@@ -18,6 +18,7 @@ use foundry_evm::{
 };
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
+use tracing::debug;
 use yansi::Paint;
 
 const USIZE_MAX_AS_U256: U256 = U256::from_limbs([usize::MAX as u64, 0, 0, 0]);
@@ -30,6 +31,8 @@ impl SessionSource {
     ///
     /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
     /// the [ChiselResult].
+    ///
+    /// Returns an error if compilation fails.
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
@@ -125,35 +128,41 @@ impl SessionSource {
     ///
     /// ### Returns
     ///
-    /// If the input is valid `Ok((formatted_output, continue))` where:
+    /// If the input is valid `Ok((continue, formatted_output))` where:
     /// - `continue` is true if the input should be appended to the source
-    /// - `formatted_output` is the formatted value
+    /// - `formatted_output` is the formatted value, if any
     pub async fn inspect(&self, input: &str) -> Result<(bool, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line) {
+        let mut source = match self.clone_with_new_line(line.clone()) {
             Ok((source, _)) => source,
-            Err(_) => return Ok((true, None)),
+            Err(err) => {
+                debug!(%err, "failed to build new source");
+                return Ok((true, None))
+            },
         };
 
         let mut source_without_inspector = self.clone();
 
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
-        let (mut res, has_inspector) = match source.execute().await {
-            Ok((_, res)) => (res, true),
-            Err(e) => match source_without_inspector.execute().await {
-                Ok((_, res)) => (res, false),
-                Err(_) => {
-                    if self.config.foundry_config.verbosity >= 3 {
-                        eprintln!("Could not inspect: {e}");
+        let (mut res,  err) = match source.execute().await {
+            Ok((_, res)) => (res,  None),
+            Err(err) => {
+                debug!(?err, %input, "execution failed");
+                match source_without_inspector.execute().await {
+                    Ok((_, res)) => (res, Some(err)),
+                    Err(_) => {
+                        if self.config.foundry_config.verbosity >= 3 {
+                            eprintln!("Could not inspect: {err}");
+                        }
+                        return Ok((true, None))
                     }
-                    return Ok((true, None))
                 }
             },
         };
 
         // If abi-encoding the input failed, check whether it is an event
-        if !has_inspector {
+        if let Some(err) = err {
             let generated_output = source_without_inspector
                 .generated_output
                 .as_ref()
@@ -170,6 +179,12 @@ impl SessionSource {
                 return Ok((false, Some(formatted)))
             }
 
+            // we were unable to check the event
+            if self.config.foundry_config.verbosity >= 3 {
+                eprintln!("Failed eval: {err}");
+            }
+
+            debug!(%err, %input, "failed abi encode input");
             return Ok((false, None))
         }
 

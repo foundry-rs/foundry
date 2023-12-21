@@ -25,6 +25,7 @@ use foundry_config::{
 use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use std::path::PathBuf;
 use yansi::Paint;
+use tracing::debug;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
@@ -180,6 +181,7 @@ async fn main() -> eyre::Result<()> {
         // Get the prompt from the dispatcher
         // Variable based on status of the last entry
         let prompt = dispatcher.get_prompt();
+
         rl.helper_mut().unwrap().set_errored(dispatcher.errored);
 
         // Read the next line
@@ -188,6 +190,7 @@ async fn main() -> eyre::Result<()> {
         // Try to read the string
         match next_string {
             Ok(line) => {
+                debug!("dispatching next line: {line}");
                 // Clear interrupt flag
                 interrupt = false;
 
@@ -231,8 +234,11 @@ impl Provider for ChiselParser {
 /// Evaluate a single Solidity line.
 async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) {
     match dispatcher.dispatch(line).await {
-        DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => if let Some(msg) = msg {
-            println!("{}", Paint::green(msg));
+        DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => {
+            debug!(%line, ?msg, "dispatch success");
+            if let Some(msg) = msg {
+                println!("{}", Paint::green(msg));
+            }
         },
         DispatchResult::UnrecognizedCommand(e) => eprintln!("{e}"),
         DispatchResult::SolangParserFailed(e) => {

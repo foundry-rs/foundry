@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
 use std::{borrow::Cow, error::Error, io::Write, path::PathBuf, process::Command};
 use strum::IntoEnumIterator;
+use tracing::debug;
 use yansi::Paint;
 
 /// Prompt arrow character
@@ -807,6 +808,7 @@ impl ChiselDispatcher {
             }
         }
         if input.trim().is_empty() {
+            debug!("empty dispatch input");
             return DispatchResult::Success(None)
         }
 
@@ -822,6 +824,7 @@ impl ChiselDispatcher {
 
         // If the input is a comment, add it to the run code so we avoid running with empty input
         if COMMENT_RE.is_match(input) {
+            debug!(%input, "matched comment");
             source.with_run_code(input);
             return DispatchResult::Success(None)
         }
@@ -858,7 +861,10 @@ impl ChiselDispatcher {
             Ok((true, Some(res))) => println!("{res}"),
             Ok((true, None)) => {}
             // Return successfully
-            Ok((false, res)) => return DispatchResult::Success(res),
+            Ok((false, res)) => {
+                debug!(%input, ?res, "inspect success");
+                return DispatchResult::Success(res)
+            },
 
             // Return with the error
             Err(e) => {
@@ -915,7 +921,8 @@ impl ChiselDispatcher {
             }
         } else {
             match new_source.build() {
-                Ok(_) => {
+                Ok(out) => {
+                    debug!(%input, ?out, "skipped execute and rebuild source");
                     self.session.session_source = Some(new_source);
                     self.errored = false;
                     DispatchResult::Success(None)
