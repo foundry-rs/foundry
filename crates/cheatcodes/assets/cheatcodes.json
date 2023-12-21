@@ -2175,6 +2175,46 @@
     },
     {
       "func": {
+        "id": "getBlockNumber",
+        "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getBlockNumber() external view returns (uint256 height);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlockNumber()",
+        "selector": "0x42cbb15c",
+        "selectorBytes": [
+          66,
+          203,
+          177,
+          92
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBlockTimestamp",
+        "description": "Gets the current `block.timestamp`.\nYou should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getBlockTimestamp() external view returns (uint256 timestamp);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlockTimestamp()",
+        "selector": "0x796b89b9",
+        "selectorBytes": [
+          121,
+          107,
+          137,
+          185
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getCode",
         "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",

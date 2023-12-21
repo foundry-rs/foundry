@@ -317,6 +317,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function roll(uint256 newHeight) external;
 
+    /// Gets the current `block.number`.
+    /// You should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,
+    /// and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockNumber() external view returns (uint256 height);
+
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function txGasPrice(uint256 newGasPrice) external;
@@ -324,6 +331,13 @@ interface Vm {
     /// Sets `block.timestamp`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function warp(uint256 newTimestamp) external;
+
+    /// Gets the current `block.timestamp`.
+    /// You should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,
+    /// and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockTimestamp() external view returns (uint256 timestamp);
 
     // -------- Account State --------
 
