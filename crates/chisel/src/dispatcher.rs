@@ -864,7 +864,7 @@ impl ChiselDispatcher {
             Ok((false, res)) => {
                 debug!(%input, ?res, "inspect success");
                 return DispatchResult::Success(res)
-            },
+            }
 
             // Return with the error
             Err(e) => {

@@ -138,15 +138,15 @@ impl SessionSource {
             Err(err) => {
                 debug!(%err, "failed to build new source");
                 return Ok((true, None))
-            },
+            }
         };
 
         let mut source_without_inspector = self.clone();
 
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
-        let (mut res,  err) = match source.execute().await {
-            Ok((_, res)) => (res,  None),
+        let (mut res, err) = match source.execute().await {
+            Ok((_, res)) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
                 match source_without_inspector.execute().await {
@@ -158,7 +158,7 @@ impl SessionSource {
                         return Ok((true, None))
                     }
                 }
-            },
+            }
         };
 
         // If abi-encoding the input failed, check whether it is an event

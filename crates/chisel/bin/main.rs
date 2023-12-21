@@ -24,8 +24,8 @@ use foundry_config::{
 };
 use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use std::path::PathBuf;
-use yansi::Paint;
 use tracing::debug;
+use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
