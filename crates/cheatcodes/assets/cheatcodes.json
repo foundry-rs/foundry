@@ -2176,7 +2176,7 @@
     {
       "func": {
         "id": "getBlockNumber",
-        "description": "Gets the current `block.number`",
+        "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockNumber() external view returns (uint256 height);",
         "visibility": "external",
         "mutability": "view",
@@ -2196,7 +2196,7 @@
     {
       "func": {
         "id": "getBlockTimestamp",
-        "description": "Gets the current `block.timestamp`",
+        "description": "Gets the current `block.timestamp`.\nYou should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockTimestamp() external view returns (uint256 timestamp);",
         "visibility": "external",
         "mutability": "view",
