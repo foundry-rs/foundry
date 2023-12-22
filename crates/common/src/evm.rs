@@ -95,6 +95,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub ffi: bool,
 
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    #[clap(long)]
+    #[serde(skip)]
+    pub always_use_create_2_factory: bool,
+
     /// Verbosity of the EVM.
     ///
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
@@ -159,6 +164,13 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.always_use_create_2_factory {
+            dict.insert(
+                "always_use_create_2_factory".to_string(),
+                self.always_use_create_2_factory.into(),
+            );
         }
 
         if self.no_storage_caching {
