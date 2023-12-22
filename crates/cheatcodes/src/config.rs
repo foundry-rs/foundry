@@ -20,6 +20,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
     /// All known endpoints and their aliases
@@ -50,6 +52,7 @@ impl CheatsConfig {
 
         Self {
             ffi: evm_opts.ffi,
+            always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             rpc_endpoints,
             paths: config.project_paths(),
@@ -164,6 +167,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            always_use_create_2_factory: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
             paths: ProjectPathsConfig::builder().build_with_root("./"),

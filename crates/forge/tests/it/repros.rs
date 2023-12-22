@@ -300,3 +300,10 @@ test_repro!(6759);
 
 // https://github.com/foundry-rs/foundry/issues/6966
 test_repro!(6966);
+
+// https://github.com/foundry-rs/foundry/issues/5529
+test_repro!(5529; |config| {
+  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+  cheats_config.always_use_create_2_factory = true;
+  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+});

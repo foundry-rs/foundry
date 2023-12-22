@@ -53,6 +53,9 @@ pub struct EvmOpts {
     /// Enables the FFI cheatcode.
     pub ffi: bool,
 
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
+
     /// Verbosity mode of EVM output as number of occurrences.
     pub verbosity: u8,
 

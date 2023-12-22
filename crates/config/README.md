@@ -114,6 +114,7 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 ffi = false
+always_use_create_2_factory = false
 # These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
 sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
 tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'

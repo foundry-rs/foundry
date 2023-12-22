@@ -240,6 +240,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
     /// The address which will be executing all tests
     pub sender: Address,
     /// The tx.origin value during EVM execution
@@ -1793,6 +1795,7 @@ impl Default for Config {
             path_pattern_inverse: None,
             fuzz: Default::default(),
             invariant: Default::default(),
+            always_use_create_2_factory: false,
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -3360,6 +3363,7 @@ mod tests {
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
+                always_use_create_2_factory = true
 
                 [rpc_endpoints]
                 optimism = "https://example.com/"
@@ -3411,6 +3415,7 @@ mod tests {
                         ),
                     ]),
                     build_info_path: Some("build-info".into()),
+                    always_use_create_2_factory: true,
                     ..Config::default()
                 }
             );
@@ -3462,6 +3467,7 @@ mod tests {
                 evm_version = 'london'
                 extra_output = []
                 extra_output_files = []
+                always_use_create_2_factory = false
                 ffi = false
                 force = false
                 gas_limit = 9223372036854775807
