@@ -37,7 +37,7 @@ pub const IMPERSONATED_SIGNATURE: Signature =
 /// 2. EIP2930 (state access lists) [`EIP2930TransactionRequest`]
 /// 3. EIP1559 [`EIP1559TransactionRequest`]
 /// 4. Deposit [`DepositTransactionRequest`]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypedTransactionRequest {
     Legacy(LegacyTransactionRequest),
     EIP2930(EIP2930TransactionRequest),
@@ -46,7 +46,7 @@ pub enum TypedTransactionRequest {
 }
 
 /// Represents _all_ transaction requests received from RPC
-#[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -87,7 +87,7 @@ pub struct EthTransactionRequest {
     pub optimism_fields: Option<OptimismDepositRequestFields>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -282,7 +282,7 @@ impl open_fastrlp::Decodable for TransactionKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 pub struct EIP2930TransactionRequest {
     pub chain_id: u64,
@@ -334,7 +334,7 @@ impl Encodable for EIP2930TransactionRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyTransactionRequest {
     pub nonce: U256,
     pub gas_price: U256,
@@ -393,7 +393,7 @@ impl Encodable for LegacyTransactionRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 pub struct EIP1559TransactionRequest {
     pub chain_id: u64,
@@ -450,7 +450,7 @@ impl Encodable for EIP1559TransactionRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DepositTransactionRequest {
     pub from: Address,
     pub source_hash: H256,
@@ -1499,7 +1499,7 @@ impl PendingTransaction {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransactionInfo {
     pub transaction_hash: H256,
     pub transaction_index: u32,

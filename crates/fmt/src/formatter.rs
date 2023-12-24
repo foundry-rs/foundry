@@ -23,7 +23,7 @@ use thiserror::Error;
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// A custom Error thrown by the Formatter
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum FormatterError {
     /// Error thrown by `std::fmt::Write` interfaces
     #[error(transparent)]
@@ -73,7 +73,7 @@ macro_rules! bail {
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,

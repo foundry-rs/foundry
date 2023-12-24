@@ -24,7 +24,7 @@ use serde::Serialize;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum BlockchainError {
     #[error(transparent)]
     Pool(#[from] PoolError),
@@ -113,7 +113,7 @@ where
 }
 
 /// Errors that can occur in the transaction pool
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PoolError {
     #[error("Transaction with cyclic dependent transactions")]
     CyclicTransaction,
@@ -125,7 +125,7 @@ pub enum PoolError {
 }
 
 /// Errors that can occur with `eth_feeHistory`
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum FeeHistoryError {
     #[error("Requested block range is out of bounds")]
     InvalidBlockRange,
@@ -137,7 +137,7 @@ pub struct ErrDetail {
 }
 
 /// An error due to invalid transaction
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum InvalidTransactionError {
     /// returned if the nonce of a transaction is lower than the one present in the local chain.
     #[error("nonce too low")]

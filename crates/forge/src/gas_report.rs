@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
 /// Represents the gas report for a set of contracts.
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
@@ -176,14 +176,14 @@ impl Display for GasReport {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ContractInfo {
     pub gas: U256,
     pub size: U256,
     pub functions: BTreeMap<String, BTreeMap<String, GasInfo>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GasInfo {
     pub calls: Vec<U256>,
     pub min: U256,

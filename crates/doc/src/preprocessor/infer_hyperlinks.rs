@@ -24,7 +24,7 @@ pub const INFER_INLINE_HYPERLINKS_ID: PreprocessorId = PreprocessorId("infer inl
 /// comments for dev comment tags.
 ///
 /// This preprocessor replaces inline links in comments with the links to the referenced items.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct InferInlineHyperlinks;
 

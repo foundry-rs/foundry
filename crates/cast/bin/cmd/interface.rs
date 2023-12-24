@@ -8,7 +8,7 @@ use itertools::Itertools;
 use std::path::{Path, PathBuf};
 
 /// CLI arguments for `cast interface`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct InterfaceArgs {
     /// The contract address, or the path to an ABI file.
     ///

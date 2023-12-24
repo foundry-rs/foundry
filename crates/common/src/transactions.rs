@@ -5,7 +5,7 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 
 /// Helper type to carry a transaction along with an optional revert reason
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TransactionReceiptWithRevertReason {
     /// The underlying transaction receipt
     #[serde(flatten)]

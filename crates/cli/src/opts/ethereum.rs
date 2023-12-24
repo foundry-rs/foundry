@@ -83,7 +83,7 @@ impl RpcOpts {
     }
 }
 
-#[derive(Clone, Debug, Default, Parser, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct EtherscanOpts {
     /// The Etherscan (or equivalent) API key.
     #[clap(short = 'e', long = "etherscan-api-key", alias = "api-key", env = "ETHERSCAN_API_KEY")]

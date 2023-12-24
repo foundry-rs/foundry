@@ -10,7 +10,7 @@ use std::{
 /// Configures file system access
 ///
 /// E.g. for cheat codes (`vm.writeFile`)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FsPermissions {
     /// what kind of access is allowed
@@ -98,7 +98,7 @@ impl FsPermissions {
 }
 
 /// Represents an access permission to a single path
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathPermission {
     /// Permission level to access the `path`
     pub access: FsAccessPermission,
@@ -141,7 +141,7 @@ impl PathPermission {
 }
 
 /// Represents the operation on the fs
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FsAccessKind {
     /// read from fs (`vm.readFile`)
     Read,
@@ -159,7 +159,7 @@ impl fmt::Display for FsAccessKind {
 }
 
 /// Determines the status of file system access
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FsAccessPermission {
     /// FS access is _not_ allowed
     #[default]

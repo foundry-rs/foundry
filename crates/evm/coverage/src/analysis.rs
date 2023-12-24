@@ -5,7 +5,7 @@ use semver::Version;
 use std::collections::{HashMap, HashSet};
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ContractVisitor<'a> {
     /// The source ID of the contract.
     source_id: usize,
@@ -440,7 +440,7 @@ pub struct SourceAnalysis {
 }
 
 /// Analyzes a set of sources to find coverage items.
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SourceAnalyzer {
     /// A map of source IDs to their source code
     sources: HashMap<usize, String>,

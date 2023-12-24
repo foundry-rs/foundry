@@ -14,7 +14,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 /// Common arguments for a project's paths.
-#[derive(Debug, Clone, Parser, Serialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Project options")]
 pub struct ProjectPathsArgs {
     /// The project's root path.

@@ -32,7 +32,7 @@ use std::{borrow::Cow, collections::HashMap};
 /// don't make use of them. Alternatively each test case would require its own `Backend` clone,
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct FuzzBackendWrapper<'a> {
     /// The underlying immutable `Backend`
     ///

@@ -24,7 +24,7 @@ const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_TIMEDOUT_REQ: usize = 4usize;
 
 /// A client that can request API data from `https://api.openchain.xyz`
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct SignEthClient {
     inner: reqwest::Client,
     /// Whether the connection is spurious, or API is down
@@ -418,7 +418,7 @@ pub async fn pretty_calldata(
     SignEthClient::new()?.pretty_calldata(calldata, offline).await
 }
 
-#[derive(Default, Serialize, PartialEq, Debug, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RawSelectorImportData {
     pub function: Vec<String>,
     pub event: Vec<String>,
@@ -490,7 +490,7 @@ pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<Selector
     SignEthClient::new()?.import_selectors(data).await
 }
 
-#[derive(PartialEq, Default, Debug)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ParsedSignatures {
     pub signatures: RawSelectorImportData,
     pub abis: Vec<JsonAbi>,

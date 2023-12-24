@@ -22,7 +22,7 @@ pub fn expand_globs(
 
 /// A `globset::Glob` that creates its `globset::GlobMatcher` when its created, so it doesn't need
 /// to be compiled when the filter functions `TestFilter` functions are called.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct GlobMatcher {
     /// The parsed glob
     pub glob: globset::Glob,

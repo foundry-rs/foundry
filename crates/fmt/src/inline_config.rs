@@ -5,7 +5,7 @@ use std::{fmt, str::FromStr};
 
 /// An inline config item
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum InlineConfigItem {
     /// Disables the next code item regardless of newlines
     DisableNextItem,
@@ -63,7 +63,7 @@ impl DisabledRange {
 /// This is a list of Inline Config items for locations in a source file. This is
 /// usually acquired by parsing the comments for an `forgefmt:` items. See
 /// [`Comments::parse_inline_config_items`] for details.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct InlineConfig {
     disabled_ranges: Vec<DisabledRange>,
 }

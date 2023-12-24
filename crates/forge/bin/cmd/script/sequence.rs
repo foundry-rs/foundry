@@ -30,7 +30,7 @@ pub const DRY_RUN_DIR: &str = "dry-run";
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     #[serde(serialize_with = "wrapper::serialize_receipts")]
@@ -50,13 +50,13 @@ pub struct ScriptSequence {
 }
 
 /// Sensitive values from the transactions in a script sequence
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveTransactionMetadata {
     pub rpc: Option<String>,
 }
 
 /// Sensitive info from the script sequence which is saved into the cache folder
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }

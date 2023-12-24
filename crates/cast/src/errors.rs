@@ -4,7 +4,7 @@ use foundry_config::Chain;
 use std::fmt;
 
 /// An error thrown when resolving a function via signature failed
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum FunctionSignatureError {
     MissingSignature,
     MissingEtherscan { sig: String },

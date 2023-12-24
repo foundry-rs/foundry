@@ -22,7 +22,7 @@ pub struct OtsBlock<TX> {
 }
 
 /// Block structure with additional details regarding fees and issuance
-#[derive(Serialize, Debug)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsBlockDetails {
     pub block: OtsBlock<H256>,
@@ -31,7 +31,7 @@ pub struct OtsBlockDetails {
 }
 
 /// Issuance information for a block. Expected by Otterscan in ots_getBlockDetails calls
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct Issuance {
     block_reward: U256,
     uncle_reward: U256,
@@ -39,7 +39,7 @@ pub struct Issuance {
 }
 
 /// Holds both transactions and receipts for a block
-#[derive(Serialize, Debug)]
+#[derive(Debug, Serialize)]
 pub struct OtsBlockTransactions {
     pub fullblock: OtsBlock<Transaction>,
     pub receipts: Vec<TransactionReceipt>,
@@ -55,14 +55,14 @@ pub struct OtsTransactionReceipt {
 }
 
 /// Information about the creator address and transaction for a contract
-#[derive(Serialize, Debug)]
+#[derive(Debug, Serialize)]
 pub struct OtsContractCreator {
     pub hash: H256,
     pub creator: Address,
 }
 
 /// Paginated search results of an account's history
-#[derive(Serialize, Debug)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsSearchTransactions {
     pub txs: Vec<Transaction>,
@@ -72,7 +72,7 @@ pub struct OtsSearchTransactions {
 }
 
 /// Otterscan format for listing relevant internal operations
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsInternalOperation {
     pub r#type: OtsInternalOperationType,
@@ -82,7 +82,7 @@ pub struct OtsInternalOperation {
 }
 
 /// Types of internal operations recognized by Otterscan
-#[derive(Serialize_repr, Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize_repr)]
 #[repr(u8)]
 pub enum OtsInternalOperationType {
     Transfer = 0,
@@ -92,7 +92,7 @@ pub enum OtsInternalOperationType {
 }
 
 /// Otterscan's representation of a trace
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct OtsTrace {
     pub r#type: OtsTraceType,
     pub depth: usize,
@@ -104,7 +104,7 @@ pub struct OtsTrace {
 
 /// The type of call being described by an Otterscan trace. Only CALL, STATICCALL and DELEGATECALL
 /// are represented
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum OtsTraceType {
     Call,

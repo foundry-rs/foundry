@@ -7,7 +7,7 @@ use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
 /// Contains for fuzz testing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
@@ -67,7 +67,7 @@ impl InlineConfigParser for FuzzConfig {
 }
 
 /// Contains for fuzz testing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzDictionaryConfig {
     /// The weight of the dictionary
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]

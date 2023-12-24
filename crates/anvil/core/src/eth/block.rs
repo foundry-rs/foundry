@@ -8,7 +8,7 @@ use ethers_core::{
 };
 
 /// Container type that gathers all block data
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockInfo {
     pub block: Block,
     pub transactions: Vec<TransactionInfo>,
@@ -281,7 +281,7 @@ impl open_fastrlp::Decodable for Header {
 }
 
 /// Partial header definition without ommers hash and transactions root
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PartialHeader {
     pub parent_hash: H256,
     pub beneficiary: Address,

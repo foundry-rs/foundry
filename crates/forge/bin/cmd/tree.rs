@@ -7,7 +7,7 @@ use foundry_compilers::{
 };
 
 /// CLI arguments for `forge tree`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct TreeArgs {
     /// Do not de-duplicate (repeats all shared dependencies)
     #[clap(long)]
