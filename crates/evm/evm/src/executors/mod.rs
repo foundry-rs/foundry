@@ -55,7 +55,7 @@ pub use tracing::TracingExecutor;
 /// - `committing`: any state changes made during the call are recorded and are persisting
 /// - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
 ///   other words: the state of the underlying database remains unchanged.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Executor {
     /// The underlying `revm::Database` that contains the EVM storage.
     // Note: We do not store an EVM here, since we are really
@@ -582,7 +582,7 @@ impl Executor {
 }
 
 /// Represents the context after an execution error occurred.
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 #[error("Execution reverted: {reason} (gas: {gas_used})")]
 pub struct ExecutionErr {
     pub reverted: bool,
@@ -599,7 +599,7 @@ pub struct ExecutionErr {
     pub script_wallets: Vec<LocalWallet>,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
     #[error(transparent)]

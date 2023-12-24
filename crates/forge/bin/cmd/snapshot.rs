@@ -27,7 +27,7 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// CLI arguments for `forge snapshot`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct SnapshotArgs {
     /// Output a diff against a pre-existing snapshot.
     ///
@@ -124,7 +124,7 @@ impl SnapshotArgs {
 }
 
 // TODO implement pretty tables
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Format {
     Table,
 }
@@ -141,7 +141,7 @@ impl FromStr for Format {
 }
 
 /// Additional filters that can be applied on the test results
-#[derive(Debug, Clone, Parser, Default)]
+#[derive(Clone, Debug, Default, Parser)]
 struct SnapshotConfig {
     /// Sort results by gas used (ascending).
     #[clap(long)]
@@ -197,7 +197,7 @@ impl SnapshotConfig {
 ///   `<signature>(gas:? 40181)` for normal tests
 ///   `<signature>(runs: 256, μ: 40181, ~: 40181)` for fuzz tests
 ///   `<signature>(runs: 256, calls: 40181, reverts: 40181)` for invariant tests
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotEntry {
     pub contract_name: String,
     pub signature: String,
@@ -293,7 +293,7 @@ fn write_to_snapshot_file(
 }
 
 /// A Snapshot entry diff
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotDiff {
     pub signature: String,
     pub source_gas_used: TestKindReport,

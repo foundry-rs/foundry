@@ -42,7 +42,7 @@ pub use node::CallTraceNode;
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 /// An arena of [CallTraceNode]s
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
@@ -256,7 +256,7 @@ impl fmt::Display for CallTraceArena {
 }
 
 /// A raw or decoded log.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TraceLog {
     /// A raw log
     Raw(RawLog),
@@ -299,14 +299,14 @@ impl fmt::Display for TraceLog {
 ///
 /// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
 /// the log.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
 }
 
 /// Raw or decoded calldata.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceCallData {
     /// Raw calldata bytes.
     Raw(Bytes),
@@ -335,7 +335,7 @@ impl TraceCallData {
 }
 
 /// Raw or decoded return data.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceRetData {
     /// Raw return data.
     Raw(Bytes),
@@ -378,7 +378,7 @@ impl fmt::Display for TraceRetData {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTraceStep {
     // Fields filled in `step`
     /// Call depth
@@ -432,7 +432,7 @@ impl From<&CallTraceStep> for StructLog {
 }
 
 /// A trace of a call.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,

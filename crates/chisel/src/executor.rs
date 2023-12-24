@@ -499,7 +499,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Type {
     /// (type)
     Builtin(DynSolType),
@@ -1339,7 +1339,7 @@ fn unit_multiplier(unit: &Option<pt::Identifier>) -> Result<U256> {
     }
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Instruction {
     pub pc: usize,
     pub opcode: u8,

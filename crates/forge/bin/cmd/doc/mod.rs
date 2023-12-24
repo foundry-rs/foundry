@@ -10,7 +10,7 @@ use std::{path::PathBuf, process::Command};
 mod server;
 use server::Server;
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct DocArgs {
     /// The project's root path.
     ///

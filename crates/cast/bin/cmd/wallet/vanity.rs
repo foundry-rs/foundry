@@ -17,7 +17,7 @@ use std::{
 pub type GeneratedWallet = (SigningKey, Address);
 
 /// CLI arguments for `cast wallet vanity`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct VanityArgs {
     /// Prefix for the vanity address.
     #[clap(
@@ -333,7 +333,7 @@ impl VanityMatcher for RegexMatcher {
 }
 
 /// Parse 40 byte addresses
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct HexAddressValidator;
 
 impl TypedValueParser for HexAddressValidator {

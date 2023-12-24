@@ -15,7 +15,7 @@ use foundry_evm::{
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Inspector {
     pub tracer: Option<Tracer>,
     /// collects all `console.sol` logs

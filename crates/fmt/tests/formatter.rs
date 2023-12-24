@@ -148,7 +148,7 @@ fn test_formatter(
     );
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Clone, Copy, Default)]
 struct TestConfig {
     /// Whether to compare the formatted source code AST with the original AST
     skip_compare_ast_eq: bool,

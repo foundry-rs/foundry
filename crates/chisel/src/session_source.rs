@@ -22,7 +22,7 @@ use yansi::Paint;
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateOutput {
     /// All expressions within the REPL contract's run function and top level scope.
     #[serde(skip)]
@@ -34,7 +34,7 @@ pub struct IntermediateOutput {
 
 /// A refined intermediate parse tree for a contract that enables easy lookups
 /// of definitions.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateContract {
     /// All function definitions within the contract
     #[serde(skip)]
@@ -54,7 +54,7 @@ pub struct IntermediateContract {
 type IntermediateContracts = HashMap<String, IntermediateContract>;
 
 /// Full compilation output for the [SessionSource]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GeneratedOutput {
     /// The [IntermediateOutput] component
     pub intermediate: IntermediateOutput,
@@ -63,7 +63,7 @@ pub struct GeneratedOutput {
 }
 
 /// Configuration for the [SessionSource]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
     pub foundry_config: Config,
@@ -143,7 +143,7 @@ You can also set the solc version in your foundry.toml.")
 /// REPL Session Source wrapper
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionSource {
     /// The file name
     pub file_name: PathBuf,

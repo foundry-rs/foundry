@@ -15,7 +15,7 @@ const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
 
 /// CLI arguments for `forge bind`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct BindArgs {
     /// Path to where the contract artifacts are stored.
     #[clap(

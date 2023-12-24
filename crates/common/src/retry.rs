@@ -4,7 +4,7 @@ use eyre::{Error, Result};
 use std::{future::Future, time::Duration};
 
 /// A type that keeps track of attempts.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Retry {
     retries: u32,
     delay: Option<Duration>,

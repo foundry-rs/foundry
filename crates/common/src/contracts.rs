@@ -17,7 +17,7 @@ use std::{
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a (Abi, Vec<u8>));
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
-#[derive(Default, Clone)]
+#[derive(Clone, Default)]
 pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, (Abi, Vec<u8>)>);
 
 impl ContractsByArtifact {

@@ -3,7 +3,7 @@ use ethers::types::BlockNumber;
 use foundry_evm::revm::primitives::SpecId;
 use std::str::FromStr;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Hardfork {
     Frontier,
     Homestead,

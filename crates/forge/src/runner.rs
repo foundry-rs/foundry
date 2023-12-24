@@ -32,7 +32,7 @@ use std::{
 };
 
 /// A type that executes all tests of a contract
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ContractRunner<'a> {
     pub name: &'a str,
     /// The executor used by the runner.

@@ -100,7 +100,7 @@ impl CallTraceDecoderBuilder {
 ///
 /// Note that a call trace decoder is required for each new set of traces, since addresses in
 /// different sets might overlap.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CallTraceDecoder {
     /// Addresses identified to be a specific contract.
     ///

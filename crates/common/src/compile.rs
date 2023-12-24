@@ -23,7 +23,7 @@ use std::{
 ///
 /// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
 /// settings
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ProjectCompiler {
     /// whether to also print the contract names
     print_names: bool,
@@ -172,7 +172,7 @@ impl ProjectCompiler {
 }
 
 /// Map over artifacts contract sources name -> file_id -> (source, contract)
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
 
 // https://eips.ethereum.org/EIPS/eip-170
@@ -253,7 +253,7 @@ pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
 }
 
 /// How big the contract is and whether it is a dev contract where size limits can be neglected
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ContractInfo {
     /// size of the contract in bytes
     pub size: usize,
@@ -513,7 +513,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 }
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkipBuildFilters(pub Vec<SkipBuildFilter>);
 
 impl FileFilter for SkipBuildFilters {
@@ -524,7 +524,7 @@ impl FileFilter for SkipBuildFilters {
 }
 
 /// A filter that excludes matching contracts from the build
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkipBuildFilter {
     /// Exclude all `.t.sol` contracts
     Tests,

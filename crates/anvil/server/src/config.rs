@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::str::FromStr;
 
 /// Additional server options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::Parser), clap(next_help_heading = "Server options"))]
 pub struct ServerConfig {
     /// The cors `allow_origin` header
@@ -48,7 +48,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct HeaderValueWrapper(pub HeaderValue);
 
 impl FromStr for HeaderValueWrapper {

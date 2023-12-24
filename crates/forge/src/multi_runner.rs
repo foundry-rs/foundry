@@ -231,7 +231,7 @@ impl MultiContractRunner {
 }
 
 /// Builder used for instantiating the multi-contract runner
-#[derive(Debug, Default, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct MultiContractRunnerBuilder {
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions

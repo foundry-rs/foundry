@@ -21,7 +21,7 @@ static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
 
 /// CLI arguments for `forge install`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[clap(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
     forge install [OPTIONS] <github username>/<github project>@<tag>...
     forge install [OPTIONS] <alias>=<github username>/<github project>@<tag>...
@@ -62,7 +62,7 @@ impl InstallArgs {
     }
 }
 
-#[derive(Debug, Clone, Default, Copy, Parser)]
+#[derive(Clone, Copy, Debug, Default, Parser)]
 pub struct DependencyInstallOpts {
     /// Perform shallow clones instead of deep ones.
     ///

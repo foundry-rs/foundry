@@ -28,7 +28,7 @@ enum InnerClient {
 }
 
 /// Error type for the runtime provider
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum RuntimeClientError {
     /// Internal provider error
     #[error(transparent)]

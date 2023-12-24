@@ -6,7 +6,7 @@ use revm::{
 use serde::{Deserialize, Serialize};
 
 /// A minimal abstraction of a state at a certain point in time
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub accounts: Map<Address, AccountInfo>,
     pub storage: Map<Address, Map<U256, U256>>,
@@ -46,7 +46,7 @@ impl<T> BackendSnapshot<T> {
 /// What to do when reverting a snapshot
 ///
 /// Whether to remove the snapshot or keep it
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RevertSnapshotAction {
     /// Remove the snapshot after reverting
     #[default]

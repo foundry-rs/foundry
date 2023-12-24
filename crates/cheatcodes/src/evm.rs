@@ -28,7 +28,7 @@ pub struct RecordAccess {
 }
 
 /// Records `deal` cheatcodes
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct DealRecord {
     /// Target of the deal.
     pub address: Address,

@@ -55,7 +55,7 @@ impl Error for ExtractConfigError {
 }
 
 /// Represents an error that can occur when constructing the `Config`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FoundryConfigError {
     /// An error thrown during toml parsing
     Toml(figment::Error),
@@ -98,7 +98,7 @@ impl Error for FoundryConfigError {
 }
 
 /// A non-exhaustive list of solidity error codes
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
