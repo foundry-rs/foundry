@@ -1,5 +1,7 @@
 use crate::{
-    identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
+    identifier::{
+        AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
+    },
     CallTrace, CallTraceArena, TraceCallData, TraceLog, TraceRetData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
@@ -42,6 +44,15 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Add known functions to the decoder.
+    #[inline]
+    pub fn with_functions(mut self, functions: impl IntoIterator<Item = Function>) -> Self {
+        for function in functions {
+            self.decoder.functions.entry(function.selector()).or_default().push(function);
+        }
+        self
+    }
+
     /// Add known events to the decoder.
     #[inline]
     pub fn with_events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
@@ -53,6 +64,12 @@ impl CallTraceDecoderBuilder {
                 .push(event);
         }
         self
+    }
+
+    #[inline]
+    pub fn with_local_identifier_abis(self, identifier: &LocalTraceIdentifier<'_>) -> Self {
+        self.with_events(identifier.events().cloned())
+            .with_functions(identifier.functions().cloned())
     }
 
     /// Sets the verbosity level of the decoder.
@@ -410,7 +427,7 @@ impl CallTraceDecoder {
                 s = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func));
             }
 
-            if s.is_some() {
+            if s.is_none() {
                 if let Some(values) =
                     funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
                 {

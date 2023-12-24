@@ -367,3 +367,68 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     // run command and assert error exit code
     cmd.assert_err();
 });
+
+// <https://github.com/foundry-rs/foundry/issues/6531>
+forgetest_init!(repro_6531, |prj, cmd| {
+    prj.wipe_contracts();
+
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
+    prj.add_test(
+        "Contract.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IERC20 {
+    function name() external view returns (string memory);
+}
+
+contract USDCCallingTest is Test {
+    function test() public {
+        vm.createSelectFork("<url>");
+        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    )
+    .unwrap();
+
+    let expected = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/repro_6531.stdout"),
+    )
+    .unwrap()
+    .replace("<url>", &endpoint);
+
+    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6579>
+forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+error PoolNotInitialized();
+event MyEvent(uint256 a);
+
+contract CustomTypesTest is Test {
+    function testErr() public pure {
+       revert PoolNotInitialized();
+    }
+    function testEvent() public {
+       emit MyEvent(100);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/include_custom_types_in_traces.stdout"),
+    );
+});

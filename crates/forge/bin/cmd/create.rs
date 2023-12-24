@@ -185,7 +185,7 @@ impl CreateArgs {
             },
             flatten: false,
             force: false,
-            skip_is_verified_check: false,
+            skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
             libraries: vec![],

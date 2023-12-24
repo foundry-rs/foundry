@@ -1,4 +1,4 @@
-//! forge tests for cheat codes
+//! Forge forking tests.
 
 use crate::{
     config::*,
@@ -13,13 +13,12 @@ use foundry_test_utils::Filter;
 async fn test_cheats_fork_revert() {
     let mut runner = runner().await;
     let suite_result = runner
-        .test(
+        .test_collect(
             &Filter::new(
                 "testNonExistingContractRevert",
                 ".*",
                 &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
             ),
-            None,
             test_opts(),
         )
         .await;

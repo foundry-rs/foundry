@@ -1,4 +1,4 @@
-//! forge tests for cheat codes
+//! Forge tests for cheatcodes.
 
 use crate::{
     config::*,

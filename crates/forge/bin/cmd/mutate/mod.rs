@@ -489,7 +489,7 @@ pub fn setup_and_compile_mutant(
     // )?;
     let mut project = config.project()?;
     project.set_solc_jobs(4);
-    
+
     let compile_output = project.compile().map_err(|_| eyre!("compilation failed"))?;
 
     Ok((temp_project, compile_output, config))

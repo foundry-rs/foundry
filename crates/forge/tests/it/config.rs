@@ -1,4 +1,4 @@
-//! Test setup
+//! Test config.
 
 use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
 use forge::{
@@ -16,7 +16,7 @@ use foundry_test_utils::{init_tracing, Filter};
 use itertools::Itertools;
 use std::{collections::BTreeMap, path::Path};
 
-/// How to execute a a test run
+/// How to execute a test run.
 pub struct TestConfig {
     pub runner: MultiContractRunner,
     pub should_fail: bool,
@@ -54,7 +54,7 @@ impl TestConfig {
 
     /// Executes the test runner
     pub async fn test(&mut self) -> BTreeMap<String, SuiteResult> {
-        self.runner.test(&self.filter, None, self.opts.clone()).await
+        self.runner.test_collect(&self.filter, self.opts.clone()).await
     }
 
     pub async fn run(&mut self) {
@@ -123,6 +123,7 @@ pub fn test_opts() -> TestOptions {
                 max_fuzz_dictionary_values: 10_000,
             },
             shrink_sequence: true,
+            shrink_run_limit: 2usize.pow(18u32),
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")

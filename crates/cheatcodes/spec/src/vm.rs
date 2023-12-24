@@ -53,6 +53,14 @@ interface Vm {
         SelfDestruct,
         /// Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess).
         Resume,
+        /// The account's balance was read.
+        Balance,
+        /// The account's codesize was read.
+        Extcodesize,
+        /// The account's codehash was read.
+        Extcodehash,
+        /// The account's code was copied.
+        Extcodecopy,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
@@ -252,7 +260,7 @@ interface Vm {
 
     /// Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.
     #[cheatcode(group = Evm, safety = Safe)]
-    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);
+    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
 
     // -------- Recording Map Writes --------
 
@@ -309,6 +317,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function roll(uint256 newHeight) external;
 
+    /// Gets the current `block.number`.
+    /// You should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,
+    /// and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockNumber() external view returns (uint256 height);
+
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function txGasPrice(uint256 newGasPrice) external;
@@ -316,6 +331,13 @@ interface Vm {
     /// Sets `block.timestamp`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function warp(uint256 newTimestamp) external;
+
+    /// Gets the current `block.timestamp`.
+    /// You should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,
+    /// and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockTimestamp() external view returns (uint256 timestamp);
 
     // -------- Account State --------
 
@@ -344,7 +366,7 @@ interface Vm {
     function store(address target, bytes32 slot, bytes32 value) external;
 
     /// Marks the slots of an account and the account address as cold.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function cool(address target) external;
 
     // -------- Call Manipulation --------
@@ -411,9 +433,33 @@ interface Vm {
 
     /// Revert the state of the EVM to a previous snapshot
     /// Takes the snapshot ID to revert to.
-    /// This deletes the snapshot and all snapshots taken after the given snapshot ID.
+    ///
+    /// Returns `true` if the snapshot was successfully reverted.
+    /// Returns `false` if the snapshot does not exist.
+    ///
+    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function revertTo(uint256 snapshotId) external returns (bool success);
+
+    /// Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots
+    /// Takes the snapshot ID to revert to.
+    ///
+    /// Returns `true` if the snapshot was successfully reverted and deleted.
+    /// Returns `false` if the snapshot does not exist.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
+
+    /// Removes the snapshot with the given ID created by `snapshot`.
+    /// Takes the snapshot ID to delete.
+    ///
+    /// Returns `true` if the snapshot was successfully deleted.
+    /// Returns `false` if the snapshot does not exist.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
+
+    /// Removes _all_ snapshots previously created by `snapshot`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function deleteSnapshots() external;
 
     // -------- Forking --------
     // --- Creation and Selection ---
@@ -476,7 +522,7 @@ interface Vm {
 
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
-    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);
 

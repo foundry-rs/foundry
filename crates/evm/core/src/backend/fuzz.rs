@@ -3,6 +3,7 @@
 use crate::{
     backend::{
         diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
+        RevertSnapshotAction,
     },
     fork::{CreateFork, ForkId},
 };
@@ -83,6 +84,14 @@ impl<'a> FuzzBackendWrapper<'a> {
         }
         self.backend.to_mut()
     }
+
+    /// Returns a mutable instance of the Backend if it is initialized.
+    fn initialized_backend_mut(&mut self) -> Option<&mut Backend> {
+        if self.is_initialized {
+            return Some(self.backend.to_mut())
+        }
+        None
+    }
 }
 
 impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
@@ -96,9 +105,24 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         id: U256,
         journaled_state: &JournaledState,
         current: &mut Env,
+        action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
         trace!(?id, "fuzz: revert snapshot");
-        self.backend_mut(current).revert(id, journaled_state, current)
+        self.backend_mut(current).revert(id, journaled_state, current, action)
+    }
+
+    fn delete_snapshot(&mut self, id: U256) -> bool {
+        // delete snapshot requires a previous snapshot to be initialized
+        if let Some(backend) = self.initialized_backend_mut() {
+            return backend.delete_snapshot(id)
+        }
+        false
+    }
+
+    fn delete_snapshots(&mut self) {
+        if let Some(backend) = self.initialized_backend_mut() {
+            backend.delete_snapshots()
+        }
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {

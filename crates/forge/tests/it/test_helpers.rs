@@ -1,3 +1,5 @@
+//! Test helpers for Forge integration tests.
+
 use alloy_primitives::U256;
 use foundry_compilers::{
     artifacts::{Libraries, Settings},

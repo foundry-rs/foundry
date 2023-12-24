@@ -1,4 +1,4 @@
-//! Tests for invariants
+//! Invariant tests.
 
 use crate::config::*;
 use alloy_primitives::U256;
@@ -11,9 +11,8 @@ async fn test_invariant() {
     let mut runner = runner().await;
 
     let results = runner
-        .test(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
-            None,
             test_opts(),
         )
         .await;
@@ -132,9 +131,8 @@ async fn test_invariant_override() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol"),
-            None,
             opts,
         )
         .await;
@@ -159,9 +157,8 @@ async fn test_invariant_fail_on_revert() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol"),
-            None,
             opts,
         )
         .await;
@@ -192,9 +189,8 @@ async fn test_invariant_storage() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol"),
-            None,
             opts,
         )
         .await;
@@ -219,13 +215,12 @@ async fn test_invariant_shrink() {
     let mut runner = runner().await;
 
     let mut opts = test_opts();
-    opts.fuzz.seed = Some(U256::from(102u32));
+    opts.fuzz.seed = Some(U256::from(119u32));
     runner.test_options = opts.clone();
 
     let results = runner
-        .test(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol"),
-            None,
             opts,
         )
         .await;
@@ -243,10 +238,9 @@ async fn test_invariant_shrink() {
 
     match counter {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        // `fuzz_seed` at 100 makes this sequence shrinkable from 4 to 2.
+        // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
         CounterExample::Sequence(sequence) => {
-            // there some diff across platforms for some reason, either 3 or 2
-            assert!(sequence.len() <= 3)
+            assert!(sequence.len() == 2)
         }
     };
 }
