@@ -19,7 +19,7 @@ use std::{
 };
 
 /// Holds the sequences of multiple chain deployments.
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct MultiChainSequence {
     pub deployments: Vec<ScriptSequence>,
     #[serde(skip)]
@@ -30,7 +30,7 @@ pub struct MultiChainSequence {
 }
 
 /// Sensitive values from script sequences.
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveMultiChainSequence {
     pub deployments: Vec<SensitiveScriptSequence>,
 }

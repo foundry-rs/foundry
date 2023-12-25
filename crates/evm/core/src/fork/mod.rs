@@ -16,7 +16,7 @@ mod multi;
 pub use multi::{ForkId, MultiFork, MultiForkHandler};
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct CreateFork {
     /// Whether to enable rpc storage caching for this fork
     pub enable_caching: bool,

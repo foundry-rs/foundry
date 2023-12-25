@@ -345,7 +345,7 @@ impl NodeArgs {
 }
 
 /// Anvil's EVM related arguments.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[clap(next_help_heading = "EVM options")]
 pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
@@ -604,7 +604,7 @@ impl Future for PeriodicStateDumper {
 }
 
 /// Represents the --state flag and where to load from, or dump the state to
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct StateFile {
     pub path: PathBuf,
     pub state: Option<SerializableState>,
@@ -631,7 +631,7 @@ impl StateFile {
 
 /// Represents the input URL for a fork with an optional trailing block number:
 /// `http://localhost:8545@1000000`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForkUrl {
     /// The endpoint url
     pub url: String,

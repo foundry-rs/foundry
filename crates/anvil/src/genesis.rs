@@ -107,7 +107,7 @@ impl Genesis {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Alloc {
     pub accounts: BTreeMap<Address, GenesisAccount>,

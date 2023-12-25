@@ -60,7 +60,7 @@ pub struct ChiselParser {
 }
 
 /// Chisel binary subcommands
-#[derive(clap::Subcommand, Debug)]
+#[derive(Debug, clap::Subcommand)]
 pub enum ChiselParserSub {
     /// List all cached sessions
     List,

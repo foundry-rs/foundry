@@ -1,5 +1,5 @@
 /// Errors returned by the [`InlineConfigParser`] trait.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InlineConfigParserError {
     /// An invalid configuration property has been provided.
     /// The property cannot be mapped to the configuration object
@@ -19,7 +19,7 @@ pub enum InlineConfigParserError {
 /// Wrapper error struct that catches config parsing
 /// errors [`InlineConfigParserError`], enriching them with context information
 /// reporting the misconfigured line.
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 #[error("Inline config error detected at {line}")]
 pub struct InlineConfigError {
     /// Specifies the misconfigured line. This is something of the form

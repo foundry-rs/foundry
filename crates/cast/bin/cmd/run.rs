@@ -18,7 +18,7 @@ use foundry_evm::{
 };
 
 /// CLI arguments for `cast run`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct RunArgs {
     /// The transaction hash.
     tx_hash: String,

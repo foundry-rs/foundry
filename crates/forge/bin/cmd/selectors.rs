@@ -13,7 +13,7 @@ use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, in
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub enum SelectorsSubcommands {
     /// Check for selector collisions between contracts
     #[clap(visible_alias = "co")]

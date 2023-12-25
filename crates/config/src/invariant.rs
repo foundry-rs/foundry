@@ -10,7 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 /// Contains for invariant testing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,

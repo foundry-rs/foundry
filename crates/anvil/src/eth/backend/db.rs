@@ -326,7 +326,7 @@ impl MaybeHashDatabase for StateDb {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SerializableState {
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
 }
@@ -350,7 +350,7 @@ impl SerializableState {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,

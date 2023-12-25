@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 
 /// Warnings emitted during loading or managing Configuration
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Warning {
     /// An unknown section was encountered in a TOML file

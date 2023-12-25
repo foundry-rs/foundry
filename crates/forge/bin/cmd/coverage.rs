@@ -37,7 +37,7 @@ type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 
 /// CLI arguments for `forge coverage`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -389,7 +389,7 @@ impl CoverageArgs {
 }
 
 // TODO: HTML
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum)]
 pub enum CoverageReportKind {
     Summary,
     Lcov,

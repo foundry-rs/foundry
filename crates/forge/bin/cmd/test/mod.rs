@@ -47,7 +47,7 @@ pub use filter::FilterArgs;
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge test`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Run a test in the debugger.
@@ -582,7 +582,7 @@ impl Provider for TestArgs {
 }
 
 /// The result of a single test
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Test {
     /// The identifier of the artifact/contract in the form of `<artifact file name>:<contract
     /// name>`

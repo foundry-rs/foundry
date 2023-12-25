@@ -368,7 +368,7 @@ impl Blockchain {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct MinedBlockOutcome {
     /// The block that was mined
     pub block_number: U64,
@@ -380,7 +380,7 @@ pub struct MinedBlockOutcome {
 }
 
 /// Container type for a mined transaction
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct MinedTransaction {
     pub info: TransactionInfo,
     pub receipt: TypedReceipt,
@@ -428,7 +428,7 @@ impl MinedTransaction {
 }
 
 /// Intermediary Anvil representation of a receipt
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
     pub inner: TransactionReceipt,

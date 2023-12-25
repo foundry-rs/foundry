@@ -12,7 +12,7 @@ pub use self::paths::ProjectPathsArgs;
 // to be merged into an existing `foundry_config::Config`.
 //
 // See also `BuildArgs`.
-#[derive(Default, Debug, Clone, Parser, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
     /// The target EVM version.

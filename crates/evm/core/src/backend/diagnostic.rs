@@ -4,7 +4,7 @@ use itertools::Itertools;
 use std::collections::HashMap;
 
 /// Represents possible diagnostic cases on revert
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum RevertDiagnostic {
     /// The `contract` does not exist on the `active` fork but exist on other fork(s)
     ContractExistsOnOtherForks {

@@ -16,7 +16,7 @@ use std::{
 pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
 
 /// Errors that can occur when creating an `EtherscanConfig`
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum EtherscanConfigError {
     #[error(transparent)]
     Unresolved(#[from] UnresolvedEnvVarError),
@@ -29,7 +29,7 @@ pub enum EtherscanConfigError {
 }
 
 /// Container type for Etherscan API keys and URLs.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct EtherscanConfigs {
     configs: BTreeMap<String, EtherscanConfig>,
@@ -83,7 +83,7 @@ impl DerefMut for EtherscanConfigs {
 }
 
 /// Container type for _resolved_ etherscan keys, see [EtherscanConfigs::resolve_all()]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedEtherscanConfigs {
     /// contains all named `ResolvedEtherscanConfig` or an error if we failed to resolve the env
     /// var alias
@@ -138,7 +138,7 @@ impl DerefMut for ResolvedEtherscanConfigs {
 }
 
 /// Represents all info required to create an etherscan client
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EtherscanConfig {
     /// The chain name or EIP-155 chain ID used to derive the API URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -204,7 +204,7 @@ impl EtherscanConfig {
 }
 
 /// Contains required url + api key to set up an etherscan client
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedEtherscanConfig {
     /// Etherscan API URL.
     #[serde(rename = "url")]
@@ -300,7 +300,7 @@ impl ResolvedEtherscanConfig {
 /// env var, then the `EtherscanKey::Key` var will hold the reference (`${MAIN_NET}`) and _not_ the
 /// value of the env var itself.
 /// In other words, this type does not resolve env vars when it's being deserialized
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EtherscanApiKey {
     /// A raw key
     Key(String),

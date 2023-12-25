@@ -28,7 +28,7 @@ pub use inspector::CoverageCollector;
 ///
 /// A coverage report contains coverage items and opcodes corresponding to those items (called
 /// "anchors"). A single coverage item may be referred to by multiple anchors.
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of source IDs to the source path
     pub source_paths: HashMap<(Version, usize), String>,
@@ -154,7 +154,7 @@ impl CoverageReport {
 }
 
 /// A collection of [HitMap]s
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
@@ -188,7 +188,7 @@ impl DerefMut for HitMaps {
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct HitMap {
     pub bytecode: Bytes,
     pub hits: BTreeMap<usize, u64>,
@@ -228,7 +228,7 @@ impl HitMap {
 }
 
 /// A unique identifier for a contract
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
     pub version: Version,
     pub source_id: usize,
@@ -315,7 +315,7 @@ impl Display for CoverageItem {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct SourceLocation {
     /// The source ID.
     pub source_id: usize,
@@ -343,7 +343,7 @@ impl Display for SourceLocation {
 }
 
 /// Coverage summary for a source file.
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct CoverageSummary {
     /// The number of executable lines in the source file.
     pub line_count: usize,

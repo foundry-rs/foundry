@@ -75,7 +75,7 @@ impl Context {
 }
 
 /// Helps collecting transactions from different forks.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<RpcUrl>,
@@ -86,7 +86,7 @@ pub struct BroadcastableTransaction {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct AccountAccess {
     /// The account access.
     pub access: crate::Vm::AccountAccess,

@@ -87,7 +87,7 @@ impl DatabaseCommit for MemDb {
 /// If an account is `NotExisting`, `Database(Ref)::basic` will always return `None` for the
 /// requested `AccountInfo`. To prevent this, we ensure that a missing account is never marked as
 /// `NotExisting` by always returning `Some` with this type.
-#[derive(Debug, Default, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct EmptyDBWrapper(EmptyDB);
 
 impl DatabaseRef for EmptyDBWrapper {

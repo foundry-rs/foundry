@@ -27,7 +27,7 @@ type FilterMap = Arc<Mutex<HashMap<String, (EthFilter, Instant)>>>;
 pub const ACTIVE_FILTER_TIMEOUT_SECS: u64 = 60 * 5;
 
 /// Contains all registered filters
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Filters {
     /// all currently active filters
     active_filters: FilterMap,

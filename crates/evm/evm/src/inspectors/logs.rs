@@ -14,7 +14,7 @@ use revm::{
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style logs.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LogCollector {
     /// The collected logs. Includes both `LOG` opcodes and Hardhat-style logs.
     pub logs: Vec<Log>,

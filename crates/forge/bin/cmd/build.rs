@@ -42,7 +42,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 ///
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
-#[derive(Debug, Clone, Parser, Serialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
     /// Print compiled contract names.

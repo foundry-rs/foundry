@@ -16,7 +16,7 @@ use std::{
 const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
 /// CLI arguments for `cast create2`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct Create2Args {
     /// Prefix for the contract address.
     #[clap(

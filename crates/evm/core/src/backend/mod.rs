@@ -373,7 +373,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
 /// **Note:** Snapshots work across fork-swaps, e.g. if fork `A` is currently active, then a
 /// snapshot is created before fork `B` is selected, then fork `A` will be the active fork again
 /// after reverting the snapshot.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
@@ -1484,7 +1484,7 @@ impl Database for Backend {
 }
 
 /// Variants of a [revm::Database]
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum BackendDatabaseSnapshot {
     /// Simple in-memory [revm::Database]
     InMemory(FoundryEvmInMemoryDB),
@@ -1493,7 +1493,7 @@ pub enum BackendDatabaseSnapshot {
 }
 
 /// Represents a fork
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Fork {
     db: ForkDB,
     journaled_state: JournaledState,
@@ -1514,7 +1514,7 @@ impl Fork {
 }
 
 /// Container type for various Backend related data
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///

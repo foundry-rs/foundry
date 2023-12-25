@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 #[derive(Default)]
 pub enum CallKind {

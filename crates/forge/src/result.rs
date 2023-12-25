@@ -19,7 +19,7 @@ use std::{
 use yansi::Paint;
 
 /// Results and duration for a set of tests included in the same test contract
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
     /// Total duration of the test run for this block of tests
     pub duration: Duration,
@@ -180,7 +180,7 @@ impl TestResult {
 }
 
 /// Data report by a test.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TestKindReport {
     Standard { gas: u64 },
     Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },

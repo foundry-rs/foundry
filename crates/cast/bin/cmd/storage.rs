@@ -31,7 +31,7 @@ use std::str::FromStr;
 const MIN_SOLC: Version = Version::new(0, 6, 5);
 
 /// CLI arguments for `cast storage`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct StorageArgs {
     /// The contract address.
     #[clap(value_parser = NameOrAddress::from_str)]
@@ -180,7 +180,7 @@ impl StorageArgs {
 }
 
 /// Represents the value of a storage slot `eth_getStorageAt` call.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct StorageValue {
     /// The slot number.
     slot: B256,

@@ -198,7 +198,7 @@ pub struct InspectorData {
 ///
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
 /// equivalent) the remaining inspectors are not called.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct InspectorStack {
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<ChiselState>,

@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{borrow::Cow, fmt};
 
 /// Represents a JSON-RPC error
-#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RpcError {
     pub code: ErrorCode,
@@ -75,7 +75,7 @@ impl fmt::Display for RpcError {
 }
 
 /// List of JSON-RPC error codes
-#[derive(Debug, Copy, PartialEq, Eq, Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorCode {
     /// Server received Invalid JSON.
     /// server side error while parsing JSON
