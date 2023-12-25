@@ -203,6 +203,8 @@ interface Vm {
         bool reverted;
         /// An ordered list of storage accesses made during an account access operation.
         StorageAccess[] storageAccesses;
+        /// Call depth traversed during the recording of state differences
+        uint256 depth;
     }
 
     /// The storage accessed during an `AccountAccess`.

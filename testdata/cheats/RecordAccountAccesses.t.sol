@@ -348,7 +348,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 0
             })
         );
 
@@ -366,7 +367,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 1
             })
         );
         assertEq(
@@ -383,7 +385,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: "hello world",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 2
             })
         );
         assertEq(
@@ -400,7 +403,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 3
             })
         );
         assertEq(
@@ -417,7 +421,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 2 ether,
                 data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2")),
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 3
             })
         );
         assertEq(
@@ -434,7 +439,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.2 ether,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 3
             })
         );
     }
@@ -461,7 +467,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: abi.encodeCall(this.revertingCall, (address(1234), "")),
                 reverted: true,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 0
             })
         );
         assertEq(
@@ -478,7 +485,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.1 ether,
                 data: "",
                 reverted: true,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 1
             })
         );
     }
@@ -519,7 +527,8 @@ contract RecordAccountAccessesTest is DSTest {
                     value: 0,
                     data: "",
                     reverted: false,
-                    storageAccesses: new Vm.StorageAccess[](0)
+                    storageAccesses: new Vm.StorageAccess[](0),
+		    depth: startingIndex
                 })
             );
         }
@@ -551,7 +560,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: abi.encodeCall(NestedRunner.run, (shouldRevert)),
                 reverted: shouldRevert,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex
             }),
             false
         );
@@ -583,7 +593,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.1 ether,
                 data: abi.encodeCall(Reverter.run, ()),
                 reverted: true,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex + 1
             }),
             false
         );
@@ -615,7 +626,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.01 ether,
                 data: abi.encodeCall(Doer.run, ()),
                 reverted: true,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex + 2
             }),
             false
         );
@@ -647,7 +659,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.001 ether,
                 data: abi.encodeCall(Doer.doStuff, ()),
                 reverted: true,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex + 3
             }),
             false
         );
@@ -679,7 +692,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.1 ether,
                 data: abi.encodeCall(Succeeder.run, ()),
                 reverted: shouldRevert,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex + 4
             }),
             false
         );
@@ -711,7 +725,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.01 ether,
                 data: abi.encodeCall(Doer.run, ()),
                 reverted: shouldRevert,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex + 5
             }),
             false
         );
@@ -743,7 +758,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0.001 ether,
                 data: abi.encodeCall(Doer.doStuff, ()),
                 reverted: shouldRevert,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: startingIndex + 6
             }),
             false
         );
@@ -782,7 +798,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: abi.encodeCall(NestedStorer.run, ()),
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 0
             }),
             false
         );
@@ -826,7 +843,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: abi.encodeCall(NestedStorer.run2, ()),
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 1
             }),
             false
         );
@@ -858,7 +876,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 2
             }),
             false
         );
@@ -903,7 +922,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(false)),
                 reverted: false,
-                storageAccesses: storageAccesses
+                storageAccesses: storageAccesses,
+		depth: 0
             })
         );
 
@@ -925,7 +945,8 @@ contract RecordAccountAccessesTest is DSTest {
                     (bytes32(0), abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)))
                     ),
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 1
             })
         );
 
@@ -953,7 +974,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: creationCode,
                 reverted: true,
-                storageAccesses: storageAccesses
+                storageAccesses: storageAccesses,
+		depth: 2
             })
         );
     }
@@ -998,7 +1020,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: creationCode,
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 1
             })
         );
         assertEq(
@@ -1015,7 +1038,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 2
             })
         );
     }
@@ -1044,7 +1068,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(this))),
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 1
             })
         );
         assertEq(
@@ -1061,7 +1086,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 2
             })
         );
         assertEq(
@@ -1078,7 +1104,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))),
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 3
             })
         );
         assertEq(
@@ -1095,7 +1122,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 1 ether,
                 data: "",
                 reverted: false,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 4
             })
         );
     }
@@ -1190,7 +1218,8 @@ contract RecordAccountAccessesTest is DSTest {
                 value: 0,
                 data: "",
                 reverted: expected.reverted,
-                storageAccesses: new Vm.StorageAccess[](0)
+                storageAccesses: new Vm.StorageAccess[](0),
+		depth: 0
             }),
             false
         );
