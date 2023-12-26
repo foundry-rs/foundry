@@ -558,6 +558,21 @@ impl<'a> ContractRunner<'a> {
             address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
         } = setup;
 
+        // skip fuzz testing if runs is 0
+        if fuzz_config.runs == 0 {
+            return TestResult {
+                status: TestStatus::Skipped,
+                reason: None,
+                decoded_logs: decode_console_logs(&logs),
+                traces,
+                labeled_addresses,
+                kind: TestKind::Standard(0),
+                debug: None,
+                coverage,
+                ..Default::default()
+            };
+        }
+
         // Run fuzz test
         let start = Instant::now();
         let fuzzed_executor =
