@@ -120,7 +120,7 @@ impl MutateFilterArgs {
 
 impl fmt::Debug for MutateFilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MutationTestFilterArgs")
+        f.debug_struct("MutateFilterArgs")
             .field("match-function", &self.function_pattern.as_ref().map(|r| r.as_str()))
             .field("no-match-function", &self.function_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-contract", &self.contract_pattern.as_ref().map(|r| r.as_str()))

@@ -2,11 +2,9 @@ use super::{
     install,
     test::{ProjectPathsAwareFilter, TestOutcome},
 };
-use crate::cmd::{
-    mutate::summary::{
+use crate::cmd::mutate::summary::{
         MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
-    }
-};
+    };
 use clap::Parser;
 use eyre::{eyre, Result};
 use forge::{
