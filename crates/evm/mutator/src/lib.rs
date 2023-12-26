@@ -174,7 +174,7 @@ impl Mutator {
         self.artifacts.iter().filter(|(id, abi, _)| {
             id.source.starts_with(&self.src_root) &&
                 !id.source.as_path().is_sol_test() &&
-                filter.matches_path(id.source.to_string_lossy()) &&
+                filter.matches_path(&id.source) &&
                 filter.matches_contract(&id.name) &&
                 abi.functions().any(|func| filter.matches_function(&func.name))
         })

@@ -30,7 +30,7 @@ impl ArtifactFilter {
         filter: &'a A,
     ) -> bool {
         self.valid_mutator_source_file(root, id) &&
-            filter.matches_path(id.source.to_string_lossy()) &&
+            filter.matches_path(&id.source) &&
             filter.matches_contract(&id.name)
     }
 

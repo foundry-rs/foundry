@@ -393,7 +393,7 @@ impl MutateTestArgs {
 
         // Run tests
         let handle =
-            tokio::task::spawn(async move { runner.test(filter.clone(), Some(tx), test_options).await });
+            tokio::task::spawn(async move { runner.test(&filter, tx, test_options).await });
 
         'outer: for (contract_name, suite_result) in rx {
             results.insert(contract_name.clone(), suite_result.clone());
@@ -534,7 +534,7 @@ pub async fn test_mutant(
     // mpsc channel for reporting test results
     let (tx, rx) = channel::<(String, SuiteResult)>();
     let handle =
-        tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
+        tokio::task::spawn(async move { runner.test(&filter, tx, test_options).await });
 
     let mut status: MutantTestStatus = MutantTestStatus::Survived;
 
