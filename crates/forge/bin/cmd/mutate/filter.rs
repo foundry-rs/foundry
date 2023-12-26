@@ -168,9 +168,12 @@ impl ContractFilter for MutateFilterArgs {
         ok
     }
 
-    fn matches_path(&self, path: impl AsRef<str>) -> bool {
+    fn matches_path(&self, path: &Path) -> bool {
+        let Some(path) = path.to_str() else {
+            return false;
+        };
+        
         let mut ok = true;
-        let path = path.as_ref();
         if let Some(ref glob) = self.path_pattern {
             ok &= glob.is_match(path);
         }
@@ -259,13 +262,11 @@ impl ContractFilter for MutationProjectPathsAwareFilter {
         self.args_filter.matches_contract(contract_name)
     }
 
-    fn matches_path(&self, path: impl AsRef<str>) -> bool {
-        let path = path.as_ref();
+    fn matches_path(&self, path: &Path) -> bool {
         // we don't want to test files that belong to a library
         self.args_filter.matches_path(path) && 
-            !self.paths.has_library_ancestor(Path::new(path)) &&
+            !self.paths.has_library_ancestor(path) &&
             !Path::new(path).starts_with(&self.paths.tests)
-        
     }
 }
 

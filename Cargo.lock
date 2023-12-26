@@ -1981,7 +1981,7 @@ dependencies = [
  "num-traits",
  "proc-macro2",
  "quote",
- "syn 2.0.39",
+ "syn 2.0.42",
 ]
 
 [[package]]
@@ -2231,13 +2231,8 @@ dependencies = [
  "rlp",
  "serde",
  "serde_json",
-<<<<<<< HEAD
  "strum 0.25.0",
- "syn 2.0.39",
-=======
- "strum",
  "syn 2.0.42",
->>>>>>> upstream/master
  "tempfile",
  "thiserror",
  "tiny-keccak",

@@ -115,17 +115,15 @@ impl<T: std::error::Error> ErrorExt for T {
 }
 
 /// Extension trait for matching functions
-#[auto_impl(&)]
 pub trait FunctionFilter {
     /// Returns whether the function should be included
     fn matches_function(&self, function_name: impl AsRef<str>) -> bool;
 }
 
 /// Extension trait for matching functions
-#[auto_impl(&)]
 pub trait ContractFilter {
     /// Returns whether the contract should be included
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool;
     /// Returns a contract with the given path should be included
-    fn matches_path(&self, path: impl AsRef<str>) -> bool;
+    fn matches_path(&self, path: &Path) -> bool;
 }
