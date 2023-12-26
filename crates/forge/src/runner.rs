@@ -260,7 +260,7 @@ impl<'a> ContractRunner<'a> {
             })
             .collect::<BTreeMap<_, _>>();
 
-        if has_invariants {
+        if has_invariants && test_options.invariant.runs > 0 {
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
             let results: Vec<_> = functions
                 .par_iter()
