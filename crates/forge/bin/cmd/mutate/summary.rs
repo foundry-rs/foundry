@@ -230,7 +230,7 @@ impl MutationTestOutcome {
             }
 
             if survived > MAX_SURVIVE_RESULT_LOG_SIZE {
-                println!("\tMore ...");
+                println!("\t More..");
             }
         }
 

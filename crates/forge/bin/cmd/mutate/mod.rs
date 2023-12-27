@@ -20,7 +20,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::ProjectCompiler,
     evm::EvmArgs,
-    shell::{self}, term::MutatorSpinnerReporter
+    shell::{self}, term::{MutatorSpinnerReporter, ProgressReporter}
 };
 use foundry_compilers::{
     project_util::{copy_dir, TempProject},
@@ -192,37 +192,12 @@ impl MutateTestArgs {
             mutants_len_iterator.len(), elapsed
         );
         
-        // 
-        // @Notice This is having a race condition on Fuzz and Invariant tests
-        // let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
-        // BTreeMap::from_iter(try_join_all(mutants_output.iter().map(         |(file_name, mutants)| async {
-        //             let start = Instant::now();
-        //             let result = try_join_all(
-        //                 mutants.iter().map(|mutant| {
-        //                     test_mutant(
-        //                         filter.clone(),
-        //                         &project.root(),
-        //                         &evm_opts,
-        //                         mutant.clone()
-        //                     )
-        //                 })
-        //             ).await?;
-        //             let duration = start.elapsed();
-        //             update_progress!(progress_bar, mutants.len());
-        //             Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(),
-        // MutationTestSuiteResult::new(duration, result)))         }
-        //     )
-        // ).await?.into_iter());
-        
         // this is required for progress bar
         println!("[⠆] Testing Mutants...");
-        let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
-        progress_bar.set_position(0);
+        let progress_bar_reporter = ProgressReporter::spawn("Mutants".into(), mutants_len_iterator.len());
 
         let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
             BTreeMap::new();
-
-        let mut progress_bar_index = 0;
         
         let mutation_project_root = project.root();
         for (contract_out_dir, contract_mutants) in mutants_output.into_iter() {
@@ -230,9 +205,9 @@ impl MutateTestArgs {
             let contract_mutants_start = Instant::now();
 
             // a file can have hundreds of mutants depending on design
-            // we chunk there to prevent I/O exhaustion as we use
+            // we chunk there to prevent huge memory consumption
             // try_join_all which launches all the futures and polls
-            let mut contract_mutants_iterator = contract_mutants.chunks(6);
+            let mut contract_mutants_iterator = contract_mutants.chunks(32);
             
             while let Some(mutant_chunks) = contract_mutants_iterator.next() {
                 let mutant_data_iterator = mutant_chunks.iter().map(
@@ -244,39 +219,29 @@ impl MutateTestArgs {
                 );
 
                 // we compile the projects here
-                let mutant_project_and_compile_output = try_join_all(
+                let mutant_project_and_compile_output: Vec<_> = try_join_all(
                     mutant_data_iterator
                     .map(
                         |(root, file_name, mutant_contents)| tokio::task::spawn_blocking(
                             || setup_and_compile_mutant(root, file_name, mutant_contents )
                         )
                     )
-                ).await?;
+                ).await?.into_iter().filter_map(|x| x.ok()).collect();
 
-                let mut mutant_project_and_compile_output_iterator = mutant_project_and_compile_output.into_iter();
-                // We run the tests serially because each mutant project could have a lot tests and 
-                // running the test is parallelized. 
-                // So not to have huge resource consumption we run tests serially.
-                // Also, running tests is pretty fast
-                while let Some(Ok((temp_project, mutant_compile_output, mutant_config))) = mutant_project_and_compile_output_iterator.next() {
-                    let (duration, mutant_test_status) =  test_mutant(
-                        test_filter.clone(),
-                        temp_project,
-                        mutant_config,
-                        mutant_compile_output,
-                        &evm_opts
-                    ).await?;
-                    
-                    let mutant_survived = mutant_test_status == MutantTestStatus::Survived;
-
-                    mutant_test_statuses.push((duration, mutant_test_status));
-                    if self.fail_fast && mutant_survived {
-                        break;
+                let test_output = try_join_all(mutant_project_and_compile_output.into_iter().map(
+                    |(temp_project, mutant_compile_output, mutant_config)| {
+                        test_mutant(
+                            progress_bar_reporter.clone(), 
+                            test_filter.clone(),
+                            temp_project,
+                            mutant_config,
+                            mutant_compile_output,
+                            &evm_opts
+                        )
                     }
+                )).await?;
 
-                    progress_bar_index += 1;
-                    update_progress!(progress_bar, progress_bar_index);
-                }
+                mutant_test_statuses.extend(test_output);
             }
 
             let mutant_test_results: Vec<_> =  mutant_test_statuses.into_iter().enumerate().map(|(index, (duration, status))| {
@@ -284,6 +249,7 @@ impl MutateTestArgs {
                 MutantTestResult::new(duration, mutant.clone(), status)
             }).collect();
 
+            let has_survivors = mutant_test_results.iter().any(|result| result.survived());           
             let contract_name = contract_out_dir.split(std::path::MAIN_SEPARATOR_STR)
                 .nth(1)
                 .ok_or(eyre!("Failed to parse contract name"))?;
@@ -292,10 +258,15 @@ impl MutateTestArgs {
                 contract_name.to_string(),
                 MutationTestSuiteResult::new(contract_mutants_start.elapsed(), mutant_test_results),
             );
+
+            // Exit if fail fast is configured
+            if self.fail_fast && has_survivors {
+                break;
+            }
         }
 
-        // finish progress bar
-        progress_bar.finish_and_clear();
+        // finish progress bar and clear it
+        progress_bar_reporter.finish_and_clear();
 
         if self.json {
             println!(
@@ -315,7 +286,6 @@ impl MutateTestArgs {
 
         if self.summary {
             let mut reporter = MutationTestSummaryReporter::new(self.detailed);
-            println!();
             reporter.print_summary(&mutation_test_outcome);
         }
 
@@ -476,15 +446,6 @@ pub fn setup_and_compile_mutant(
         "compilation times",
     );
     
-    // @TODO compile_sparse should be the preferred approach it makes the compilation step
-    // quite fast and skips output for generated files. But it doesn't re-compile files that inherit the "dirty" file
-    // At the moment there is a bug in the implementation.
-    // let output = project.compile_sparse(
-    // move |path: &Path| {
-    //     println!("{:?}", path.to_str());
-    //     path.starts_with(&file_source_root) || path.ends_with(".t.sol")
-    // }
-    // )?;
     let mut project = config.project()?;
     project.set_solc_jobs(4);
 
@@ -496,6 +457,7 @@ pub fn setup_and_compile_mutant(
 /// Runs mutation test for a mutation temp project.
 /// returns on the first failed test suite
 pub async fn test_mutant(
+    progress_bar: ProgressReporter,
     filter: ProjectPathsAwareFilter,
     temp_project: TempProject,
     config: Config,
@@ -575,7 +537,7 @@ pub async fn test_mutant(
                 } 
             },
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                trace!("test timeout");
+                trace!(target: "forge:mutate", "test timeout");
                 status = MutantTestStatus::Timeout;
                 break;
             },
@@ -584,6 +546,8 @@ pub async fn test_mutant(
             }
         }
     }
+
+    progress_bar.increment();
 
     trace!(target: "forge::mutate", "received mutant test results");
 

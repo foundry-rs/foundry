@@ -45,6 +45,7 @@ tracing.workspace = true
 url = "2"
 walkdir = "2"
 yansi = "0.5"
+indicatif = "0.17"
 
 [dev-dependencies]
 foundry-macros.workspace = true

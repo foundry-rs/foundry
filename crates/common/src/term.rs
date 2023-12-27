@@ -276,6 +276,85 @@ impl MutatorSpinnerReporter {
 }
 
 
+enum ProgressMsg {
+    Increment,
+    Shutdown(mpsc::Sender<()>),
+}
+
+/// A progress bar used for reporting progess
+///
+/// Spins up a dedicated thread.
+#[derive(Debug, Clone)]
+pub struct ProgressReporter {
+    /// The sender to the spinner thread.
+    sender: mpsc::Sender<ProgressMsg>
+}
+
+impl ProgressReporter {
+    /// Spawns a progress bar on a new thread
+    ///
+    ///
+    /// On drop the channel will disconnect and the thread will terminate
+    pub fn spawn(label: String, size: usize) -> Self {
+        let (sender, rx) = mpsc::channel::<ProgressMsg>();
+
+        std::thread::Builder::new()
+            .name("mutator".into())
+            .spawn(move || {
+                let pb = indicatif::ProgressBar::new(size as u64);
+                let mut template =
+                    "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
+                template += &label;
+                template += " ({eta})";
+                pb.set_style(
+                    indicatif::ProgressStyle::with_template(&template)
+                        .unwrap()
+                        .with_key("eta", eta_key)
+                        .progress_chars("#>-"),
+                );
+                pb.set_position(0);
+
+                let mut current_index = 0;
+                loop {
+                    pb.tick();
+                    match rx.try_recv() {
+                        Ok(ProgressMsg::Increment) => {
+                            current_index += 1;
+                            // new line so past messages are not overwritten
+                            pb.set_position(current_index);
+                        }
+                        Ok(ProgressMsg::Shutdown(ack)) => {
+                            pb.finish_and_clear();
+                            let _ = ack.send(());
+                            break
+                        }
+                        Err(TryRecvError::Disconnected) => break,
+                        Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
+                    }
+                }
+            })
+            .expect("failed to spawn thread");
+
+        Self { sender }
+    }
+
+    /// Increment the progress bar    
+    pub fn increment(&self) {
+        let _ = self.sender.send(ProgressMsg::Increment);
+    }
+
+    /// Finish and clear progress bar
+    pub fn finish_and_clear(&self) {
+        let (tx, rx) = mpsc::channel();
+        if self.sender.send(ProgressMsg::Shutdown(tx)).is_ok() {
+            let _ = rx.recv();
+        }
+    }
+}
+
+fn eta_key(state: &indicatif::ProgressState, f: &mut dyn std::fmt::Write) {
+    write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+}
 
 #[macro_export]
 /// Displays warnings on the cli
