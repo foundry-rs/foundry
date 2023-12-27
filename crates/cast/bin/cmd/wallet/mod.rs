@@ -276,7 +276,12 @@ impl WalletSubcommands {
                     }
                 }
             }
-            WalletSubcommands::Import { account_name, keystore_dir, unsafe_password, raw_wallet_options } => {
+            WalletSubcommands::Import {
+                account_name,
+                keystore_dir,
+                unsafe_password,
+                raw_wallet_options,
+            } => {
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
