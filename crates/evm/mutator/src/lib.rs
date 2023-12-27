@@ -211,11 +211,13 @@ impl Mutator {
     where
         A: ContractFilter + FunctionFilter,
     {
+        let default_out_dir = PathBuf::from(DEFAULT_GAMBIT_DIR_OUT);
+        
         let mutant_params = self
             .matching_artifacts(&filter)
             .map(|(id, abi, _)| {
                 let mut current_mutate_params = self.default_mutate_params.clone();
-                let outdir = PathBuf::from(DEFAULT_GAMBIT_DIR_OUT).join(id.name.clone());
+                let outdir = default_out_dir.join(id.name.clone());
                 current_mutate_params.outdir = outdir.to_str().map(|x| x.to_owned());
                 current_mutate_params.functions =
                     Some(self.get_artifact_functions(&filter, abi).collect_vec());
@@ -225,7 +227,7 @@ impl Mutator {
                 current_mutate_params
             })
             .collect_vec();
-
+    
         run_mutate(mutant_params).map_err(|err| eyre!("{:?}", err))
     }
 }
