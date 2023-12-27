@@ -31,9 +31,9 @@ pub struct CallArgs {
 
     /// Data for the transaction.
     #[clap(
-    long,
-    value_parser = foundry_common::clap_helpers::strip_0x_prefix,
-    conflicts_with_all = & ["sig", "args"]
+        long,
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
+        conflicts_with_all = & ["sig", "args"]
     )]
     data: Option<String>,
 
@@ -168,7 +168,7 @@ impl CallArgs {
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
-                    return Ok(());
+                    return Ok(())
                 }
 
                 // fill the builder after the conditional so we dont move values
@@ -204,7 +204,7 @@ impl CallArgs {
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
-                    return Ok(());
+                    return Ok(())
                 }
             }
         };
