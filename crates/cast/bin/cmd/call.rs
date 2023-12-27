@@ -8,7 +8,11 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{RetryProvider, runtime_client::RuntimeClient, types::{ToAlloy, ToEthers}};
+use foundry_common::{
+    runtime_client::RuntimeClient,
+    types::{ToAlloy, ToEthers},
+    RetryProvider,
+};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
@@ -168,7 +172,7 @@ impl CallArgs {
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
-                    return Ok(())
+                    return Ok(());
                 }
 
                 // fill the builder after the conditional so we dont move values
@@ -204,7 +208,7 @@ impl CallArgs {
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
-                    return Ok(())
+                    return Ok(());
                 }
             }
         };
@@ -260,10 +264,14 @@ async fn fill_tx(
     Ok(())
 }
 
-async fn derive_fork_block_number(provider: &RetryProvider, block: Option<BlockId>) -> Result<Option<u64>> {
+async fn derive_fork_block_number(
+    provider: &RetryProvider,
+    block: Option<BlockId>,
+) -> Result<Option<u64>> {
     let fork_block_number = match block {
-        Some(BlockId::Number(BlockNumber::Latest)) | Some(BlockId::Number(BlockNumber::Pending)) | None =>
-            None,
+        Some(BlockId::Number(BlockNumber::Latest))
+        | Some(BlockId::Number(BlockNumber::Pending))
+        | None => None,
 
         Some(BlockId::Number(BlockNumber::Number(number))) => Some(number.as_u64()),
 
