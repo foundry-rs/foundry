@@ -202,3 +202,4 @@ revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_f
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 
+foundry-compilers = { git = "https://github.com/tash-2s/foundry-rs-compilers", branch = "fix-standard-json-input" }
