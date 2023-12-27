@@ -2761,8 +2761,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eec9fd9df7ad0509ae45e2ea8a595cf13b1f35d69980e985b3be00ffabcc01a"
+source = "git+https://github.com/tash-2s/foundry-rs-compilers?branch=fix-standard-json-input-external#5c781d025a1df4fdfb3991345b71498aff834795"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
