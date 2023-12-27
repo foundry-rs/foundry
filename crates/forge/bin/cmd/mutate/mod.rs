@@ -528,24 +528,62 @@ pub async fn test_mutant(
 
     let mut runner =
         runner_builder.build(project_root, output.clone(), env.clone(), evm_opts.clone())?;
-
+    
+    // We use a thread and recv_timeout here because Gambit generates 
+    // valid solidity grammar mutants that leads to very long running
+    // execution in REVM due to large amount of gas available. 
+    //
+    // An example of a mutant generated is below, the test will take forever to end
+    // because it's an infinite loop
+    // 
+    // unchecked {
+    //        UnaryOperatorMutation(`++` |==> `~`) of: `for (uint256 i = 0; i < owners.length; ++i) {`
+    //        for (uint256 i = 0; i < owners.length; ~i) {
+    //            balances[i] = balanceOf[owners[i]][ids[i]];
+    //        }
+    //    }
+    //
+    // 
+    let test_timeout = Duration::from_millis(100);
     // mpsc channel for reporting test results
     let (tx, rx) = channel::<(String, SuiteResult)>();
-    let handle =
-        tokio::task::spawn(async move { runner.test(&filter, tx, test_options).await });
+    
+    std::thread::Builder::new()
+        .name("mutation_test_execution_backend".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build tokio runtime");
+
+            rt.block_on(async move {
+                // flush cache every 60s, this ensures that long-running fork tests get their
+                // cache flushed from time to time
+                // NOTE: we install the interval here because the `tokio::timer::Interval`
+                // requires a rt
+                runner.test(&filter, tx, test_options).await;
+            });
+        }).expect("failed to spawn thread");
 
     let mut status: MutantTestStatus = MutantTestStatus::Survived;
-
-    'outer: for (_, suite_result) in rx {
-        // If there were any test failures that means the mutant
-        // was killed so exit
-        if suite_result.failures().count() > 0 {
-            status = MutantTestStatus::Killed;
-            break 'outer;
+    loop {
+        match rx.recv_timeout(test_timeout) {
+            Ok((_, suite_result)) => {
+                if suite_result.failures().count() > 0 {
+                    status = MutantTestStatus::Killed;
+                    break;
+                } 
+            },
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                trace!("test timeout");
+                status = MutantTestStatus::Timeout;
+                break;
+            },
+            _ => {
+                break;
+            }
         }
     }
-
-    let _results = handle.await?;
 
     trace!(target: "forge::mutate", "received mutant test results");
 

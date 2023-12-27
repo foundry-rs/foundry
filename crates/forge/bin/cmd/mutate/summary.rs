@@ -18,6 +18,7 @@ pub enum MutantTestStatus {
     Survived,
     #[default]
     Equivalent,
+    Timeout
 }
 
 impl fmt::Display for MutantTestStatus {
@@ -26,6 +27,7 @@ impl fmt::Display for MutantTestStatus {
             MutantTestStatus::Killed => "KILLED".fmt(f),
             MutantTestStatus::Survived => "SURVIVED".fmt(f),
             MutantTestStatus::Equivalent => "EQUIVALENT".fmt(f),
+            MutantTestStatus::Timeout => "TIMEOUT".fmt(f),
         }
     }
 }
@@ -52,6 +54,10 @@ impl MutantTestResult {
 
     pub fn equivalent(&self) -> bool {
         matches!(self.status, MutantTestStatus::Equivalent)
+    }
+
+    pub fn timeout(&self) -> bool {
+        matches!(self.status, MutantTestStatus::Timeout)
     }
 
     pub fn diff(&self) -> String {
@@ -105,6 +111,10 @@ impl MutationTestSuiteResult {
 
     pub fn equivalent(&self) -> impl Iterator<Item = &MutantTestResult> {
         self.mutation_test_results().filter(|result| result.equivalent())
+    }
+
+    pub fn timeout(&self) -> impl Iterator<Item = &MutantTestResult> {
+        self.mutation_test_results().filter(|result| result.timeout())
     }
 
     pub fn mutation_test_results(&self) -> impl Iterator<Item = &MutantTestResult> {
@@ -162,6 +172,11 @@ impl MutationTestOutcome {
         self.results().filter(|result| result.equivalent())
     }
 
+    /// Iterator over all timeout mutation tests
+    pub fn timeout(&self) -> impl Iterator<Item = &MutantTestResult> {
+        self.results().filter(|result| result.timeout())
+    }
+
     /// Iterator over all mutation tests and their names
     pub fn results(&self) -> impl Iterator<Item = &MutantTestResult> {
         self.test_suite_result.values().flat_map(|suite| suite.mutation_test_results())
@@ -171,11 +186,12 @@ impl MutationTestOutcome {
         let survived = self.survived().count();
         let result = if survived == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Mutation Test result: {}. {} killed; {} survived; {} equivalent; finished in {:.2?}",
+            "Mutation Test result: {}. {} killed; {} survived; {} equivalent; {} timeout, finished in {:.2?}",
             result,
             Paint::green(self.killed().count()),
             Paint::red(survived),
             Paint::yellow(self.equivalent().count()),
+            Paint::cyan(self.timeout().count()),
             self.duration()
         )
     }
@@ -204,7 +220,7 @@ impl MutationTestOutcome {
 
             let term = if survived > 1 { "mutations" } else { "mutation" };
             println!("Encountered {} surviving {term} in {}", survived, contract_name);
-            // @TODO print only first 5
+
             for survive_result in suite_result.survived().take(MAX_SURVIVE_RESULT_LOG_SIZE) {
                 let description = survive_result.mutant.op.to_string();
                 let (line, _) = survive_result.mutant.get_line_column().map_err(|x| eyre!(
@@ -214,7 +230,7 @@ impl MutationTestOutcome {
             }
 
             if survived > MAX_SURVIVE_RESULT_LOG_SIZE {
-                println!("More ...");
+                println!("\tMore ...");
             }
         }
 
@@ -251,15 +267,14 @@ impl MutationTestSummaryReporter {
             Cell::new("Equivalent")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
+                .fg(Color::White),
+            Cell::new("Timeout")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
                 .fg(Color::White)
         ]);
 
         if is_detailed {
-            // row.add_cell(
-            //     Cell::new("Diff")
-            //         .set_alignment(CellAlignment::Center)
-            //         .add_attribute(Attribute::Bold),
-            // );
             row.add_cell(
                 Cell::new("Duration")
                     .set_alignment(CellAlignment::Center)
@@ -280,9 +295,10 @@ impl MutationTestSummaryReporter {
 
     pub fn print_summary(&mut self, mutation_test_outcome: &MutationTestOutcome) {
 
-        let mut total_killed: f64 = 0.0;
-        let mut total_survived: f64 = 0.0;
-        let mut total_equivalent: f64 = 0.0;
+        let mut total_killed= 0.0;
+        let mut total_survived = 0.0;
+        let mut total_equivalent = 0.0;
+        let mut total_timeout = 0.0;
         let mut total_time_taken = Duration::ZERO;
         for (contract_name, suite_result) in mutation_test_outcome.test_suite_result.iter() {
             let mut row = Row::new();
@@ -304,10 +320,13 @@ impl MutationTestSummaryReporter {
             total_survived += survived;
             let equivalent = suite_result.equivalent().count() as f64;
             total_equivalent += equivalent;
+            let timeout = suite_result.timeout().count() as f64;
+            total_timeout += timeout;
 
             let mut killed_cell = Cell::new(killed).set_alignment(CellAlignment::Center);
             let mut survived_cell = Cell::new(survived).set_alignment(CellAlignment::Center);
             let mut equivalent_cell = Cell::new(equivalent).set_alignment(CellAlignment::Center);
+            let mut timeout_cell = Cell::new(timeout).set_alignment(CellAlignment::Center);
 
             if killed > 0.0 {
                 killed_cell = killed_cell.fg(Color::Green);
@@ -323,6 +342,11 @@ impl MutationTestSummaryReporter {
                 equivalent_cell = equivalent_cell.fg(Color::Yellow);
             }
             row.add_cell(equivalent_cell);
+
+            if timeout > 0.0 {
+                timeout_cell = timeout_cell.fg(Color::Cyan);
+            }
+            row.add_cell(timeout_cell);
 
             if self.is_detailed {
                 total_time_taken = total_time_taken.add(suite_result.duration);
@@ -350,6 +374,7 @@ impl MutationTestSummaryReporter {
             Cell::new(total_killed).set_alignment(CellAlignment::Center),
             Cell::new(total_survived).set_alignment(CellAlignment::Center),
             Cell::new(total_equivalent).set_alignment(CellAlignment::Center),
+            Cell::new(total_timeout).set_alignment(CellAlignment::Center),
         ]);
 
         if self.is_detailed {
