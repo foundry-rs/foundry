@@ -135,6 +135,10 @@ pub enum WalletSubcommands {
         /// (~/.foundry/keystores)
         #[clap(long, short)]
         keystore_dir: Option<String>,
+        /// Password for the JSON keystore in cleartext
+        /// This is unsafe, we recommend using the default hidden password prompt
+        #[clap(long, env = "CAST_PASSWORD", value_name = "PASSWORD")]
+        unsafe_password: Option<String>,
         #[clap(flatten)]
         raw_wallet_options: RawWallet,
     },
@@ -272,7 +276,7 @@ impl WalletSubcommands {
                     }
                 }
             }
-            WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
+            WalletSubcommands::Import { account_name, keystore_dir, unsafe_password, raw_wallet_options } => {
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -303,7 +307,12 @@ flag to set your key via:
                 })?;
 
                 let private_key = wallet.signer().to_bytes();
-                let password = rpassword::prompt_password("Enter password: ")?;
+                let password = if let Some(password) = unsafe_password {
+                    password
+                } else {
+                    // if no --unsafe-password was provided read via stdin
+                    rpassword::prompt_password("Enter password: ")?
+                };
 
                 let mut rng = thread_rng();
                 eth_keystore::encrypt_key(
