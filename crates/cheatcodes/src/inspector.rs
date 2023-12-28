@@ -225,6 +225,13 @@ impl Cheatcodes {
         Self { config, fs_commit: true, ..Default::default() }
     }
 
+    /// Returns all labeled address to label mappings.
+    pub fn get_labels(&self) -> HashMap<Address, String> {
+        let mut labels = self.labels.clone();
+        labels.extend(self.config.labels.clone().into_iter());
+        labels
+    }
+
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -1056,7 +1063,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // return a better error here
         if status == InstructionResult::Revert {
             if let Some(err) = diag {
-                return (status, remaining_gas, Error::encode(err.to_error_msg(&self.labels)))
+                return (status, remaining_gas, Error::encode(err.to_error_msg(&self.get_labels())))
             }
         }
 
