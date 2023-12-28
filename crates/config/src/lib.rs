@@ -369,6 +369,9 @@ pub struct Config {
     /// Should be removed once EvmVersion Cancun is supported by solc
     pub cancun: bool,
 
+    /// Address labels
+    pub labels: HashMap<Address, String>,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -411,7 +414,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1831,6 +1834,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             doc: Default::default(),
+            labels: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -4432,12 +4436,43 @@ mod tests {
                 "foundry.toml",
                 r"
                 [default]
-               [profile.default.optimizer_details]
+                [profile.default.optimizer_details]
             ",
             )?;
 
             let config = Config::load();
             assert_eq!(config.optimizer_details, Some(OptimizerDetails::default()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_labels() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [labels]
+                0x1F98431c8aD98523631AE4a59f267346ea31F984 = "Uniswap V3: Factory"
+                0xC36442b4a4522E871399CD717aBDD847Ab11FE88 = "Uniswap V3: Positions NFT"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.labels,
+                HashMap::from_iter(vec![
+                    (
+                        Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984").unwrap(),
+                        "Uniswap V3: Factory".to_string()
+                    ),
+                    (
+                        Address::from_str("0xC36442b4a4522E871399CD717aBDD847Ab11FE88").unwrap(),
+                        "Uniswap V3: Positions NFT".to_string()
+                    ),
+                ])
+            );
 
             Ok(())
         });
