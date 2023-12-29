@@ -269,6 +269,11 @@ async fn main() -> Result<()> {
         Subcommands::Disassemble { bytecode } => {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
         }
+        Subcommands::Selectors { bytecode } => {
+            let s = SimpleCast::extract_selectors(&bytecode)?;
+            let v: Vec<_> = s.into_iter().map(|r| format!("{}\t{}", r.0, r.1)).collect();
+            println!("{}", v.join("\n"));
+        }
         Subcommands::FindBlock(cmd) => cmd.run().await?,
         Subcommands::GasPrice { rpc } => {
             let config = Config::from(&rpc);

@@ -858,6 +858,10 @@ pub enum Subcommands {
     /// Decodes a raw signed EIP 2718 typed transaction
     #[clap(visible_alias = "dt")]
     DecodeTransaction { tx: Option<String> },
+
+    /// Extracts function selectors and arguments from bytecode
+    #[clap(visible_alias = "sel")]
+    Selectors { bytecode: String },
 }
 
 /// CLI arguments for `cast --to-base`.
