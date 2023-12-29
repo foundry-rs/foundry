@@ -260,7 +260,7 @@ impl<'a> ContractRunner<'a> {
             })
             .collect::<BTreeMap<_, _>>();
 
-        if has_invariants {
+        if has_invariants && test_options.invariant.runs > 0 {
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
             let results: Vec<_> = functions
                 .par_iter()
@@ -557,6 +557,21 @@ impl<'a> ContractRunner<'a> {
         let TestSetup {
             address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
         } = setup;
+
+        // skip fuzz testing if runs is 0
+        if fuzz_config.runs == 0 {
+            return TestResult {
+                status: TestStatus::Skipped,
+                reason: None,
+                decoded_logs: decode_console_logs(&logs),
+                traces,
+                labeled_addresses,
+                kind: TestKind::Standard(0),
+                debug: None,
+                coverage,
+                ..Default::default()
+            };
+        }
 
         // Run fuzz test
         let start = Instant::now();

@@ -18,6 +18,7 @@ use crate::cmd::{
     selectors::SelectorsSubcommands,
     snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
+    mutate::MutateTestArgs,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use std::path::PathBuf;
@@ -166,4 +167,7 @@ pub enum Subcommands {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Run mutation tests on project
+    Mutate(MutateTestArgs),
 }

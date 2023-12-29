@@ -24,6 +24,7 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-evm-mutator.workspace = true
 
 ethers-contract.workspace = true
 ethers-core.workspace = true
@@ -78,6 +79,9 @@ axum = { workspace = true, features = ["ws"] }
 hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
+
+# temp file
+tempfile = { version = "3.8.0" }
 
 [dev-dependencies]
 anvil.workspace = true
