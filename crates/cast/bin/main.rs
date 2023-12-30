@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers_core::types::{BlockId, BlockNumber::Latest};
 use ethers_providers::Middleware;
+use contract_verification_migrator::copy_etherscan_verification;
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
@@ -472,6 +473,13 @@ async fn main() -> Result<()> {
                 None => {
                     println!("{}", SimpleCast::etherscan_source(chain, address, api_key).await?);
                 }
+            }
+        }
+        Subcommands::CopyVerifiedSource { addresses,  source_api_key, source_url, target_api_key, target_url } => {
+            let results = copy_etherscan_verification(addresses.clone(), source_api_key, source_url, target_api_key, target_url, true).await;
+            let failed_results = results.iter().zip(addresses.iter()).filter(|(r,_)| r.is_err()).collect::<Vec<_>>();
+            if !failed_results.is_empty() {
+                return Result::Err(eyre::eyre!("Failed to copy verification for the following contracts: {:#?}", failed_results));
             }
         }
         Subcommands::Create2(cmd) => {

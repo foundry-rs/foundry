@@ -69,6 +69,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "signal"] }
 tracing.workspace = true
 yansi = "0.5"
+contract-verification-migrator = "0.1.0" 
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

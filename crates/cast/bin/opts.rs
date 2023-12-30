@@ -781,6 +781,22 @@ pub enum Subcommands {
         etherscan: EtherscanOpts,
     },
 
+    /// Copy source code verification from one block explorer / contract to another
+    #[clap(visible_aliases = &["cvs"])]
+    CopyVerifiedSource {
+        /// The contract's address.
+        addresses: Vec<String>,
+
+        #[clap(long)]
+        source_url: String,
+        #[clap(long)]
+        source_api_key: String,
+        #[clap(long)]
+        target_url: String,
+        #[clap(long)]
+        target_api_key: String,
+    },
+
     /// Wallet management utilities.
     #[clap(visible_alias = "w")]
     Wallet {
