@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use ethers_core::types::{TxHash, H256, U256, U64};
+use ethers_core::types::{Address, BlockNumber, TxHash, H256, U256, U64};
 use revm::primitives::SpecId;
 
 #[cfg(feature = "serde")]
@@ -231,6 +231,48 @@ pub struct ForkedNetwork {
     pub chain_id: u64,
     pub fork_block_number: u64,
     pub fork_block_hash: TxHash,
+}
+
+/// Type forked from ethers-rs due to private struct fields in ethers-rs lib.
+/// Contains extra flag (mode) which allows to select address filtering mode.
+/// See <https://openethereum.github.io/JSONRPC-trace-module#trace_filter>
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default, rename_all = "camelCase"))]
+pub struct TraceFilter {
+    /// From block
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_block: Option<BlockNumber>,
+    /// To block
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_block: Option<BlockNumber>,
+    /// From address
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_address: Option<Vec<Address>>,
+    /// To address
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_address: Option<Vec<Address>>,
+    /// Output offset
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<usize>,
+    /// Output amount
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    /// From/To Addresses filtering mode
+    pub mode: TraceFilterMode,
+}
+
+/// Enum for selecting address trace filtering mode.
+///
+/// This enum is used to choose whether the code logic should verify both
+/// `from_address` and `to_address` (Intersection) or only one of them (Union).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum TraceFilterMode {
+    #[default]
+    Intersection,
+    Union,
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use crate::{
         subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::EthTransactionRequest,
     },
-    types::{EvmMineOptions, Forking, Index},
+    types::{EvmMineOptions, Forking, Index, TraceFilter as EthTraceFilter},
 };
 use ethers_core::{
     abi::ethereum_types::H64,
@@ -284,6 +284,10 @@ pub enum EthRequest {
         serde(rename = "trace_block", deserialize_with = "lenient_block_number_seq")
     )]
     TraceBlock(BlockNumber),
+
+    /// Trace filter endpoint
+    #[cfg_attr(feature = "serde", serde(rename = "trace_filter", with = "sequence"))]
+    TraceFilter(EthTraceFilter),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
