@@ -105,7 +105,7 @@ impl Cheatcode for labelCall {
 impl Cheatcode for getLabelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { account } = self;
-        Ok(match state.get_labels().get(account) {
+        Ok(match state.labels.get(account) {
             Some(label) => label.abi_encode(),
             None => format!("unlabeled:{account}").abi_encode(),
         })
