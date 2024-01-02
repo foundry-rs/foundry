@@ -1,13 +1,22 @@
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::Address;
+use ethers_providers::Provider;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{
+    cli_warn,
+    fs,
+    TestFunctionExt,
+    compile::{ContractSources, ProjectCompiler},
+    compact_to_contract,
+    ContractsByArtifact,
+    runtime_client::RuntimeClient
+};
 use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode},
     cache::{CacheEntry, SolFilesCache},
     info::ContractInfo,
     utils::read_json_file,
-    Artifact, ProjectCompileOutput,
+    Artifact, ProjectCompileOutput, ArtifactId,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
@@ -16,11 +25,11 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
     opts::EvmOpts,
     traces::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{SignaturesIdentifier, EtherscanIdentifier, RPCTraceIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
-use std::{fmt::Write, path::PathBuf, str::FromStr};
+use std::{fmt::Write, path::PathBuf, str::FromStr, collections::BTreeMap};
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -368,6 +377,42 @@ impl TryFrom<EvmError> for TraceResult {
     }
 }
 
+// fetches the contracts and sources from the project
+fn fetch_contracts_and_sources(config: &Config) -> Result<(ContractsByArtifact, ContractSources)> {
+    let project = config.project()?;
+    let compiler = ProjectCompiler::with_filter(false, false, Vec::default());
+    let output = compiler.compile(&project)?;
+
+    let mut sources: ContractSources = Default::default();
+    for (id, artifact) in output.clone().into_artifacts() {
+        if let Some(source) = artifact.source_file() {
+            let path = source
+                .ast
+                .ok_or_else(|| eyre::eyre!("source from artifact has no AST"))?
+                .absolute_path;
+            let abs_path = project.root().join(path);
+            let source_code = config.project_paths().flatten(&abs_path)
+                .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {err}")))?;
+            let contract = artifact.clone().into_contract_bytecode();
+            let source_contract = compact_to_contract(contract)?;
+            sources
+                .0
+                .entry(id.clone().name)
+                .or_default()
+                .insert(source.id, (source_code, source_contract));
+        }
+    }
+
+    let known_contracts = ContractsByArtifact(output
+        .with_stripped_file_prefixes(&project.paths.root)
+        .into_artifacts()
+        .filter_map(|(i, c)|
+            Some((i, (c.abi?, c.deployed_bytecode?.into_bytes()?.to_vec()))))
+        .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>());
+
+    Ok((known_contracts, sources))
+}
+
 /// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
@@ -376,9 +421,8 @@ pub async fn handle_traces(
     labels: Vec<String>,
     verbose: bool,
     debug: bool,
+    provider: Provider<RuntimeClient>,
 ) -> Result<()> {
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-
     let labeled_addresses = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
@@ -398,16 +442,33 @@ pub async fn handle_traces(
         )?)
         .build();
 
-    for (_, trace) in &mut result.traces {
-        decoder.identify(trace, &mut etherscan_identifier);
-    }
+    // Decoding traces using etherscan is costly as we run into rate limits,
+    // causing scripts to run for a very long time unnecessarily.
+    // Therefore, we only try and use etherscan if the user has provided an API key.
+    let sources = if config.etherscan_api_key.is_some() {
+        let mut identifier = EtherscanIdentifier::new(config, chain)?;
+        for (_, trace) in &mut result.traces {
+            decoder.identify(trace, &mut identifier);
+        }
+        if debug {
+            Some(identifier.get_compiled_contracts().await?);
+        }
+        None
+
+    } else {
+        let (contracts, sources) = fetch_contracts_and_sources(&config)?;
+        let mut identifier = RPCTraceIdentifier::new(&contracts,&provider);
+        for (_, trace) in &mut result.traces {
+            decoder.identify(trace, &mut identifier);
+        }
+        Some(sources)
+    };
 
     if debug {
-        let sources = etherscan_identifier.get_compiled_contracts().await?;
         let mut debugger = Debugger::builder()
             .debug_arena(&result.debug)
             .decoder(&decoder)
-            .sources(sources)
+            .sources(sources.unwrap())
             .build();
         debugger.try_run()?;
     } else {

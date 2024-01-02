@@ -204,8 +204,7 @@ impl RunArgs {
                 }
             }
         };
-
-        handle_traces(result, &config, chain, self.label, self.verbose, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.verbose, self.debug, provider).await?;
 
         Ok(())
     }

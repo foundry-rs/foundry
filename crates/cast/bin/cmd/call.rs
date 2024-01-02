@@ -166,7 +166,7 @@ impl CallArgs {
                         Err(evm_err) => TraceResult::try_from(evm_err)?,
                     };
 
-                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, verbose, debug, provider).await?;
 
                     return Ok(())
                 }
@@ -200,7 +200,7 @@ impl CallArgs {
                         tx.value().copied().unwrap_or_default().to_alloy(),
                     )?);
 
-                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, verbose, debug, provider).await?;
 
                     return Ok(())
                 }

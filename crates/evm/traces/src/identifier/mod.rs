@@ -6,6 +6,9 @@ use std::borrow::Cow;
 mod local;
 pub use local::LocalTraceIdentifier;
 
+mod rpc;
+pub use rpc::RPCTraceIdentifier;
+
 mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
@@ -13,6 +16,7 @@ mod signatures;
 pub use signatures::{SignaturesIdentifier, SingleSignaturesIdentifier};
 
 /// An address identity
+#[derive(Debug)]
 pub struct AddressIdentity<'a> {
     /// The address this identity belongs to
     pub address: Address,

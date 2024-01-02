@@ -196,7 +196,7 @@ impl CallTraceDecoder {
     }
 
     #[inline(always)]
-    fn addresses<'a>(
+    pub fn addresses<'a>(
         &'a self,
         trace: &'a CallTraceArena,
     ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + 'a {
