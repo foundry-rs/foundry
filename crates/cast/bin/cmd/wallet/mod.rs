@@ -137,7 +137,7 @@ pub enum WalletSubcommands {
         keystore_dir: Option<String>,
         /// Password for the JSON keystore in cleartext
         /// This is unsafe, we recommend using the default hidden password prompt
-        #[clap(long, env = "CAST_PASSWORD", value_name = "PASSWORD")]
+        #[clap(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
         #[clap(flatten)]
         raw_wallet_options: RawWallet,
