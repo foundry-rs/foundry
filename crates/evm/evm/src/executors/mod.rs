@@ -2,7 +2,7 @@
 //!
 //! Used for running tests, scripts, and interacting with the inner backend which holds the state.
 
-// TODO: The individual executors in this module should be moved into the respective craits, and the
+// TODO: The individual executors in this module should be moved into the respective crates, and the
 // `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
