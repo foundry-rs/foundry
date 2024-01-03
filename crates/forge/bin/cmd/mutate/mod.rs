@@ -219,7 +219,7 @@ impl MutateTestArgs {
                 );
 
                 // we compile the projects here
-                let mutant_project_and_compile_output: Vec<_> = try_join_all(
+                let mutant_project_and_compile_output: Vec<_> = join_all(
                     mutant_data_iterator
                     .map(
                         |(root, file_name, mutant_contents)| tokio::task::spawn_blocking(
@@ -228,7 +228,7 @@ impl MutateTestArgs {
                     )
                 ).await?.into_iter().filter_map(|x| x.ok()).collect();
 
-                let test_output = try_join_all(mutant_project_and_compile_output.into_iter().map(
+                let test_output = join_all(mutant_project_and_compile_output.into_iter().map(
                     |(temp_project, mutant_compile_output, mutant_config)| {
                         test_mutant(
                             progress_bar_reporter.clone(), 
