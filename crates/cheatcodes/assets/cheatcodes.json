@@ -373,10 +373,10 @@
           "ty": "StorageAccess[]",
           "description": "An ordered list of storage accesses made during an account access operation."
         },
-		{
-		  "name": "depth",
+        {
+          "name": "depth",
           "ty": "uint256",
-          "description": "Call depth traversed during the execution of the function"
+          "description": "Call depth traversed during the recording of state differences"
         }
       ]
     },
