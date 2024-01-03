@@ -1093,6 +1093,7 @@ dependencies = [
  "strum",
  "time",
  "tokio",
+ "tracing",
  "vergen",
  "yansi 0.5.1",
 ]
