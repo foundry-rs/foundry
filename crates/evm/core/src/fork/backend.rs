@@ -494,7 +494,7 @@ where
 // > Runs the provided blocking function on the current thread without blocking the executor.
 // This prevents issues (hangs) we ran into were the [SharedBackend] itself is called from a spawned
 // task.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,

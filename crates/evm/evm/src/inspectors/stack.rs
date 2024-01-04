@@ -198,7 +198,7 @@ pub struct InspectorData {
 ///
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
 /// equivalent) the remaining inspectors are not called.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct InspectorStack {
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<ChiselState>,
@@ -354,7 +354,7 @@ impl InspectorStack {
                 if new_status != status ||
                     (new_status == InstructionResult::Revert && new_retdata != retdata)
                 {
-                    return (new_status, new_gas, new_retdata)
+                    return (new_status, new_gas, new_retdata);
                 }
             }
         );
@@ -381,7 +381,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != res {
                     #[allow(clippy::needless_return)]
-                    return
+                    return;
                 }
             }
         );
@@ -405,7 +405,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != res {
                     #[allow(clippy::needless_return)]
-                    return
+                    return;
                 }
             }
         );
@@ -443,7 +443,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != res {
                     #[allow(clippy::needless_return)]
-                    return
+                    return;
                 }
             }
         );
@@ -470,7 +470,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 // Allow inspectors to exit early
                 #[allow(clippy::needless_return)]
                 if status != InstructionResult::Continue {
-                    return (status, gas, retdata)
+                    return (status, gas, retdata);
                 }
             }
         );
@@ -519,7 +519,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return (status, addr, gas, retdata)
+                    return (status, addr, gas, retdata);
                 }
             }
         );
@@ -556,7 +556,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 );
 
                 if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata)
+                    return (new_status, new_address, new_gas, new_retdata);
                 }
             }
         );

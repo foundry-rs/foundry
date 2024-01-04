@@ -48,6 +48,7 @@ strum = { version = "0.25", features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["full"] }
 yansi = "0.5"
+tracing.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }

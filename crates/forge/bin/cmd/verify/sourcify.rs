@@ -11,7 +11,7 @@ use std::{collections::HashMap, path::PathBuf};
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
 /// The type that can verify a contract on `sourcify`
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SourcifyVerificationProvider;
 
@@ -184,7 +184,7 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Debug, Serialize)]
 pub struct SourcifyVerifyRequest {
     address: String,
     chain: String,
@@ -193,12 +193,12 @@ pub struct SourcifyVerifyRequest {
     chosen_contract: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 pub struct SourcifyVerificationResponse {
     result: Vec<SourcifyResponseElement>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 pub struct SourcifyResponseElement {
     status: String,
     #[serde(rename = "storageTimestamp")]

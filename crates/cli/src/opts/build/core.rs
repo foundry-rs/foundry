@@ -18,7 +18,7 @@ use foundry_config::{
 use serde::Serialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Parser, Serialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Build options")]
 pub struct CoreBuildArgs {
     /// Clear the cache and artifacts folder and recompile.

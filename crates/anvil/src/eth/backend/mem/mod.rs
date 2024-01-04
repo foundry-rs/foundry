@@ -367,10 +367,15 @@ impl Backend {
             if let Some(eth_rpc_url) = forking.clone().json_rpc_url {
                 let mut env = self.env.read().clone();
 
-                let mut node_config = self.node_config.write().await;
+                let (db, config) = {
+                    let mut node_config = self.node_config.write().await;
 
-                let (db, config) =
-                    node_config.setup_fork_db_config(eth_rpc_url, &mut env, &self.fees).await;
+                    // we want to force the correct base fee for the next block during
+                    // `setup_fork_db_config`
+                    node_config.base_fee.take();
+
+                    node_config.setup_fork_db_config(eth_rpc_url, &mut env, &self.fees).await
+                };
 
                 *self.db.write().await = Box::new(db);
 
@@ -414,8 +419,17 @@ impl Backend {
                     ..env.block.clone()
                 };
 
-                self.time.reset((env.block.timestamp.to_ethers()).as_u64());
-                self.fees.set_base_fee(env.block.basefee.to_ethers());
+                self.time.reset(env.block.timestamp.to_ethers().as_u64());
+
+                // this is the base fee of the current block, but we need the base fee of
+                // the next block
+                let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                    fork_block.header.gas_used.to_ethers(),
+                    fork_block.header.gas_limit.to_ethers(),
+                    fork_block.header.base_fee_per_gas.unwrap_or_default().to_ethers(),
+                );
+
+                self.fees.set_base_fee(next_block_base_fee.into());
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();

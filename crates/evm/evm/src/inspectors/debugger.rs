@@ -15,7 +15,7 @@ use revm::{
 };
 
 /// An inspector that collects debug nodes on every step of the interpreter.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Debugger {
     /// The arena of [DebugNode]s
     pub arena: DebugArena,

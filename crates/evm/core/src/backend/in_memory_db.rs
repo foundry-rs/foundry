@@ -84,10 +84,13 @@ impl DatabaseCommit for MemDb {
 /// `DbAccount`, this will be set to `AccountState::NotExisting` if the account does not exist yet.
 /// This is because there's a distinction between "non-existing" and "empty",
 /// see <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L81-L83>.
-/// If an account is `NotExisting`, `Database(Ref)::basic` will always return `None` for the
-/// requested `AccountInfo`. To prevent this, we ensure that a missing account is never marked as
-/// `NotExisting` by always returning `Some` with this type.
-#[derive(Debug, Default, Clone)]
+/// If an account is `NotExisting`, `Database::basic_ref` will always return `None` for the
+/// requested `AccountInfo`.
+///
+/// To prevent this, we ensure that a missing account is never marked as `NotExisting` by always
+/// returning `Some` with this type, which will then insert a default [`AccountInfo`] instead
+/// of one marked as `AccountState::NotExisting`.
+#[derive(Clone, Debug, Default)]
 pub struct EmptyDBWrapper(EmptyDB);
 
 impl DatabaseRef for EmptyDBWrapper {
@@ -143,6 +146,7 @@ mod tests {
         let mut db = CacheDB::new(EmptyDB::default());
         let address = Address::random();
 
+        // We use `basic_ref` here to ensure that the account is not marked as `NotExisting`.
         let info = DatabaseRef::basic_ref(&db, address).unwrap();
         assert!(info.is_none());
         let mut info = info.unwrap_or_default();
@@ -165,6 +169,8 @@ mod tests {
         ));
 
         let info = Database::basic(&mut db, address).unwrap();
+        // We know info exists, as MemDb always returns `Some(AccountInfo)` due to the
+        // `EmptyDbWrapper`.
         assert!(info.is_some());
         let mut info = info.unwrap();
         info.balance = U256::from(500u64);

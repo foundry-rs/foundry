@@ -63,8 +63,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Creates a new snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
-    /// Snapshots can be reverted: [DatabaseExt::revert], however a snapshot can only be reverted
-    /// once. After a successful revert, the same snapshot id cannot be used again.
+    /// Snapshots can be reverted: [DatabaseExt::revert], however, depending on the
+    /// [RevertSnapshotAction], it will keep the snapshot alive or delete it.
     fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
 
     /// Reverts the snapshot if it exists
@@ -198,21 +198,21 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Returns the Fork url that's currently used in the database, if fork mode is on
     fn active_fork_url(&self) -> Option<String>;
 
-    /// Whether the database is currently in forked
+    /// Whether the database is currently in forked mode.
     fn is_forked_mode(&self) -> bool {
         self.active_fork_id().is_some()
     }
 
-    /// Ensures that an appropriate fork exits
+    /// Ensures that an appropriate fork exists
     ///
-    /// If `id` contains a requested `Fork` this will ensure it exits.
+    /// If `id` contains a requested `Fork` this will ensure it exists.
     /// Otherwise, this returns the currently active fork.
     ///
     /// # Errors
     ///
     /// Returns an error if the given `id` does not match any forks
     ///
-    /// Returns an error if no fork exits
+    /// Returns an error if no fork exists
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId>;
 
     /// Ensures that a corresponding `ForkId` exists for the given local `id`
@@ -367,7 +367,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
 /// **Note:** Snapshots work across fork-swaps, e.g. if fork `A` is currently active, then a
 /// snapshot is created before fork `B` is selected, then fork `A` will be the active fork again
 /// after reverting the snapshot.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
@@ -1485,7 +1485,7 @@ impl Database for Backend {
 }
 
 /// Variants of a [revm::Database]
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum BackendDatabaseSnapshot {
     /// Simple in-memory [revm::Database]
     InMemory(FoundryEvmInMemoryDB),
@@ -1494,7 +1494,7 @@ pub enum BackendDatabaseSnapshot {
 }
 
 /// Represents a fork
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Fork {
     db: ForkDB,
     journaled_state: JournaledState,
@@ -1515,7 +1515,7 @@ impl Fork {
 }
 
 /// Container type for various Backend related data
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///

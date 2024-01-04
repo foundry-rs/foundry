@@ -21,7 +21,7 @@ static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: Lazy<String> = Lazy::new(|| {
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
 /// to create configs directly bound to a solidity test.
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct InlineConfig<T> {
     /// Maps a (test-contract, test-function) pair
     /// to a specific configuration provided by the user.
@@ -60,7 +60,7 @@ impl<T> InlineConfig<T> {
 }
 
 /// Represents a (test-contract, test-function) pair
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct InlineConfigKey<'a> {
     contract: Cow<'a, str>,
     function: Cow<'a, str>,

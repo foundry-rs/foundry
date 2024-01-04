@@ -19,7 +19,7 @@ use serde_json::{to_value, Value};
 use std::fmt;
 
 /// CLI arguments for `forge inspect`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct InspectArgs {
     /// The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.
     pub contract: ContractInfo,

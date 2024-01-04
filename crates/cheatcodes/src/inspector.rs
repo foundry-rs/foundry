@@ -75,7 +75,7 @@ impl Context {
 }
 
 /// Helps collecting transactions from different forks.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<RpcUrl>,
@@ -86,7 +86,7 @@ pub struct BroadcastableTransaction {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct AccountAccess {
     /// The account access.
     pub access: crate::Vm::AccountAccess,
@@ -222,7 +222,8 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     #[inline]
     pub fn new(config: Arc<CheatsConfig>) -> Self {
-        Self { config, fs_commit: true, ..Default::default() }
+        let labels = config.labels.clone();
+        Self { config, fs_commit: true, labels, ..Default::default() }
     }
 
     fn apply_cheatcode<DB: DatabaseExt>(
@@ -262,7 +263,7 @@ impl Cheatcodes {
         if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
-            return created_address
+            return created_address;
         }
 
         data.db.allow_cheatcode_access(created_address);

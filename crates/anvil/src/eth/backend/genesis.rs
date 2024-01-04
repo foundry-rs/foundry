@@ -17,7 +17,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLockWriteGuard;
 
 /// Genesis settings
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GenesisConfig {
     /// The initial timestamp for the genesis block
     pub timestamp: u64,

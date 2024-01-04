@@ -75,12 +75,12 @@
           "description": "The account's codesize was read."
         },
         {
-          "name": "Extcodecopy",
-          "description": "The account's code was copied."
-        },
-        {
           "name": "Extcodehash",
           "description": "The account's codehash was read."
+        },
+        {
+          "name": "Extcodecopy",
+          "description": "The account's code was copied."
         }
       ]
     }
@@ -770,7 +770,7 @@
         ]
       },
       "group": "evm",
-      "status": "stable",
+      "status": "experimental",
       "safety": "unsafe"
     },
     {
@@ -1737,7 +1737,7 @@
       "func": {
         "id": "eth_getLogs",
         "description": "Gets all the logs according to specified filter.",
-        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);",
+        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);",
         "visibility": "external",
         "mutability": "",
         "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
@@ -2175,6 +2175,46 @@
     },
     {
       "func": {
+        "id": "getBlockNumber",
+        "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getBlockNumber() external view returns (uint256 height);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlockNumber()",
+        "selector": "0x42cbb15c",
+        "selectorBytes": [
+          66,
+          203,
+          177,
+          92
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBlockTimestamp",
+        "description": "Gets the current `block.timestamp`.\nYou should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getBlockTimestamp() external view returns (uint256 timestamp);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlockTimestamp()",
+        "selector": "0x796b89b9",
+        "selectorBytes": [
+          121,
+          107,
+          137,
+          185
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getCode",
         "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
@@ -2217,9 +2257,9 @@
       "func": {
         "id": "getLabel",
         "description": "Gets the label for the specified address.",
-        "declaration": "function getLabel(address account) external returns (string memory currentLabel);",
+        "declaration": "function getLabel(address account) external view returns (string memory currentLabel);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getLabel(address)",
         "selector": "0x28a249b0",
         "selectorBytes": [
@@ -4397,7 +4437,7 @@
       "func": {
         "id": "stopAndReturnStateDiff",
         "description": "Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.",
-        "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);",
+        "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);",
         "visibility": "external",
         "mutability": "",
         "signature": "stopAndReturnStateDiff()",

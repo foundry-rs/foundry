@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 /// An arena of [DebugNode]s
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DebugArena {
     /// The arena of nodes
     pub arena: Vec<DebugNode>,
@@ -163,7 +163,7 @@ impl DebugNodeFlat {
 /// It holds the current program counter (where in the program you are),
 /// the stack and memory (prior to the opcodes execution), any bytes to be
 /// pushed onto the stack, and the instruction counter for use with sourcemap.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
@@ -206,7 +206,7 @@ impl DebugStep {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Instruction {
     OpCode(u8),
     Cheatcode([u8; 4]),

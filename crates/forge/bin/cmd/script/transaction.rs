@@ -17,7 +17,7 @@ use foundry_evm::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
@@ -27,7 +27,7 @@ pub struct AdditionalContract {
     pub init_code: Bytes,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<B256>,
@@ -382,7 +382,7 @@ pub mod wrapper {
 
     // "Receipt" of an executed transaction: details of its execution.
     // copied from https://github.com/gakonst/ethers-rs
-    #[derive(Default, Clone, Serialize, Deserialize)]
+    #[derive(Clone, Default, Serialize, Deserialize)]
     pub struct WrappedTransactionReceipt {
         /// Transaction hash.
         #[serde(rename = "transactionHash")]

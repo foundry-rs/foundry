@@ -29,7 +29,7 @@ use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
 /// CLI arguments for `forge create`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct CreateArgs {
     /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,

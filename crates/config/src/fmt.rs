@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Contains the config and rule set
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormatterConfig {
     /// Maximum line length where formatter will try to wrap the line
     pub line_length: usize,
@@ -36,7 +36,7 @@ pub struct FormatterConfig {
 }
 
 /// Style of uint/int256 types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntTypes {
     /// Print the explicit uint256 or int256
@@ -48,7 +48,7 @@ pub enum IntTypes {
 }
 
 /// Style of underscores in number literals
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumberUnderscore {
     /// Use the underscores defined in the source code
@@ -82,7 +82,7 @@ impl NumberUnderscore {
 }
 
 /// Style of underscores in hex literals
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HexUnderscore {
     /// Use the underscores defined in the source code
@@ -115,7 +115,7 @@ impl HexUnderscore {
 }
 
 /// Style of string quotes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuoteStyle {
     /// Use double quotes where possible
@@ -138,7 +138,7 @@ impl QuoteStyle {
 }
 
 /// Style of single line blocks in statements
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SingleLineBlockStyle {
     /// Prefer single line block when possible
@@ -150,7 +150,7 @@ pub enum SingleLineBlockStyle {
 }
 
 /// Style of function header in case it doesn't fit
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
     /// Write function parameters multiline first

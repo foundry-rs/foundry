@@ -25,7 +25,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 ///
 /// This type contains a subset of the [`EthApi`](crate::eth::EthApi) functions but will exclusively
 /// fetch the requested data from the remote client, if it wasn't already fetched.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ClientFork {
     /// Contains the cached data
     pub storage: Arc<RwLock<ForkedStorage>>,
@@ -568,7 +568,7 @@ impl ClientFork {
 }
 
 /// Contains all fork metadata
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ClientForkConfig {
     pub eth_rpc_url: String,
     pub block_number: u64,
@@ -636,7 +636,7 @@ impl ClientForkConfig {
 }
 
 /// Contains cached state fetched to serve EthApi requests
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ForkedStorage {
     pub uncles: HashMap<B256, Vec<Block>>,
     pub blocks: HashMap<B256, Block>,

@@ -13,7 +13,7 @@ use std::{
 static SHELL: OnceCell<Shell> = OnceCell::new();
 
 /// Error indicating that `set_hook` was unable to install the provided ErrorHook
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct InstallError;
 
 impl fmt::Display for InstallError {
@@ -283,7 +283,7 @@ impl ShellOut {
 }
 
 /// The requested verbosity of output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Verbosity {
     /// only allow json output
     Json,

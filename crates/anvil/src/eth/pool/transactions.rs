@@ -26,7 +26,7 @@ pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
 /// Modes that determine the transaction ordering of the mempool
 ///
 /// This type controls the transaction order via the priority metric of a transaction
-#[derive(Debug, Clone, Eq, PartialEq, Copy, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TransactionOrder {
     /// Keep the pool transaction transactions sorted in the order they arrive.
     ///
@@ -68,7 +68,7 @@ impl FromStr for TransactionOrder {
 ///
 /// The `TransactionPriority` determines the ordering of two transactions that have all  their
 /// markers satisfied.
-#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransactionPriority(pub U256);
 
 /// Internal Transaction type
@@ -113,7 +113,7 @@ impl fmt::Debug for PoolTransaction {
 /// A waiting pool of transaction that are pending, but not yet ready to be included in a new block.
 ///
 /// Keeps a set of transactions that are waiting for other transactions
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PendingTransactions {
     /// markers that aren't yet provided by any transaction
     required_markers: HashMap<TxMarker, HashSet<TxHash>>,
@@ -350,7 +350,7 @@ impl Iterator for TransactionsIterator {
 }
 
 /// transactions that are ready to be included in a block.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ReadyTransactions {
     /// keeps track of transactions inserted in the pool
     ///
@@ -634,7 +634,7 @@ impl ReadyTransactions {
 }
 
 /// A reference to a transaction in the pool
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PoolTransactionRef {
     /// actual transaction
     pub transaction: Arc<PoolTransaction>,
@@ -665,7 +665,7 @@ impl Ord for PoolTransactionRef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ReadyTransaction {
     /// ref to the actual transaction
     pub transaction: PoolTransactionRef,

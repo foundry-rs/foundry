@@ -389,8 +389,12 @@ pub async fn handle_traces(
         None
     });
 
+    let labeled_addresses_in_config = config.labels.clone().into_iter();
+
+    let concatenated_addresses = labeled_addresses.chain(labeled_addresses_in_config);
+
     let mut decoder = CallTraceDecoderBuilder::new()
-        .with_labels(labeled_addresses)
+        .with_labels(concatenated_addresses)
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,

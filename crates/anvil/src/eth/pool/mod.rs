@@ -374,7 +374,7 @@ impl fmt::Debug for PruneResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ReadyTransaction {
     /// the hash of the submitted transaction
     hash: TxHash,
@@ -397,7 +397,7 @@ impl ReadyTransaction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum AddedTransaction {
     /// transaction was successfully added and being processed
     Ready(ReadyTransaction),

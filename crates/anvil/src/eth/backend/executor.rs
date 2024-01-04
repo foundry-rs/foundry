@@ -84,7 +84,7 @@ impl ExecutedTransaction {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ExecutedTransactions {
     /// The block created after executing the `included` transactions
     pub block: BlockInfo,

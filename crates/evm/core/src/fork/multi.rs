@@ -30,7 +30,7 @@ use std::{
 
 /// The identifier for a specific fork, this could be the name of the network a custom descriptive
 /// name.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ForkId(pub String);
 
 impl fmt::Display for ForkId {
@@ -47,7 +47,7 @@ impl<T: Into<String>> From<T> for ForkId {
 
 /// The Sender half of multi fork pair.
 /// Can send requests to the `MultiForkHandler` to create forks
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct MultiFork {
     /// Channel to send `Request`s to the handler
     handler: Sender<Request>,

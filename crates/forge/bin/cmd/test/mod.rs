@@ -48,7 +48,7 @@ use forge::traces::render_trace_arena;
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge test`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Run a test in the debugger.
@@ -388,11 +388,6 @@ impl TestArgs {
             for (name, result) in &mut tests {
                 short_test_result(name, result);
 
-                // If the test failed, we want to stop processing the rest of the tests
-                if self.fail_fast && result.status == TestStatus::Failure {
-                    break 'outer;
-                }
-
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {
                     // We only decode logs from Hardhat and DS-style console events
@@ -456,6 +451,11 @@ impl TestArgs {
 
                 if self.gas_report {
                     gas_report.analyze(&result.traces, &decoder).await;
+                }
+
+                // If the test failed, we want to stop processing the rest of the tests
+                if self.fail_fast && result.status == TestStatus::Failure {
+                    break 'outer
                 }
             }
             let block_outcome = TestOutcome::new(
@@ -554,7 +554,7 @@ impl Provider for TestArgs {
 }
 
 /// The result of a single test
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Test {
     /// The identifier of the artifact/contract in the form of `<artifact file name>:<contract
     /// name>`

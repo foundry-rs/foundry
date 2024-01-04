@@ -70,7 +70,7 @@ macro_rules! create_hw_wallets {
 /// 5. Private Keys (cleartext in CLI)
 /// 6. Private Keys (interactively via secure prompt)
 /// 7. AWS KMS
-#[derive(Parser, Debug, Clone, Serialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWallet {
     /// The sender accounts.

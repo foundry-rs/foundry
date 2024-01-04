@@ -37,7 +37,7 @@ pub fn default_elasticity() -> f64 {
 }
 
 /// Stores the fee related information
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct FeeManager {
     /// Hardfork identifier
     spec_id: SpecId,
@@ -330,14 +330,14 @@ impl Future for FeeHistoryService {
 pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 
 /// A single item in the whole fee history cache
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct FeeHistoryCacheItem {
     pub base_fee: u64,
     pub gas_used_ratio: f64,
     pub rewards: Vec<u64>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone, Default)]
 pub struct FeeDetails {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,

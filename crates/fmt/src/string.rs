@@ -4,7 +4,7 @@
 /// This is a simplified version of the
 /// [actual parser](https://docs.soliditylang.org/en/v0.8.15/grammar.html#a4.SolidityLexer.EscapeSequence)
 /// as we don't care about hex or other character meanings
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum QuoteState {
     /// Not currently in quoted string
     #[default]

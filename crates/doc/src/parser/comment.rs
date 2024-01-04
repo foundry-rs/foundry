@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
     Title,
@@ -55,7 +55,7 @@ impl CommentTag {
 
 /// The natspec documentation comment.
 /// https://docs.soliditylang.org/en/v0.8.17/natspec-format.html
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Comment {
     /// The doc comment tag.
     pub tag: CommentTag,
@@ -98,7 +98,7 @@ impl Comment {
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Deref, DerefMut, PartialEq, Default, Clone, Debug)]
+#[derive(Clone, Debug, Default, PartialEq, Deref, DerefMut)]
 pub struct Comments(Vec<Comment>);
 
 /// Forward the [Comments] function implementation to the [CommentsRef]
@@ -152,7 +152,7 @@ impl From<Vec<DocCommentTag>> for Comments {
 }
 
 /// The collection of references to natspec [Comment] items.
-#[derive(Deref, PartialEq, Default, Debug)]
+#[derive(Debug, Default, PartialEq, Deref)]
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {

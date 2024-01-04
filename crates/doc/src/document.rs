@@ -1,5 +1,10 @@
-use crate::{ParseItem, PreprocessorId, PreprocessorOutput};
-use std::{collections::HashMap, path::PathBuf, sync::Mutex};
+use crate::{DocBuilder, ParseItem, PreprocessorId, PreprocessorOutput};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    slice::IterMut,
+    sync::Mutex,
+};
 
 /// The wrapper around the [ParseItem] containing additional
 /// information the original item and extra context for outputting it.
@@ -62,6 +67,15 @@ impl Document {
         let context = self.context.lock().expect("failed to lock context");
         context.get(&id).cloned()
     }
+
+    fn try_relative_output_path(&self) -> Option<&Path> {
+        self.target_path.strip_prefix(&self.out_target_dir).ok()?.strip_prefix(DocBuilder::SRC).ok()
+    }
+
+    /// Returns the relative path of the document output.
+    pub fn relative_output_path(&self) -> &Path {
+        self.try_relative_output_path().unwrap_or(self.target_path.as_path())
+    }
 }
 
 /// The content of the document.
@@ -71,6 +85,100 @@ pub enum DocumentContent {
     Single(ParseItem),
     Constants(Vec<ParseItem>),
     OverloadedFunctions(Vec<ParseItem>),
+}
+
+impl DocumentContent {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            DocumentContent::Empty => 0,
+            DocumentContent::Single(_) => 1,
+            DocumentContent::Constants(items) => items.len(),
+            DocumentContent::OverloadedFunctions(items) => items.len(),
+        }
+    }
+
+    pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut ParseItem> {
+        match self {
+            DocumentContent::Empty => None,
+            DocumentContent::Single(item) => {
+                if index == 0 {
+                    Some(item)
+                } else {
+                    None
+                }
+            }
+            DocumentContent::Constants(items) => items.get_mut(index),
+            DocumentContent::OverloadedFunctions(items) => items.get_mut(index),
+        }
+    }
+
+    pub fn iter_items(&self) -> ParseItemIter<'_> {
+        match self {
+            DocumentContent::Empty => ParseItemIter { next: None, other: None },
+            DocumentContent::Single(item) => ParseItemIter { next: Some(item), other: None },
+            DocumentContent::Constants(items) => {
+                ParseItemIter { next: None, other: Some(items.iter()) }
+            }
+            DocumentContent::OverloadedFunctions(items) => {
+                ParseItemIter { next: None, other: Some(items.iter()) }
+            }
+        }
+    }
+
+    pub fn iter_items_mut(&mut self) -> ParseItemIterMut<'_> {
+        match self {
+            DocumentContent::Empty => ParseItemIterMut { next: None, other: None },
+            DocumentContent::Single(item) => ParseItemIterMut { next: Some(item), other: None },
+            DocumentContent::Constants(items) => {
+                ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
+            }
+            DocumentContent::OverloadedFunctions(items) => {
+                ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ParseItemIter<'a> {
+    next: Option<&'a ParseItem>,
+    other: Option<std::slice::Iter<'a, ParseItem>>,
+}
+
+impl<'a> Iterator for ParseItemIter<'a> {
+    type Item = &'a ParseItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(next) = self.next.take() {
+            return Some(next)
+        }
+        if let Some(other) = self.other.as_mut() {
+            return other.next()
+        }
+
+        None
+    }
+}
+
+#[derive(Debug)]
+pub struct ParseItemIterMut<'a> {
+    next: Option<&'a mut ParseItem>,
+    other: Option<IterMut<'a, ParseItem>>,
+}
+
+impl<'a> Iterator for ParseItemIterMut<'a> {
+    type Item = &'a mut ParseItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(next) = self.next.take() {
+            return Some(next)
+        }
+        if let Some(other) = self.other.as_mut() {
+            return other.next()
+        }
+
+        None
+    }
 }
 
 /// Read the preprocessor output variant from document context.

@@ -237,7 +237,7 @@ impl Cheatcode for rpcCall {
 
 impl Cheatcode for eth_getLogsCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { fromBlock, toBlock, addr, topics } = self;
+        let Self { fromBlock, toBlock, target, topics } = self;
         let (Ok(from_block), Ok(to_block)) = (u64::try_from(fromBlock), u64::try_from(toBlock))
         else {
             bail!("blocks in block range must be less than 2^64 - 1")
@@ -250,7 +250,7 @@ impl Cheatcode for eth_getLogsCall {
         let url =
             ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
-        let mut filter = Filter::new().address(*addr).from_block(from_block).to_block(to_block);
+        let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, topic) in topics.iter().enumerate() {
             let topic = topic.to_ethers();
             // todo: needed because rust wants to convert FixedBytes<32> to U256 to convert it back

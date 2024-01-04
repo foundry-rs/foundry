@@ -33,7 +33,7 @@ use foundry_common::serde_helpers::{
 };
 
 /// Wrapper type that ensures the type is named `params`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 pub struct Params<T: Default> {
     #[cfg_attr(feature = "serde", serde(default))]

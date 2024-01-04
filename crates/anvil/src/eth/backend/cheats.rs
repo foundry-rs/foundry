@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// Manages user modifications that may affect the node's behavior
 ///
 /// Contains the state of executed, non-eth standard cheat code RPC
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CheatsManager {
     /// shareable state
     state: Arc<RwLock<CheatsState>>,
@@ -70,7 +70,7 @@ impl CheatsManager {
 }
 
 /// Container type for all the state variables
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct CheatsState {
     /// All accounts that are currently impersonated
     pub impersonated_accounts: HashSet<Address>,

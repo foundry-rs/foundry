@@ -8,7 +8,7 @@ use serde::{de::Error, Deserializer, Serializer};
 /// Represents the params to set forking which can take various forms
 ///  - untagged
 ///  - tagged `forking`
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Forking {
     pub json_rpc_url: Option<String>,
     pub block_number: Option<u64>,
@@ -89,7 +89,7 @@ impl Default for EvmMineOptions {
 
 /// Represents the result of `eth_getWork`
 /// This may or may not include the block number
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Work {
     pub pow_hash: B256,
     pub seed_hash: B256,
@@ -112,7 +112,7 @@ impl serde::Serialize for Work {
 }
 
 /// A hex encoded or decimal index
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Index(usize);
 
 impl From<Index> for usize {
@@ -173,7 +173,7 @@ impl<'a> serde::Deserialize<'a> for Index {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeInfo {
@@ -186,7 +186,7 @@ pub struct NodeInfo {
     pub fork_config: NodeForkConfig,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeEnvironment {
@@ -196,7 +196,7 @@ pub struct NodeEnvironment {
     pub gas_price: U256,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeForkConfig {
@@ -208,7 +208,7 @@ pub struct NodeForkConfig {
 /// Anvil equivalent of `hardhat_metadata`.
 /// Metadata about the current Anvil instance.
 /// See <https://hardhat.org/hardhat-network/docs/reference#hardhat_metadata>
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct AnvilMetadata {
@@ -223,7 +223,7 @@ pub struct AnvilMetadata {
 
 /// Information about the forked network.
 /// See <https://hardhat.org/hardhat-network/docs/reference#hardhat_metadata>
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct ForkedNetwork {
