@@ -40,9 +40,8 @@ impl FlattenArgs {
 
         let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;
-        let flattened = paths
-            .flatten(&target_path)
-            .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {err}")))?;
+        let flattened =
+            paths.flatten(&target_path).map_err(|err| eyre::eyre!("Failed to flatten: {err}"))?;
 
         match output {
             Some(output) => {

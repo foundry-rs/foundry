@@ -9,7 +9,6 @@ extern crate tracing;
 
 pub mod abi;
 pub mod calc;
-pub mod clap_helpers;
 pub mod compile;
 pub mod constants;
 pub mod contracts;

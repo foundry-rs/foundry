@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
 use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts, ShellOptions};
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -19,19 +19,22 @@ const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-#[derive(Debug, Parser)]
-#[clap(name = "cast", version = VERSION_MESSAGE)]
+/// Perform Ethereum RPC calls from the comfort of your command line.
+#[derive(Parser)]
+#[clap(
+    name = "cast",
+    version = VERSION_MESSAGE,
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    next_display_order = None,
+)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
+    #[clap(flatten)]
+    pub shell: ShellOptions,
 }
 
-/// Perform Ethereum RPC calls from the comfort of your command line.
-#[derive(Debug, Subcommand)]
-#[clap(
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
-    next_display_order = None
-)]
+#[derive(Subcommand)]
 pub enum Subcommands {
     /// Prints the maximum value of the given integer type.
     #[clap(visible_aliases = &["--max-int", "maxi"])]

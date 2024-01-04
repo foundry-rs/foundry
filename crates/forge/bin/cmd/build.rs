@@ -2,10 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{
-    compile,
-    compile::{ProjectCompiler, SkipBuildFilter},
-};
+use foundry_common::compile::{ProjectCompiler, SkipBuildFilter};
 use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
@@ -72,7 +69,7 @@ pub struct BuildArgs {
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[clap(long, conflicts_with = "silent")]
+    #[clap(long, conflicts_with = "quiet")]
     #[serde(skip)]
     pub format_json: bool,
 }
@@ -82,27 +79,17 @@ impl BuildArgs {
         let mut config = self.try_load_config_emit_warnings()?;
         let mut project = config.project()?;
 
-        if install::install_missing_dependencies(&mut config, self.args.silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
             project = config.project()?;
         }
 
-        let filters = self.skip.unwrap_or_default();
-
-        if self.format_json {
-            let output = compile::suppress_compile_with_filter_json(&project, filters)?;
-            let json = serde_json::to_string_pretty(&output.clone().output())?;
-            println!("{}", json);
-            Ok(output)
-        } else if self.args.silent {
-            compile::suppress_compile_with_filter(&project, filters)
-        } else {
-            let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
-            compiler.compile(&project)
-        }
+        ProjectCompiler::new()
+            .print_names(self.names)
+            .print_sizes(self.sizes)
+            .filters(self.skip.unwrap_or_default())
+            .compile(&project)
     }
 
     /// Returns the `Project` for the current workspace

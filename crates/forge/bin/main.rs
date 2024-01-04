@@ -12,8 +12,7 @@ mod opts;
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 use opts::{Opts, Subcommands};
 
-fn main() -> Result<()> {
-    handler::install()?;
+    handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();

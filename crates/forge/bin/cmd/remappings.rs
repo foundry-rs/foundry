@@ -1,7 +1,6 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::remappings::RelativeRemapping;
 use foundry_config::impl_figment_convert_basic;
 use foundry_evm::hashbrown::HashMap;
 use std::path::PathBuf;
@@ -22,19 +21,15 @@ pub struct RemappingArgs {
 impl_figment_convert_basic!(RemappingArgs);
 
 impl RemappingArgs {
-    // TODO: Do people use `forge remappings >> file`?
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
 
         if self.pretty {
-            let groups = config.remappings.into_iter().fold(
-                HashMap::new(),
-                |mut groups: HashMap<Option<String>, Vec<RelativeRemapping>>, remapping| {
-                    groups.entry(remapping.context.clone()).or_default().push(remapping);
-                    groups
-                },
-            );
-            for (group, remappings) in groups.into_iter() {
+            let mut groups = HashMap::<_, Vec<_>>::with_capacity(config.remappings.len());
+            for remapping in config.remappings {
+                groups.entry(remapping.context.clone()).or_default().push(remapping);
+            }
+            for (group, remappings) in groups {
                 if let Some(group) = group {
                     println!("Context: {group}");
                 } else {
