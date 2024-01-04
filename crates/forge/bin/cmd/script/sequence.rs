@@ -12,7 +12,7 @@ use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionRece
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{
-    fs, shell,
+    fs,
     types::{ToAlloy, ToEthers},
     SELECTOR_LEN,
 };
@@ -24,7 +24,6 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
-use yansi::Paint;
 
 pub const DRY_RUN_DIR: &str = "dry-run";
 
@@ -171,8 +170,8 @@ impl ScriptSequence {
         //../run-[timestamp].json
         fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
 
-        shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
-        shell::println(format!("Sensitive values saved to: {}\n", self.sensitive_path.display()))?;
+        sh_note!("Transactions saved to: {}", self.path.display())?;
+        sh_note!("Sensitive values saved to: {}", self.sensitive_path.display())?;
 
         Ok(())
     }
@@ -314,12 +313,12 @@ impl ScriptSequence {
             self.check_unverified(unverifiable_contracts, verify);
 
             let num_verifications = future_verifications.len();
-            println!("##\nStart verification for ({num_verifications}) contracts",);
+            sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
             for verification in future_verifications {
                 verification.await?;
             }
 
-            println!("All ({num_verifications}) contracts were verified!");
+            sh_println!("All ({num_verifications}) contracts were verified!")?;
         }
 
         Ok(())
@@ -329,14 +328,10 @@ impl ScriptSequence {
     /// hints on potential causes.
     fn check_unverified(&self, unverifiable_contracts: Vec<Address>, verify: VerifyBundle) {
         if !unverifiable_contracts.is_empty() {
-            println!(
-                "\n{}",
-                Paint::yellow(format!(
-                    "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
-                    unverifiable_contracts,
-                    "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
-                ))
-                .bold(),
+            let _ = sh_warn!(
+                "We haven't found any matching bytecode for the following contracts: {unverifiable_contracts:?}.\n\
+                 This may occur when resuming a verification, \
+                 but the underlying source code or compiler version has changed.",
             );
 
             if let Some(commit) = &self.commit {
@@ -347,7 +342,10 @@ impl ScriptSequence {
                     .unwrap_or_default();
 
                 if &current_commit != commit {
-                    println!("\tScript was broadcasted on commit `{commit}`, but we are at `{current_commit}`.");
+                    let _ = sh_println!(
+                        "\tScript was broadcasted on commit `{commit}`, \
+                         but we are at `{current_commit}`."
+                    );
                 }
             }
         }

@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{fs, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode},
     cache::{CacheEntry, SolFilesCache},
@@ -122,9 +122,8 @@ pub fn needs_setup(abi: &Abi) -> bool {
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
-            println!(
-                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                Paint::yellow("Warning:").bold(),
+            let _ = sh_warn!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 setup_fn.signature()
             );
         }
@@ -270,32 +269,38 @@ where
 
     fn load_config_emit_warnings(self) -> Config {
         let config = self.load_config();
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         config
     }
 
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config()?;
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
     }
 
     fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok((config, evm_opts))
     }
 
     fn load_config_unsanitized_emit_warnings(self) -> Config {
         let config = self.load_config_unsanitized();
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         config
     }
 
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config_unsanitized()?;
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
+    }
+}
+
+fn emit_warnings(config: &Config) {
+    for warning in &config.__warnings {
+        let _ = sh_warn!("{warning}");
     }
 }
 
@@ -430,23 +435,22 @@ pub async fn print_traces(
         panic!("No traces found")
     }
 
-    println!("Traces:");
+    sh_println!("Traces:")?;
     for (_, trace) in &mut result.traces {
         decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
+        if verbose {
+            sh_println!("{trace:#}")?;
         } else {
-            println!("{trace:#}");
+            sh_println!("{trace}")?;
         }
     }
-    println!();
+    sh_println!()?;
 
     if result.success {
-        println!("{}", Paint::green("Transaction successfully executed."));
+        sh_println!("{}", Paint::green("Transaction successfully executed."))?;
     } else {
-        println!("{}", Paint::red("Transaction failed."));
+        sh_println!("{}", Paint::red("Transaction failed."))?;
     }
 
-    println!("Gas used: {}", result.gas_used);
-    Ok(())
+    sh_println!("Gas used: {}", result.gas_used)
 }

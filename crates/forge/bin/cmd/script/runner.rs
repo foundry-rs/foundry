@@ -231,7 +231,7 @@ impl ScriptRunner {
                 }
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { reason, traces, gas_used, logs, debug, .. } = *err;
-                    println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
+                    sh_println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")))?;
 
                     (Address::ZERO, gas_used, logs, traces, debug)
                 }

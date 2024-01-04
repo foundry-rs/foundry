@@ -1,6 +1,7 @@
 //! Bootstrap [axum] RPC servers
 
 #![warn(missing_docs, unused_crate_dependencies)]
+#![allow(clippy::disallowed_macros)]
 
 #[macro_use]
 extern crate tracing;

@@ -1,3 +1,6 @@
+// TODO
+#![allow(clippy::disallowed_macros)]
+
 #[macro_use]
 extern crate tracing;
 
@@ -8,7 +11,7 @@ use clap_complete::generate;
 use ethers_core::types::{BlockId, BlockNumber::Latest};
 use ethers_providers::Middleware;
 use eyre::Result;
-use foundry_cli::{handler, prompt, stdin, utils};
+use foundry_cli::{handler, utils};
 use foundry_common::{
     abi::get_event,
     fmt::format_tokens,
@@ -17,10 +20,14 @@ use foundry_common::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
+    stdin,
     types::{ToAlloy, ToEthers},
 };
 use foundry_config::Config;
 use std::time::Instant;
+
+#[macro_use]
+extern crate foundry_common;
 
 pub mod cmd;
 pub mod opts;
@@ -28,13 +35,21 @@ pub mod opts;
 use opts::{Opts, Subcommands, ToBaseArgs};
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    handler::install()?;
+async fn main() {
+    if let Err(err) = run().await {
+        let _ = foundry_common::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
+    handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
     let opts = Opts::parse();
+    opts.shell.shell().set();
     match opts.sub {
         // Constants
         Subcommands::MaxInt { r#type } => {
@@ -388,10 +403,10 @@ async fn main() -> Result<()> {
             let signatures = stdin::unwrap_vec(signatures)?;
             let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
             if !abis.is_empty() {
-                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe()?;
             }
             if !signatures.is_empty() {
-                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe()?;
             }
         }
 

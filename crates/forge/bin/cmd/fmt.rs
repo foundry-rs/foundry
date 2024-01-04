@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{fs, glob::expand_globs, term::cli_warn};
+use foundry_common::{fs, glob::expand_globs};
 use foundry_config::impl_figment_convert_basic;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
@@ -97,7 +97,7 @@ impl FmtArgs {
                 Some(path) => {
                     path.strip_prefix(&config.__root.0).unwrap_or(path).display().to_string()
                 }
-                None => "stdin".to_string(),
+                None => "<stdin>".to_string(),
             };
 
             let parsed = parse(&source).map_err(|diagnostics| {
@@ -110,23 +110,24 @@ impl FmtArgs {
                     let mut lines = source[..loc.start().min(source.len())].split('\n');
                     let col = lines.next_back().unwrap().len() + 1;
                     let row = lines.count() + 1;
-                    cli_warn!("[{}:{}:{}] {}", name, row, col, warning);
+                    sh_warn!("[{name}:{row}:{col}]: {warning}")?;
                 }
             }
 
             let mut output = String::new();
             format_to(&mut output, parsed, config.fmt.clone()).unwrap();
 
-            solang_parser::parse(&output, 0).map_err(|diags| {
+            // validate
+            let _ = solang_parser::parse(&output, 0).map_err(|diags| {
+                tracing::debug!(?diags);
                 eyre::eyre!(
-                    "Failed to construct valid Solidity code for {name}. Leaving source unchanged.\n\
-                     Debug info: {diags:?}"
+                    "Failed to construct valid Solidity code for {name}. Leaving source unchanged."
                 )
             })?;
 
             if self.check || path.is_none() {
                 if self.raw {
-                    print!("{output}");
+                    sh_print!("{output}")?;
                 }
 
                 let diff = TextDiff::from_lines(&source, &output);
@@ -143,11 +144,11 @@ impl FmtArgs {
             Input::Stdin(source) => format(source, None).map(|diff| vec![diff]),
             Input::Paths(paths) => {
                 if paths.is_empty() {
-                    cli_warn!(
-                        "Nothing to format.\n\
-                         HINT: If you are working outside of the project, \
-                         try providing paths to your source files: `forge fmt <paths>`"
-                    );
+                    sh_eprintln!("Nothing to format")?;
+                    sh_note!(
+                        "if you are working outside of the project, \
+                         try providing paths to your source files: `forge fmt <paths>...`"
+                    )?;
                     return Ok(())
                 }
                 paths

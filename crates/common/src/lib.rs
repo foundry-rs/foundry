@@ -2,14 +2,15 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
 extern crate self as foundry_common;
 
 #[macro_use]
-extern crate tracing;
+pub mod io;
 
 pub mod abi;
 pub mod calc;
-pub mod clap_helpers;
 pub mod compile;
 pub mod constants;
 pub mod contracts;
@@ -23,7 +24,6 @@ pub mod retry;
 pub mod rpc;
 pub mod runtime_client;
 pub mod selectors;
-pub mod shell;
 pub mod term;
 pub mod traits;
 pub mod transactions;
@@ -35,3 +35,5 @@ pub use contracts::*;
 pub use provider::*;
 pub use traits::*;
 pub use transactions::*;
+
+pub use io::{shell, stdin, Shell};

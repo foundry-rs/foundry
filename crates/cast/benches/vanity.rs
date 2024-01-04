@@ -4,6 +4,7 @@ use std::{hint::black_box, time::Duration};
 
 #[path = "../bin/cmd/wallet/mod.rs"]
 #[allow(unused)]
+#[allow(clippy::all)]
 mod wallet;
 use wallet::vanity::*;
 

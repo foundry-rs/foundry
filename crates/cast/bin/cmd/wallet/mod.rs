@@ -72,10 +72,7 @@ pub enum WalletSubcommands {
     #[clap(visible_aliases = &["a", "addr"])]
     Address {
         /// If provided, the address will be derived from the specified private key.
-        #[clap(
-            value_name = "PRIVATE_KEY",
-            value_parser = foundry_common::clap_helpers::strip_0x_prefix,
-        )]
+        #[clap(value_name = "PRIVATE_KEY")]
         private_key_override: Option<String>,
 
         #[clap(flatten)]

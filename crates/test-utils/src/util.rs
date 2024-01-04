@@ -936,21 +936,38 @@ fn normalize_output(s: &str) -> String {
 impl OutputExt for Output {
     #[track_caller]
     fn stdout_matches_content(&self, expected: &str) {
-        let out = lossy_string(&self.stdout);
-        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(expected));
+        matches(&lossy_string(&self.stdout), expected, None);
     }
 
     #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
-        let expected = fs::read_to_string(expected_path).unwrap();
-        self.stdout_matches_content(&expected);
+        let path = expected_path.as_ref();
+        let expected = fs::read_to_string(path).unwrap();
+        matches(&lossy_string(&self.stdout), &expected, Some(path));
     }
 
     #[track_caller]
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) {
-        let expected = fs::read_to_string(expected_path).unwrap();
+        let path = expected_path.as_ref();
+        let expected = fs::read_to_string(path).unwrap();
         let err = lossy_string(&self.stderr);
-        pretty_assertions::assert_eq!(normalize_output(&err), normalize_output(&expected));
+        matches(&err, &expected, Some(path));
+    }
+}
+
+#[track_caller]
+fn matches(a: &str, b: &str, path: Option<&Path>) {
+    let a = &normalize_output(a);
+    let b = &normalize_output(b);
+    if a != b {
+        let msg = pretty_assertions::StrComparison::new(a, b).to_string();
+        if let Some(path) = path {
+            if let Ok("1") = std::env::var("UPDATE_FIXTURES").as_deref() {
+                fs::write(path, b).unwrap();
+                panic!("fixture {} updated", path.display());
+            }
+        }
+        panic!("{msg}");
     }
 }
 

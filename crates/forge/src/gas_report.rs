@@ -68,10 +68,8 @@ impl GasReport {
             // preferable than not getting one you expect. A warning is printed to stderr
             // indicating the "double listing".
             if self.report_for.contains(contract_name) && self.ignore.contains(contract_name) {
-                eprintln!(
-                    "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
-                    yansi::Paint::yellow("warning").bold(),
-                    contract_name
+                let _ = sh_warn!(
+                    "{contract_name} is listed in both 'gas_reports' and 'gas_reports_ignore'"
                 );
             }
 

@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 /// Various Ethereum types
 pub mod eth;
 

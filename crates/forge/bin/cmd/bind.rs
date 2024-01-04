@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use ethers_contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{compile, fs::json_files};
+use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{
     fs,
@@ -86,13 +86,13 @@ impl BindArgs {
         if !self.skip_build {
             // run `forge build`
             let project = self.build_args.project()?;
-            compile::compile(&project, false, false)?;
+            let _ = ProjectCompiler::new().compile(&project)?;
         }
 
         let artifacts = self.try_load_config_emit_warnings()?.out;
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
-            println!("Bindings found. Checking for consistency.");
+            sh_println!("Bindings found, checking for consistency")?;
             return self.check_existing_bindings(&artifacts)
         }
 
@@ -103,10 +103,7 @@ impl BindArgs {
 
         self.generate_bindings(&artifacts)?;
 
-        println!(
-            "Bindings have been output to {}",
-            self.bindings_root(&artifacts).to_str().unwrap()
-        );
+        sh_println!("Bindings have been output to {}", self.bindings_root(&artifacts).display())?;
         Ok(())
     }
 
@@ -181,7 +178,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
-        println!("Checking bindings for {} contracts.", bindings.len());
+        sh_eprintln!("Checking bindings for {} contracts.", bindings.len())?;
         if !self.module {
             bindings
                 .ensure_consistent_crate(
@@ -201,14 +198,13 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         } else {
             bindings.ensure_consistent_module(self.bindings_root(&artifacts), self.single_file)?;
         }
-        println!("OK.");
-        Ok(())
+        sh_eprintln!("OK.")
     }
 
     /// Generate the bindings
     fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
-        println!("Generating bindings for {} contracts", bindings.len());
+        sh_println!("Generating bindings for {} contracts", bindings.len())?;
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");
             bindings.dependencies([r#"serde = "1""#]).write_to_crate(
@@ -216,11 +212,10 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
                 &self.crate_version,
                 self.bindings_root(&artifacts),
                 self.single_file,
-            )?;
+            )
         } else {
             trace!(single_file = self.single_file, "generating module");
-            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)?;
+            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)
         }
-        Ok(())
     }
 }

@@ -106,8 +106,7 @@ impl DocBuilder {
             .collect::<Vec<_>>();
 
         if sources.is_empty() {
-            println!("No sources detected at {}", self.sources.display());
-            return Ok(())
+            return sh_println!("No sources detected at {}", self.sources.display())
         }
 
         let library_sources = self.libraries.iter().flat_map(source_files_iter).collect::<Vec<_>>();

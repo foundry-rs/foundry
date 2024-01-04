@@ -110,8 +110,8 @@ impl ScriptArgs {
         );
 
         if script_config.evm_opts.verbosity > 3 {
-            println!("==========================");
-            println!("Simulated On-chain Traces:\n");
+            sh_println!("==========================")?;
+            sh_println!("Simulated On-chain Traces:\n")?;
         }
 
         let address_to_abi: BTreeMap<Address, ArtifactInfo> = decoder
@@ -193,7 +193,7 @@ impl ScriptArgs {
                                     .to_ethers(),
                             );
                         } else {
-                            println!("Gas limit was set in script to {:}", tx.gas.unwrap());
+                            sh_println!("Gas limit was set in script to {}", tx.gas.unwrap())?;
                         }
 
                         let tx = TransactionWithMetadata::new(
@@ -231,7 +231,7 @@ impl ScriptArgs {
 
                 for (_kind, trace) in &mut traces {
                     decoder.decode(trace).await;
-                    println!("{trace}");
+                    sh_println!("{trace}")?;
                 }
             }
 
@@ -253,10 +253,10 @@ impl ScriptArgs {
     async fn build_runners(&self, script_config: &ScriptConfig) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
-        if !shell::verbosity().is_silent() {
+        if !shell::verbosity().is_quiet() {
             let n = script_config.total_rpcs.len();
             let s = if n != 1 { "s" } else { "" };
-            println!("\n## Setting up {n} EVM{s}.");
+            let _ = sh_eprintln!("\n## Setting up {n} EVM{s}");
         }
 
         let futs = script_config

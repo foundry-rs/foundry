@@ -1,4 +1,5 @@
 #![warn(unused_crate_dependencies, unreachable_pub)]
+#![allow(clippy::disallowed_macros)]
 
 #[macro_use]
 extern crate tracing;

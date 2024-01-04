@@ -1,5 +1,7 @@
 //! Contains various tests for checking cast commands
 
+#![allow(clippy::disallowed_macros)]
+
 use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
 use foundry_test_utils::{casttest, util::OutputExt};
 use std::{io::Write, path::Path};

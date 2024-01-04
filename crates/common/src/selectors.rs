@@ -1,5 +1,7 @@
+//! Support for handling/identifying selectors.
+
 #![allow(missing_docs)]
-//! Support for handling/identifying selectors
+
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -410,7 +412,6 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 /// # Ok(())
 /// # }
 /// ```
-
 pub async fn pretty_calldata(
     calldata: impl AsRef<str>,
     offline: bool,
@@ -463,25 +464,21 @@ pub struct SelectorImportResponse {
 
 impl SelectorImportResponse {
     /// Print info about the functions which were uploaded or already known
-    pub fn describe(&self) {
-        self.result
-            .function
-            .imported
-            .iter()
-            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
-        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
-        self.result
-            .function
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
-        self.result
-            .event
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
+    pub fn describe(&self) -> eyre::Result<()> {
+        for (k, v) in &self.result.function.imported {
+            sh_status!("Imported" => "function {k}: {v}")?;
+        }
+        for (k, v) in &self.result.event.imported {
+            sh_status!("Imported" => "event {k}: {v}")?;
+        }
+        for (k, v) in &self.result.function.duplicated {
+            sh_status!("Duplicated" => "function {k}: {v}")?;
+        }
+        for (k, v) in &self.result.event.duplicated {
+            sh_status!("Duplicated" => "event {k}: {v}")?;
+        }
 
-        println!("Selectors successfully uploaded to https://api.openchain.xyz");
+        sh_eprintln!("Selectors successfully uploaded to https://api.openchain.xyz")
     }
 }
 
@@ -596,7 +593,6 @@ mod tests {
 
         let abi: JsonAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
-        println!("{:?}", result);
         assert_eq!(
             result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
             "0xa9059cbb"

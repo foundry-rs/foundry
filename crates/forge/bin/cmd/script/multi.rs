@@ -164,8 +164,8 @@ impl MultiChainSequence {
         fs::create_dir_all(file.parent().unwrap())?;
         fs::copy(&self.sensitive_path, &file)?;
 
-        println!("\nTransactions saved to: {}\n", self.path.display());
-        println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+        sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
+        sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
 
         Ok(())
     }

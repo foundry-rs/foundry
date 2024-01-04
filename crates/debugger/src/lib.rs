@@ -5,6 +5,8 @@
 #![warn(unused_crate_dependencies, unreachable_pub)]
 
 #[macro_use]
+extern crate foundry_common;
+#[macro_use]
 extern crate tracing;
 
 mod op;

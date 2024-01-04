@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 pub mod config;
 pub mod test_helpers;
 

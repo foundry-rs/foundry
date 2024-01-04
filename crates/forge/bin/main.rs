@@ -6,19 +6,30 @@ use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
 
+#[macro_use]
+extern crate foundry_common;
+
 mod cmd;
 mod opts;
 
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 use opts::{Opts, Subcommands};
 
-fn main() -> Result<()> {
-    handler::install()?;
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
     let opts = Opts::parse();
+    opts.shell.shell().set();
     match opts.sub {
         Subcommands::Test(cmd) => {
             if cmd.is_watch() {
@@ -28,14 +39,7 @@ fn main() -> Result<()> {
                 outcome.ensure_ok()
             }
         }
-        Subcommands::Script(cmd) => {
-            // install the shell before executing the command
-            foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
-                cmd.opts.args.silent,
-                cmd.json,
-            ))?;
-            utils::block_on(cmd.run_script())
-        }
+        Subcommands::Script(cmd) => utils::block_on(cmd.run_script()),
         Subcommands::Coverage(cmd) => utils::block_on(cmd.run()),
         Subcommands::Bind(cmd) => cmd.run(),
         Subcommands::Build(cmd) => {

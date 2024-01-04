@@ -74,7 +74,7 @@ impl Server {
         let file_404 = get_404_output_file(&input_404);
 
         let serving_url = format!("http://{address}");
-        println!("Serving on: {serving_url}");
+        sh_println!("Serving on: {serving_url}")?;
 
         let thread_handle = std::thread::spawn(move || serve(build_dir, sockaddr, &file_404));
 

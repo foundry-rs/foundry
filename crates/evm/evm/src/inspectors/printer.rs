@@ -15,7 +15,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         let opcode = interp.current_opcode();
         let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
         let gas_remaining = interp.gas.remaining();
-        println!(
+        let _ = sh_println!(
             "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}, Data: 0x{}",
             data.journaled_state.depth(),
             interp.program_counter(),
@@ -36,8 +36,8 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        println!(
-            "SM CALL:   {},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
+        let _ = sh_println!(
+            "SM CALL:   {:?},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.contract,
             inputs.context,
             inputs.is_static,
@@ -52,8 +52,8 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        println!(
-            "CREATE CALL: caller:{}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
+        let _ = sh_println!(
+            "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
             inputs.scheme,
             inputs.value,

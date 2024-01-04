@@ -89,6 +89,7 @@ impl fmt::Display for Item {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_macros)]
 mod test {
     use crate::rlp_converter::Item;
     use alloy_rlp::Decodable;
@@ -138,7 +139,7 @@ mod test {
             assert_eq!(Item::decode(&mut &encoded[..])?, params.2);
             let decoded = Item::decode(&mut &params.1[..])?;
             assert_eq!(alloy_rlp::encode(&decoded), params.1);
-            println!("case {} validated", params.0)
+            println!("case {} validated", params.0);
         }
 
         Ok(())
@@ -168,7 +169,6 @@ mod test {
             let val = serde_json::from_str(params.1)?;
             let item = Item::value_to_item(&val).unwrap();
             assert_eq!(item, params.2);
-            println!("case {} validated", params.0);
         }
 
         Ok(())

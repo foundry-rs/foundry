@@ -1,7 +1,7 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
-use eyre::{eyre, Context, Result};
+use eyre::{bail, eyre, Context, Result};
 use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
@@ -60,13 +60,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
         if !args.skip_is_verified_check &&
             self.is_contract_verified(&etherscan, &verify_args).await?
         {
-            println!(
-                "\nContract [{}] {:?} is already verified. Skipping verification.",
+            return sh_println!(
+                "\nContract [{}] {} is already verified; skipping verification",
                 verify_args.contract_name,
-                verify_args.address.to_checksum(None)
+                verify_args.address,
             );
-
-            return Ok(())
         }
 
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
@@ -74,8 +72,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| async {
-                println!(
-                    "\nSubmitting verification for [{}] {}.",
+                let _ = sh_println!(
+                    "\nSubmitting verification for [{}] {}",
                     verify_args.contract_name, verify_args.address
                 );
                 let resp = etherscan
@@ -99,15 +97,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     if resp.result.starts_with("Unable to locate ContractCode at") {
-                        warn!("{}", resp.result);
-                        return Err(eyre!("Etherscan could not detect the deployment."))
+                        bail!("Etherscan could not detect the deployment.")
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
-                    eprintln!(
-                    "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                    resp.message, resp.result
-                );
+                    let _ = sh_err!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
+                    );
                     std::process::exit(1);
                 }
 
@@ -116,13 +113,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL:
-        {}",
+            sh_println!(
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(args.address)
-            );
+            )?;
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
@@ -135,7 +131,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 return self.check(check_args).await
             }
         } else {
-            println!("Contract source code already verified");
+            sh_println!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -161,31 +157,30 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     trace!(target: "forge::verify", ?resp, "Received verification response");
 
-                    eprintln!(
+                    sh_println!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                        resp.message,
+                        resp.result
+                    )?;
+
+                    if resp.status == "0" {
+                        bail!("Contract failed to verify.")
+                    }
 
                     if resp.result == "Pending in queue" {
-                        return Err(eyre!("Verification is still pending...",))
+                        bail!("Verification is still pending...")
                     }
 
                     if resp.result == "Unable to verify" {
-                        return Err(eyre!("Unable to verify.",))
+                        bail!("Unable to verify.")
                     }
 
                     if resp.result == "Already Verified" {
-                        println!("Contract source code already verified");
-                        return Ok(())
-                    }
-
-                    if resp.status == "0" {
-                        println!("Contract failed to verify.");
-                        std::process::exit(1);
+                        return sh_println!("Contract source code already verified")
                     }
 
                     if resp.result == "Pass - Verified" {
-                        println!("Contract successfully verified");
+                        return sh_println!("Contract successfully verified")
                     }
 
                     Ok(())

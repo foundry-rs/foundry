@@ -80,16 +80,16 @@ impl EtherscanFlattenedSource {
         if out.has_error() {
             let mut o = AggregatedCompilerOutput::default();
             o.extend(version, out);
-            eprintln!("{}", o.diagnostics(&[], Default::default()));
+            let diags = o.diagnostics(&[], Default::default());
 
-            eprintln!(
-                r#"Failed to compile the flattened code locally.
+            eyre::bail!(
+                "\
+Failed to compile the flattened code locally.
 This could be a bug, please inspect the output of `forge flatten {}` and report an issue.
 To skip this solc dry, pass `--force`.
-"#,
+Diagnostics: {diags}",
                 contract_path.display()
             );
-            std::process::exit(1)
         }
 
         Ok(())

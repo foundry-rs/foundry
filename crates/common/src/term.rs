@@ -1,4 +1,8 @@
-//! terminal utils
+//! Terminal utils.
+
+// TODO
+#![allow(clippy::disallowed_macros)]
+
 use foundry_compilers::{
     remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
@@ -71,8 +75,9 @@ impl Spinner {
 
         let indicator = Paint::green(self.indicator[self.idx % self.indicator.len()]);
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        print!("\r\x33[2K\r{indicator} {}", self.message);
-        io::stdout().flush().unwrap();
+        let mut stderr = io::stderr().lock();
+        write!(stderr, "\r\x33[2K\r{indicator} {}", self.message);
+        stderr.flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
     }
@@ -213,21 +218,6 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     };
     report::with_scoped(&reporter, f)
 }
-
-#[macro_export]
-/// Displays warnings on the cli
-macro_rules! cli_warn {
-    ($($arg:tt)*) => {
-        eprintln!(
-            "{}{} {}",
-            yansi::Paint::yellow("warning").bold(),
-            yansi::Paint::new(":").bold(),
-            format_args!($($arg)*)
-        )
-    }
-}
-
-pub use cli_warn;
 
 #[cfg(test)]
 mod tests {
