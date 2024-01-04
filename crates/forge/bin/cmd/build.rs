@@ -2,7 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::compile::{ProjectCompiler, SkipBuildFilter};
+use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
 use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
@@ -92,7 +92,7 @@ impl BuildArgs {
             .print_sizes(self.sizes)
             .quiet(self.format_json)
             .bail(!self.format_json)
-            .filters(self.skip.unwrap_or_default())
+            .filter(Box::new(SkipBuildFilters(self.skip.unwrap_or_default())))
             .compile(&project)?;
         if self.format_json {
             println!("{}", serde_json::to_string_pretty(&output.clone().output())?);

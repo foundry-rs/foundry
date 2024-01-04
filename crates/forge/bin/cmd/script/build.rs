@@ -225,8 +225,8 @@ impl ScriptArgs {
             let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
-                self.verify,
                 self.opts.args.silent,
+                self.verify,
                 filters,
             )?;
             return Ok((project, output))
@@ -246,8 +246,8 @@ impl ScriptArgs {
             let output = compile::compile_target_with_filter(
                 &path,
                 &project,
-                self.verify,
                 self.opts.args.silent,
+                self.verify,
                 filters,
             )?;
             self.path = path.to_string_lossy().to_string();

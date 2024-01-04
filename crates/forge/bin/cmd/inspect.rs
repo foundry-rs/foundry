@@ -96,7 +96,7 @@ impl InspectArgs {
                 print_json_str(&artifact.deployed_bytecode, Some("object"))?;
             }
             ContractArtifactField::Assembly | ContractArtifactField::AssemblyOptimized => {
-                print_json(&artifact.assembly)?;
+                print_json_str(&artifact.assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
                 print_json(&artifact.method_identifiers)?;
@@ -111,7 +111,7 @@ impl InspectArgs {
                 print_json(&artifact.devdoc)?;
             }
             ContractArtifactField::Ir => {
-                print_json(&artifact.ir)?;
+                print_json_str(&artifact.ir, None)?;
             }
             ContractArtifactField::IrOptimized => {
                 print_json_str(&artifact.ir_optimized, None)?;
@@ -361,7 +361,7 @@ impl ContractArtifactField {
 }
 
 fn print_json(obj: &impl serde::Serialize) -> Result<()> {
-    println!("{}", serde_json::to_string(obj)?);
+    println!("{}", serde_json::to_string_pretty(obj)?);
     Ok(())
 }
 
@@ -373,8 +373,10 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
             value_ref = value2;
         }
     }
-    let s = value_ref.as_str().ok_or_else(|| eyre::eyre!("not a string: {value}"))?;
-    println!("{s}");
+    match value_ref.as_str() {
+        Some(s) => println!("{s}"),
+        None => println!("{value_ref:#}"),
+    }
     Ok(())
 }
 

@@ -25,12 +25,8 @@ use std::{
 ///
 /// This is merely a wrapper for [`Project::compile()`] which also prints to stdout depending on its
 /// settings.
-#[derive(Clone, Debug)]
 #[must_use = "this builder does nothing unless you call a `compile*` method"]
 pub struct ProjectCompiler {
-    /// Whether to compile in sparse mode.
-    sparse: Option<bool>,
-
     /// Whether we are going to verify the contracts after compilation.
     verify: Option<bool>,
 
@@ -47,7 +43,7 @@ pub struct ProjectCompiler {
     bail: Option<bool>,
 
     /// Files to exclude.
-    filters: Vec<SkipBuildFilter>,
+    filter: Option<Box<dyn FileFilter>>,
 
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
@@ -65,22 +61,14 @@ impl ProjectCompiler {
     #[inline]
     pub fn new() -> Self {
         Self {
-            sparse: None,
             verify: None,
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::verbosity().is_silent()),
             bail: None,
-            filters: Vec::new(),
+            filter: None,
             files: Vec::new(),
         }
-    }
-
-    /// Sets whether to compile in sparse mode.
-    #[inline]
-    pub fn sparse(mut self, yes: bool) -> Self {
-        self.sparse = Some(yes);
-        self
     }
 
     /// Sets whether we are going to verify the contracts after compilation.
@@ -128,10 +116,10 @@ impl ProjectCompiler {
         self
     }
 
-    /// Sets files to exclude.
+    /// Sets the filter to use.
     #[inline]
-    pub fn filters(mut self, filters: impl IntoIterator<Item = SkipBuildFilter>) -> Self {
-        self.filters.extend(filters);
+    pub fn filter(mut self, filter: Box<dyn FileFilter>) -> Self {
+        self.filter = Some(filter);
         self
     }
 
@@ -142,36 +130,21 @@ impl ProjectCompiler {
         self
     }
 
-    /// Compiles the project with [`Project::compile()`].
+    /// Compiles the project.
     pub fn compile(mut self, project: &Project) -> Result<ProjectCompileOutput> {
         // Taking is fine since we don't need these in `compile_with`.
-        let filters = std::mem::take(&mut self.filters);
+        let filter = std::mem::take(&mut self.filter);
         let files = std::mem::take(&mut self.files);
         self.compile_with(project, || {
             if !files.is_empty() {
                 project.compile_files(files)
-            } else if !filters.is_empty() {
-                project.compile_sparse(SkipBuildFilters(filters))
+            } else if let Some(filter) = filter {
+                project.compile_sparse(move |file: &_| filter.is_match(file))
             } else {
                 project.compile()
             }
             .map_err(Into::into)
         })
-    }
-
-    /// Compiles the project with [`Project::compile_sparse()`] and the given filter.
-    ///
-    /// This will emit artifacts only for files that match the given filter.
-    /// Files that do _not_ match the filter are given a pruned output selection and do not generate
-    /// artifacts.
-    ///
-    /// Note that this ignores previously set `filters` and `files`.
-    pub fn compile_sparse<F: FileFilter + 'static>(
-        self,
-        project: &Project,
-        filter: F,
-    ) -> Result<ProjectCompileOutput> {
-        self.compile_with(project, || project.compile_sparse(filter).map_err(Into::into))
     }
 
     /// Compiles the project with the given closure
@@ -185,7 +158,7 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(&prj, || Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
+    fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
     where
         F: FnOnce() -> Result<ProjectCompileOutput>,
     {
@@ -387,22 +360,22 @@ pub struct ContractInfo {
 
 /// Compiles target file path.
 ///
-/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
-///
 /// If `quiet` no solc related output will be emitted to stdout.
+///
+/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target_with_filter(
     target_path: &Path,
     project: &Project,
-    verify: bool,
     quiet: bool,
+    verify: bool,
     skip: Vec<SkipBuildFilter>,
 ) -> Result<ProjectCompileOutput> {
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
-    let mut compiler = ProjectCompiler::new().filters(skip).quiet(quiet);
+    let mut compiler = ProjectCompiler::new().filter(Box::new(SkipBuildFilters(skip))).quiet(quiet);
     if !graph.files().contains_key(target_path) {
         if verify {
             eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");

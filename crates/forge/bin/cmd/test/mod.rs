@@ -142,14 +142,10 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        let mut filter = self.filter(&config);
-
-        trace!(target: "forge::test", ?filter, "using filter");
-
-        // Set up the project
+        // Set up the project.
         let mut project = config.project()?;
 
-        // install missing dependencies
+        // Install missing dependencies.
         if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
         {
@@ -158,12 +154,16 @@ impl TestArgs {
             project = config.project()?;
         }
 
-        let output = ProjectCompiler::new()
-            .quiet_if(self.json || self.opts.silent)
-            .sparse(config.sparse_mode)
-            .compile_sparse(&project, filter.clone())?;
-        // Create test options from general project settings
-        // and compiler output
+        let mut filter = self.filter(&config);
+        trace!(target: "forge::test", ?filter, "using filter");
+
+        let mut compiler = ProjectCompiler::new().quiet_if(self.json || self.opts.silent);
+        if config.sparse_mode {
+            compiler = compiler.filter(Box::new(filter.clone()));
+        }
+        let output = compiler.compile(&project)?;
+
+        // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
