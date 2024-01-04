@@ -1,5 +1,6 @@
 use super::Result;
 use crate::Vm::Rpc;
+use alloy_primitives::Address;
 use foundry_common::fs::normalize_path;
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
@@ -7,7 +8,10 @@ use foundry_config::{
     ResolvedRpcEndpoints,
 };
 use foundry_evm_core::opts::EvmOpts;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///
@@ -30,6 +34,8 @@ pub struct CheatsConfig {
     pub allowed_paths: Vec<PathBuf>,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
+    /// Address labels from config
+    pub labels: HashMap<Address, String>,
 }
 
 impl CheatsConfig {
@@ -51,6 +57,7 @@ impl CheatsConfig {
             root: config.__root.0.clone(),
             allowed_paths,
             evm_opts,
+            labels: config.labels.clone(),
         }
     }
 
@@ -164,6 +171,7 @@ impl Default for CheatsConfig {
             root: Default::default(),
             allowed_paths: vec![],
             evm_opts: Default::default(),
+            labels: Default::default(),
         }
     }
 }
