@@ -8,7 +8,7 @@ use revm::{
 };
 
 /// An inspector that collects touched accounts and storage slots.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct AccessListTracer {
     excluded: HashSet<Address>,
     access_list: HashMap<Address, HashSet<B256>>,

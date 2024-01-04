@@ -2,7 +2,7 @@ use crate::{HitMap, HitMaps};
 use alloy_primitives::Bytes;
 use revm::{interpreter::Interpreter, Database, EVMData, Inspector};
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CoverageCollector {
     /// Maps that track instruction hit data.
     pub maps: HitMaps,

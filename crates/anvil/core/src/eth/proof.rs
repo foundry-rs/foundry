@@ -12,7 +12,7 @@ use revm::primitives::KECCAK_EMPTY;
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
 
 /// Basic account type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 pub struct BasicAccount {
     /// Nonce of the account.

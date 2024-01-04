@@ -67,7 +67,7 @@ impl LogsSubscription {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EthSubscriptionResponse {
     jsonrpc: Version,
     method: &'static str,
@@ -83,7 +83,7 @@ impl EthSubscriptionResponse {
 }
 
 /// Represents the `params` field of an `eth_subscription` event
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EthSubscriptionParams {
     subscription: SubscriptionId,
     #[serde(flatten)]

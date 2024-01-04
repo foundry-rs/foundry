@@ -11,7 +11,7 @@ use std::{
 };
 
 /// CLI arguments for `forge init`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct InitArgs {
     /// The root directory of the new project.
     #[clap(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]

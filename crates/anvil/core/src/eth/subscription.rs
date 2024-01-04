@@ -9,7 +9,7 @@ use ethers_core::{
 use std::fmt;
 
 /// Result of a subscription
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum SubscriptionResult {
@@ -24,7 +24,7 @@ pub enum SubscriptionResult {
 }
 
 /// Sync status
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SyncStatus {
@@ -32,7 +32,7 @@ pub struct SyncStatus {
 }
 
 /// Params for a subscription request
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SubscriptionParams {
     /// holds the filter params field if present in the request
     pub filter: Option<Filter>,
@@ -58,7 +58,7 @@ impl<'a> serde::Deserialize<'a> for SubscriptionParams {
 }
 
 /// Subscription kind
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -112,7 +112,7 @@ impl fmt::Debug for SubscriptionId {
 }
 
 /// Provides random hex identifier with a certain length
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HexIdProvider {
     len: usize,
 }

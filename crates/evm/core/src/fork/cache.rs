@@ -116,7 +116,7 @@ impl BlockchainDb {
 }
 
 /// relevant identifying markers in the context of [BlockchainDb]
-#[derive(Debug, Clone, Eq, Serialize)]
+#[derive(Clone, Debug, Eq, Serialize)]
 pub struct BlockchainDbMeta {
     pub cfg_env: revm::primitives::CfgEnv,
     pub block_env: revm::primitives::BlockEnv,

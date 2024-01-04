@@ -17,7 +17,7 @@ use foundry_compilers::{
 use std::fmt;
 
 /// CLI arguments for `forge inspect`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct InspectArgs {
     /// The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.
     pub contract: ContractInfo,

@@ -8,7 +8,7 @@ use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge remove`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct RemoveArgs {
     /// The dependencies you want to remove.
     dependencies: Vec<Dependency>,

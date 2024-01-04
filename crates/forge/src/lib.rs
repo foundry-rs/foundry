@@ -32,7 +32,7 @@ pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
 
 /// Metadata on how to run fuzz/invariant tests
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TestOptions {
     /// The base "fuzz" test configuration. To be used as a fallback in case
     /// no more specific configs are found for a given run.

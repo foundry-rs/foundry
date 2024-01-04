@@ -57,10 +57,10 @@ interface Vm {
         Balance,
         /// The account's codesize was read.
         Extcodesize,
-        /// The account's code was copied.
-        Extcodecopy,
         /// The account's codehash was read.
         Extcodehash,
+        /// The account's code was copied.
+        Extcodecopy,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
@@ -260,7 +260,7 @@ interface Vm {
 
     /// Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.
     #[cheatcode(group = Evm, safety = Safe)]
-    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);
+    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
 
     // -------- Recording Map Writes --------
 
@@ -317,6 +317,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function roll(uint256 newHeight) external;
 
+    /// Gets the current `block.number`.
+    /// You should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,
+    /// and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockNumber() external view returns (uint256 height);
+
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function txGasPrice(uint256 newGasPrice) external;
@@ -324,6 +331,13 @@ interface Vm {
     /// Sets `block.timestamp`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function warp(uint256 newTimestamp) external;
+
+    /// Gets the current `block.timestamp`.
+    /// You should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,
+    /// and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockTimestamp() external view returns (uint256 timestamp);
 
     // -------- Account State --------
 
@@ -352,7 +366,7 @@ interface Vm {
     function store(address target, bytes32 slot, bytes32 value) external;
 
     /// Marks the slots of an account and the account address as cold.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function cool(address target) external;
 
     // -------- Call Manipulation --------
@@ -508,7 +522,7 @@ interface Vm {
 
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
-    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);
 
@@ -1274,7 +1288,7 @@ interface Vm {
 
     /// Gets the label for the specified address.
     #[cheatcode(group = Utilities)]
-    function getLabel(address account) external returns (string memory currentLabel);
+    function getLabel(address account) external view returns (string memory currentLabel);
 
     /// Compute the address a contract will be deployed at for a given deployer address and nonce.
     #[cheatcode(group = Utilities)]

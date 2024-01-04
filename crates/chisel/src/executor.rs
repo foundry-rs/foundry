@@ -18,6 +18,7 @@ use foundry_evm::{
 };
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
+use tracing::debug;
 use yansi::Paint;
 
 const USIZE_MAX_AS_U256: U256 = U256::from_limbs([usize::MAX as u64, 0, 0, 0]);
@@ -30,6 +31,8 @@ impl SessionSource {
     ///
     /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
     /// the [ChiselResult].
+    ///
+    /// Returns an error if compilation fails.
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
@@ -125,35 +128,41 @@ impl SessionSource {
     ///
     /// ### Returns
     ///
-    /// If the input is valid `Ok((formatted_output, continue))` where:
+    /// If the input is valid `Ok((continue, formatted_output))` where:
     /// - `continue` is true if the input should be appended to the source
-    /// - `formatted_output` is the formatted value
+    /// - `formatted_output` is the formatted value, if any
     pub async fn inspect(&self, input: &str) -> Result<(bool, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line) {
+        let mut source = match self.clone_with_new_line(line.clone()) {
             Ok((source, _)) => source,
-            Err(_) => return Ok((true, None)),
+            Err(err) => {
+                debug!(%err, "failed to build new source");
+                return Ok((true, None))
+            }
         };
 
         let mut source_without_inspector = self.clone();
 
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
-        let (mut res, has_inspector) = match source.execute().await {
-            Ok((_, res)) => (res, true),
-            Err(e) => match source_without_inspector.execute().await {
-                Ok((_, res)) => (res, false),
-                Err(_) => {
-                    if self.config.foundry_config.verbosity >= 3 {
-                        eprintln!("Could not inspect: {e}");
+        let (mut res, err) = match source.execute().await {
+            Ok((_, res)) => (res, None),
+            Err(err) => {
+                debug!(?err, %input, "execution failed");
+                match source_without_inspector.execute().await {
+                    Ok((_, res)) => (res, Some(err)),
+                    Err(_) => {
+                        if self.config.foundry_config.verbosity >= 3 {
+                            eprintln!("Could not inspect: {err}");
+                        }
+                        return Ok((true, None))
                     }
-                    return Ok((true, None))
                 }
-            },
+            }
         };
 
         // If abi-encoding the input failed, check whether it is an event
-        if !has_inspector {
+        if let Some(err) = err {
             let generated_output = source_without_inspector
                 .generated_output
                 .as_ref()
@@ -170,6 +179,12 @@ impl SessionSource {
                 return Ok((false, Some(formatted)))
             }
 
+            // we were unable to check the event
+            if self.config.foundry_config.verbosity >= 3 {
+                eprintln!("Failed eval: {err}");
+            }
+
+            debug!(%err, %input, "failed abi encode input");
             return Ok((false, None))
         }
 
@@ -321,26 +336,44 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Address(a) => {
             format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(a.to_string()))
         }
-        DynSolValue::FixedBytes(b, _) => {
+        DynSolValue::FixedBytes(b, byte_len) => {
             format!(
                 "Type: {}\n└ Data: {}",
-                Paint::red(format!("bytes{}", b.len())),
+                Paint::red(format!("bytes{byte_len}")),
                 Paint::cyan(hex::encode_prefixed(b))
             )
         }
-        DynSolValue::Int(i, _) => {
+        DynSolValue::Int(i, bit_len) => {
             format!(
-                "Type: {}\n├ Hex: {}\n└ Decimal: {}",
-                Paint::red("int"),
-                Paint::cyan(format!("0x{i:x}")),
+                "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
+                Paint::red(format!("int{}", bit_len)),
+                Paint::cyan(format!(
+                    "0x{}",
+                    format!("{i:x}")
+                        .char_indices()
+                        .skip(64 - bit_len / 4)
+                        .take(bit_len / 4)
+                        .map(|(_, c)| c)
+                        .collect::<String>()
+                )),
+                Paint::cyan(format!("{i:#x}")),
                 Paint::cyan(i)
             )
         }
-        DynSolValue::Uint(i, _) => {
+        DynSolValue::Uint(i, bit_len) => {
             format!(
-                "Type: {}\n├ Hex: {}\n└ Decimal: {}",
-                Paint::red("uint"),
-                Paint::cyan(format!("0x{i:x}")),
+                "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
+                Paint::red(format!("uint{}", bit_len)),
+                Paint::cyan(format!(
+                    "0x{}",
+                    format!("{i:x}")
+                        .char_indices()
+                        .skip(64 - bit_len / 4)
+                        .take(bit_len / 4)
+                        .map(|(_, c)| c)
+                        .collect::<String>()
+                )),
+                Paint::cyan(format!("{i:#x}")),
                 Paint::cyan(i)
             )
         }
@@ -450,7 +483,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
         alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
 
     Ok(format!(
-        "Type: {}\n├ Name: {}\n└ Signature: {:?}",
+        "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         Paint::red("event"),
         SolidityHelper::highlight(&format!(
             "{}({})",
@@ -472,6 +505,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                 .join(", ")
         )),
         Paint::cyan(event.signature()),
+        Paint::cyan(event.selector()),
     ))
 }
 
@@ -480,7 +514,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Type {
     /// (type)
     Builtin(DynSolType),
@@ -1320,7 +1354,7 @@ fn unit_multiplier(unit: &Option<pt::Identifier>) -> Result<U256> {
     }
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Instruction {
     pub pc: usize,
     pub opcode: u8,

@@ -6,7 +6,7 @@ use foundry_evm::hashbrown::HashMap;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge remappings`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct RemappingArgs {
     /// The project's root path.
     ///

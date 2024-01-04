@@ -13,7 +13,7 @@ pub struct App {
     pub cmd: Option<Commands>,
 }
 
-#[derive(Clone, Debug, Subcommand, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
 pub enum Commands {
     /// Generate shell completions script.
     #[clap(visible_alias = "com")]

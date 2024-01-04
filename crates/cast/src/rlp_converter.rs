@@ -5,7 +5,7 @@ use std::fmt;
 /// Arbitrary nested data
 /// Item::Array(vec![]); is equivalent to []
 /// Item::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Data(Vec<u8>),
     Array(Vec<Item>),

@@ -4,7 +4,7 @@ use solang_parser::pt::*;
 use std::collections::VecDeque;
 
 /// The type of a Comment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentType {
     /// A Line comment (e.g. `// ...`)
     Line,
@@ -17,7 +17,7 @@ pub enum CommentType {
 }
 
 /// The comment position
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentPosition {
     /// Comes before the code it describes
     Prefix,
@@ -26,7 +26,7 @@ pub enum CommentPosition {
 }
 
 /// Comment with additional metadata
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommentWithMetadata {
     pub ty: CommentType,
     pub loc: Loc,
@@ -152,6 +152,10 @@ impl CommentWithMetadata {
         matches!(self.ty, CommentType::Line | CommentType::DocLine)
     }
 
+    pub fn is_doc_block(&self) -> bool {
+        matches!(self.ty, CommentType::DocBlock)
+    }
+
     pub fn is_prefix(&self) -> bool {
         matches!(self.position, CommentPosition::Prefix)
     }
@@ -208,7 +212,7 @@ impl CommentWithMetadata {
 }
 
 /// A list of comments
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,
@@ -295,7 +299,7 @@ impl Comments {
 }
 
 /// The state of a character in a string with possible comments
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CommentState {
     /// character not in a comment
     #[default]

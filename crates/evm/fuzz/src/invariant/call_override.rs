@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// Given a TestRunner and a strategy, it generates calls. Used inside the Fuzzer inspector to
 /// override external calls to test for potential reentrancy vulnerabilities..
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct RandomCallGenerator {
     /// Address of the test contract.
     pub test_address: Address,

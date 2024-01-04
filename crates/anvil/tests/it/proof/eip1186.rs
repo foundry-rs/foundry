@@ -8,7 +8,7 @@ use trie_db::{
 /// Errors that may occur during proof verification. Most of the errors types simply indicate that
 /// the proof is invalid with respect to the statement being verified, and the exact error type can
 /// be used for debugging.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum VerifyError<'a, HO, CE> {
     /// The proof does not contain any value for the given key
     /// the error carries the nibbles left after traversing the trie

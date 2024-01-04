@@ -13,7 +13,7 @@ pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");
 /// comments for inheritdoc comment tags.
 ///
 /// This preprocessor writes to [Document]'s context.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Inheritdoc;
 

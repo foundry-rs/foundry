@@ -168,7 +168,7 @@ pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
 }
 
 /// How to initialize a remote git project
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct RemoteProject {
     id: String,
     run_build: bool,

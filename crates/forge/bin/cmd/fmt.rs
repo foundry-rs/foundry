@@ -15,7 +15,7 @@ use std::{
 use yansi::Color;
 
 /// CLI arguments for `forge fmt`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct FmtArgs {
     /// Path to the file, directory or '-' to read from stdin.
     #[clap(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]

@@ -8,7 +8,7 @@ use foundry_config::{impl_figment_convert_basic, Config};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge update`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct UpdateArgs {
     /// The dependencies you want to update.
     dependencies: Vec<Dependency>,

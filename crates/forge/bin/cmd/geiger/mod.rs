@@ -15,7 +15,7 @@ use find::{find_cheatcodes_in_file, SolFileMetricsPrinter};
 mod visitor;
 
 /// CLI arguments for `forge geiger`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct GeigerArgs {
     /// Paths to files or directories to detect.
     #[clap(

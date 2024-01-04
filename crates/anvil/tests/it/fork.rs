@@ -1026,3 +1026,27 @@ async fn test_fork_reset_moonbeam() {
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 }
+
+// <https://github.com/foundry-rs/foundry/issues/6640
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_basefee() {
+    // <https://etherscan.io/block/18835000>
+    let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(18835000u64))).await;
+
+    api.mine_one().await;
+    let latest = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    // basefee of +1 block: <https://etherscan.io/block/18835001>
+    assert_eq!(latest.base_fee_per_gas.unwrap(), 59455969592u64.into());
+
+    // now reset to block 18835000 -1
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(18835000u64 - 1) }))
+        .await
+        .unwrap();
+
+    api.mine_one().await;
+    let latest = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    // basefee of the forked block: <https://etherscan.io/block/18835000>
+    assert_eq!(latest.base_fee_per_gas.unwrap(), 59017001138u64.into());
+}

@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, fmt::Formatter, str::FromStr};
 
 /// Settings to configure caching of remote
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageCachingConfig {
     /// chains to cache
     pub chains: CachedChains,
@@ -31,7 +31,7 @@ impl StorageCachingConfig {
 }
 
 /// What chains to cache
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum CachedChains {
     /// Cache all chains
     #[default]
@@ -89,7 +89,7 @@ impl<'de> Deserialize<'de> for CachedChains {
 }
 
 /// What endpoints to enable caching for
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub enum CachedEndpoints {
     /// Cache all endpoints
     #[default]

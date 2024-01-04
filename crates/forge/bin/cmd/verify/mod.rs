@@ -18,7 +18,7 @@ use provider::VerificationProvider;
 mod sourcify;
 
 /// Verification provider arguments
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
     #[clap(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
@@ -36,7 +36,7 @@ impl Default for VerifierArgs {
 }
 
 /// CLI arguments for `forge verify`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct VerifyArgs {
     /// The address of the contract to verify.
     pub address: Address,
@@ -45,7 +45,12 @@ pub struct VerifyArgs {
     pub contract: ContractInfo,
 
     /// The ABI-encoded constructor arguments.
-    #[clap(long, conflicts_with = "constructor_args_path", value_name = "ARGS")]
+    #[clap(
+        long,
+        conflicts_with = "constructor_args_path",
+        value_name = "ARGS",
+        visible_alias = "encoded-constructor-args"
+    )]
     pub constructor_args: Option<String>,
 
     /// The path to a file containing the constructor arguments.
@@ -173,7 +178,7 @@ impl VerifyArgs {
 }
 
 /// Check verification status arguments
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct VerifyCheckArgs {
     /// The verification ID.
     ///

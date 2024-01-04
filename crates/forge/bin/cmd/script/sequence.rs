@@ -29,7 +29,7 @@ pub const DRY_RUN_DIR: &str = "dry-run";
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     #[serde(serialize_with = "wrapper::serialize_receipts")]
@@ -49,13 +49,13 @@ pub struct ScriptSequence {
 }
 
 /// Sensitive values from the transactions in a script sequence
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveTransactionMetadata {
     pub rpc: Option<String>,
 }
 
 /// Sensitive info from the script sequence which is saved into the cache folder
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
@@ -135,11 +135,7 @@ impl ScriptSequence {
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
 
-        script_sequence
-            .transactions
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, tx)| tx.rpc = sensitive_script_sequence.transactions[i].rpc.clone());
+        script_sequence.fill_sensitive(&sensitive_script_sequence);
 
         script_sequence.path = path;
         script_sequence.sensitive_path = sensitive_path;
@@ -364,6 +360,13 @@ impl ScriptSequence {
             })
             .collect()
     }
+
+    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
+        self.transactions
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, tx)| tx.rpc = sensitive.transactions[i].rpc.clone());
+    }
 }
 
 impl Drop for ScriptSequence {
@@ -377,7 +380,7 @@ impl Drop for ScriptSequence {
 ///
 /// This accepts either the signature of the function or the raw calldata
 
-fn sig_to_file_name(sig: &str) -> String {
+pub fn sig_to_file_name(sig: &str) -> String {
     if let Some((name, _)) = sig.split_once('(') {
         // strip until call argument parenthesis
         return name.to_string()

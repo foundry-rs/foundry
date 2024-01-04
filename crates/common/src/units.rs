@@ -137,7 +137,7 @@ impl Units {
 
 /// This enum holds the numeric types that a possible to be returned by `parse_units` and
 /// that are taken by `format_units`.
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParseUnits {
     /// Unsigned 256-bit integer.
     U256(U256),
@@ -212,7 +212,7 @@ construct_signed_format_units_from! {
 }
 
 /// Handles all possible conversion errors.
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum ConversionError {
     /// The unit is unrecognized.
     #[error("Unknown units: {0}")]

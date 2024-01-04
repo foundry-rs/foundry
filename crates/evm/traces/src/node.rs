@@ -6,7 +6,7 @@ use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 
 /// A node in the arena
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTraceNode {
     /// Parent node index in the arena
     pub parent: Option<usize>,

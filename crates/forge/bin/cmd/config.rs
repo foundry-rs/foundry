@@ -8,7 +8,7 @@ use foundry_config::fix::fix_tomls;
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
 /// CLI arguments for `forge config`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct ConfigArgs {
     /// Print only a basic set of the currently set config values.
     #[clap(long)]

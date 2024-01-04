@@ -32,7 +32,7 @@ use std::{
 };
 
 /// A type that executes all tests of a contract
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ContractRunner<'a> {
     pub name: &'a str,
     /// The executor used by the runner.
@@ -115,8 +115,7 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
-        let sender_nonce = self.executor.get_nonce(self.sender)?;
-        let address = self.sender.create(sender_nonce);
+        let address = self.sender.create(self.executor.get_nonce(self.sender)?);
 
         // Set the contracts initial balance before deployment, so it is available during
         // construction

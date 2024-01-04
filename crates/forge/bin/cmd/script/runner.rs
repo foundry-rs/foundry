@@ -70,8 +70,7 @@ impl ScriptRunner {
             .map(|traces| (TraceKind::Deployment, traces))
             .collect();
 
-        let sender_nonce = self.executor.get_nonce(CALLER)?;
-        let address = CALLER.create(sender_nonce);
+        let address = CALLER.create(self.executor.get_nonce(CALLER)?);
 
         // Set the contracts initial balance before deployment, so it is available during the
         // construction

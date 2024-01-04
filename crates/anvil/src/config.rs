@@ -87,7 +87,7 @@ const BANNER: &str = r"
 ";
 
 /// Configurations of the EVM node
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
     pub chain_id: Option<u64>,
@@ -1085,7 +1085,7 @@ latest block number: {latest_block}"
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PruneStateHistoryConfig {
     pub enabled: bool,
     pub max_memory_history: Option<usize>,
@@ -1110,7 +1110,7 @@ impl PruneStateHistoryConfig {
 }
 
 /// Can create dev accounts
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct AccountGenerator {
     chain_id: u64,
     amount: usize,

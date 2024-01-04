@@ -100,7 +100,7 @@ impl CallTraceDecoderBuilder {
 ///
 /// Note that a call trace decoder is required for each new set of traces, since addresses in
 /// different sets might overlap.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CallTraceDecoder {
     /// Addresses identified to be a specific contract.
     ///
@@ -357,7 +357,7 @@ impl CallTraceDecoder {
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
             "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
-            "rememberKey" | "addr" | "startBroadcast" | "broadcast" => {
+            "rememberKey" | "startBroadcast" | "broadcast" => {
                 // these functions accept a private key as uint256, which should not be
                 // converted to plain text
                 if !func.inputs.is_empty() && func.inputs[0].ty != "uint256" {
@@ -375,6 +375,7 @@ impl CallTraceDecoder {
                 }
                 Some(decoded.iter().map(format_token).collect())
             }
+            "addr" => Some(vec!["<pk>".to_string()]),
             "deriveKey" => Some(vec!["<pk>".to_string()]),
             "parseJson" |
             "parseJsonUint" |

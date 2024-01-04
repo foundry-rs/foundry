@@ -21,7 +21,7 @@
 //! use foundry_config::{figment::Figment, *};
 //!
 //! // A new clap subcommand that accepts both `EvmArgs` and `BuildArgs`
-//! #[derive(Debug, Clone, Parser)]
+//! #[derive(Clone, Debug, Parser)]
 //! pub struct MyArgs {
 //!     #[clap(flatten)]
 //!     evm_opts: EvmArgs,

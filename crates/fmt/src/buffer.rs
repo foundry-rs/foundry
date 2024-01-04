@@ -7,7 +7,7 @@ use crate::{
 use std::fmt::Write;
 
 /// An indent group. The group may optionally skip the first line
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct IndentGroup {
     skip_line: bool,
 }

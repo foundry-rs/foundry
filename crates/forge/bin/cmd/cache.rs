@@ -106,7 +106,7 @@ impl LsArgs {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum ChainOrAll {
     NamedChain(NamedChain),
     All,

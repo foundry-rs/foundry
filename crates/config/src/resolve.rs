@@ -9,7 +9,7 @@ pub static RE_PLACEHOLDER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)(?P<outer>\$\{\s*(?P<inner>.*?)\s*})").unwrap());
 
 /// Error when we failed to resolve an env var
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnresolvedEnvVarError {
     /// The unresolved input string
     pub unresolved: String,

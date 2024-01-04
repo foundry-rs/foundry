@@ -15,7 +15,7 @@ use watchexec::{
     Watchexec,
 };
 
-#[derive(Debug, Clone, Parser, Default)]
+#[derive(Clone, Debug, Default, Parser)]
 #[clap(next_help_heading = "Watch options")]
 pub struct WatchArgs {
     /// Watch the given files or directories for changes.
@@ -150,7 +150,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 struct WatchTestState {
     /// the root directory of the project
     project_root: PathBuf,

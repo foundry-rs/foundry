@@ -10,7 +10,7 @@ use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
     #[serde(flatten)]
@@ -197,7 +197,7 @@ impl EvmOpts {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Env {
     /// The block gas limit.
     #[serde(deserialize_with = "string_or_number")]

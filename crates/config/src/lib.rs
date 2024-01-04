@@ -129,7 +129,7 @@ pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfi
 ///     the "default" meta-profile.
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -1621,7 +1621,7 @@ impl From<Config> for Figment {
 }
 
 /// Wrapper type for `regex::Regex` that implements `PartialEq`
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RegexWrapper {
     #[serde(with = "serde_regex")]
@@ -1681,7 +1681,7 @@ pub(crate) mod from_opt_glob {
 }
 
 /// A helper wrapper around the root path used during Config detection
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RootPath(pub PathBuf);
 
@@ -1842,7 +1842,7 @@ impl Default for Config {
 ///
 /// Due to this limitation this type will be serialized/deserialized as String if it's larger than
 /// `i64`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GasLimit(pub u64);
 
 impl From<u64> for GasLimit {
@@ -1912,7 +1912,7 @@ impl<'de> Deserialize<'de> for GasLimit {
 }
 
 /// Variants for selecting the [`Solc`] instance
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
@@ -2452,7 +2452,7 @@ impl<P: Provider> ProviderExt for P {}
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BasicConfig {
     /// the profile tag: `[profile.default]`
     #[serde(skip)]
@@ -3088,6 +3088,33 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_resolve_rpc_aliases() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+               [profile.default]
+               [etherscan]
+               arbitrum_alias = { key = "${TEST_RESOLVE_RPC_ALIAS_ARBISCAN}" }
+               [rpc_endpoints]
+               arbitrum_alias = "https://arb-mainnet.g.alchemy.com/v2/${TEST_RESOLVE_RPC_ALIAS_ARB_ONE}"
+            "#,
+            )?;
+
+            jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARB_ONE", "123455");
+            jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARBISCAN", "123455");
+
+            let config = Config::load();
+
+            let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
+            assert!(config.is_err());
+            assert_eq!(config.unwrap_err().to_string(), "At least one of `url` or `chain` must be present for Etherscan config with unknown alias `arbitrum_alias`");
+
+            Ok(())
+        });
     }
 
     #[test]

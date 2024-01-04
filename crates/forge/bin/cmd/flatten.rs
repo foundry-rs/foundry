@@ -8,7 +8,7 @@ use foundry_common::fs;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct FlattenArgs {
     /// The path to the contract to flatten.
     #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]

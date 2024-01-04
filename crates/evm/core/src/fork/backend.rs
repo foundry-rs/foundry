@@ -507,7 +507,7 @@ where
 // > Runs the provided blocking function on the current thread without blocking the executor.
 // This prevents issues (hangs) we ran into were the [SharedBackend] itself is called from a spawned
 // task.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,
@@ -661,16 +661,13 @@ impl DatabaseRef for SharedBackend {
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         trace!(target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        match self.do_get_storage(address, index).map_err(|err| {
+        self.do_get_storage(address, index).map_err(|err| {
             error!(target: "sharedbackend", %err, %address, %index, "Failed to send/recv `storage`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
           err
-        }) {
-            Ok(val) => Ok(val),
-            Err(err) => Err(err),
-        }
+        })
     }
 
     fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
@@ -680,16 +677,13 @@ impl DatabaseRef for SharedBackend {
         let number: U256 = number;
         let number = number.to();
         trace!(target: "sharedbackend", "request block hash for number {:?}", number);
-        match self.do_get_block_hash(number).map_err(|err| {
+        self.do_get_block_hash(number).map_err(|err| {
             error!(target: "sharedbackend", %err, %number, "Failed to send/recv `block_hash`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
             err
-        }) {
-            Ok(val) => Ok(val),
-            Err(err) => Err(err),
-        }
+        })
     }
 }
 

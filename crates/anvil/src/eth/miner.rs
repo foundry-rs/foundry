@@ -17,7 +17,7 @@ use std::{
 };
 use tokio::time::Interval;
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Miner {
     /// The mode this miner currently operates in
     mode: Arc<RwLock<MiningMode>>,

@@ -109,7 +109,7 @@ called in the [`Cheatcodes` inspector](#cheatcode-inspector) implementation.
 Generates the raw Rust bindings for the cheatcodes, as well as lets us specify custom attributes
 individually for each item, such as functions and structs, or for entire interfaces.
 
-The way bindings are generated and extra information can be found the [`sol!`] documentation.
+The way bindings are generated and extra information can be found in the [`sol!`] documentation.
 
 We leverage this macro to apply the [`Cheatcode` derive macro](#cheatcode-derive-macro) on the `Vm` interface.
 
@@ -127,7 +127,7 @@ The latter is what fails compilation when adding a new cheatcode, and is fixed b
 [`Cheatcode` trait](#cheatcode-trait) to the newly-generated function call struct(s).
 
 The `Cheatcode` derive macro also parses the `#[cheatcode(...)]` attributes on functions, which are
-used to specify additional properties the JSON interface.
+used to specify additional properties of the JSON interface.
 
 These are all the attributes that can be specified on cheatcode functions:
 - `#[cheatcode(group = <ident>)]`: The group that the cheatcode belongs to. Required.
@@ -165,11 +165,9 @@ update of the files.
 3. If a struct, enum, error, or event was added to `Vm`, update [`spec::Cheatcodes::new`]
 4. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
 5. Write an integration test for the cheatcode in [`testdata/cheats/`]
-6. Submit a PR to [`forge-std`] updating the Solidity interfaces as necessary. Note that this step won't be necessary once the Solidity interfaces are generated using the JSON interface
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
 [`cheatcodes`]: ../../crates/cheatcodes/
 [`spec::Cheatcodes::new`]: ../../crates/cheatcodes/spec/src/lib.rs#L74
 [`testdata/cheats/`]: ../../testdata/cheats/
-[`forge-std`]: https://github.com/foundry-rs/forge-std

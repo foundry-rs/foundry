@@ -22,7 +22,6 @@ use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
-use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;
 
@@ -32,7 +31,7 @@ use std::str::FromStr;
 const MIN_SOLC: Version = Version::new(0, 6, 5);
 
 /// CLI arguments for `cast storage`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct StorageArgs {
     /// The contract address.
     #[clap(value_parser = NameOrAddress::from_str)]
@@ -180,6 +179,37 @@ impl StorageArgs {
     }
 }
 
+/// Represents the value of a storage slot `eth_getStorageAt` call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StorageValue {
+    /// The slot number.
+    slot: B256,
+    /// The value as returned by `eth_getStorageAt`.
+    raw_slot_value: B256,
+}
+
+impl StorageValue {
+    /// Returns the value of the storage slot, applying the offset if necessary.
+    fn value(&self, offset: i64, number_of_bytes: Option<usize>) -> B256 {
+        let offset = offset as usize;
+        let mut end = 32;
+        if let Some(number_of_bytes) = number_of_bytes {
+            end = offset + number_of_bytes;
+            if end > 32 {
+                end = 32;
+            }
+        }
+        let mut value = [0u8; 32];
+
+        // reverse range, because the value is stored in big endian
+        let offset = 32 - offset;
+        let end = 32 - end;
+
+        value[end..offset].copy_from_slice(&self.raw_slot_value.as_slice()[end..offset]);
+        B256::from(value)
+    }
+}
+
 async fn fetch_and_print_storage(
     provider: RetryProvider,
     address: NameOrAddress,
@@ -199,34 +229,35 @@ async fn fetch_storage_slots(
     provider: RetryProvider,
     address: NameOrAddress,
     layout: &StorageLayout,
-) -> Result<Vec<B256>> {
-    // TODO: Batch request
-    let futures: Vec<_> = layout
-        .storage
-        .iter()
-        .map(|slot| {
-            let slot = B256::from(U256::from_str(&slot.slot)?);
-            Ok(provider.get_storage_at(address.clone(), slot.to_ethers(), None))
-        })
-        .collect::<Result<_>>()?;
+) -> Result<Vec<StorageValue>> {
+    let requests = layout.storage.iter().map(|storage_slot| async {
+        let slot = B256::from(U256::from_str(&storage_slot.slot)?);
+        let raw_slot_value =
+            provider.get_storage_at(address.clone(), slot.to_ethers(), None).await?.to_alloy();
 
-    join_all(futures).await.into_iter().map(|r| Ok(r?.to_alloy())).collect()
+        let value = StorageValue { slot, raw_slot_value };
+
+        Ok(value)
+    });
+
+    futures::future::try_join_all(requests).await
 }
 
-fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Result<()> {
+fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(());
+        return Ok(())
     }
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
     table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
 
-    for (slot, value) in layout.storage.into_iter().zip(values) {
+    for (slot, storage_value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
-        let raw_value_bytes = value.0;
-        let converted_value = U256::from_be_bytes(raw_value_bytes);
+        let value = storage_value
+            .value(slot.offset, storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()));
+        let converted_value = U256::from_be_bytes(value.0);
 
         table.add_row([
             slot.label.as_str(),
