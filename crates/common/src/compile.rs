@@ -151,7 +151,7 @@ impl ProjectCompiler {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// let prj = config.project().unwrap();
