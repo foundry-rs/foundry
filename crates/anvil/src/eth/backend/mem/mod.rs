@@ -30,14 +30,14 @@ use crate::{
     NodeConfig,
 };
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_rpc_trace_types::{
+    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace,
+};
 use alloy_rpc_types::{
-    state::StateOverride,
-    trace::{
-        DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace,
-        LocalizedTransactionTrace,
-    },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, Filter,
-    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt,
+    state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
+    BlockNumberOrTag as BlockNumber, Filter, FilteredParams, Header as AlloyHeader, Log,
+    Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{

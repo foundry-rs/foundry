@@ -30,16 +30,16 @@ use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
+use alloy_rpc_trace_types::{
+    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace,
+};
 use alloy_rpc_types::{
     state::StateOverride,
-    trace::{
-        DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace,
-        LocalizedTransactionTrace,
-    },
+    txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter,
-    FilteredParams, Log, Transaction, TransactionReceipt, TxpoolContent, TxpoolInspect,
-    TxpoolInspectSummary, TxpoolStatus,
+    FilteredParams, Log, Transaction, TransactionReceipt,
 };
 use alloy_transport::TransportErrorKind;
 use anvil_core::{

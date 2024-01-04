@@ -149,11 +149,11 @@ impl ToAlloy for ethers_core::types::Transaction {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::LocalizedTransactionTrace {
-    type To = alloy_rpc_types::trace::parity::LocalizedTransactionTrace;
+impl ToReth for alloy_rpc_trace_types::parity::LocalizedTransactionTrace {
+    type To = alloy_rpc_trace_types::parity::LocalizedTransactionTrace;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::LocalizedTransactionTrace {
+        alloy_rpc_trace_types::parity::LocalizedTransactionTrace {
             trace: self.trace.to_reth(),
             block_hash: self.block_hash,
             block_number: self.block_number,
@@ -163,11 +163,11 @@ impl ToReth for alloy_rpc_types::trace::parity::LocalizedTransactionTrace {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::TransactionTrace {
-    type To = alloy_rpc_types::trace::parity::TransactionTrace;
+impl ToReth for alloy_rpc_trace_types::parity::TransactionTrace {
+    type To = alloy_rpc_trace_types::parity::TransactionTrace;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::TransactionTrace {
+        alloy_rpc_trace_types::parity::TransactionTrace {
             action: self.action.to_reth(),
             error: self.error,
             result: self.result.map(ToReth::to_reth),
@@ -177,34 +177,34 @@ impl ToReth for alloy_rpc_types::trace::parity::TransactionTrace {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::TraceOutput {
-    type To = alloy_rpc_types::trace::parity::TraceOutput;
+impl ToReth for alloy_rpc_trace_types::parity::TraceOutput {
+    type To = alloy_rpc_trace_types::parity::TraceOutput;
 
     fn to_reth(self) -> Self::To {
         match self {
-            alloy_rpc_types::trace::parity::TraceOutput::Call(call_output) => {
-                alloy_rpc_types::trace::parity::TraceOutput::Call(call_output.to_reth())
+            alloy_rpc_trace_types::parity::TraceOutput::Call(call_output) => {
+                alloy_rpc_trace_types::parity::TraceOutput::Call(call_output.to_reth())
             }
-            alloy_rpc_types::trace::parity::TraceOutput::Create(create_output) => {
-                alloy_rpc_types::trace::parity::TraceOutput::Create(create_output.to_reth())
+            alloy_rpc_trace_types::parity::TraceOutput::Create(create_output) => {
+                alloy_rpc_trace_types::parity::TraceOutput::Create(create_output.to_reth())
             }
         }
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::CallOutput {
-    type To = alloy_rpc_types::trace::parity::CallOutput;
+impl ToReth for alloy_rpc_trace_types::parity::CallOutput {
+    type To = alloy_rpc_trace_types::parity::CallOutput;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::CallOutput { gas_used: self.gas_used, output: self.output }
+        alloy_rpc_trace_types::parity::CallOutput { gas_used: self.gas_used, output: self.output }
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::CreateOutput {
-    type To = alloy_rpc_types::trace::parity::CreateOutput;
+impl ToReth for alloy_rpc_trace_types::parity::CreateOutput {
+    type To = alloy_rpc_trace_types::parity::CreateOutput;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::CreateOutput {
+        alloy_rpc_trace_types::parity::CreateOutput {
             gas_used: self.gas_used,
             code: self.code,
             address: self.address,
@@ -212,56 +212,56 @@ impl ToReth for alloy_rpc_types::trace::parity::CreateOutput {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::Action {
-    type To = alloy_rpc_types::trace::parity::Action;
+impl ToReth for alloy_rpc_trace_types::parity::Action {
+    type To = alloy_rpc_trace_types::parity::Action;
 
     fn to_reth(self) -> Self::To {
         match self {
-            alloy_rpc_types::trace::parity::Action::Call(call_action) => {
-                alloy_rpc_types::trace::parity::Action::Call(call_action.to_reth())
+            alloy_rpc_trace_types::parity::Action::Call(call_action) => {
+                alloy_rpc_trace_types::parity::Action::Call(call_action.to_reth())
             }
-            alloy_rpc_types::trace::parity::Action::Create(create_action) => {
-                alloy_rpc_types::trace::parity::Action::Create(create_action.to_reth())
+            alloy_rpc_trace_types::parity::Action::Create(create_action) => {
+                alloy_rpc_trace_types::parity::Action::Create(create_action.to_reth())
             }
-            alloy_rpc_types::trace::parity::Action::Selfdestruct(self_destruct_action) => {
-                alloy_rpc_types::trace::parity::Action::Selfdestruct(self_destruct_action.to_reth())
+            alloy_rpc_trace_types::parity::Action::Selfdestruct(self_destruct_action) => {
+                alloy_rpc_trace_types::parity::Action::Selfdestruct(self_destruct_action.to_reth())
             }
-            alloy_rpc_types::trace::parity::Action::Reward(reward_action) => {
-                alloy_rpc_types::trace::parity::Action::Reward(reward_action.to_reth())
+            alloy_rpc_trace_types::parity::Action::Reward(reward_action) => {
+                alloy_rpc_trace_types::parity::Action::Reward(reward_action.to_reth())
             }
         }
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::CallType {
-    type To = alloy_rpc_types::trace::parity::CallType;
+impl ToReth for alloy_rpc_trace_types::parity::CallType {
+    type To = alloy_rpc_trace_types::parity::CallType;
 
     fn to_reth(self) -> Self::To {
         match self {
-            alloy_rpc_types::trace::parity::CallType::Call => {
-                alloy_rpc_types::trace::parity::CallType::Call
+            alloy_rpc_trace_types::parity::CallType::Call => {
+                alloy_rpc_trace_types::parity::CallType::Call
             }
-            alloy_rpc_types::trace::parity::CallType::DelegateCall => {
-                alloy_rpc_types::trace::parity::CallType::DelegateCall
+            alloy_rpc_trace_types::parity::CallType::DelegateCall => {
+                alloy_rpc_trace_types::parity::CallType::DelegateCall
             }
-            alloy_rpc_types::trace::parity::CallType::StaticCall => {
-                alloy_rpc_types::trace::parity::CallType::StaticCall
+            alloy_rpc_trace_types::parity::CallType::StaticCall => {
+                alloy_rpc_trace_types::parity::CallType::StaticCall
             }
-            alloy_rpc_types::trace::parity::CallType::CallCode => {
-                alloy_rpc_types::trace::parity::CallType::CallCode
+            alloy_rpc_trace_types::parity::CallType::CallCode => {
+                alloy_rpc_trace_types::parity::CallType::CallCode
             }
-            alloy_rpc_types::trace::CallType::None => {
-                alloy_rpc_types::trace::parity::CallType::None
+            alloy_rpc_trace_types::parity::CallType::None => {
+                alloy_rpc_trace_types::parity::CallType::None
             }
         }
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::CallAction {
-    type To = alloy_rpc_types::trace::parity::CallAction;
+impl ToReth for alloy_rpc_trace_types::parity::CallAction {
+    type To = alloy_rpc_trace_types::parity::CallAction;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::CallAction {
+        alloy_rpc_trace_types::parity::CallAction {
             call_type: self.call_type.to_reth(),
             from: self.from,
             gas: self.gas,
@@ -272,11 +272,11 @@ impl ToReth for alloy_rpc_types::trace::parity::CallAction {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::CreateAction {
-    type To = alloy_rpc_types::trace::parity::CreateAction;
+impl ToReth for alloy_rpc_trace_types::parity::CreateAction {
+    type To = alloy_rpc_trace_types::parity::CreateAction;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::CreateAction {
+        alloy_rpc_trace_types::parity::CreateAction {
             from: self.from,
             gas: self.gas,
             init: self.init,
@@ -285,11 +285,11 @@ impl ToReth for alloy_rpc_types::trace::parity::CreateAction {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::SelfdestructAction {
-    type To = alloy_rpc_types::trace::parity::SelfdestructAction;
+impl ToReth for alloy_rpc_trace_types::parity::SelfdestructAction {
+    type To = alloy_rpc_trace_types::parity::SelfdestructAction;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::SelfdestructAction {
+        alloy_rpc_trace_types::parity::SelfdestructAction {
             refund_address: self.refund_address,
             address: self.address,
             balance: self.balance,
@@ -297,11 +297,11 @@ impl ToReth for alloy_rpc_types::trace::parity::SelfdestructAction {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::RewardAction {
-    type To = alloy_rpc_types::trace::parity::RewardAction;
+impl ToReth for alloy_rpc_trace_types::parity::RewardAction {
+    type To = alloy_rpc_trace_types::parity::RewardAction;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::parity::RewardAction {
+        alloy_rpc_trace_types::parity::RewardAction {
             author: self.author,
             reward_type: self.reward_type.to_reth(),
             value: self.value,
@@ -309,26 +309,26 @@ impl ToReth for alloy_rpc_types::trace::parity::RewardAction {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::parity::RewardType {
-    type To = alloy_rpc_types::trace::parity::RewardType;
+impl ToReth for alloy_rpc_trace_types::parity::RewardType {
+    type To = alloy_rpc_trace_types::parity::RewardType;
 
     fn to_reth(self) -> Self::To {
         match self {
-            alloy_rpc_types::trace::parity::RewardType::Block => {
-                alloy_rpc_types::trace::parity::RewardType::Block
+            alloy_rpc_trace_types::parity::RewardType::Block => {
+                alloy_rpc_trace_types::parity::RewardType::Block
             }
-            alloy_rpc_types::trace::parity::RewardType::Uncle => {
-                alloy_rpc_types::trace::parity::RewardType::Uncle
+            alloy_rpc_trace_types::parity::RewardType::Uncle => {
+                alloy_rpc_trace_types::parity::RewardType::Uncle
             }
         }
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::GethDefaultTracingOptions {
-    type To = alloy_rpc_types::trace::geth::GethDefaultTracingOptions;
+impl ToReth for alloy_rpc_trace_types::geth::GethDefaultTracingOptions {
+    type To = alloy_rpc_trace_types::geth::GethDefaultTracingOptions;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::GethDefaultTracingOptions {
+        alloy_rpc_trace_types::geth::GethDefaultTracingOptions {
             disable_memory: self.disable_memory,
             disable_stack: self.disable_stack,
             disable_storage: self.disable_storage,
@@ -341,11 +341,11 @@ impl ToReth for alloy_rpc_types::trace::geth::GethDefaultTracingOptions {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::GethTrace {
-    type To = alloy_rpc_types::trace::geth::GethTrace;
+impl ToReth for alloy_rpc_trace_types::geth::GethTrace {
+    type To = alloy_rpc_trace_types::geth::GethTrace;
 
     fn to_reth(self) -> Self::To {
-        use alloy_rpc_types::trace::geth::{
+        use alloy_rpc_trace_types::geth::{
             GethTrace as AlloyGethTrace, GethTrace as RethGethTrace,
         };
         match self {
@@ -365,11 +365,11 @@ impl ToReth for alloy_rpc_types::trace::geth::GethTrace {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::AccountState {
-    type To = alloy_rpc_types::trace::geth::AccountState;
+impl ToReth for alloy_rpc_trace_types::geth::AccountState {
+    type To = alloy_rpc_trace_types::geth::AccountState;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::AccountState {
+        alloy_rpc_trace_types::geth::AccountState {
             balance: self.balance,
             nonce: self.nonce,
             code: self.code,
@@ -378,32 +378,32 @@ impl ToReth for alloy_rpc_types::trace::geth::AccountState {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::PreStateMode {
-    type To = alloy_rpc_types::trace::geth::PreStateMode;
+impl ToReth for alloy_rpc_trace_types::geth::PreStateMode {
+    type To = alloy_rpc_trace_types::geth::PreStateMode;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::PreStateMode(
+        alloy_rpc_trace_types::geth::PreStateMode(
             self.0.into_iter().map(|(k, v)| (k, v.to_reth())).collect(),
         )
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::DiffMode {
-    type To = alloy_rpc_types::trace::geth::DiffMode;
+impl ToReth for alloy_rpc_trace_types::geth::DiffMode {
+    type To = alloy_rpc_trace_types::geth::DiffMode;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::DiffMode {
+        alloy_rpc_trace_types::geth::DiffMode {
             pre: self.pre.into_iter().map(|(k, v)| (k, v.to_reth())).collect(),
             post: self.post.into_iter().map(|(k, v)| (k, v.to_reth())).collect(),
         }
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::PreStateFrame {
-    type To = alloy_rpc_types::trace::geth::PreStateFrame;
+impl ToReth for alloy_rpc_trace_types::geth::PreStateFrame {
+    type To = alloy_rpc_trace_types::geth::PreStateFrame;
 
     fn to_reth(self) -> Self::To {
-        use alloy_rpc_types::trace::geth::{
+        use alloy_rpc_trace_types::geth::{
             PreStateFrame as AlloyPreStateFrame, PreStateFrame as RethPreStateFrame,
         };
 
@@ -416,19 +416,19 @@ impl ToReth for alloy_rpc_types::trace::geth::PreStateFrame {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::NoopFrame {
-    type To = alloy_rpc_types::trace::geth::NoopFrame;
+impl ToReth for alloy_rpc_trace_types::geth::NoopFrame {
+    type To = alloy_rpc_trace_types::geth::NoopFrame;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::NoopFrame::default()
+        alloy_rpc_trace_types::geth::NoopFrame::default()
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::DefaultFrame {
-    type To = alloy_rpc_types::trace::geth::DefaultFrame;
+impl ToReth for alloy_rpc_trace_types::geth::DefaultFrame {
+    type To = alloy_rpc_trace_types::geth::DefaultFrame;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::DefaultFrame {
+        alloy_rpc_trace_types::geth::DefaultFrame {
             gas: self.gas,
             failed: self.failed,
             return_value: self.return_value,
@@ -437,11 +437,11 @@ impl ToReth for alloy_rpc_types::trace::geth::DefaultFrame {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::StructLog {
-    type To = alloy_rpc_types::trace::geth::StructLog;
+impl ToReth for alloy_rpc_trace_types::geth::StructLog {
+    type To = alloy_rpc_trace_types::geth::StructLog;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::StructLog {
+        alloy_rpc_trace_types::geth::StructLog {
             depth: self.depth,
             error: self.error,
             gas: self.gas,
@@ -458,19 +458,19 @@ impl ToReth for alloy_rpc_types::trace::geth::StructLog {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::FourByteFrame {
-    type To = alloy_rpc_types::trace::geth::FourByteFrame;
+impl ToReth for alloy_rpc_trace_types::geth::FourByteFrame {
+    type To = alloy_rpc_trace_types::geth::FourByteFrame;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::FourByteFrame(self.0)
+        alloy_rpc_trace_types::geth::FourByteFrame(self.0)
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::CallFrame {
-    type To = alloy_rpc_types::trace::geth::CallFrame;
+impl ToReth for alloy_rpc_trace_types::geth::CallFrame {
+    type To = alloy_rpc_trace_types::geth::CallFrame;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::CallFrame {
+        alloy_rpc_trace_types::geth::CallFrame {
             from: self.from,
             to: self.to,
             input: self.input,
@@ -487,11 +487,11 @@ impl ToReth for alloy_rpc_types::trace::geth::CallFrame {
     }
 }
 
-impl ToReth for alloy_rpc_types::trace::geth::CallLogFrame {
-    type To = alloy_rpc_types::trace::geth::CallLogFrame;
+impl ToReth for alloy_rpc_trace_types::geth::CallLogFrame {
+    type To = alloy_rpc_trace_types::geth::CallLogFrame;
 
     fn to_reth(self) -> Self::To {
-        alloy_rpc_types::trace::geth::CallLogFrame {
+        alloy_rpc_trace_types::geth::CallLogFrame {
             address: self.address,
             topics: self.topics,
             data: self.data,

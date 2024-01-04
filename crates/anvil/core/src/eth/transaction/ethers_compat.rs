@@ -13,8 +13,8 @@ use crate::eth::{
 use alloy_primitives::{U128 as rU128, U256 as rU256, U64 as rU64};
 use alloy_rpc_types::{
     state::{AccountOverride as AlloyAccountOverride, StateOverride},
+    transaction::request::TransactionRequest as AlloyTransactionRequest,
     AccessList as AlloyAccessList, CallRequest, Signature, Transaction as AlloyTransaction,
-    TransactionRequest as AlloyTransactionRequest,
 };
 use ethers_core::types::{
     transaction::{

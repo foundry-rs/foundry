@@ -37,7 +37,7 @@ use crate::{
     mem::storage::MinedBlockOutcome,
 };
 use alloy_primitives::{TxHash, U64};
-use alloy_rpc_types::TxpoolStatus;
+use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use foundry_common::types::ToAlloy;
 use futures::channel::mpsc::{channel, Receiver, Sender};

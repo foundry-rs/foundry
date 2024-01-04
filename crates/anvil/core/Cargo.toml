@@ -16,6 +16,7 @@ revm = { workspace = true, default-features = false, features = ["std", "serde",
 
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types = { workspace = true }
+alloy-rpc-trace-types.workspace = true
 ethers-core = { workspace = true, features = ["optimism"] }
 # theses are not used by anvil-core, but are required by ethers, because pulled in via foundry-common
 ethers-contract = { workspace = true, features = ["optimism"] }
