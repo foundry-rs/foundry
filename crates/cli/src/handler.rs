@@ -1,4 +1,4 @@
-use eyre::{EyreHandler, Result};
+use eyre::EyreHandler;
 use std::error::Error;
 use yansi::Paint;
 
@@ -47,9 +47,8 @@ impl EyreHandler for Handler {
 /// verbose debug-centric handler is installed.
 ///
 /// Panics are always caught by the more debug-centric handler.
-pub fn install() -> Result<()> {
+pub fn install() {
     let debug_enabled = std::env::var("FOUNDRY_DEBUG").is_ok();
-
     if debug_enabled {
         if let Err(e) = color_eyre::install() {
             debug!("failed to install color eyre error hook: {e}");
@@ -65,6 +64,4 @@ pub fn install() -> Result<()> {
             debug!("failed to install eyre error hook: {e}");
         }
     }
-
-    Ok(())
 }
