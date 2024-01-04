@@ -13,7 +13,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::find_source,
-    compile::{compile, etherscan_project, suppress_compile},
+    compile::{compile, etherscan_project, suppress_compile, ProjectCompiler},
     provider::ethers::RetryProvider,
     types::{ToAlloy, ToEthers},
 };
@@ -100,7 +100,7 @@ impl StorageArgs {
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
-            let out = compile(&project, false, false)?;
+            let out = ProjectCompiler::new().compile(&project)?;
             let match_code = |artifact: &ConfigurableContractArtifact| -> Option<bool> {
                 let bytes =
                     artifact.deployed_bytecode.as_ref()?.bytecode.as_ref()?.object.as_bytes()?;
@@ -146,7 +146,7 @@ impl StorageArgs {
         project.auto_detect = auto_detect;
 
         // Compile
-        let mut out = suppress_compile(&project)?;
+        let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
         let artifact = {
             let (_, mut artifact) = out
                 .artifacts()
@@ -159,7 +159,7 @@ impl StorageArgs {
                 let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
                 project.solc = solc;
                 project.auto_detect = false;
-                if let Ok(output) = suppress_compile(&project) {
+                if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
                         .artifacts()

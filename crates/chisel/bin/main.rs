@@ -84,7 +84,7 @@ pub enum ChiselParserSub {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    handler::install()?;
+    handler::install();
     utils::subscriber();
     #[cfg(windows)]
     if !Paint::enable_windows_ascii() {

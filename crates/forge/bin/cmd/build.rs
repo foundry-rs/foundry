@@ -2,10 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{
-    compile,
-    compile::{ProjectCompiler, SkipBuildFilter},
-};
+use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
 use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
@@ -90,19 +87,17 @@ impl BuildArgs {
             project = config.project()?;
         }
 
-        let filters = self.skip.unwrap_or_default();
-
+        let output = ProjectCompiler::new()
+            .print_names(self.names)
+            .print_sizes(self.sizes)
+            .quiet(self.format_json)
+            .bail(!self.format_json)
+            .filter(Box::new(SkipBuildFilters(self.skip.unwrap_or_default())))
+            .compile(&project)?;
         if self.format_json {
-            let output = compile::suppress_compile_with_filter_json(&project, filters)?;
-            let json = serde_json::to_string_pretty(&output.clone().output())?;
-            println!("{}", json);
-            Ok(output)
-        } else if self.args.silent {
-            compile::suppress_compile_with_filter(&project, filters)
-        } else {
-            let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
-            compiler.compile(&project)
+            println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
         }
+        Ok(output)
     }
 
     /// Returns the `Project` for the current workspace

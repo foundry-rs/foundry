@@ -91,12 +91,7 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(
-        long,
-        short,
-        default_value = "run()",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
-    )]
+    #[clap(long, short, default_value = "run()")]
     pub sig: String,
 
     /// Max priority fee per gas for EIP1559 transactions.

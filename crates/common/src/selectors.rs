@@ -1,5 +1,7 @@
+//! Support for handling/identifying selectors.
+
 #![allow(missing_docs)]
-//! Support for handling/identifying selectors
+
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -410,7 +412,6 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 /// # Ok(())
 /// # }
 /// ```
-
 pub async fn pretty_calldata(
     calldata: impl AsRef<str>,
     offline: bool,

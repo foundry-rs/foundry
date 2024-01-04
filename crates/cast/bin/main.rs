@@ -29,7 +29,7 @@ use opts::{Opts, Subcommands, ToBaseArgs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    handler::install()?;
+    handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();

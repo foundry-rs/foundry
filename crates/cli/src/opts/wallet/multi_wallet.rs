@@ -97,12 +97,7 @@ pub struct MultiWallet {
     pub interactives: u32,
 
     /// Use the provided private keys.
-    #[clap(
-        long,
-        help_heading = "Wallet options - raw",
-        value_name = "RAW_PRIVATE_KEYS",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
-    )]
+    #[clap(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
     pub private_keys: Option<Vec<String>>,
 
     /// Use the provided private key.
@@ -110,8 +105,7 @@ pub struct MultiWallet {
         long,
         help_heading = "Wallet options - raw",
         conflicts_with = "private_keys",
-        value_name = "RAW_PRIVATE_KEY",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
+        value_name = "RAW_PRIVATE_KEY"
     )]
     pub private_key: Option<String>,
 
