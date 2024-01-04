@@ -149,6 +149,7 @@ alloy-transport-http = "0.1.0"
 alloy-transport-ws = "0.1.0"
 alloy-transport-ipc = "0.1.0"
 alloy-rpc-types = "0.1.0"
+alloy-rpc-trace-types = "0.1.0"
 alloy-json-rpc = "0.1.0"
 alloy-pubsub = "0.1.0"
 alloy-rpc-client = "0.1.0"
@@ -206,15 +207,16 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 
-alloy-providers = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-providers = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy/" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy/" }
 
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

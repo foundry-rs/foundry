@@ -3,10 +3,8 @@ use crate::eth::{
     error::{BlockchainError, Result},
 };
 use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
-use alloy_rpc_types::{
-    trace::parity::{Action, CallType, LocalizedTransactionTrace},
-    Block, BlockTransactions, Transaction, TransactionReceipt,
-};
+use alloy_rpc_trace_types::parity::{Action, CallType, LocalizedTransactionTrace};
+use alloy_rpc_types::{Block, BlockTransactions, Transaction, TransactionReceipt};
 use foundry_evm::{revm::interpreter::InstructionResult, traces::CallKind};
 use futures::future::join_all;
 use serde::Serialize;

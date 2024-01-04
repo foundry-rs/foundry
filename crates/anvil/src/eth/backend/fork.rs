@@ -3,17 +3,17 @@
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, B256, U256, U64};
 use alloy_providers::provider::TempProvider;
+use alloy_rpc_trace_types::{
+    geth::{GethDebugTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace as Trace,
+};
 use alloy_rpc_types::{
-    trace::{GethDebugTracingOptions, GethTrace, LocalizedTransactionTrace as Trace},
     AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
     TransactionReceipt,
 };
 use alloy_transport::TransportError;
-use foundry_common::{
-    provider::alloy::{ProviderBuilder, RetryProvider},
-    types::ToReth,
-};
+use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
@@ -364,13 +364,7 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self
-            .provider()
-            .trace_transaction(hash)
-            .await?
-            .into_iter()
-            .map(ToReth::to_reth)
-            .collect::<Vec<_>>();
+        let traces = self.provider().trace_transaction(hash).await?.into_iter().collect::<Vec<_>>();
 
         let mut storage = self.storage_write();
         storage.transaction_traces.insert(hash, traces.clone());
@@ -400,13 +394,8 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self
-            .provider()
-            .trace_block(number.into())
-            .await?
-            .into_iter()
-            .map(ToReth::to_reth)
-            .collect::<Vec<_>>();
+        let traces =
+            self.provider().trace_block(number.into()).await?.into_iter().collect::<Vec<_>>();
 
         let mut storage = self.storage_write();
         storage.block_traces.insert(number, traces.clone());

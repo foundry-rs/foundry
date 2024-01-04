@@ -7,11 +7,11 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
+use alloy_rpc_trace_types::{
+    geth::{DefaultFrame, GethDefaultTracingOptions},
+    parity::LocalizedTransactionTrace,
+};
 use alloy_rpc_types::{
-    trace::{
-        geth::{DefaultFrame, GethDefaultTracingOptions},
-        parity::LocalizedTransactionTrace,
-    },
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo, TransactionReceipt,
 };
 use anvil_core::eth::{
@@ -420,7 +420,7 @@ impl MinedTransaction {
         GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
             .geth_traces(
                 self.receipt.gas_used().as_u64(),
-                self.info.out.clone().unwrap_or_default(),
+                self.info.out.clone().unwrap_or_default().0.into(),
                 opts,
             )
     }

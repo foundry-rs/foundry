@@ -3,10 +3,10 @@ use crate::{
     types::{EvmMineOptions, Forking, Index},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
+use alloy_rpc_trace_types::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     state::StateOverride,
-    trace::{GethDebugTracingOptions, GethDefaultTracingOptions},
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
 use ethers_core::types::transaction::eip712::TypedData;

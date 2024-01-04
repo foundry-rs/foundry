@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -134,7 +134,7 @@ dependencies = [
 [[package]]
 name = "alloy-networks"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -169,11 +169,12 @@ dependencies = [
 [[package]]
 name = "alloy-providers"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-networks",
  "alloy-primitives",
  "alloy-rpc-client",
+ "alloy-rpc-trace-types",
  "alloy-rpc-types",
  "alloy-transport",
  "alloy-transport-http",
@@ -187,7 +188,7 @@ dependencies = [
 [[package]]
 name = "alloy-pubsub"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -226,7 +227,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -241,9 +242,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-trace-types"
+version = "0.1.0"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "itertools 0.12.0",
+ "jsonrpsee-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "alloy-rpc-types"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -251,7 +267,6 @@ dependencies = [
  "jsonrpsee-types",
  "serde",
  "serde_json",
- "serde_with",
  "thiserror",
 ]
 
@@ -300,7 +315,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-json-rpc",
  "base64 0.21.5",
@@ -316,7 +331,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -329,7 +344,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ipc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -347,7 +362,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ws"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#506b4c5b46220477f282e1b7a98c1cbddb4ee3a4"
+source = "git+https://github.com/alloy-rs/alloy/#f5174888c523b70fa1a94fad24f3214048d3d462"
 dependencies = [
  "alloy-pubsub",
  "alloy-transport",
@@ -448,6 +463,7 @@ version = "0.2.0"
 dependencies = [
  "alloy-primitives",
  "alloy-providers",
+ "alloy-rpc-trace-types",
  "alloy-rpc-types",
  "alloy-transport",
  "anvil-core",
@@ -501,6 +517,7 @@ name = "anvil-core"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-trace-types",
  "alloy-rpc-types",
  "anvil-core",
  "bytes",
@@ -6442,7 +6459,7 @@ dependencies = [
 [[package]]
 name = "reth-revm-inspectors"
 version = "0.1.0-alpha.13"
-source = "git+https://github.com/paradigmxyz/reth/?branch=main#fa1584b22306f6f0573a5d4c85f77a685c3e65d4"
+source = "git+https://github.com/paradigmxyz/reth/?branch=main#9a25470ae280189b399ce5dab9f5ac276ceedae6"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6459,12 +6476,14 @@ dependencies = [
 [[package]]
 name = "reth-rpc-types"
 version = "0.1.0-alpha.13"
-source = "git+https://github.com/paradigmxyz/reth/?branch=main#fa1584b22306f6f0573a5d4c85f77a685c3e65d4"
+source = "git+https://github.com/paradigmxyz/reth/?branch=main#9a25470ae280189b399ce5dab9f5ac276ceedae6"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rpc-trace-types",
+ "alloy-rpc-types",
  "bytes",
- "itertools 0.11.0",
+ "itertools 0.12.0",
  "jsonrpsee-types",
  "secp256k1 0.27.0",
  "serde",
