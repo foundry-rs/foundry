@@ -20,7 +20,6 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::ProjectCompiler,
-    estimate_eip1559_fees,
     fmt::parse_tokens,
     provider::ethers::estimate_eip1559_fees,
     types::{ToAlloy, ToEthers},
