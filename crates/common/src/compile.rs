@@ -43,6 +43,9 @@ pub struct ProjectCompiler {
     /// Whether to print anything at all. Overrides other `print` options.
     quiet: Option<bool>,
 
+    /// Whether to bail on compiler errors.
+    bail: Option<bool>,
+
     /// Files to exclude.
     filters: Vec<SkipBuildFilter>,
 
@@ -67,6 +70,7 @@ impl ProjectCompiler {
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::verbosity().is_silent()),
+            bail: None,
             filters: Vec::new(),
             files: Vec::new(),
         }
@@ -114,6 +118,13 @@ impl ProjectCompiler {
         if maybe {
             self.quiet = Some(true);
         }
+        self
+    }
+
+    /// Sets whether to bail on compiler errors.
+    #[inline]
+    pub fn bail(mut self, yes: bool) -> Self {
+        self.bail = Some(yes);
         self
     }
 
@@ -186,6 +197,7 @@ impl ProjectCompiler {
         }
 
         let quiet = self.quiet.unwrap_or(false);
+        let bail = self.bail.unwrap_or(true);
         #[allow(clippy::collapsible_else_if)]
         let reporter = if quiet {
             Report::new(NoReporter::default())
@@ -208,7 +220,7 @@ impl ProjectCompiler {
             r
         })?;
 
-        if output.has_compiler_errors() {
+        if bail && output.has_compiler_errors() {
             eyre::bail!("{output}")
         }
 
@@ -376,6 +388,8 @@ pub struct ContractInfo {
 /// Compiles target file path.
 ///
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
+///
+/// If `quiet` no solc related output will be emitted to stdout.
 ///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target_with_filter(

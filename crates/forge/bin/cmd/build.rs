@@ -87,11 +87,17 @@ impl BuildArgs {
             project = config.project()?;
         }
 
-        ProjectCompiler::new()
+        let output = ProjectCompiler::new()
             .print_names(self.names)
             .print_sizes(self.sizes)
+            .quiet(self.format_json)
+            .bail(!self.format_json)
             .filters(self.skip.unwrap_or_default())
-            .compile(&project)
+            .compile(&project)?;
+        if self.format_json {
+            println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
+        }
+        Ok(output)
     }
 
     /// Returns the `Project` for the current workspace
