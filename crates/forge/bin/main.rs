@@ -102,9 +102,7 @@ fn main() -> Result<()> {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
         Subcommands::Mutate(cmd) => {
-            let outcome = utils::block_on(cmd.run())?;
-            println!();
-            outcome.ensure_ok()
+            utils::block_on(cmd.run())
         }
     }
 }

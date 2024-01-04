@@ -10,11 +10,10 @@ use eyre::{eyre, Result};
 use forge::{
     inspectors::CheatsConfig, result::SuiteResult, MultiContractRunnerBuilder, TestOptions,
     TestOptionsBuilder,
+    revm::primitives::Env
 };
 use foundry_cli::{
-    init_progress,
     opts::CoreBuildArgs,
-    update_progress,
     utils::{self, LoadConfig},
 };
 use foundry_common::{
@@ -34,12 +33,12 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::opts::EvmOpts;
+use foundry_evm::{opts::EvmOpts, backend::Backend};
 use foundry_evm_mutator::{Mutant, MutatorConfigBuilder};
-use futures::future::{join_all};
+use futures::future::{try_join_all, join_all};
 use itertools::Itertools;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap as StdHashMap},
     fs,
     path::{PathBuf},
     sync::mpsc::channel,
@@ -85,23 +84,27 @@ pub struct MutateTestArgs {
     opts: CoreBuildArgs,
 
     /// Timeout for tests it helps exit long running test
-    #[arg(value_parser = parse_duration)]
-    timeout: Duration,
+    #[arg(value_parser = parse_duration, default_value = "100")]
+    test_timeout: Duration,
 
     /// Number of mutants to execute concurrently
+    ///
     /// This should be configured conservatively because of "Too Many Files Open Error" as
     /// we use join_all to run tasks in concurrently
-    #[clap(long)]
-    parallel: u32,
+    #[clap(long, default_value_t = 16)]
+    parallel: usize,
 
     /// Max Timeout
-    /// 
+    ///
     /// Maximum number of tests allowed to timeout, this is required because a test run
     /// can be long depending on the mutation. This leads to memory consumption per each
     /// mutant test that runs for a long time. 
     /// We configure this value here to put a bound on the possible memory leak for this
+    /// 
     /// This is required because we can't cancel a thread
-    #[clap(long)]
+    /// 
+    /// 16 * 32 MB (EVM default memory limit) = 512 MB
+    #[clap(long, default_value_t = 16)]
     maximum_timeout_test: u32,
 
     /// Export generated mutants to a directory
@@ -123,7 +126,7 @@ impl MutateTestArgs {
         &self.opts
     }
 
-    pub async fn run(self) -> Result<MutationTestOutcome> {
+    pub async fn run(self) -> Result<()> {
         trace!(target: "forge::mutate", "executing mutation command");
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         println!(
@@ -140,7 +143,7 @@ impl MutateTestArgs {
     /// On success tests matching configured filter will be executed for all mutants.
     ///
     /// Returns the mutation test results for all matching functions
-    pub async fn execute_mutation_test(self) -> Result<MutationTestOutcome> {
+    pub async fn execute_mutation_test(self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         // Fetch project mutate and test filter
         let (mutate_filter, test_filter) = self.filter(&config);
@@ -157,7 +160,7 @@ impl MutateTestArgs {
             project = config.project()?;
         }
 
-        let (test_outcome, output) = self.compile_and_test_project(
+        let (test_outcome, output) = self.ensure_valid_project(
             &project,
             &config,
             &evm_opts,
@@ -169,52 +172,12 @@ impl MutateTestArgs {
             test_outcome.ensure_ok()?;
         }
 
-        let mutator = MutatorConfigBuilder::new(
-            project.solc.solc.clone(),
-            config.optimizer,
-            project.allowed_paths.paths().map(|x| x.to_owned()).collect_vec(),
-            project.include_paths.paths().map(|x| x.to_owned()).collect(),
-            config.remappings,
-        )
-        .build(config.src.clone(), output)?;
-
-        if mutator.matching_function_count(&mutate_filter) == 0 {
-            println!("\nNo functions match the provided pattern");
-            println!("{}", mutate_filter.to_string());
-            // Try to suggest a function when there's no match
-            if let Some(ref function_pattern) = mutate_filter.args().function_pattern {
-                let function_name = function_pattern.as_str();
-                let candidates = mutator.get_function_names(&mutate_filter);
-                if let Some(suggestion) = utils::did_you_mean(function_name, candidates).pop() {
-                    println!("\nDid you mean `{suggestion}`?");
-                }
-                std::process::exit(0);
-            }
-        }
-
-        let now = Instant::now();
-        // init spinner
-        let spinner = MutatorSpinnerReporter::spawn("Generating Mutants...".into());
-        trace!("running gambit");
-        let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
-
-        let elapsed = now.elapsed();
-        trace!(?elapsed, "finished running gambit");
-        drop(spinner);
-
-        // this is bad
-        let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter()
-            .flat_map(|(_, v)| v)
-            .collect();
-
-        println!(
-            "Generated {} mutants in {:.2?}",
-            mutants_len_iterator.len(), elapsed
-        );
+        let (mutants_output, mutants_len) = self.execute_mutation(&project, mutate_filter, output, &config)?;
         
-        // this is required for progress bar
         println!("[⠆] Testing Mutants...");
-        let progress_bar_reporter = ProgressReporter::spawn("Mutants".into(), mutants_len_iterator.len());
+        let env = evm_opts.evm_env().await?;
+        let test_backend = Backend::spawn(evm_opts.get_fork(&config, env.clone())).await;
+        let progress_bar_reporter = ProgressReporter::spawn("Mutants".into(), mutants_len);
 
         let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
             BTreeMap::new();
@@ -226,8 +189,8 @@ impl MutateTestArgs {
 
             // a file can have hundreds of mutants depending on design
             // we chunk there to prevent huge memory consumption
-            // try_join_all which launches all the futures and polls
-            let mut contract_mutants_iterator = contract_mutants.chunks(32);
+            // join_all which launches all the futures and polls
+            let mut contract_mutants_iterator = contract_mutants.chunks(self.parallel);
             
             while let Some(mutant_chunks) = contract_mutants_iterator.next() {
                 let mutant_data_iterator = mutant_chunks.iter().map(
@@ -237,9 +200,9 @@ impl MutateTestArgs {
                         mutant.as_source_string().expect("Failed to read a file")
                     )
                 );
-
+                
                 // we compile the projects here
-                let mutant_project_and_compile_output: Vec<_> = join_all(
+                let mutant_project_and_compile_output: Vec<_> = try_join_all(
                     mutant_data_iterator
                     .map(
                         |(root, file_name, mutant_contents)| tokio::task::spawn_blocking(
@@ -251,23 +214,28 @@ impl MutateTestArgs {
                 let test_output = join_all(mutant_project_and_compile_output.into_iter().map(
                     |(temp_project, mutant_compile_output, mutant_config)| {
                         test_mutant(
+                            test_backend.clone(),
                             progress_bar_reporter.clone(), 
                             test_filter.clone(),
                             temp_project,
                             mutant_config,
                             mutant_compile_output,
-                            &evm_opts
+                            &evm_opts,
+                            env.clone(),
+                            self.test_timeout.clone(),
                         )
                     }
-                )).await?;
+                )).await;
 
                 mutant_test_statuses.extend(test_output);
             }
 
-            let mutant_test_results: Vec<_> =  mutant_test_statuses.into_iter().enumerate().map(|(index, (duration, status))| {
-                let mutant = contract_mutants.get(index).expect("this should not throw");
-                MutantTestResult::new(duration, mutant.clone(), status)
-            }).collect();
+            let mutant_test_results: Vec<_> = std::iter::zip(
+                    contract_mutants,
+                    mutant_test_statuses
+                ).map(
+                    |(mutant, (duration, status))| MutantTestResult::new(duration, mutant, status)
+                ).collect_vec();
 
             let has_survivors = mutant_test_results.iter().any(|result| result.survived());           
             let contract_name = contract_out_dir.split(std::path::MAIN_SEPARATOR_STR)
@@ -298,7 +266,7 @@ impl MutateTestArgs {
                         .collect::<Vec<_>>()
                 )?
             );
-            return Ok(MutationTestOutcome::new(self.allow_failure, mutant_test_suite_results));
+            return Ok(());
         }
 
         let mutation_test_outcome =
@@ -309,13 +277,74 @@ impl MutateTestArgs {
             reporter.print_summary(&mutation_test_outcome);
         }
 
-        println!();
         println!("{}", mutation_test_outcome.summary());
 
-        Ok(mutation_test_outcome)
+        println!();
+        mutation_test_outcome.ensure_ok()?;
+
+        Ok(())
     }
 
-    pub async fn compile_and_test_project(
+    /// Performs mutation on the project contracts 
+    pub fn execute_mutation(
+        &self,
+        project: &Project,
+        mutate_filter: MutationProjectPathsAwareFilter,
+        output: ProjectCompileOutput,
+        config: &Config,
+    ) ->  Result<(StdHashMap<String, Vec<Mutant>>, usize)> {
+        trace!(target: "forge::mutate", "running gambit");
+
+        let spinner = MutatorSpinnerReporter::spawn("Generating Mutants...".into());
+
+        let mutator = MutatorConfigBuilder::new(
+            project.solc.solc.clone(),
+            config.optimizer,
+            project.allowed_paths.paths().map(|x| x.to_owned()).collect_vec(),
+            project.include_paths.paths().map(|x| x.to_owned()).collect(),
+            config.remappings.clone(),
+        )
+        .build(config.src.clone(), output)?;
+
+        if mutator.matching_function_count(&mutate_filter) == 0 {
+            println!("\nNo functions match the provided pattern");
+            println!("{}", mutate_filter.to_string());
+            // Try to suggest a function when there's no match
+            if let Some(ref function_pattern) = mutate_filter.args().function_pattern {
+                let function_name = function_pattern.as_str();
+                let candidates = mutator.get_function_names(&mutate_filter);
+                if let Some(suggestion) = utils::did_you_mean(function_name, candidates).pop() {
+                    println!("\nDid you mean `{suggestion}`?");
+                }
+                std::process::exit(0);
+            }
+        }
+
+        let now = Instant::now();
+        // init spinner
+        let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
+
+        let elapsed = now.elapsed();
+        
+        drop(spinner);
+
+        trace!(target: "forge::mutate", "finished running gambit");
+        // trace!(?elapsed, "finished running gambit");
+
+        let mutants_len = mutants_output.iter()
+            .flat_map(|(_, v)| v)
+            .count();
+
+        println!(
+            "Generated {} mutants in {:.2?}",
+            mutants_len, elapsed
+        );
+
+        Ok((mutants_output, mutants_len))
+    }
+
+    /// Compiles and Tests the project to ensure no failing tests
+    pub async fn ensure_valid_project(
         &self,
         project: &Project,
         config: &Config,
@@ -412,7 +441,7 @@ impl MutateTestArgs {
 
 impl Provider for MutateTestArgs {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Mutation Test: Core Build Args ")
+        Metadata::named("Mutation Test: Args ")
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
@@ -445,6 +474,8 @@ pub fn setup_and_compile_mutant(
     mutant_file: String,
     mutant_contents: String 
 ) -> Result<(TempProject, ProjectCompileOutput, Config)> {
+    trace!(target: "forge::mutate", "setting up and compiling mutant");
+
     let start = Instant::now();
 
     // we do not support hardhat style testing
@@ -477,33 +508,39 @@ pub fn setup_and_compile_mutant(
 
     let compile_output = project.compile().map_err(|_| eyre!("compilation failed"))?;
 
+    trace!(target: "forge::mutate", "finishing setting up and compiling mutant");
+
     Ok((temp_project, compile_output, config))
 }
 
 /// Runs mutation test for a mutation temp project.
 /// returns on the first failed test suite
 pub async fn test_mutant(
+    db: Backend,
     progress_bar: ProgressReporter,
     filter: ProjectPathsAwareFilter,
     temp_project: TempProject,
     config: Config,
     output: ProjectCompileOutput,
     evm_opts: &EvmOpts,
-) -> Result<(Duration, MutantTestStatus)> {
+    env: Env,
+    test_timeout: Duration
+) -> (Duration, MutantTestStatus) {
     trace!(target: "forge::mutate", "testing mutant");
 
     let start = Instant::now();
-    let env = evm_opts.evm_env().await?;
 
     let project_root = temp_project.root();
     let toml = config.get_config_path();
-    let profiles = get_available_profiles(toml)?;
+    let profiles = get_available_profiles(toml)
+        .expect("Failed to get profiles");
 
     let test_options: TestOptions = TestOptionsBuilder::default()
         .fuzz(config.fuzz)
         .invariant(config.invariant)
         .profiles(profiles)
-        .build(&output, project_root)?;
+        .build(&output, project_root)
+        .expect("Failed to setup test options");
 
     let runner_builder = MultiContractRunnerBuilder::default()
         .set_debug(false)
@@ -515,7 +552,8 @@ pub async fn test_mutant(
         .with_test_options(test_options.clone());
 
     let mut runner =
-        runner_builder.build(project_root, output.clone(), env.clone(), evm_opts.clone())?;
+        runner_builder.build(project_root, output.clone(), env, evm_opts.clone())
+            .expect("Failed to build test runner");
     
     // We use a thread and recv_timeout here because Gambit generates 
     // valid solidity grammar mutants that leads to very long running
@@ -532,26 +570,22 @@ pub async fn test_mutant(
     //    }
     //
     // 
-    let test_timeout = Duration::from_millis(100);
     // mpsc channel for reporting test results
     let (tx, rx) = channel::<(String, SuiteResult)>();
-    
-    std::thread::Builder::new()
-        .name("mutation_test_execution_backend".into())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build tokio runtime");
+    let _ = tokio::task::spawn_blocking(move || {
+        // We create ThreadPool here because it's possible to have 
+        // a long running test that attaches itself to the global rayon ThreadPool
+        // This would prevent other rayon tasks from executing leading to a deadlock
+        // Creating a pool means we can isolate this and prevent it from affecting
+        // other tasks.
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()
+            .expect("Failed to setup thread pool ");
 
-            rt.block_on(async move {
-                // flush cache every 60s, this ensures that long-running fork tests get their
-                // cache flushed from time to time
-                // NOTE: we install the interval here because the `tokio::timer::Interval`
-                // requires a rt
-                runner.test(&filter, tx, test_options).await;
-            });
-        }).expect("failed to spawn thread");
+        pool.install(
+            || runner.test_with_backend(db, &filter, tx, test_options)
+        );
+    
+    });
 
     let mut status: MutantTestStatus = MutantTestStatus::Survived;
     loop {
@@ -577,5 +611,5 @@ pub async fn test_mutant(
 
     trace!(target: "forge::mutate", "received mutant test results");
 
-    Ok((start.elapsed(), status))
+    (start.elapsed(), status)
 }

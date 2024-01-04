@@ -169,6 +169,17 @@ impl MultiContractRunner {
         // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take()).await;
 
+        self.test_with_backend(db, filter, stream_result, test_options)
+    }
+
+    /// Allows Backend param
+    pub fn test_with_backend(
+        &mut self,
+        db: Backend,
+        filter: &dyn TestFilter,
+        stream_result: mpsc::Sender<(String, SuiteResult)>,
+        test_options: TestOptions,
+    ) {
         self.contracts
             .par_iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
