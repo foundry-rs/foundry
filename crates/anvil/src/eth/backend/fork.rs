@@ -13,10 +13,7 @@ use alloy_rpc_types::{
     TransactionReceipt,
 };
 use alloy_transport::TransportError;
-use foundry_common::{
-    provider::alloy::{ProviderBuilder, RetryProvider},
-    types::ToReth,
-};
+use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
@@ -367,13 +364,7 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self
-            .provider()
-            .trace_transaction(hash)
-            .await?
-            .into_iter()
-            .map(ToReth::to_reth)
-            .collect::<Vec<_>>();
+        let traces = self.provider().trace_transaction(hash).await?.into_iter().collect::<Vec<_>>();
 
         let mut storage = self.storage_write();
         storage.transaction_traces.insert(hash, traces.clone());
@@ -403,13 +394,8 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self
-            .provider()
-            .trace_block(number.into())
-            .await?
-            .into_iter()
-            .map(ToReth::to_reth)
-            .collect::<Vec<_>>();
+        let traces =
+            self.provider().trace_block(number.into()).await?.into_iter().collect::<Vec<_>>();
 
         let mut storage = self.storage_write();
         storage.block_traces.insert(number, traces.clone());

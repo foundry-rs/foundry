@@ -60,7 +60,7 @@ use ethers::{
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::types::{ToAlloy, ToEthers, ToReth};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -1883,7 +1883,6 @@ impl Backend {
             return fork
                 .debug_trace_transaction(hash, opts)
                 .await
-                .map(|t| t.to_reth())
                 .map_err(|_| BlockchainError::DataUnavailable)
         }
 
@@ -1895,12 +1894,7 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<DefaultFrame> {
-        self.blockchain
-            .storage
-            .read()
-            .transactions
-            .get(&hash)
-            .map(|tx| tx.geth_trace(opts.config.to_reth()))
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts.config))
     }
 
     /// Returns the traces for the given block

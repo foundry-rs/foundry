@@ -3208,7 +3208,6 @@ dependencies = [
  "alloy-providers",
  "alloy-pubsub",
  "alloy-rpc-client",
- "alloy-rpc-trace-types",
  "alloy-rpc-types",
  "alloy-sol-types",
  "alloy-transport",
