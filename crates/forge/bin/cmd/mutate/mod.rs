@@ -36,7 +36,7 @@ use foundry_config::{
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_evm_mutator::{Mutant, MutatorConfigBuilder};
-use futures::future::try_join_all;
+use futures::future::{join_all};
 use itertools::Itertools;
 use std::{
     collections::BTreeMap,
@@ -83,6 +83,26 @@ pub struct MutateTestArgs {
 
     #[clap(flatten)]
     opts: CoreBuildArgs,
+
+    /// Timeout for tests it helps exit long running test
+    #[arg(value_parser = parse_duration)]
+    timeout: Duration,
+
+    /// Number of mutants to execute concurrently
+    /// This should be configured conservatively because of "Too Many Files Open Error" as
+    /// we use join_all to run tasks in concurrently
+    #[clap(long)]
+    parallel: u32,
+
+    /// Max Timeout
+    /// 
+    /// Maximum number of tests allowed to timeout, this is required because a test run
+    /// can be long depending on the mutation. This leads to memory consumption per each
+    /// mutant test that runs for a long time. 
+    /// We configure this value here to put a bound on the possible memory leak for this
+    /// This is required because we can't cancel a thread
+    #[clap(long)]
+    maximum_timeout_test: u32,
 
     /// Export generated mutants to a directory
     #[clap(long, default_value_t = false)]
@@ -411,6 +431,12 @@ impl Provider for MutateTestArgs {
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
+}
+
+/// Parse Duration
+fn parse_duration(arg: &str) -> Result<Duration, std::num::ParseIntError> {
+    let seconds = arg.parse()?;
+    Ok(Duration::from_millis(seconds))
 }
 
 /// Creates a temp project from source project and compiles the project
