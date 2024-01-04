@@ -2,7 +2,7 @@ use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::{compile::ProjectCompiler, Shell};
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{
         output_selection::{
@@ -84,10 +84,10 @@ impl InspectArgs {
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
                 if pretty {
                     let source = foundry_cli::utils::abi_to_solidity(abi, "")?;
-                    Shell::get().write_stdout(source, &Default::default())
+                    println!("{source}");
                 } else {
-                    Shell::get().print_json(abi)
-                }?;
+                    print_json(abi)?;
+                }
             }
             ContractArtifactField::Bytecode => {
                 print_json_str(&artifact.bytecode, Some("object"))?;
@@ -139,7 +139,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                Shell::get().print_json(&out)?;
+                print_json(&out)?;
             }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
@@ -153,7 +153,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                Shell::get().print_json(&out)?;
+                print_json(&out)?;
             }
         };
 
@@ -186,7 +186,8 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool
         ]);
     }
 
-    Shell::get().write_stdout(table, &Default::default())
+    println!("{table}");
+    Ok(())
 }
 
 /// Contract level output selection
@@ -360,7 +361,8 @@ impl ContractArtifactField {
 }
 
 fn print_json(obj: &impl serde::Serialize) -> Result<()> {
-    Shell::get().print_json(obj)
+    println!("{}", serde_json::to_string(obj)?);
+    Ok(())
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
@@ -372,7 +374,8 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
         }
     }
     let s = value_ref.as_str().ok_or_else(|| eyre::eyre!("not a string: {value}"))?;
-    sh_println!("{s}")
+    println!("{s}");
+    Ok(())
 }
 
 #[cfg(test)]

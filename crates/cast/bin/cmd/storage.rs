@@ -115,7 +115,7 @@ impl StorageArgs {
 
         // Not a forge project or artifact not found
         // Get code from Etherscan
-        sh_note!("No matching artifacts found, fetching source code from Etherscan...")?;
+        eprintln!("No matching artifacts found, fetching source code from Etherscan...");
 
         if self.etherscan.key.is_none() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
@@ -155,7 +155,7 @@ impl StorageArgs {
 
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
-                sh_warn!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.")?;
+                eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
                 let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
                 project.solc = solc;
                 project.auto_detect = false;
@@ -217,7 +217,8 @@ async fn fetch_and_print_storage(
     pretty: bool,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
-        sh_note!("Storage layout is empty.")
+        eprintln!("Storage layout is empty.");
+        Ok(())
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
         let values = fetch_storage_slots(provider, address, &layout).await?;

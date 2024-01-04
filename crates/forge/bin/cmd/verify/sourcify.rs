@@ -166,17 +166,18 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
         match response.status.as_str() {
             "perfect" => {
                 if let Some(ts) = &response.storage_timestamp {
-                    sh_println!("Contract source code already verified. Storage Timestamp: {ts}")
+                    println!("Contract source code already verified. Storage Timestamp: {ts}");
                 } else {
-                    sh_println!("Contract successfully verified")
+                    println!("Contract successfully verified");
                 }
             }
             "partial" => {
-                sh_println!("The recompiled contract partially matches the deployed version")
+                println!("The recompiled contract partially matches the deployed version");
             }
-            "false" => sh_println!("Contract source code is not verified"),
-            s => Err(eyre::eyre!("Unknown status from sourcify. Status: {s:?}")),
+            "false" => println!("Contract source code is not verified"),
+            s => eyre::bail!("Unknown status from sourcify. Status: {s:?}"),
         }
+        Ok(())
     }
 }
 

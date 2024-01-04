@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
 use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, RpcOpts, ShellOptions};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts};
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -30,8 +30,6 @@ const VERSION_MESSAGE: &str = concat!(
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
-    #[clap(flatten)]
-    pub shell: ShellOptions,
 }
 
 #[derive(Subcommand)]

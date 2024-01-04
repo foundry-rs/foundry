@@ -19,7 +19,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compact_to_contract,
-    compile::{self, ContractSources, ProjectCompiler},
+    compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
     get_contract_name, get_file_name, shell,
 };

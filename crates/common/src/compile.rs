@@ -65,7 +65,7 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: Some(crate::shell::verbosity().is_quiet()),
+            quiet: Some(crate::shell::verbosity().is_silent()),
             filters: Vec::new(),
             files: Vec::new(),
         }
@@ -179,7 +179,7 @@ impl ProjectCompiler {
     {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() {
-            sh_eprintln!("Nothing to compile")?;
+            println!("Nothing to compile");
             // nothing to do here
             std::process::exit(0);
         }
@@ -189,7 +189,7 @@ impl ProjectCompiler {
         let reporter = if quiet {
             Report::new(NoReporter::default())
         } else {
-            if crate::Shell::get().is_err_tty() {
+            if false {
                 Report::new(SpinnerReporter::spawn())
             } else {
                 Report::new(BasicStdoutReporter::default())
@@ -213,10 +213,10 @@ impl ProjectCompiler {
 
         if !quiet {
             if output.is_unchanged() {
-                sh_println!("No files changed, compilation skipped")?;
+                println!("No files changed, compilation skipped");
             } else {
                 // print the compiler output / warnings
-                sh_println!("{output}")?;
+                println!("{output}");
             }
 
             self.handle_output(&output);
@@ -237,14 +237,12 @@ impl ProjectCompiler {
                 artifacts.entry(version).or_default().push(name);
             }
             for (version, names) in artifacts {
-                let _ = sh_println!(
+                println!(
                     "  compiler version: {}.{}.{}",
-                    version.major,
-                    version.minor,
-                    version.patch
+                    version.major, version.minor, version.patch
                 );
                 for name in names {
-                    let _ = sh_println!("    - {name}");
+                    println!("    - {name}");
                 }
             }
         }
@@ -252,7 +250,7 @@ impl ProjectCompiler {
         if print_sizes {
             // add extra newline if names were already printed
             if print_names {
-                let _ = sh_println!();
+                println!();
             }
 
             let mut size_report = SizeReport { contracts: BTreeMap::new() };
@@ -273,7 +271,7 @@ impl ProjectCompiler {
                 size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
             }
 
-            let _ = sh_println!("{size_report}");
+            println!("{size_report}");
 
             // TODO: avoid process::exit
             // exit with error if any contract exceeds the size limit, excluding test contracts.

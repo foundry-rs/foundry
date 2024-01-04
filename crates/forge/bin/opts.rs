@@ -20,7 +20,6 @@ use crate::cmd::{
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use clap::{Parser, Subcommand, ValueHint};
-use foundry_cli::opts::ShellOptions;
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -43,8 +42,6 @@ const VERSION_MESSAGE: &str = concat!(
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
-    #[clap(flatten)]
-    pub shell: ShellOptions,
 }
 
 #[derive(Subcommand)]
