@@ -226,6 +226,7 @@ impl ScriptArgs {
                 &target_contract,
                 &project,
                 self.verify,
+                self.opts.args.silent,
                 filters,
             )?;
             return Ok((project, output))
@@ -242,8 +243,13 @@ impl ScriptArgs {
         if let Some(path) = contract.path {
             let path =
                 dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
-            let output =
-                compile::compile_target_with_filter(&path, &project, self.verify, filters)?;
+            let output = compile::compile_target_with_filter(
+                &path,
+                &project,
+                self.verify,
+                self.opts.args.silent,
+                filters,
+            )?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }

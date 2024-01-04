@@ -159,7 +159,7 @@ impl TestArgs {
         }
 
         let output = ProjectCompiler::new()
-            .quiet_if(self.json)
+            .quiet_if(self.json || self.opts.silent)
             .sparse(config.sparse_mode)
             .compile_sparse(&project, filter.clone())?;
         // Create test options from general project settings

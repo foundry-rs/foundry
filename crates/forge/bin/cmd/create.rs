@@ -91,7 +91,8 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let mut output = ProjectCompiler::new().quiet_if(self.json).compile(&project)?;
+        let mut output =
+            ProjectCompiler::new().quiet_if(self.json || self.opts.silent).compile(&project)?;
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output

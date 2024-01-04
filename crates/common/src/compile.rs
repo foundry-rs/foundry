@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
     fmt::Display,
+    io::IsTerminal,
     path::{Path, PathBuf},
     result,
     str::FromStr,
@@ -189,7 +190,7 @@ impl ProjectCompiler {
         let reporter = if quiet {
             Report::new(NoReporter::default())
         } else {
-            if false {
+            if std::io::stdout().is_terminal() {
                 Report::new(SpinnerReporter::spawn())
             } else {
                 Report::new(BasicStdoutReporter::default())
@@ -381,12 +382,13 @@ pub fn compile_target_with_filter(
     target_path: &Path,
     project: &Project,
     verify: bool,
+    quiet: bool,
     skip: Vec<SkipBuildFilter>,
 ) -> Result<ProjectCompileOutput> {
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
-    let mut compiler = ProjectCompiler::new().filters(skip);
+    let mut compiler = ProjectCompiler::new().filters(skip).quiet(quiet);
     if !graph.files().contains_key(target_path) {
         if verify {
             eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
