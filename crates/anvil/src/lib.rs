@@ -280,6 +280,8 @@ impl NodeHandle {
         // .interval(Duration::from_millis(500))
     }
 
+    /// Constructs a [`EthersRetryProvider`] for this handle's HTTP endpoint.
+    /// TODO: Remove once ethers is phased out of cast/alloy and tests.
     pub fn ethers_http_provider(&self) -> EthersRetryProvider {
         EthersProviderBuilder::new(&self.http_endpoint())
             .build()
