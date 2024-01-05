@@ -10,14 +10,12 @@ use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{PathBuf}
+    path::PathBuf,
 };
 
 mod filter;
 pub use filter::*;
 pub use gambit::Mutant;
-
-const DEFAULT_GAMBIT_DIR_OUT: &'static str = ".gambit";
 
 /// Array of artifact ids, abi and bytecode
 pub type GambitArtifacts = Vec<(ArtifactId, Abi, Bytes)>;
@@ -56,7 +54,7 @@ impl MutatorConfigBuilder {
                 _ => None,
             })
             .collect::<Vec<(ArtifactId, Abi, Bytes)>>();
-        
+
         let solc = self.solc.to_str().ok_or(eyre!("failed to decode solc root"))?;
         let solc_allow_paths: Vec<String> = self
             .solc_allow_paths
@@ -109,7 +107,7 @@ impl Mutator {
             num_mutants: None,
             random_seed: false,
             seed: 0,
-            outdir: Some(DEFAULT_GAMBIT_DIR_OUT.into()),
+            outdir: None,
             sourceroot: Some(source_root.into()),
             mutations: None,
             no_export: true,
@@ -207,12 +205,15 @@ impl Mutator {
 
     /// Run mutation on contract functions that match configured filters
     /// @TODO we should support ability to disable writing out artifacts
-    pub fn run_mutate<A>(self, _: bool, filter: A) -> Result<HashMap<String, Vec<Mutant>>>
+    pub fn run_mutate<A>(
+        self,
+        _: bool,
+        default_out_dir: PathBuf,
+        filter: A,
+    ) -> Result<HashMap<String, Vec<Mutant>>>
     where
         A: ContractFilter + FunctionFilter,
     {
-        let default_out_dir = PathBuf::from(DEFAULT_GAMBIT_DIR_OUT);
-        
         let mutant_params = self
             .matching_artifacts(&filter)
             .map(|(id, abi, _)| {
@@ -227,7 +228,7 @@ impl Mutator {
                 current_mutate_params
             })
             .collect_vec();
-    
+
         run_mutate(mutant_params).map_err(|err| eyre!("{:?}", err))
     }
 }

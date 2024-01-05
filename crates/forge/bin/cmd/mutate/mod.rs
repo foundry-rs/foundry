@@ -3,14 +3,13 @@ use super::{
     test::{ProjectPathsAwareFilter, TestOutcome},
 };
 use crate::cmd::mutate::summary::{
-        MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
-    };
+    MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
+};
 use clap::Parser;
 use eyre::{eyre, Result};
 use forge::{
-    inspectors::CheatsConfig, result::SuiteResult, MultiContractRunnerBuilder, TestOptions,
-    TestOptionsBuilder,
-    revm::primitives::Env
+    inspectors::CheatsConfig, result::SuiteResult, revm::primitives::Env,
+    MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
     opts::CoreBuildArgs,
@@ -19,7 +18,8 @@ use foundry_cli::{
 use foundry_common::{
     compile::ProjectCompiler,
     evm::EvmArgs,
-    shell::{self}, term::{MutatorSpinnerReporter, ProgressReporter}
+    shell::{self},
+    term::{MutatorSpinnerReporter, ProgressReporter},
 };
 use foundry_compilers::{
     project_util::{copy_dir, TempProject},
@@ -33,14 +33,14 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::{opts::EvmOpts, backend::Backend};
+use foundry_evm::{backend::Backend, opts::EvmOpts};
 use foundry_evm_mutator::{Mutant, MutatorConfigBuilder};
-use futures::future::{try_join_all, join_all};
+use futures::future::{join_all, try_join_all};
 use itertools::Itertools;
 use std::{
     collections::{BTreeMap, HashMap as StdHashMap},
     fs,
-    path::{PathBuf},
+    path::PathBuf,
     sync::mpsc::channel,
     time::{Duration, Instant},
 };
@@ -52,7 +52,6 @@ pub use summary::*;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
-
 
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]
@@ -73,7 +72,7 @@ pub struct MutateTestArgs {
     #[clap(long)]
     pub fail_fast: bool,
 
-    /// List mutation tests instead of running them
+    /// List all matching functions instead of running them
     #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
@@ -82,30 +81,6 @@ pub struct MutateTestArgs {
 
     #[clap(flatten)]
     opts: CoreBuildArgs,
-
-    /// Timeout for tests it helps exit long running test
-    #[arg(value_parser = parse_duration, default_value = "100")]
-    test_timeout: Duration,
-
-    /// Number of mutants to execute concurrently
-    ///
-    /// This should be configured conservatively because of "Too Many Files Open Error" as
-    /// we use join_all to run tasks in concurrently
-    #[clap(long, default_value_t = 16)]
-    parallel: usize,
-
-    /// Max Timeout
-    ///
-    /// Maximum number of tests allowed to timeout, this is required because a test run
-    /// can be long depending on the mutation. This leads to memory consumption per each
-    /// mutant test that runs for a long time. 
-    /// We configure this value here to put a bound on the possible memory leak for this
-    /// 
-    /// This is required because we can't cancel a thread
-    /// 
-    /// 16 * 32 MB (EVM default memory limit) = 512 MB
-    #[clap(long, default_value_t = 16)]
-    maximum_timeout_test: u32,
 
     /// Export generated mutants to a directory
     #[clap(long, default_value_t = false)]
@@ -133,7 +108,12 @@ impl MutateTestArgs {
             "{}",
             "[⠆] Starting Mutation Test. Go grab a cup of coffee ☕, it's going to take a while"
         );
-        self.execute_mutation_test().await
+
+        let mutation_test_outcome = self.execute_mutation_test().await?;
+        println!();
+        mutation_test_outcome.ensure_ok()?;
+
+        Ok(())
     }
 
     /// Executes mutation test for the project
@@ -143,7 +123,7 @@ impl MutateTestArgs {
     /// On success tests matching configured filter will be executed for all mutants.
     ///
     /// Returns the mutation test results for all matching functions
-    pub async fn execute_mutation_test(self) -> Result<()> {
+    pub async fn execute_mutation_test(self) -> Result<MutationTestOutcome> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         // Fetch project mutate and test filter
         let (mutate_filter, test_filter) = self.filter(&config);
@@ -160,20 +140,17 @@ impl MutateTestArgs {
             project = config.project()?;
         }
 
-        let (test_outcome, output) = self.ensure_valid_project(
-            &project,
-            &config,
-            &evm_opts,
-            test_filter.clone()
-        ).await?;
+        let (test_outcome, output) =
+            self.ensure_valid_project(&project, &config, &evm_opts, test_filter.clone()).await?;
 
         // Ensure test outcome is ok, exit if any test is failing
         if test_outcome.failures().count() > 0 {
             test_outcome.ensure_ok()?;
         }
 
-        let (mutants_output, mutants_len) = self.execute_mutation(&project, mutate_filter, output, &config)?;
-        
+        let (mutants_output, mutants_len) =
+            self.execute_mutation(&project, mutate_filter, output, &config)?;
+
         println!("[⠆] Testing Mutants...");
         let env = evm_opts.evm_env().await?;
         let test_backend = Backend::spawn(evm_opts.get_fork(&config, env.clone())).await;
@@ -181,64 +158,68 @@ impl MutateTestArgs {
 
         let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
             BTreeMap::new();
-        
+
         let mutation_project_root = project.root();
         for (contract_out_dir, contract_mutants) in mutants_output.into_iter() {
-            let mut mutant_test_statuses: Vec<(Duration, MutantTestStatus)> = Vec::with_capacity(contract_mutants.len());
+            let mut mutant_test_statuses: Vec<(Duration, MutantTestStatus)> =
+                Vec::with_capacity(contract_mutants.len());
             let contract_mutants_start = Instant::now();
 
             // a file can have hundreds of mutants depending on design
             // we chunk there to prevent huge memory consumption
             // join_all which launches all the futures and polls
-            let mut contract_mutants_iterator = contract_mutants.chunks(self.parallel);
-            
+            let mut contract_mutants_iterator = contract_mutants.chunks(config.mutate.parallel);
+
             while let Some(mutant_chunks) = contract_mutants_iterator.next() {
-                let mutant_data_iterator = mutant_chunks.iter().map(
-                    |mutant| (
+                let mutant_data_iterator = mutant_chunks.iter().map(|mutant| {
+                    (
                         mutation_project_root.clone(),
                         mutant.source.filename_as_str(),
-                        mutant.as_source_string().expect("Failed to read a file")
+                        mutant.as_source_string().expect("Failed to read a file"),
                     )
-                );
-                
+                });
+
                 // we compile the projects here
-                let mutant_project_and_compile_output: Vec<_> = try_join_all(
-                    mutant_data_iterator
-                    .map(
-                        |(root, file_name, mutant_contents)| tokio::task::spawn_blocking(
-                            || setup_and_compile_mutant(root, file_name, mutant_contents )
-                        )
-                    )
-                ).await?.into_iter().filter_map(|x| x.ok()).collect();
+                let mutant_project_and_compile_output: Vec<_> =
+                    try_join_all(mutant_data_iterator.map(|(root, file_name, mutant_contents)| {
+                        tokio::task::spawn_blocking(|| {
+                            setup_and_compile_mutant(root, file_name, mutant_contents)
+                        })
+                    }))
+                    .await?
+                    .into_iter()
+                    .filter_map(|x| x.ok())
+                    .collect();
 
                 let test_output = join_all(mutant_project_and_compile_output.into_iter().map(
                     |(temp_project, mutant_compile_output, mutant_config)| {
                         test_mutant(
                             test_backend.clone(),
-                            progress_bar_reporter.clone(), 
+                            progress_bar_reporter.clone(),
                             test_filter.clone(),
                             temp_project,
                             mutant_config,
                             mutant_compile_output,
                             &evm_opts,
                             env.clone(),
-                            self.test_timeout.clone(),
                         )
-                    }
-                )).await;
+                    },
+                ))
+                .await;
 
                 mutant_test_statuses.extend(test_output);
             }
 
-            let mutant_test_results: Vec<_> = std::iter::zip(
-                    contract_mutants,
-                    mutant_test_statuses
-                ).map(
-                    |(mutant, (duration, status))| MutantTestResult::new(duration, mutant, status)
-                ).collect_vec();
+            let mutant_test_results: Vec<_> =
+                std::iter::zip(contract_mutants, mutant_test_statuses)
+                    .map(|(mutant, (duration, status))| {
+                        MutantTestResult::new(duration, mutant, status)
+                    })
+                    .collect_vec();
 
-            let has_survivors = mutant_test_results.iter().any(|result| result.survived());           
-            let contract_name = contract_out_dir.split(std::path::MAIN_SEPARATOR_STR)
+            let has_survivors = mutant_test_results.iter().any(|result| result.survived());
+            let contract_name = contract_out_dir
+                .split(std::path::MAIN_SEPARATOR_STR)
                 .nth(1)
                 .ok_or(eyre!("Failed to parse contract name"))?;
 
@@ -249,6 +230,13 @@ impl MutateTestArgs {
 
             // Exit if fail fast is configured
             if self.fail_fast && has_survivors {
+                break;
+            }
+
+            // Exit if number of maximum number of timeout tests is reached
+            if mutant_test_suite_results.values().flat_map(|result| result.timeout()).count() >=
+                config.mutate.maximum_timeout_test
+            {
                 break;
             }
         }
@@ -266,7 +254,7 @@ impl MutateTestArgs {
                         .collect::<Vec<_>>()
                 )?
             );
-            return Ok(());
+            std::process::exit(0);
         }
 
         let mutation_test_outcome =
@@ -279,23 +267,18 @@ impl MutateTestArgs {
 
         println!("{}", mutation_test_outcome.summary());
 
-        println!();
-        mutation_test_outcome.ensure_ok()?;
-
-        Ok(())
+        Ok(mutation_test_outcome)
     }
 
-    /// Performs mutation on the project contracts 
+    /// Performs mutation on the project contracts
     pub fn execute_mutation(
         &self,
         project: &Project,
         mutate_filter: MutationProjectPathsAwareFilter,
         output: ProjectCompileOutput,
         config: &Config,
-    ) ->  Result<(StdHashMap<String, Vec<Mutant>>, usize)> {
+    ) -> Result<(StdHashMap<String, Vec<Mutant>>, usize)> {
         trace!(target: "forge::mutate", "running gambit");
-
-        let spinner = MutatorSpinnerReporter::spawn("Generating Mutants...".into());
 
         let mutator = MutatorConfigBuilder::new(
             project.solc.solc.clone(),
@@ -320,25 +303,35 @@ impl MutateTestArgs {
             }
         }
 
+        if self.list {
+            println!();
+
+            let results = mutator.list(&mutate_filter);
+            for (source, mutants) in results.iter() {
+                for (name, functions) in mutants.iter() {
+                    println!("{}:{}", source, name);
+                    println!("\t{}", functions.join(" \n\t"));
+                }
+            }
+            std::process::exit(0);
+        }
+
+        let spinner = MutatorSpinnerReporter::spawn("Generating Mutants...".into());
+
         let now = Instant::now();
         // init spinner
-        let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
+        let mutants_output =
+            mutator.run_mutate(self.export, config.mutate.out.clone(), mutate_filter.clone())?;
 
         let elapsed = now.elapsed();
-        
+
         drop(spinner);
 
         trace!(target: "forge::mutate", "finished running gambit");
-        // trace!(?elapsed, "finished running gambit");
 
-        let mutants_len = mutants_output.iter()
-            .flat_map(|(_, v)| v)
-            .count();
+        let mutants_len = mutants_output.iter().flat_map(|(_, v)| v).count();
 
-        println!(
-            "Generated {} mutants in {:.2?}",
-            mutants_len, elapsed
-        );
+        println!("Generated {} mutants in {:.2?}", mutants_len, elapsed);
 
         Ok((mutants_output, mutants_len))
     }
@@ -352,7 +345,7 @@ impl MutateTestArgs {
         filter: ProjectPathsAwareFilter,
     ) -> Result<(TestOutcome, ProjectCompileOutput)> {
         let compiler = ProjectCompiler::default();
-        let output =  compiler.compile(&project)?;
+        let output = compiler.compile(&project)?;
         // Create test options from general project settings
         // and compiler output
         let start = Instant::now();
@@ -403,7 +396,7 @@ impl MutateTestArgs {
                 }
             }
         }
-        
+
         let mut results = BTreeMap::new();
         // Set up test reporter channel
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -424,10 +417,7 @@ impl MutateTestArgs {
         drop(test_reporter);
 
         println!("Finished running project tests in {:2?}", start.elapsed());
-        Ok((
-            TestOutcome::new(results, false),
-            output,
-        ))
+        Ok((TestOutcome::new(results, false), output))
     }
 
     /// Returns the flattened [`MutateFilterArgs`] arguments merged with [`Config`].
@@ -462,17 +452,11 @@ impl Provider for MutateTestArgs {
     }
 }
 
-/// Parse Duration
-fn parse_duration(arg: &str) -> Result<Duration, std::num::ParseIntError> {
-    let seconds = arg.parse()?;
-    Ok(Duration::from_millis(seconds))
-}
-
 /// Creates a temp project from source project and compiles the project
 pub fn setup_and_compile_mutant(
     mutation_project_root: PathBuf,
     mutant_file: String,
-    mutant_contents: String 
+    mutant_contents: String,
 ) -> Result<(TempProject, ProjectCompileOutput, Config)> {
     trace!(target: "forge::mutate", "setting up and compiling mutant");
 
@@ -494,7 +478,7 @@ pub fn setup_and_compile_mutant(
     config.fuzz.runs = 0;
     config.invariant.runs = 0;
 
-    let mutant_file_path= temp_project_root.join(mutant_file);
+    let mutant_file_path = temp_project_root.join(mutant_file);
     // Write Mutant contents to file in temp_directory
     fs::write(&mutant_file_path.as_path(), mutant_contents)?;
 
@@ -502,7 +486,7 @@ pub fn setup_and_compile_mutant(
         duration = ?start.elapsed(),
         "compilation times",
     );
-    
+
     let mut project = config.project()?;
     project.set_solc_jobs(4);
 
@@ -524,7 +508,6 @@ pub async fn test_mutant(
     output: ProjectCompileOutput,
     evm_opts: &EvmOpts,
     env: Env,
-    test_timeout: Duration
 ) -> (Duration, MutantTestStatus) {
     trace!(target: "forge::mutate", "testing mutant");
 
@@ -532,8 +515,7 @@ pub async fn test_mutant(
 
     let project_root = temp_project.root();
     let toml = config.get_config_path();
-    let profiles = get_available_profiles(toml)
-        .expect("Failed to get profiles");
+    let profiles = get_available_profiles(toml).expect("Failed to get profiles");
 
     let test_options: TestOptions = TestOptionsBuilder::default()
         .fuzz(config.fuzz)
@@ -551,56 +533,55 @@ pub async fn test_mutant(
         .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
         .with_test_options(test_options.clone());
 
-    let mut runner =
-        runner_builder.build(project_root, output.clone(), env, evm_opts.clone())
-            .expect("Failed to build test runner");
-    
-    // We use a thread and recv_timeout here because Gambit generates 
+    let mut runner = runner_builder
+        .build(project_root, output.clone(), env, evm_opts.clone())
+        .expect("Failed to build test runner");
+
+    // We use a thread and recv_timeout here because Gambit generates
     // valid solidity grammar mutants that leads to very long running
-    // execution in REVM due to large amount of gas available. 
+    // execution in REVM due to large amount of gas available.
     //
     // An example of a mutant generated is below, the test will take forever to end
     // because it's an infinite loop
-    // 
-    // unchecked {
-    //        UnaryOperatorMutation(`++` |==> `~`) of: `for (uint256 i = 0; i < owners.length; ++i) {`
-    //        for (uint256 i = 0; i < owners.length; ~i) {
-    //            balances[i] = balanceOf[owners[i]][ids[i]];
-    //        }
-    //    }
     //
-    // 
+    // unchecked {
+    //    UnaryOperatorMutation(`++` |==> `~`) of: `for (uint256 i = 0; i < owners.length; ++i)
+    //    for (uint256 i = 0; i < owners.length; ~i) {
+    //       balances[i] = balanceOf[owners[i]][ids[i]];
+    //    }
+    // }
+    //
+    //
     // mpsc channel for reporting test results
     let (tx, rx) = channel::<(String, SuiteResult)>();
     let _ = tokio::task::spawn_blocking(move || {
-        // We create ThreadPool here because it's possible to have 
+        // We create ThreadPool here because it's possible to have
         // a long running test that attaches itself to the global rayon ThreadPool
         // This would prevent other rayon tasks from executing leading to a deadlock
         // Creating a pool means we can isolate this and prevent it from affecting
         // other tasks.
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
             .expect("Failed to setup thread pool ");
 
-        pool.install(
-            || runner.test_with_backend(db, &filter, tx, test_options)
-        );
-    
+        pool.install(|| runner.test_with_backend(db, &filter, tx, test_options));
     });
 
     let mut status: MutantTestStatus = MutantTestStatus::Survived;
     loop {
-        match rx.recv_timeout(test_timeout) {
+        match rx.recv_timeout(config.mutate.test_timeout) {
             Ok((_, suite_result)) => {
                 if suite_result.failures().count() > 0 {
                     status = MutantTestStatus::Killed;
                     break;
-                } 
-            },
+                }
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 trace!(target: "forge:mutate", "test timeout");
                 status = MutantTestStatus::Timeout;
                 break;
-            },
+            }
             _ => {
                 break;
             }

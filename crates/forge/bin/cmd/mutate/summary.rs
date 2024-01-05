@@ -2,13 +2,13 @@ use comfy_table::{
     modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
 };
 use core::fmt;
+use eyre::{eyre, Result};
 use foundry_common::shell::{self};
 use foundry_evm_mutator::Mutant;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use similar::TextDiff;
-use std::{collections::BTreeMap, time::Duration, ops::Add};
+use std::{collections::BTreeMap, ops::Add, time::Duration};
 use yansi::Paint;
-use eyre::{eyre, Result};
 
 const MAX_SURVIVE_RESULT_LOG_SIZE: usize = 5;
 
@@ -18,7 +18,7 @@ pub enum MutantTestStatus {
     Survived,
     #[default]
     Equivalent,
-    Timeout
+    Timeout,
 }
 
 impl fmt::Display for MutantTestStatus {
@@ -223,10 +223,16 @@ impl MutationTestOutcome {
 
             for survive_result in suite_result.survived().take(MAX_SURVIVE_RESULT_LOG_SIZE) {
                 let description = survive_result.mutant.op.to_string();
-                let (line, _) = survive_result.mutant.get_line_column().map_err(|x| eyre!(
-                    format!("{:?}", x)
-                ))?;
-                println!("\t Location: {}:{}, MutationType: {}", survive_result.mutant.source.filename_as_str(), line, description);
+                let (line, _) = survive_result
+                    .mutant
+                    .get_line_column()
+                    .map_err(|x| eyre!(format!("{:?}", x)))?;
+                println!(
+                    "\t Location: {}:{}, MutationType: {}",
+                    survive_result.mutant.source.filename_as_str(),
+                    line,
+                    description
+                );
             }
 
             if survived > MAX_SURVIVE_RESULT_LOG_SIZE {
@@ -271,7 +277,7 @@ impl MutationTestSummaryReporter {
             Cell::new("Timeout")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
-                .fg(Color::White)
+                .fg(Color::White),
         ]);
 
         if is_detailed {
@@ -286,7 +292,7 @@ impl MutationTestSummaryReporter {
             Cell::new("% Score")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
-                .fg(Color::White)
+                .fg(Color::White),
         );
 
         table.set_header(row);
@@ -294,8 +300,7 @@ impl MutationTestSummaryReporter {
     }
 
     pub fn print_summary(&mut self, mutation_test_outcome: &MutationTestOutcome) {
-
-        let mut total_killed= 0.0;
+        let mut total_killed = 0.0;
         let mut total_survived = 0.0;
         let mut total_equivalent = 0.0;
         let mut total_timeout = 0.0;
@@ -357,19 +362,21 @@ impl MutationTestSummaryReporter {
             if killed > 0.0 {
                 mutation_score = ((killed / (killed + survived)) * 100.0) as f64;
             }
-            let mut mutation_score_cell = Cell::new(
-                format!("{:.2}", mutation_score).to_string()
-            ).set_alignment(CellAlignment::Center);
+            let mut mutation_score_cell = Cell::new(format!("{:.2}", mutation_score).to_string())
+                .set_alignment(CellAlignment::Center);
 
-            mutation_score_cell = if mutation_score > 50.0 { mutation_score_cell.fg(Color::Green)} else { mutation_score_cell.fg(Color::Red)};
+            mutation_score_cell = if mutation_score > 50.0 {
+                mutation_score_cell.fg(Color::Green)
+            } else {
+                mutation_score_cell.fg(Color::Red)
+            };
 
             row.add_cell(mutation_score_cell);
 
             self.table.add_row(row);
         }
 
-
-        let mut footer  = Row::from(vec![
+        let mut footer = Row::from(vec![
             Cell::new("Total").set_alignment(CellAlignment::Center),
             Cell::new(total_killed).set_alignment(CellAlignment::Center),
             Cell::new(total_survived).set_alignment(CellAlignment::Center),
@@ -379,18 +386,22 @@ impl MutationTestSummaryReporter {
 
         if self.is_detailed {
             footer.add_cell(
-                Cell::new(format!("{:.2?}", total_time_taken).to_string()).set_alignment(CellAlignment::Left)
+                Cell::new(format!("{:.2?}", total_time_taken).to_string())
+                    .set_alignment(CellAlignment::Left),
             );
         }
-        
+
         let mut mutation_score: f64 = 0.0;
         if total_killed > 0.0 {
             mutation_score = ((total_killed / (total_killed + total_survived)) * 100.0) as f64;
         }
-        let mut mutation_score_cell = Cell::new(
-            format!("{:.2}", mutation_score).to_string()
-        ).set_alignment(CellAlignment::Center);
-        mutation_score_cell = if mutation_score > 50.0 { mutation_score_cell.fg(Color::Green)} else { mutation_score_cell.fg(Color::Red)};
+        let mut mutation_score_cell = Cell::new(format!("{:.2}", mutation_score).to_string())
+            .set_alignment(CellAlignment::Center);
+        mutation_score_cell = if mutation_score > 50.0 {
+            mutation_score_cell.fg(Color::Green)
+        } else {
+            mutation_score_cell.fg(Color::Red)
+        };
 
         footer.add_cell(mutation_score_cell);
         self.table.add_row(footer);

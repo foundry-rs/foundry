@@ -130,9 +130,15 @@ impl fmt::Debug for MutateFilterArgs {
             .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
             .field("no-match-test", &self.test_path_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-test-contract", &self.test_contract_pattern.as_ref().map(|r| r.as_str()))
-            .field("no-match-test-contract", &self.test_contract_pattern_inverse.as_ref().map(|r| r.as_str()))
+            .field(
+                "no-match-test-contract",
+                &self.test_contract_pattern_inverse.as_ref().map(|r| r.as_str()),
+            )
             .field("match-test-path", &self.test_path_pattern.as_ref().map(|g| g.as_str()))
-            .field("no-match-test-path", &self.test_path_pattern_inverse.as_ref().map(|g| g.as_str()))
+            .field(
+                "no-match-test-path",
+                &self.test_path_pattern_inverse.as_ref().map(|g| g.as_str()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -172,7 +178,7 @@ impl ContractFilter for MutateFilterArgs {
         let Some(path) = path.to_str() else {
             return false;
         };
-        
+
         let mut ok = true;
         if let Some(ref glob) = self.path_pattern {
             ok &= glob.is_match(path);
@@ -264,7 +270,7 @@ impl ContractFilter for MutationProjectPathsAwareFilter {
 
     fn matches_path(&self, path: &Path) -> bool {
         // we don't want to test files that belong to a library
-        self.args_filter.matches_path(path) && 
+        self.args_filter.matches_path(path) &&
             !self.paths.has_library_ancestor(path) &&
             !Path::new(path).starts_with(&self.paths.tests)
     }
