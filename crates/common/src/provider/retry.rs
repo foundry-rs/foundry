@@ -22,26 +22,6 @@ pub trait RetryPolicy: Send + Sync + std::fmt::Debug {
 pub struct RateLimitRetryPolicy;
 
 impl RetryPolicy for RateLimitRetryPolicy {
-    fn backoff_hint(&self, error: &TransportError) -> Option<std::time::Duration> {
-        if let TransportError::ErrorResp(resp) = error {
-            println!("resp: {:?}", resp);
-            let data = resp.try_data_as::<serde_json::Value>();
-            if let Some(Ok(data)) = data {
-                // if daily rate limit exceeded, infura returns the requested backoff in the error
-                // response
-                let backoff_seconds = &data["rate"]["backoff_seconds"];
-                // infura rate limit error
-                if let Some(seconds) = backoff_seconds.as_u64() {
-                    return Some(std::time::Duration::from_secs(seconds))
-                }
-                if let Some(seconds) = backoff_seconds.as_f64() {
-                    return Some(std::time::Duration::from_secs(seconds as u64 + 1))
-                }
-            }
-        }
-        None
-    }
-
     fn should_retry(&self, error: &TransportError) -> bool {
         match error {
             TransportError::Transport(_) => true,
@@ -64,6 +44,25 @@ impl RetryPolicy for RateLimitRetryPolicy {
             TransportError::ErrorResp(err) => should_retry_json_rpc_error(err),
         }
     }
+
+    fn backoff_hint(&self, error: &TransportError) -> Option<std::time::Duration> {
+        if let TransportError::ErrorResp(resp) = error {
+            let data = resp.try_data_as::<serde_json::Value>();
+            if let Some(Ok(data)) = data {
+                // if daily rate limit exceeded, infura returns the requested backoff in the error
+                // response
+                let backoff_seconds = &data["rate"]["backoff_seconds"];
+                // infura rate limit error
+                if let Some(seconds) = backoff_seconds.as_u64() {
+                    return Some(std::time::Duration::from_secs(seconds))
+                }
+                if let Some(seconds) = backoff_seconds.as_f64() {
+                    return Some(std::time::Duration::from_secs(seconds as u64 + 1))
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Analyzes the [ErrorPayload] and decides if the request should be retried based on the
@@ -85,11 +84,21 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
         return true
     }
 
+    // quick node rate limit error: `100/second request limit reached - reduce calls per second or
+    // upgrade your account at quicknode.com` <https://github.com/foundry-rs/foundry/issues/4894>
+    if *code == -32007 && message.contains("request limit reached") {
+        return true
+    }
+
     match message.as_str() {
         // this is commonly thrown by infura and is apparently a load balancer issue, see also <https://github.com/MetaMask/metamask-extension/issues/7234>
         "header not found" => true,
         // also thrown by infura if out of budget for the day and ratelimited
         "daily request count exceeded, request rate limited" => true,
-        _ => false,
+        msg => {
+            msg.contains("rate limit") ||
+                msg.contains("too many requests") ||
+                msg.contains("request limit")
+        }
     }
 }
