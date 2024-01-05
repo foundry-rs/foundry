@@ -1004,6 +1004,7 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "evm-disassembler",
+ "evmole",
  "eyre",
  "foundry-block-explorers",
  "foundry-cli",
@@ -2342,6 +2343,15 @@ checksum = "7ef8b778f0f7ba24aaa7c1d8fa7ec75db869f8a8508907be49eac899865ea52d"
 dependencies = [
  "eyre",
  "hex",
+]
+
+[[package]]
+name = "evmole"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f492d1949e58ef83a1bf8e23fbd042af12b03e7642d50dbb4cfb48112de5e01f"
+dependencies = [
+ "ruint",
 ]
 
 [[package]]
