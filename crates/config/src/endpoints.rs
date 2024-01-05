@@ -61,7 +61,9 @@ impl Deref for RpcEndpoints {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum RpcEndpointType {
+    /// Raw Endpoint url string
     String(RpcEndpoint),
+    /// Config object
     Config(RpcEndpointConfig),
 }
 
@@ -269,14 +271,14 @@ impl Serialize for RpcEndpointConfig {
     where
         S: Serializer,
     {
-        // use RpcEndpoint directly if all the other fields are None
-        if self.retries.is_none()
-            && self.retry_backoff.is_none()
-            && self.compute_units_per_second.is_none()
+        if self.retries.is_none() &&
+            self.retry_backoff.is_none() &&
+            self.compute_units_per_second.is_none()
         {
+            // serialize as endpoint if there's no additional config
             return self.endpoint.serialize(serializer);
         } else {
-            let mut map = serializer.serialize_map(None)?;
+            let mut map = serializer.serialize_map(Some(4))?;
             map.serialize_entry("endpoint", &self.endpoint)?;
             map.serialize_entry("retries", &self.retries)?;
             map.serialize_entry("retry_backoff", &self.retry_backoff)?;
@@ -292,8 +294,26 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
         D: Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        let config = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-        Ok(config)
+        if value.is_string() {
+            return Ok(Self {
+                endpoint: serde_json::from_value(value).map_err(serde::de::Error::custom)?,
+                ..Default::default()
+            });
+        }
+
+        #[derive(Deserialize)]
+        struct RpcEndpointConfigInner {
+            #[serde(alias = "url")]
+            endpoint: RpcEndpoint,
+            retries: Option<u32>,
+            retry_backoff: Option<u64>,
+            compute_units_per_second: Option<u64>,
+        }
+
+        let RpcEndpointConfigInner { endpoint, retries, retry_backoff, compute_units_per_second } =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+
+        Ok(RpcEndpointConfig { endpoint, retries, retry_backoff, compute_units_per_second })
     }
 }
 
@@ -342,5 +362,42 @@ impl Deref for ResolvedRpcEndpoints {
 impl DerefMut for ResolvedRpcEndpoints {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.endpoints
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serde_rpc_config() {
+        let s = r#"{
+            "endpoint": "http://localhost:8545",
+            "retries": 5,
+            "retry_backoff": 250,
+            "compute_units_per_second": 100
+        }"#;
+        let config: RpcEndpointConfig = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            config,
+            RpcEndpointConfig {
+                endpoint: RpcEndpoint::Url("http://localhost:8545".to_string()),
+                retries: Some(5),
+                retry_backoff: Some(250),
+                compute_units_per_second: Some(100),
+            }
+        );
+
+        let s = "\"http://localhost:8545\"";
+        let config: RpcEndpointConfig = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            config,
+            RpcEndpointConfig {
+                endpoint: RpcEndpoint::Url("http://localhost:8545".to_string()),
+                retries: None,
+                retry_backoff: None,
+                compute_units_per_second: None,
+            }
+        );
     }
 }
