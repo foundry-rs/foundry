@@ -13,8 +13,6 @@ use std::{
     path::PathBuf,
 };
 
-mod filter;
-pub use filter::*;
 pub use gambit::Mutant;
 
 /// Array of artifact ids, abi and bytecode
