@@ -195,7 +195,7 @@ impl Backend {
         } else {
             Blockchain::new(
                 &env.read(),
-                fees.is_eip1559().then(|| fees.base_fee()).map(|g| g.to_alloy()),
+                fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
             )
         };
@@ -424,12 +424,12 @@ impl Backend {
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                    fork_block.header.gas_used.to_ethers(),
-                    fork_block.header.gas_limit.to_ethers(),
-                    fork_block.header.base_fee_per_gas.unwrap_or_default().to_ethers(),
+                    fork_block.header.gas_used,
+                    fork_block.header.gas_limit,
+                    fork_block.header.base_fee_per_gas.unwrap_or_default(),
                 );
 
-                self.fees.set_base_fee(next_block_base_fee.into());
+                self.fees.set_base_fee(U256::from(next_block_base_fee));
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -617,27 +617,27 @@ impl Backend {
 
     /// Returns the current base fee
     pub fn base_fee(&self) -> U256 {
-        self.fees.base_fee().to_alloy()
+        self.fees.base_fee()
     }
 
     /// Sets the current basefee
     pub fn set_base_fee(&self, basefee: U256) {
-        self.fees.set_base_fee(basefee.to_ethers())
+        self.fees.set_base_fee(basefee)
     }
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> U256 {
-        self.fees.gas_price().to_alloy()
+        self.fees.gas_price()
     }
 
     /// Returns the suggested fee cap
     pub fn max_priority_fee_per_gas(&self) -> U256 {
-        self.fees.max_priority_fee_per_gas().to_alloy()
+        self.fees.max_priority_fee_per_gas()
     }
 
     /// Sets the gas price
     pub fn set_gas_price(&self, price: U256) {
-        self.fees.set_gas_price(price.to_ethers())
+        self.fees.set_gas_price(price)
     }
 
     pub fn elasticity(&self) -> f64 {
@@ -999,16 +999,16 @@ impl Backend {
             (outcome, header, block_hash)
         };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
+            header.gas_used.to_alloy(),
+            header.gas_limit.to_alloy(),
+            header.base_fee_per_gas.unwrap_or_default().to_alloy(),
         );
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash.to_alloy());
 
         // update next base fee
-        self.fees.set_base_fee(next_block_base_fee.into());
+        self.fees.set_base_fee(U256::from(next_block_base_fee));
 
         outcome
     }
@@ -1057,20 +1057,18 @@ impl Backend {
         env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
-            env.block.basefee = base.to_alloy();
+            env.block.basefee = base;
         }
 
-        let gas_price = gas_price
-            .map(|g| g.to_alloy())
-            .or(max_fee_per_gas.map(|g| g.to_alloy()))
-            .unwrap_or_else(|| self.gas_price());
+        let gas_price =
+            gas_price.map(|g| g).or(max_fee_per_gas.map(|g| g)).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
             caller: caller.to_alloy(),
             gas_limit: gas_limit.as_u64(),
             gas_price,
-            gas_priority_fee: max_priority_fee_per_gas.map(|f| f.to_alloy()),
+            gas_priority_fee: max_priority_fee_per_gas.map(|f| f),
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr.to_alloy()),
                 None => TransactTo::Create(CreateScheme::Create),
@@ -2262,8 +2260,7 @@ impl Backend {
         // sender half for the set
         self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
 
-        let notification =
-            NewBlockNotification { hash: hash.to_ethers(), header: Arc::new(header) };
+        let notification = NewBlockNotification { hash, header: Arc::new(header) };
 
         self.new_block_listeners
             .lock()

@@ -30,9 +30,8 @@ use ethers::{
     utils::WEI_IN_ETHER,
 };
 use foundry_common::{
-    provider::alloy::ProviderBuilder,
-    types::{ToAlloy, ToEthers},
-    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::alloy::ProviderBuilder, types::ToAlloy, ALCHEMY_FREE_TIER_CUPS,
+    NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -821,11 +820,7 @@ impl NodeConfig {
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
-        let fees = FeeManager::new(
-            env.cfg.spec_id,
-            self.get_base_fee().to_ethers(),
-            self.get_gas_price().to_ethers(),
-        );
+        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
 
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
@@ -1016,12 +1011,12 @@ latest block number: {latest_block}"
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used.to_ethers(),
-                    block.header.gas_limit.to_ethers(),
-                    block.header.base_fee_per_gas.unwrap_or_default().to_ethers(),
+                    block.header.gas_used,
+                    block.header.gas_limit,
+                    block.header.base_fee_per_gas.unwrap_or_default(),
                 );
                 // update next base fee
-                fees.set_base_fee(next_block_base_fee.into());
+                fees.set_base_fee(U256::from(next_block_base_fee));
             }
         }
 
@@ -1029,7 +1024,7 @@ latest block number: {latest_block}"
         if self.gas_price.is_none() {
             if let Ok(gas_price) = provider.get_gas_price().await {
                 self.gas_price = Some(gas_price);
-                fees.set_gas_price(gas_price.to_ethers());
+                fees.set_gas_price(gas_price);
             }
         }
 

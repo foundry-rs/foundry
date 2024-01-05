@@ -999,9 +999,9 @@ impl EthApi {
         }
 
         let fees = FeeDetails::new(
-            request.gas_price.map(ToEthers::to_ethers),
-            request.max_fee_per_gas.map(ToEthers::to_ethers),
-            request.max_priority_fee_per_gas.map(ToEthers::to_ethers),
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
         )?
         .or_zero_fees();
         let request = call_to_internal_tx_request(&request);
@@ -1454,9 +1454,9 @@ impl EthApi {
         node_info!("debug_traceCall");
         let block_request = self.block_request(block_number).await?;
         let fees = FeeDetails::new(
-            request.gas_price.map(ToEthers::to_ethers),
-            request.max_fee_per_gas.map(ToEthers::to_ethers),
-            request.max_priority_fee_per_gas.map(ToEthers::to_ethers),
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
         )?
         .or_zero_fees();
 
@@ -2195,9 +2195,9 @@ impl EthApi {
         }
 
         let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
+            request.gas_price.map(ToAlloy::to_alloy),
+            request.max_fee_per_gas.map(ToAlloy::to_alloy),
+            request.max_priority_fee_per_gas.map(ToAlloy::to_alloy),
         )?
         .or_zero_fees();
 
@@ -2208,7 +2208,7 @@ impl EthApi {
         // check with the funds of the sender
         if let Some(from) = request.from {
             let gas_price = fees.gas_price.unwrap_or_default();
-            if gas_price.to_alloy() > U256::ZERO {
+            if gas_price > U256::ZERO {
                 let mut available_funds =
                     self.backend.get_balance_with_state(&state, from.to_alloy())?;
                 if let Some(value) = request.value {
@@ -2219,8 +2219,7 @@ impl EthApi {
                     available_funds -= value.to_alloy();
                 }
                 // amount of gas the sender can afford with the `gas_price`
-                let allowance =
-                    available_funds.checked_div(gas_price.to_alloy()).unwrap_or_default();
+                let allowance = available_funds.checked_div(gas_price).unwrap_or_default();
                 if highest_gas_limit > allowance.to_ethers() {
                     trace!(target: "node", "eth_estimateGas capped by limited user funds");
                     highest_gas_limit = allowance.to_ethers();

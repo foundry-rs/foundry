@@ -8,7 +8,6 @@ use alloy_primitives::TxHash;
 use alloy_rpc_types::{Filter, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use foundry_common::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use std::{
     collections::HashMap,
@@ -173,8 +172,8 @@ impl LogsFilter {
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<AlloyLog> {
         let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
-            let b = self.storage.block(block.hash.to_alloy());
-            let receipts = self.storage.receipts(block.hash.to_alloy());
+            let b = self.storage.block(block.hash);
+            let receipts = self.storage.receipts(block.hash);
             if let (Some(receipts), Some(block)) = (receipts, b) {
                 logs.extend(filter_logs(block, receipts, &self.filter))
             }
