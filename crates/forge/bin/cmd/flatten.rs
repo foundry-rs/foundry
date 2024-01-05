@@ -8,7 +8,7 @@ use foundry_common::fs;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct FlattenArgs {
     /// The path to the contract to flatten.
     #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
@@ -40,9 +40,8 @@ impl FlattenArgs {
 
         let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;
-        let flattened = paths
-            .flatten(&target_path)
-            .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {err}")))?;
+        let flattened =
+            paths.flatten(&target_path).map_err(|err| eyre::eyre!("Failed to flatten: {err}"))?;
 
         match output {
             Some(output) => {

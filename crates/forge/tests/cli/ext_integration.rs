@@ -1,6 +1,21 @@
 forgetest_external!(solmate, "transmissions11/solmate");
-forgetest_external!(prb_math, "PaulRBerg/prb-math");
-forgetest_external!(prb_proxy, "PaulRBerg/prb-proxy");
+forgetest_external!(
+    #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
+    prb_math,
+    "PaulRBerg/prb-math"
+);
+forgetest_external!(
+    #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
+    prb_proxy,
+    "PaulRBerg/prb-proxy"
+);
+forgetest_external!(
+    #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
+    sablier_v2,
+    "sablier-labs/v2-core",
+    // skip fork tests
+    &["--nmc", "Fork"]
+);
 forgetest_external!(solady, "Vectorized/solady");
 forgetest_external!(
     #[cfg_attr(windows, ignore = "weird git fail")]

@@ -19,19 +19,20 @@ const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-#[derive(Debug, Parser)]
-#[clap(name = "cast", version = VERSION_MESSAGE)]
+/// Perform Ethereum RPC calls from the comfort of your command line.
+#[derive(Parser)]
+#[clap(
+    name = "cast",
+    version = VERSION_MESSAGE,
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    next_display_order = None,
+)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
 }
 
-/// Perform Ethereum RPC calls from the comfort of your command line.
-#[derive(Debug, Subcommand)]
-#[clap(
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
-    next_display_order = None
-)]
+#[derive(Subcommand)]
 pub enum Subcommands {
     /// Prints the maximum value of the given integer type.
     #[clap(visible_aliases = &["--max-int", "maxi"])]
@@ -858,6 +859,10 @@ pub enum Subcommands {
     /// Decodes a raw signed EIP 2718 typed transaction
     #[clap(visible_alias = "dt")]
     DecodeTransaction { tx: Option<String> },
+
+    /// Extracts function selectors and arguments from bytecode
+    #[clap(visible_alias = "sel")]
+    Selectors { bytecode: String },
 }
 
 /// CLI arguments for `cast --to-base`.

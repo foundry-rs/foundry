@@ -6,33 +6,26 @@ use foundry_cli::{
     utils::FoundryPathExt,
 };
 use foundry_common::{
-    compile,
+    compile::ProjectCompiler,
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub enum SelectorsSubcommands {
     /// Check for selector collisions between contracts
     #[clap(visible_alias = "co")]
     Collision {
-        /// First contract
-        #[clap(
-            help = "The first of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
-            value_name = "FIRST_CONTRACT"
-        )]
+        /// The first of the two contracts for which to look selector collisions for, in the form
+        /// `(<path>:)?<contractname>`.
         first_contract: ContractInfo,
 
-        /// Second contract
-        #[clap(
-            help = "The second of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
-            value_name = "SECOND_CONTRACT"
-        )]
+        /// The second of the two contracts for which to look selector collisions for, in the form
+        /// `(<path>:)?<contractname>`.
         second_contract: ContractInfo,
 
-        /// Support build args
         #[clap(flatten)]
         build: Box<CoreBuildArgs>,
     },
@@ -78,9 +71,9 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project)?;
+                let output = ProjectCompiler::new().quiet(true).compile(&project)?;
                 let artifacts = if all {
-                    outcome
+                    output
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
                             let is_sources_path = file
@@ -93,7 +86,7 @@ impl SelectorsSubcommands {
                         .collect()
                 } else {
                     let contract = contract.unwrap();
-                    let found_artifact = outcome.find_first(&contract);
+                    let found_artifact = output.find_first(&contract);
                     let artifact = found_artifact
                         .ok_or_else(|| {
                             eyre::eyre!(
@@ -122,41 +115,34 @@ impl SelectorsSubcommands {
                 }
             }
             SelectorsSubcommands::Collision { mut first_contract, mut second_contract, build } => {
-                // Build first project
-                let first_project = build.project()?;
-                let first_outcome = if let Some(ref mut contract_path) = first_contract.path {
+                // Compile the project with the two contracts included
+                let project = build.project()?;
+                let mut compiler = ProjectCompiler::new().quiet(true);
+
+                if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
-                    compile::compile_files(&first_project, vec![target_path], true)
-                } else {
-                    compile::suppress_compile(&first_project)
-                }?;
-
-                // Build second project
-                let second_project = build.project()?;
-                let second_outcome = if let Some(ref mut contract_path) = second_contract.path {
+                    compiler = compiler.files([target_path]);
+                }
+                if let Some(contract_path) = &mut second_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
-                    compile::compile_files(&second_project, vec![target_path], true)
-                } else {
-                    compile::suppress_compile(&second_project)
-                }?;
+                    compiler = compiler.files([target_path]);
+                }
 
-                // Find the artifacts
-                let first_found_artifact = first_outcome.find_contract(&first_contract);
-                let second_found_artifact = second_outcome.find_contract(&second_contract);
-
-                // Unwrap inner artifacts
-                let first_artifact = first_found_artifact.ok_or_else(|| {
-                    eyre::eyre!("Failed to extract first artifact bytecode as a string")
-                })?;
-                let second_artifact = second_found_artifact.ok_or_else(|| {
-                    eyre::eyre!("Failed to extract second artifact bytecode as a string")
-                })?;
+                let output = compiler.compile(&project)?;
 
                 // Check method selectors for collisions
-                let first_method_map = first_artifact.method_identifiers.as_ref().unwrap();
-                let second_method_map = second_artifact.method_identifiers.as_ref().unwrap();
+                let methods = |contract: &ContractInfo| -> eyre::Result<_> {
+                    let artifact = output
+                        .find_contract(contract)
+                        .ok_or_else(|| eyre::eyre!("Could not find artifact for {contract}"))?;
+                    artifact.method_identifiers.as_ref().ok_or_else(|| {
+                        eyre::eyre!("Could not find method identifiers for {contract}")
+                    })
+                };
+                let first_method_map = methods(&first_contract)?;
+                let second_method_map = methods(&second_contract)?;
 
                 let colliding_methods: Vec<(&String, &String, &String)> = first_method_map
                     .iter()
@@ -197,7 +183,7 @@ impl SelectorsSubcommands {
 
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project)?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact

@@ -55,7 +55,7 @@ impl fmt::Display for VerificationProviderType {
     }
 }
 
-#[derive(clap::ValueEnum, Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerificationProviderType {
     #[default]
     Etherscan,

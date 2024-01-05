@@ -264,7 +264,7 @@ where
 }
 
 /// Helper type to parse both `u64` and `U256`
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(untagged)]
 pub enum Numeric {
     /// A [U256] value.

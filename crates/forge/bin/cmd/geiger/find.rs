@@ -26,7 +26,7 @@ pub fn find_cheatcodes_in_string(src: &str) -> Result<UnsafeCheatcodes, Vec<Diag
 }
 
 /// Scan result for a single Solidity file.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SolFileMetrics {
     /// The Solidity file
     pub file: PathBuf,
@@ -97,7 +97,7 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
 }
 
 /// Unsafe usage metrics collection.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UnsafeCheatcodes {
     pub ffi: Vec<Loc>,
     pub read_file: Vec<Loc>,

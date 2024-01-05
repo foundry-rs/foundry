@@ -280,7 +280,7 @@ revertReason            {}",
 }
 
 /// Various numerical ethereum types used for pretty printing
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 #[allow(missing_docs)]
 pub enum EthValue {

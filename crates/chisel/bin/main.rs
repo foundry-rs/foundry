@@ -10,6 +10,7 @@ use chisel::{
 use clap::Parser;
 use eyre::Context;
 use foundry_cli::{
+    handler,
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
@@ -23,6 +24,7 @@ use foundry_config::{
 };
 use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use std::path::PathBuf;
+use tracing::debug;
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -59,7 +61,7 @@ pub struct ChiselParser {
 }
 
 /// Chisel binary subcommands
-#[derive(clap::Subcommand, Debug)]
+#[derive(Debug, clap::Subcommand)]
 pub enum ChiselParserSub {
     /// List all cached sessions
     List,
@@ -82,6 +84,8 @@ pub enum ChiselParserSub {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    handler::install();
+    utils::subscriber();
     #[cfg(windows)]
     if !Paint::enable_windows_ascii() {
         Paint::disable()
@@ -177,6 +181,7 @@ async fn main() -> eyre::Result<()> {
         // Get the prompt from the dispatcher
         // Variable based on status of the last entry
         let prompt = dispatcher.get_prompt();
+
         rl.helper_mut().unwrap().set_errored(dispatcher.errored);
 
         // Read the next line
@@ -185,6 +190,7 @@ async fn main() -> eyre::Result<()> {
         // Try to read the string
         match next_string {
             Ok(line) => {
+                debug!("dispatching next line: {line}");
                 // Clear interrupt flag
                 interrupt = false;
 
@@ -228,8 +234,11 @@ impl Provider for ChiselParser {
 /// Evaluate a single Solidity line.
 async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) {
     match dispatcher.dispatch(line).await {
-        DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => if let Some(msg) = msg {
-            println!("{}", Paint::green(msg));
+        DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => {
+            debug!(%line, ?msg, "dispatch success");
+            if let Some(msg) = msg {
+                println!("{}", Paint::green(msg));
+            }
         },
         DispatchResult::UnrecognizedCommand(e) => eprintln!("{e}"),
         DispatchResult::SolangParserFailed(e) => {

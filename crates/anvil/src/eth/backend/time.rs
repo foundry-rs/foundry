@@ -14,7 +14,7 @@ pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
 }
 
 /// Manages block time
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct TimeManager {
     /// tracks the overall applied timestamp offset
     offset: Arc<RwLock<i128>>,

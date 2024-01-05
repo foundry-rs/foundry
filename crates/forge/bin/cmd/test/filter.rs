@@ -165,7 +165,7 @@ impl fmt::Display for FilterArgs {
 }
 
 /// A filter that combines all command line arguments and the paths of the current projects
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ProjectPathsAwareFilter {
     args_filter: FilterArgs,
     paths: ProjectPathsConfig,

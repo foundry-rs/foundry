@@ -4,8 +4,8 @@ use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
-        analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
-        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
+        analysis::SourceAnalyzer, anchors::find_anchors, BytecodeReporter, ContractId,
+        CoverageReport, CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -37,7 +37,7 @@ type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 
 /// CLI arguments for `forge coverage`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -161,6 +161,8 @@ impl CoverageArgs {
         let mut versioned_asts: HashMap<Version, HashMap<usize, Ast>> = HashMap::new();
         let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
         for (path, mut source_file, version) in sources.into_sources_with_version() {
+            report.add_source(version.clone(), source_file.id as usize, path.clone());
+
             // Filter out dependencies
             if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
                 continue
@@ -180,7 +182,6 @@ impl CoverageArgs {
                     fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 );
-                report.add_source(version, source_file.id as usize, path);
             }
         }
 
@@ -279,6 +280,8 @@ impl CoverageArgs {
             report.add_anchors(anchors);
         }
 
+        report.add_source_maps(source_maps);
+
         Ok(report)
     }
 
@@ -301,7 +304,11 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
-            .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
+            .with_test_options(TestOptions {
+                fuzz: config.fuzz,
+                invariant: config.invariant,
+                ..Default::default()
+            })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
 
@@ -309,8 +316,9 @@ impl CoverageArgs {
         let known_contracts = runner.known_contracts.clone();
         let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle =
-            tokio::task::spawn(async move { runner.test(&filter, tx, Default::default()).await });
+        let handle = tokio::task::spawn(async move {
+            runner.test(&filter, tx, runner.test_options.clone()).await
+        });
 
         // Add hit data to the coverage report
         let data = rx
@@ -337,7 +345,7 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
-                );
+                )?;
             }
         }
 
@@ -362,6 +370,12 @@ impl CoverageArgs {
                             .report(&report)
                     }
                 }
+                CoverageReportKind::Bytecode => {
+                    let destdir = root.join("bytecode-coverage");
+                    fs::create_dir_all(&destdir)?;
+                    BytecodeReporter::new(root.clone(), destdir).report(&report)?;
+                    Ok(())
+                }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
         }
@@ -375,11 +389,12 @@ impl CoverageArgs {
 }
 
 // TODO: HTML
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum)]
 pub enum CoverageReportKind {
     Summary,
     Lcov,
     Debug,
+    Bytecode,
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

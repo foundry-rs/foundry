@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// endpoint. The inner in-memory database holds this storage and will be used for write operations.
 /// This database uses the `backend` for read and the `db` for write operations. But note the
 /// `backend` will also write (missing) data to the `db` in the background
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ForkedDatabase {
     /// responsible for fetching missing data
     ///

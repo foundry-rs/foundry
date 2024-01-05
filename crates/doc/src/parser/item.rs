@@ -9,7 +9,7 @@ use solang_parser::pt::{
 };
 
 /// The parsed item.
-#[derive(PartialEq, Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ParseItem {
     /// The parse tree source.
     pub source: ParseSource,
@@ -147,7 +147,7 @@ impl ParseItem {
 }
 
 /// A wrapper type around pt token.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ParseSource {
     /// Source contract definition.
     Contract(Box<ContractDefinition>),

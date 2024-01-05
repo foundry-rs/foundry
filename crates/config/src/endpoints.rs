@@ -9,7 +9,7 @@ use std::{
 };
 
 /// Container type for API endpoints, like various RPC endpoints
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RpcEndpoints {
     endpoints: BTreeMap<String, RpcEndpointConfig>,
@@ -121,7 +121,7 @@ impl TryFrom<RpcEndpointType> for String {
 /// env var, then the `Endpoint::Env` var will hold the reference (`${MAIN_NET}`) and _not_ the
 /// value of the env var itself.
 /// In other words, this type does not resolve env vars when it's being deserialized
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RpcEndpoint {
     /// A raw Url (ws, http)
     Url(String),
@@ -315,7 +315,7 @@ impl Default for RpcEndpointConfig {
 }
 
 /// Container type for _resolved_ endpoints, see [RpcEndpoints::resolve_all()]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedRpcEndpoints {
     /// contains all named endpoints and their URL or an error if we failed to resolve the env var
     /// alias

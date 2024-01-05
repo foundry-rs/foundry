@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 
 /// Warnings emitted during loading or managing Configuration
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Warning {
     /// An unknown section was encountered in a TOML file
@@ -53,30 +53,37 @@ impl fmt::Display for Warning {
         match self {
             Self::UnknownSection { unknown_section, source } => {
                 let source = source.as_ref().map(|src| format!(" in {src}")).unwrap_or_default();
-                f.write_fmt(format_args!("Unknown section [{unknown_section}] found{source}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{unknown_section}] instead or run `forge config --fix`."))
+                write!(
+                    f,
+                    "Found unknown config section{source}: [{unknown_section}]\n\
+                     This notation for profiles has been deprecated and may result in the profile \
+                     not being registered in future versions.\n\
+                     Please use [profile.{unknown_section}] instead or run `forge config --fix`."
+                )
             }
-            Self::NoLocalToml(tried) => {
-                let path = tried.display();
-                f.write_fmt(format_args!("No local TOML found to fix at {path}. Change the current directory to a project path or set the foundry.toml path with the FOUNDRY_CONFIG environment variable"))
-            }
+            Self::NoLocalToml(path) => write!(
+                f,
+                "No local TOML found to fix at {}.\n\
+                 Change the current directory to a project path or set the foundry.toml path with \
+                 the `FOUNDRY_CONFIG` environment variable",
+                path.display()
+            ),
+
             Self::CouldNotReadToml { path, err } => {
-                f.write_fmt(format_args!("Could not read TOML at {}: {err}", path.display()))
+                write!(f, "Could not read TOML at {}: {err}", path.display())
             }
             Self::CouldNotWriteToml { path, err } => {
-                f.write_fmt(format_args!("Could not write TOML to {}: {err}", path.display()))
+                write!(f, "Could not write TOML to {}: {err}", path.display())
             }
-            Self::CouldNotFixProfile { path, profile, err } => f.write_fmt(format_args!(
-                "Could not fix [{}] in TOML at {}: {}",
-                profile,
-                path.display(),
-                err
-            )),
-            Self::DeprecatedKey { old, new } if new.is_empty() => f.write_fmt(format_args!(
-                "Key `{old}` is being deprecated and will be removed in future versions.",
-            )),
-            Self::DeprecatedKey { old, new } => f.write_fmt(format_args!(
-                "Key `{old}` is being deprecated in favor of `{new}`. It will be removed in future versions.",
-            )),
+            Self::CouldNotFixProfile { path, profile, err } => {
+                write!(f, "Could not fix [{profile}] in TOML at {}: {err}", path.display())
+            }
+            Self::DeprecatedKey { old, new } if new.is_empty() => {
+                write!(f, "Key `{old}` is being deprecated and will be removed in future versions.")
+            }
+            Self::DeprecatedKey { old, new } => {
+                write!(f, "Key `{old}` is being deprecated in favor of `{new}`. It will be removed in future versions.")
+            }
         }
     }
 }

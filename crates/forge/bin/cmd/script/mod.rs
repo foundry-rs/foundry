@@ -74,7 +74,7 @@ mod verify;
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
 /// CLI arguments for `forge script`.
-#[derive(Debug, Clone, Parser, Default)]
+#[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
     /// The contract you want to run. Either the file path or contract name.
     ///
@@ -91,12 +91,7 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(
-        long,
-        short,
-        default_value = "run()",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
-    )]
+    #[clap(long, short, default_value = "run()")]
     pub sig: String,
 
     /// Max priority fee per gas for EIP1559 transactions.
@@ -621,7 +616,7 @@ struct JsonResult {
     returns: HashMap<String, NestedValue>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NestedValue {
     pub internal_type: String,
     pub value: String,

@@ -34,7 +34,7 @@ pub mod error;
 /// 1. Private Key (cleartext in CLI)
 /// 2. Private Key (interactively via secure prompt)
 /// 3. Mnemonic (via file path)
-#[derive(Parser, Debug, Default, Clone, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options - raw", about = None, long_about = None)]
 pub struct RawWallet {
     /// Open an interactive prompt to enter your private key.
@@ -42,11 +42,7 @@ pub struct RawWallet {
     pub interactive: bool,
 
     /// Use the provided private key.
-    #[clap(
-        long,
-        value_name = "RAW_PRIVATE_KEY",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
-    )]
+    #[clap(long, value_name = "RAW_PRIVATE_KEY")]
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrase of mnemonic file at the specified path.
@@ -76,7 +72,7 @@ pub struct RawWallet {
 /// 3. Trezor
 /// 4. Keystore (via file path)
 /// 5. AWS KMS
-#[derive(Parser, Debug, Default, Clone, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct Wallet {
     /// The sender account.
@@ -549,7 +545,7 @@ impl Signer for &WalletSigner {
 }
 
 /// Excerpt of a keystore file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeystoreFile {
     pub address: Address,
 }

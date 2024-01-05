@@ -128,7 +128,7 @@ pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfi
 ///     the "default" meta-profile.
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -369,6 +369,9 @@ pub struct Config {
     /// Should be removed once EvmVersion Cancun is supported by solc
     pub cancun: bool,
 
+    /// Address labels
+    pub labels: HashMap<Address, String>,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -411,7 +414,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1620,7 +1623,7 @@ impl From<Config> for Figment {
 }
 
 /// Wrapper type for `regex::Regex` that implements `PartialEq`
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RegexWrapper {
     #[serde(with = "serde_regex")]
@@ -1680,7 +1683,7 @@ pub(crate) mod from_opt_glob {
 }
 
 /// A helper wrapper around the root path used during Config detection
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RootPath(pub PathBuf);
 
@@ -1831,6 +1834,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             doc: Default::default(),
+            labels: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -1841,7 +1845,7 @@ impl Default for Config {
 ///
 /// Due to this limitation this type will be serialized/deserialized as String if it's larger than
 /// `i64`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GasLimit(pub u64);
 
 impl From<u64> for GasLimit {
@@ -1911,7 +1915,7 @@ impl<'de> Deserialize<'de> for GasLimit {
 }
 
 /// Variants for selecting the [`Solc`] instance
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
@@ -2451,7 +2455,7 @@ impl<P: Provider> ProviderExt for P {}
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BasicConfig {
     /// the profile tag: `[profile.default]`
     #[serde(skip)]
@@ -4466,12 +4470,43 @@ mod tests {
                 "foundry.toml",
                 r"
                 [default]
-               [profile.default.optimizer_details]
+                [profile.default.optimizer_details]
             ",
             )?;
 
             let config = Config::load();
             assert_eq!(config.optimizer_details, Some(OptimizerDetails::default()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_labels() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [labels]
+                0x1F98431c8aD98523631AE4a59f267346ea31F984 = "Uniswap V3: Factory"
+                0xC36442b4a4522E871399CD717aBDD847Ab11FE88 = "Uniswap V3: Positions NFT"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.labels,
+                HashMap::from_iter(vec![
+                    (
+                        Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984").unwrap(),
+                        "Uniswap V3: Factory".to_string()
+                    ),
+                    (
+                        Address::from_str("0xC36442b4a4522E871399CD717aBDD847Ab11FE88").unwrap(),
+                        "Uniswap V3: Positions NFT".to_string()
+                    ),
+                ])
+            );
 
             Ok(())
         });

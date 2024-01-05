@@ -9,7 +9,7 @@ use foundry_config::Config;
 use futures::join;
 
 /// CLI arguments for `cast find-block`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct FindBlockArgs {
     /// The UNIX timestamp to search for, in seconds.
     timestamp: u64,

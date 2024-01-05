@@ -3,7 +3,7 @@ use alloy_primitives::U256;
 use clap::Parser;
 use serde::Serialize;
 
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Clone, Debug, Serialize, Parser)]
 #[clap(next_help_heading = "Transaction options")]
 pub struct TransactionOpts {
     /// Gas limit for the transaction.

@@ -38,7 +38,7 @@ pub type Breakpoints = HashMap<char, (Address, usize)>;
 /// let opts = figment.extract::<EvmOpts>().unwrap();
 /// # }
 /// ```
-#[derive(Debug, Clone, Default, Parser, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
@@ -178,7 +178,7 @@ impl Provider for EvmArgs {
 }
 
 /// Configures the executor environment during tests.
-#[derive(Debug, Clone, Default, Parser, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
     /// The block gas limit.

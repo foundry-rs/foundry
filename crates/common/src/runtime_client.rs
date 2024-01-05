@@ -28,7 +28,7 @@ enum InnerClient {
 }
 
 /// Error type for the runtime provider
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum RuntimeClientError {
     /// Internal provider error
     #[error(transparent)]
@@ -277,7 +277,6 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 impl JsonRpcClient for RuntimeClient {
     type Error = RuntimeClientError;
 
-    #[allow(implied_bounds_entailment)]
     async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
     where
         T: Debug + Serialize + Send + Sync,

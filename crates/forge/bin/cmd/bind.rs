@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use ethers_contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{compile, fs::json_files};
+use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{
     fs,
@@ -15,7 +15,7 @@ const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
 
 /// CLI arguments for `forge bind`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct BindArgs {
     /// Path to where the contract artifacts are stored.
     #[clap(
@@ -86,7 +86,7 @@ impl BindArgs {
         if !self.skip_build {
             // run `forge build`
             let project = self.build_args.project()?;
-            compile::compile(&project, false, false)?;
+            let _ = ProjectCompiler::new().compile(&project)?;
         }
 
         let artifacts = self.try_load_config_emit_warnings()?.out;
@@ -216,11 +216,10 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
                 &self.crate_version,
                 self.bindings_root(&artifacts),
                 self.single_file,
-            )?;
+            )
         } else {
             trace!(single_file = self.single_file, "generating module");
-            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)?;
+            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)
         }
-        Ok(())
     }
 }

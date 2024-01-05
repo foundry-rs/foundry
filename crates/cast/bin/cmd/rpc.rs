@@ -6,7 +6,7 @@ use foundry_config::Config;
 use itertools::Itertools;
 
 /// CLI arguments for `cast rpc`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct RpcArgs {
     /// RPC method name
     method: String,

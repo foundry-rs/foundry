@@ -16,7 +16,7 @@ pub type FuzzRunIdentifiedContracts = Arc<Mutex<TargetedContracts>>;
 pub type BasicTxDetails = (Address, (Address, Bytes));
 
 /// Test contract which is testing its invariants.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct InvariantContract<'a> {
     /// Address of the test contract.
     pub address: Address,

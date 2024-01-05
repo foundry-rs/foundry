@@ -19,7 +19,7 @@ static DEPLOYMENTS_TABLE_SEPARATOR: Lazy<String> =
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct BufWriter {
     buf: String,
 }

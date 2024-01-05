@@ -28,7 +28,7 @@ pub struct RecordAccess {
 }
 
 /// Records `deal` cheatcodes
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct DealRecord {
     /// Target of the deal.
     pub address: Address,
@@ -210,6 +210,13 @@ impl Cheatcode for rollCall {
     }
 }
 
+impl Cheatcode for getBlockNumberCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        Ok(ccx.data.env.block.number.abi_encode())
+    }
+}
+
 impl Cheatcode for txGasPriceCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newGasPrice } = self;
@@ -223,6 +230,13 @@ impl Cheatcode for warpCall {
         let Self { newTimestamp } = self;
         ccx.data.env.block.timestamp = *newTimestamp;
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getBlockTimestampCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        Ok(ccx.data.env.block.timestamp.abi_encode())
     }
 }
 

@@ -5,7 +5,7 @@ use forge::link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency}
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
-    compile::{self, ContractSources},
+    compile::{self, ContractSources, ProjectCompiler},
     fs,
 };
 use foundry_compilers::{
@@ -255,11 +255,7 @@ impl ScriptArgs {
         }
 
         // We received `contract_name`, and need to find its file path.
-        let output = if self.opts.args.silent {
-            compile::suppress_compile(&project)
-        } else {
-            compile::compile(&project, false, false)
-        }?;
+        let output = ProjectCompiler::new().compile(&project)?;
         let cache =
             SolFilesCache::read_joined(&project.paths).wrap_err("Could not open compiler cache")?;
 

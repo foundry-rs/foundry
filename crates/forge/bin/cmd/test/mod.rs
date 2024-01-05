@@ -19,7 +19,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compact_to_contract,
-    compile::{self, ContractSources, ProjectCompiler},
+    compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
     get_contract_name, get_file_name, shell,
 };
@@ -47,7 +47,7 @@ pub use filter::FilterArgs;
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge test`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Run a test in the debugger.
@@ -142,14 +142,10 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        let mut filter = self.filter(&config);
-
-        trace!(target: "forge::test", ?filter, "using filter");
-
-        // Set up the project
+        // Set up the project.
         let mut project = config.project()?;
 
-        // install missing dependencies
+        // Install missing dependencies.
         if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
         {
@@ -158,15 +154,16 @@ impl TestArgs {
             project = config.project()?;
         }
 
-        let compiler = ProjectCompiler::default();
-        let output = match (config.sparse_mode, self.opts.silent | self.json) {
-            (false, false) => compiler.compile(&project),
-            (true, false) => compiler.compile_sparse(&project, filter.clone()),
-            (false, true) => compile::suppress_compile(&project),
-            (true, true) => compile::suppress_compile_sparse(&project, filter.clone()),
-        }?;
-        // Create test options from general project settings
-        // and compiler output
+        let mut filter = self.filter(&config);
+        trace!(target: "forge::test", ?filter, "using filter");
+
+        let mut compiler = ProjectCompiler::new().quiet_if(self.json || self.opts.silent);
+        if config.sparse_mode {
+            compiler = compiler.filter(Box::new(filter.clone()));
+        }
+        let output = compiler.compile(&project)?;
+
+        // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
@@ -407,11 +404,6 @@ impl TestArgs {
             for (name, result) in &mut tests {
                 short_test_result(name, result);
 
-                // If the test failed, we want to stop processing the rest of the tests
-                if self.fail_fast && result.status == TestStatus::Failure {
-                    break 'outer
-                }
-
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {
                     // We only decode logs from Hardhat and DS-style console events
@@ -481,6 +473,11 @@ impl TestArgs {
 
                 if self.gas_report {
                     gas_report.analyze(&result.traces);
+                }
+
+                // If the test failed, we want to stop processing the rest of the tests
+                if self.fail_fast && result.status == TestStatus::Failure {
+                    break 'outer
                 }
             }
             let block_outcome = TestOutcome::new(
@@ -582,7 +579,7 @@ impl Provider for TestArgs {
 }
 
 /// The result of a single test
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Test {
     /// The identifier of the artifact/contract in the form of `<artifact file name>:<contract
     /// name>`
@@ -623,26 +620,27 @@ impl TestOutcome {
         Self { results, allow_failure }
     }
 
-    /// Iterator over all succeeding tests and their names
+    /// Returns an iterator over all succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
-    /// Iterator over all failing tests and their names
+    /// Returns an iterator over all failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
     }
 
+    /// Returns an iterator over all skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
     }
 
-    /// Iterator over all tests and their names
+    /// Returns an iterator over all tests and their names.
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|suite| suite.tests())
     }
 
-    /// Returns an iterator over all `Test`
+    /// Returns an iterator over all `Test`s.
     pub fn into_tests(self) -> impl Iterator<Item = Test> {
         self.results
             .into_iter()

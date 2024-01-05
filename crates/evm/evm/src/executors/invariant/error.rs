@@ -55,7 +55,7 @@ pub struct InvariantFuzzTestResult {
     pub last_run_inputs: Vec<BasicTxDetails>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct InvariantFuzzError {
     pub logs: Vec<Log>,
     pub traces: Option<CallTraceArena>,

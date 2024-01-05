@@ -8,12 +8,15 @@
 extern crate tracing;
 
 use alloy_primitives::{Bytes, B256};
+use foundry_compilers::sourcemap::SourceElement;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
 };
+
+use eyre::{Context, Result};
 
 pub mod analysis;
 pub mod anchors;
@@ -25,7 +28,7 @@ pub use inspector::CoverageCollector;
 ///
 /// A coverage report contains coverage items and opcodes corresponding to those items (called
 /// "anchors"). A single coverage item may be referred to by multiple anchors.
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of source IDs to the source path
     pub source_paths: HashMap<(Version, usize), String>,
@@ -35,6 +38,10 @@ pub struct CoverageReport {
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
     pub anchors: HashMap<ContractId, Vec<ItemAnchor>>,
+    /// All the bytecode hits for the codebase
+    pub bytecode_hits: HashMap<ContractId, HitMap>,
+    /// The bytecode -> source mappings
+    pub source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>,
 }
 
 impl CoverageReport {
@@ -47,6 +54,14 @@ impl CoverageReport {
     /// Get the source ID for a specific source file path.
     pub fn get_source_id(&self, version: Version, path: String) -> Option<&usize> {
         self.source_paths_to_ids.get(&(version, path))
+    }
+
+    /// Add the source maps
+    pub fn add_source_maps(
+        &mut self,
+        source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>,
+    ) {
+        self.source_maps.extend(source_maps);
     }
 
     /// Add coverage items to this report
@@ -109,7 +124,20 @@ impl CoverageReport {
     ///
     /// This function should only be called *after* all the relevant sources have been processed and
     /// added to the map (see [add_source]).
-    pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: &HitMap) {
+    pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: &HitMap) -> Result<()> {
+        // Add bytecode level hits
+        let e = self
+            .bytecode_hits
+            .entry(contract_id.clone())
+            .or_insert_with(|| HitMap::new(hit_map.bytecode.clone()));
+        e.merge(hit_map).context(format!(
+            "contract_id {:?}, hash {}, hash {}",
+            contract_id,
+            e.bytecode.clone(),
+            hit_map.bytecode.clone(),
+        ))?;
+
+        // Add source level hits
         if let Some(anchors) = self.anchors.get(contract_id) {
             for anchor in anchors {
                 if let Some(hits) = hit_map.hits.get(&anchor.instruction) {
@@ -121,11 +149,12 @@ impl CoverageReport {
                 }
             }
         }
+        Ok(())
     }
 }
 
 /// A collection of [HitMap]s
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
@@ -159,7 +188,7 @@ impl DerefMut for HitMaps {
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct HitMap {
     pub bytecode: Bytes,
     pub hits: BTreeMap<usize, u64>,
@@ -174,10 +203,32 @@ impl HitMap {
     pub fn hit(&mut self, pc: usize) {
         *self.hits.entry(pc).or_default() += 1;
     }
+
+    /// Merge another hitmap into this, assuming the bytecode is consistent
+    pub fn merge(&mut self, other: &HitMap) -> Result<(), eyre::Report> {
+        for (pc, hits) in &other.hits {
+            *self.hits.entry(*pc).or_default() += hits;
+        }
+        Ok(())
+    }
+
+    pub fn consistent_bytecode(&self, hm1: &HitMap, hm2: &HitMap) -> bool {
+        // Consider the bytecodes consistent if they are the same out as far as the
+        // recorded hits
+        let len1 = hm1.hits.last_key_value();
+        let len2 = hm2.hits.last_key_value();
+        if let (Some(len1), Some(len2)) = (len1, len2) {
+            let len = std::cmp::max(len1.0, len2.0);
+            let ok = hm1.bytecode.0[..*len] == hm2.bytecode.0[..*len];
+            println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
+            return ok;
+        }
+        true
+    }
 }
 
 /// A unique identifier for a contract
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
     pub version: Version,
     pub source_id: usize,
@@ -264,7 +315,7 @@ impl Display for CoverageItem {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct SourceLocation {
     /// The source ID.
     pub source_id: usize,
@@ -292,7 +343,7 @@ impl Display for SourceLocation {
 }
 
 /// Coverage summary for a source file.
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct CoverageSummary {
     /// The number of executable lines in the source file.
     pub line_count: usize,

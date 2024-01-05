@@ -23,7 +23,7 @@ use thiserror::Error;
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// A custom Error thrown by the Formatter
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum FormatterError {
     /// Error thrown by `std::fmt::Write` interfaces
     #[error(transparent)]
@@ -73,7 +73,7 @@ macro_rules! bail {
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
@@ -957,7 +957,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         let mut last_loc: Option<Loc> = None;
         let mut visited_locs: Vec<Loc> = Vec::new();
 
+        // marker for whether the next item needs additional space
         let mut needs_space = false;
+        let mut last_comment = None;
+
         while let Some(mut line_item) = pop_next(self, &mut items) {
             let loc = line_item.as_ref().either(|c| c.loc, |i| i.loc());
             let (unwritten_whitespace_loc, unwritten_whitespace) =
@@ -999,7 +1002,19 @@ impl<'a, W: Write> Formatter<'a, W> {
                                 last_loc = *last_item;
                             }
 
-                            if needs_space || self.blank_lines(last_loc.end(), loc.start()) > 1 {
+                            // The blank lines check is susceptible additional trailing new lines
+                            // because the block docs can contain
+                            // multiple lines, but the function def should follow directly after the
+                            // block comment
+                            let is_last_doc_comment = matches!(
+                                last_comment,
+                                Some(CommentWithMetadata { ty: CommentType::DocBlock, .. })
+                            );
+
+                            if needs_space ||
+                                (!is_last_doc_comment &&
+                                    self.blank_lines(last_loc.end(), loc.start()) > 1)
+                            {
                                 writeln!(self.buf())?;
                             }
                         }
@@ -1018,12 +1033,15 @@ impl<'a, W: Write> Formatter<'a, W> {
             last_loc = Some(loc);
             visited_locs.push(loc);
 
+            last_comment = None;
+
             last_byte_written = loc.end();
-            if let Some(comment) = line_item.as_ref().left() {
+            if let Some(comment) = line_item.left() {
                 if comment.is_line() {
                     last_byte_written =
                         self.find_next_line(last_byte_written).unwrap_or(last_byte_written);
                 }
+                last_comment = Some(comment);
             }
         }
 
@@ -2020,31 +2038,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let enum_name = enumeration.name.safe_unwrap_mut();
         let mut name =
             self.visit_to_chunk(enum_name.loc.start(), Some(enum_name.loc.end()), enum_name)?;
-        name.content = format!("enum {}", name.content);
-        self.write_chunk(&name)?;
-
+        name.content = format!("enum {} ", name.content);
         if enumeration.values.is_empty() {
+            self.write_chunk(&name)?;
             self.write_empty_brackets()?;
         } else {
-            self.surrounded(
-                SurroundingChunk::new(
-                    "{",
-                    Some(enumeration.values.first_mut().unwrap().safe_unwrap().loc.start()),
-                    None,
-                ),
-                SurroundingChunk::new("}", None, Some(enumeration.loc.end())),
-                |fmt, _multiline| {
-                    let values = fmt.items_to_chunks(
-                        Some(enumeration.loc.end()),
-                        enumeration.values.iter_mut().map(|ident| {
-                            let ident = ident.safe_unwrap_mut();
-                            (ident.loc, ident)
-                        }),
-                    )?;
-                    fmt.write_chunks_separated(&values, ",", true)?;
-                    Ok(())
-                },
-            )?;
+            name.content.push('{');
+            self.write_chunk(&name)?;
+
+            self.indented(1, |fmt| {
+                let values = fmt.items_to_chunks(
+                    Some(enumeration.loc.end()),
+                    enumeration.values.iter_mut().map(|ident| {
+                        let ident = ident.safe_unwrap_mut();
+                        (ident.loc, ident)
+                    }),
+                )?;
+                fmt.write_chunks_separated(&values, ",", true)?;
+                writeln!(fmt.buf())?;
+                Ok(())
+            })?;
+            write_chunk!(self, "}}")?;
         }
 
         Ok(())

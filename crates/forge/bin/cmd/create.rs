@@ -19,7 +19,8 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    compile, estimate_eip1559_fees,
+    compile::ProjectCompiler,
+    estimate_eip1559_fees,
     fmt::parse_tokens,
     types::{ToAlloy, ToEthers},
 };
@@ -28,7 +29,7 @@ use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
 /// CLI arguments for `forge create`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct CreateArgs {
     /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,
@@ -90,12 +91,8 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let mut output = if self.json || self.opts.silent {
-            // Suppress compile stdout messages when printing json output or when silent
-            compile::suppress_compile(&project)
-        } else {
-            compile::compile(&project, false, false)
-        }?;
+        let mut output =
+            ProjectCompiler::new().quiet_if(self.json || self.opts.silent).compile(&project)?;
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
