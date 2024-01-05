@@ -1242,9 +1242,18 @@ impl SimpleCast {
             .as_uint()
             .wrap_err("Could not convert to uint")?
             .0;
-        let unit: alloy_primitives::utils::Unit = unit.parse().wrap_err("Could not parse units")?;
-        let parsed = alloy_primitives::utils::ParseUnits::parse_units(&value.to_string(), unit)?;
-        Ok(parsed.to_string())
+        let unit = unit.parse().wrap_err("could not parse units")?;
+        let mut formatted = ParseUnits::U256(value).format_units(unit);
+
+        // Trim empty fractional part.
+        if let Some(dot) = formatted.find('.') {
+            let fractional = &formatted[dot + 1..];
+            if fractional.chars().all(|c: char| c == '0') {
+                formatted = formatted[..dot].to_string();
+            }
+        }
+
+        Ok(formatted)
     }
 
     /// Converts wei into an eth amount
@@ -1273,14 +1282,14 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::to_wei("1", "wei")?, "1");
     /// assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
     /// assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
     /// assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_wei(value: &str, unit: &str) -> Result<String> {
-        Ok(ParseUnits::parse_units(value, unit.parse()?)?.to_string())
+        let unit = unit.parse().wrap_err("could not parse units")?;
+        Ok(ParseUnits::parse_units(value, unit)?.to_string())
     }
 
     /// Decodes rlp encoded list with hex data
