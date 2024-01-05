@@ -6462,7 +6462,7 @@ dependencies = [
 [[package]]
 name = "reth-revm-inspectors"
 version = "0.1.0-alpha.13"
-source = "git+https://github.com/paradigmxyz/reth/?branch=main#9a25470ae280189b399ce5dab9f5ac276ceedae6"
+source = "git+https://github.com/paradigmxyz/reth/?branch=main#8b56f50f3e326c1ef861ac3899dffd7f8a533c94"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6479,7 +6479,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-types"
 version = "0.1.0-alpha.13"
-source = "git+https://github.com/paradigmxyz/reth/?branch=main#9a25470ae280189b399ce5dab9f5ac276ceedae6"
+source = "git+https://github.com/paradigmxyz/reth/?branch=main#8b56f50f3e326c1ef861ac3899dffd7f8a533c94"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
