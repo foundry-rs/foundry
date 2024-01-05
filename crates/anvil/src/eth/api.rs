@@ -592,7 +592,7 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return fork
@@ -619,7 +619,7 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return Ok(B256::from(
@@ -758,7 +758,7 @@ impl EthApi {
         node_info!("eth_getCode");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return fork
@@ -786,7 +786,7 @@ impl EthApi {
 
         // If we're in forking mode, or still on the forked block (no blocks mined yet) then we can
         // delegate the call.
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
                     return fork
@@ -982,7 +982,7 @@ impl EthApi {
         node_info!("eth_call");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     if overrides.is_some() {
@@ -1038,7 +1038,7 @@ impl EthApi {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return fork
@@ -2150,7 +2150,7 @@ impl EthApi {
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return fork
@@ -2533,7 +2533,7 @@ impl EthApi {
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
 
-        if let &BlockRequest::Number(number) = &block_request {
+        if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
                     return fork
