@@ -461,6 +461,7 @@ dependencies = [
 name = "anvil"
 version = "0.2.0"
 dependencies = [
+ "alloy-chains",
  "alloy-primitives",
  "alloy-providers",
  "alloy-rpc-trace-types",

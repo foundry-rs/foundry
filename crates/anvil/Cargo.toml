@@ -40,6 +40,7 @@ alloy-rpc-types.workspace = true
 alloy-rpc-trace-types.workspace = true
 alloy-providers.workspace = true
 alloy-transport.workspace = true
+alloy-chains.workspace = true
 
 # axum related
 axum.workspace = true

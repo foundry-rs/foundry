@@ -941,7 +941,7 @@ impl NodeConfig {
                 // but only if we're forking mainnet
                 let chain_id =
                     provider.get_chain_id().await.expect("Failed to fetch network chain ID");
-                if chain_id.to::<u64>() == 1 {
+                if alloy_chains::NamedChain::Mainnet == chain_id.to::<u64>() {
                     let hardfork: Hardfork = fork_block_number.into();
                     env.cfg.spec_id = hardfork.into();
                     self.hardfork = Some(hardfork);
