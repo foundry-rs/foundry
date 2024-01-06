@@ -2,7 +2,11 @@ use super::retry::RetryArgs;
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::{EtherscanOpts, RpcOpts},
+    utils,
+    utils::LoadConfig,
+};
 use foundry_compilers::{info::ContractInfo, EvmVersion};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
@@ -113,6 +117,9 @@ pub struct VerifyArgs {
     pub etherscan: EtherscanOpts,
 
     #[clap(flatten)]
+    pub rpc: RpcOpts,
+
+    #[clap(flatten)]
     pub retry: RetryArgs,
 
     #[clap(flatten)]
@@ -130,6 +137,8 @@ impl figment::Provider for VerifyArgs {
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
         let mut dict = self.etherscan.dict();
+        dict.extend(self.rpc.dict());
+
         if let Some(root) = self.root.as_ref() {
             dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
         }
@@ -154,7 +163,17 @@ impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
-        let chain = config.chain.unwrap_or_default();
+
+        // If chain is not set, we try to get it from the RPC
+        // If RPC is not set, the default chain is used
+        let chain = match config.get_rpc_url() {
+            Some(_) => {
+                let provider = utils::get_provider(&config)?;
+                utils::get_chain(config.chain, provider).await?
+            }
+            None => config.chain.unwrap_or_default(),
+        };
+
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 

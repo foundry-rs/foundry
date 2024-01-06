@@ -105,6 +105,7 @@ impl VerifyBundle {
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
+                    rpc: Default::default(),
                     flatten: false,
                     force: false,
                     skip_is_verified_check: true,
