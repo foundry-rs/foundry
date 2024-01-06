@@ -123,8 +123,8 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 
-foundry-block-explorers = { version = "0.1.2", default-features = false }
-foundry-compilers = { version = "0.1.2", default-features = false }
+foundry-block-explorers = { version = "0.1.3", default-features = false }
+foundry-compilers = { version = "0.1.4", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -201,4 +201,3 @@ revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-

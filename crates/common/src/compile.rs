@@ -139,7 +139,7 @@ impl ProjectCompiler {
             if !files.is_empty() {
                 project.compile_files(files)
             } else if let Some(filter) = filter {
-                project.compile_sparse(Box::new(move |file: &_| filter.is_match(file)))
+                project.compile_sparse(filter)
             } else {
                 project.compile()
             }
