@@ -19,6 +19,7 @@ use foundry_compilers::{
     Artifact, Project, Solc,
 };
 use foundry_config::{Chain, Config, SolcReq};
+use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -486,7 +487,13 @@ impl EtherscanVerificationProvider {
                 .await?
                 .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
 
-            if receipt.contract_address != Some(args.address.to_ethers()) {
+            let maybe_creation_code: &[u8];
+
+            if receipt.contract_address == Some(args.address.to_ethers()) {
+                maybe_creation_code = &transaction.input;
+            } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER.to_ethers()) {
+                maybe_creation_code = &transaction.input[32..];
+            } else {
                 eyre::bail!("Fetching of constructor arguments is not supported for contracts created by contracts")
             }
 
@@ -505,8 +512,8 @@ impl EtherscanVerificationProvider {
                 )),
             }?;
 
-            if transaction.input.starts_with(bytecode) {
-                let constructor_args = &transaction.input[bytecode.len()..];
+            if maybe_creation_code.starts_with(bytecode) {
+                let constructor_args = &maybe_creation_code[bytecode.len()..];
                 return Ok(Some(hex::encode(constructor_args)));
             } else {
                 eyre::bail!("Local bytecode doesn't match on-chain bytecode")
