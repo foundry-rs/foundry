@@ -499,7 +499,7 @@ impl EtherscanVerificationProvider {
 
             let output = project.compile_file(self.contract_path(args, project)?)?;
             let artifact = output
-                .find_contract(&args.contract)
+                .find_first(&args.contract.name)
                 .ok_or_eyre("Contract artifact wasn't found locally")?;
             let bytecode = artifact
                 .get_bytecode_object()
