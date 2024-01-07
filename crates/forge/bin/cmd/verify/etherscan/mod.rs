@@ -1,7 +1,8 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
-use eyre::{eyre, Context, Result};
+use ethers_providers::Middleware;
+use eyre::{eyre, Context, OptionExt, Result};
 use forge::hashbrown::HashSet;
 use foundry_block_explorers::{
     errors::EtherscanError,
@@ -9,10 +10,13 @@ use foundry_block_explorers::{
     verify::{CodeFormat, VerifyContract},
     Client,
 };
-use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::{abi::encode_function_args, retry::Retry};
+use foundry_cli::utils::{self, get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
+use foundry_common::{abi::encode_function_args, retry::Retry, types::ToEthers};
 use foundry_compilers::{
-    artifacts::CompactContract, cache::CacheEntry, info::ContractInfo, Project, Solc,
+    artifacts::{BytecodeObject, CompactContract},
+    cache::CacheEntry,
+    info::ContractInfo,
+    Artifact, Project, Solc,
 };
 use foundry_config::{Chain, Config, SolcReq};
 use futures::FutureExt;
@@ -332,7 +336,7 @@ impl EtherscanVerificationProvider {
             self.source_provider(args).source(args, &project, &contract_path, &compiler_version)?;
 
         let compiler_version = format!("v{}", ensure_solc_build_metadata(compiler_version).await?);
-        let constructor_args = self.constructor_args(args, &project)?;
+        let constructor_args = self.constructor_args(args, &project, &config).await?;
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
                 .constructor_arguments(constructor_args)
@@ -435,7 +439,12 @@ impl EtherscanVerificationProvider {
     /// Return the optional encoded constructor arguments. If the path to
     /// constructor arguments was provided, read them and encode. Otherwise,
     /// return whatever was set in the [VerifyArgs] args.
-    fn constructor_args(&mut self, args: &VerifyArgs, project: &Project) -> Result<Option<String>> {
+    async fn constructor_args(
+        &mut self,
+        args: &VerifyArgs,
+        project: &Project,
+        config: &Config,
+    ) -> Result<Option<String>> {
         if let Some(ref constructor_args_path) = args.constructor_args_path {
             let (_, _, contract) = self.cache_entry(project, &args.contract).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
@@ -458,6 +467,50 @@ impl EtherscanVerificationProvider {
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()))
+        } else if args.guess_constructor_args {
+            let provider = utils::get_provider(config)?;
+            let client = self.client(
+                args.etherscan.chain.unwrap_or_default(),
+                args.verifier.verifier_url.as_deref(),
+                args.etherscan.key.as_deref(),
+                &config,
+            )?;
+
+            let creation_data = client.contract_creation_data(args.address).await?;
+            let transaction = provider
+                .get_transaction(creation_data.transaction_hash.to_ethers())
+                .await?
+                .ok_or_eyre("Couldn't fetch transaction data from RPC")?;
+            let receipt = provider
+                .get_transaction_receipt(creation_data.transaction_hash.to_ethers())
+                .await?
+                .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
+
+            if receipt.contract_address != Some(args.address.to_ethers()) {
+                eyre::bail!("Fetching of constructor arguments is not supported for contracts created by contracts")
+            }
+
+            let output = project.compile_file(self.contract_path(args, project)?)?;
+            let artifact = output
+                .find_contract(&args.contract)
+                .ok_or_eyre("Contract artifact wasn't found locally")?;
+            let bytecode = artifact
+                .get_bytecode_object()
+                .ok_or_eyre("Contract artifact does not contain bytecode")?;
+
+            let bytecode = match bytecode.as_ref() {
+                BytecodeObject::Bytecode(bytes) => Ok(bytes),
+                BytecodeObject::Unlinked(_) => Err(eyre!(
+                    "You have to provide correct libraries to use --guess-constructor-args"
+                )),
+            }?;
+
+            if transaction.input.starts_with(bytecode) {
+                let constructor_args = &transaction.input[bytecode.len()..];
+                return Ok(Some(hex::encode(constructor_args)));
+            } else {
+                eyre::bail!("Local bytecode doesn't match on-chain bytecode")
+            }
         }
 
         Ok(args.constructor_args.clone())

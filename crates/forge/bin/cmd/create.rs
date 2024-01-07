@@ -192,6 +192,7 @@ impl CreateArgs {
             via_ir: self.opts.via_ir,
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -342,6 +343,7 @@ impl CreateArgs {
             via_ir: self.opts.via_ir,
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await

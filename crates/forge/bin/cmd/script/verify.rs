@@ -117,6 +117,7 @@ impl VerifyBundle {
                     via_ir: self.via_ir,
                     evm_version: None,
                     show_standard_json_input: false,
+                    guess_constructor_args: false,
                 };
 
                 return Some(verify)

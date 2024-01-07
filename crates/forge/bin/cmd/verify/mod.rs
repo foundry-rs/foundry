@@ -61,6 +61,10 @@ pub struct VerifyArgs {
     #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
+    /// Try to extract constructor arguments from on-chain creation code.
+    #[clap(long)]
+    pub guess_constructor_args: bool,
+
     /// The `solc` version to use to build the smart contract.
     #[clap(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
@@ -163,6 +167,12 @@ impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
+
+        if self.guess_constructor_args && config.get_rpc_url().is_none() {
+            eyre::bail!(
+                "You have to provide a valid RPC URL to use --guess-constructor-args feature"
+            )
+        }
 
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
