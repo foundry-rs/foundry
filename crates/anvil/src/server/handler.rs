@@ -4,10 +4,11 @@ use crate::{
     pubsub::{EthSubscription, LogsSubscription},
     EthApi,
 };
-use anvil_core::eth::{
+use crate::engine::EngineApi;
+use anvil_core::{eth::{
     subscription::{SubscriptionId, SubscriptionKind},
     EthPubSub, EthRequest, EthRpcCall,
-};
+}, engine::EngineRequest};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 use ethers::types::FilteredParams;
@@ -117,3 +118,64 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
         }
     }
 }
+
+
+//////////////////////////////////
+/// 
+/// /// A `RpcHandler` that expects `EngineApi` rpc calls via http
+#[derive(Clone)]
+pub struct HttpEngineRpcHandler {
+    /// Access to the node
+    api: EngineApi,
+}
+
+// === impl WsEthRpcHandler ===
+
+impl HttpEngineRpcHandler {
+    /// Creates a new instance of the handler using the given `EngineApi`
+    pub fn new(api: EngineApi) -> Self {
+        Self { api }
+    }
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for HttpEngineRpcHandler {
+    type Request = EngineRequest;
+
+    async fn on_request(&self, request: Self::Request) -> ResponseResult {
+        self.api.execute(request).await;
+        ResponseResult::Success(serde_json::Value::from(1))
+    }
+}
+
+/// A `RpcHandler` that expects `EngineApi` rpc calls and `EthPubSub` via pubsub connection
+#[derive(Clone)]
+pub struct PubSubEngineRpcHandler {
+    /// Access to the node
+    api: EngineApi,
+}
+
+impl PubSubEngineRpcHandler {
+    /// Creates a new instance of the handler using the given `EthApi`
+    pub fn new(api: EngineApi) -> Self {
+        Self { api }
+    }
+
+    /// Invoked for an ethereum pubsub rpc call
+    async fn on_pub_sub(&self, pubsub: EthPubSub, cx: PubSubContext<Self>) -> ResponseResult {
+        // ResponseResult::Error(RpcError::internal_error_with("Not implemented").into())
+        ResponseResult::Success(serde_json::Value::from(1))
+    }
+}
+
+#[async_trait::async_trait]
+impl PubSubRpcHandler for PubSubEngineRpcHandler {
+    type Request = EthRpcCall;
+    type SubscriptionId = SubscriptionId;
+    type Subscription = EthSubscription;
+
+    async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult {
+        ResponseResult::Success(serde_json::Value::from(1))
+    }
+}
+

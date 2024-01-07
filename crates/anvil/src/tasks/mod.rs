@@ -56,7 +56,7 @@ impl TaskManager {
     /// use std::sync::Arc;
     /// # async fn t() {
     /// let endpoint = "http://....";
-    /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some(endpoint))).await;
+    /// let (api, _engine_api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some(endpoint))).await;
     ///
     /// let provider = Arc::new(Provider::try_from(endpoint).unwrap());
     ///
@@ -108,7 +108,7 @@ impl TaskManager {
     /// use anvil::{spawn, NodeConfig};
     /// use ethers::providers::Provider;
     /// # async fn t() {
-    /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
+    /// let (api, _engine_api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
     ///
     /// let provider = Provider::connect("ws://...").await.unwrap();
     ///

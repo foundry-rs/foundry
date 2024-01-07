@@ -12,6 +12,7 @@ repository.workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-evm.workspace = true
+reth-rpc-types.workspace = true
 
 alloy-primitives = { workspace = true, features = ["serde"] }
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }

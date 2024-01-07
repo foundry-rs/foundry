@@ -10,11 +10,12 @@ use crate::{
         sign::{DevSigner, Signer as EthSigner},
         EthApi,
     },
+    engine::EngineApi,
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
     shutdown::Signal,
-    tasks::TaskManager,
+    tasks::TaskManager
 };
 use eth::backend::fork::ClientFork;
 use ethers::{
@@ -35,6 +36,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
+    net::{IpAddr, Ipv4Addr},
 };
 use tokio::{
     runtime::Handle,
@@ -53,6 +55,8 @@ use crate::server::{
 };
 pub use hardfork::Hardfork;
 
+/// engine API
+pub mod engine;
 /// ethereum related implementations
 pub mod eth;
 /// support for polling filters
@@ -85,7 +89,7 @@ pub mod cmd;
 /// # use anvil::NodeConfig;
 /// # async fn spawn() {
 /// let config = NodeConfig::default();
-/// let (api, handle) = anvil::spawn(config).await;
+/// let (api, _engine_api, handle) =anvil::spawn(config).await;
 ///
 /// // use api
 ///
@@ -170,6 +174,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
     let mut servers = Vec::new();
+    let mut engine_servers = Vec::new();
     let mut addresses = Vec::new();
 
     for addr in config.host.iter() {
@@ -183,6 +188,19 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         servers.push(srv);
     }
 
+    // TODO test code for engine API
+    let engine_api = EngineApi::new(api.clone());
+    let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let engine_sock_addr = SocketAddr::new(ip_addr.to_owned(), config.engine_config.port);
+    let engine_srv = server::serve_engine(engine_sock_addr, engine_api.clone(), server_config.clone());
+
+    addresses.push(engine_srv.local_addr());
+
+    // spawn the server on a new task
+    let engine_srv = tokio::task::spawn(engine_srv.map_err(NodeError::from));
+    engine_servers.push(engine_srv);
+    
+
     let tokio_handle = Handle::current();
     let (signal, on_shutdown) = shutdown::signal();
     let task_manager = TaskManager::new(tokio_handle, on_shutdown);
@@ -193,10 +211,13 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         config,
         node_service,
         servers,
+        engine_servers,
         ipc_task,
         addresses,
         _signal: Some(signal),
         task_manager,
+        eth_api: api.clone(),
+        engine_api: Some(engine_api.clone()),
     };
 
     handle.print(fork.as_ref());
@@ -217,6 +238,11 @@ pub struct NodeHandle {
     pub node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handles (one per socket) for the Anvil server.
     pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
+    /// Join handles (one per socket) for the Anvil EngineAPI server.
+    pub engine_servers: Vec<JoinHandle<Result<(), NodeError>>>,
+
+    pub eth_api: EthApi,
+    pub engine_api: Option<EngineApi>,
     // The future that joins the ipc server, if any
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
