@@ -42,7 +42,7 @@ pub fn decode_revert(
 ) -> String {
     maybe_decode_revert(err, maybe_abi, status).unwrap_or_else(|| {
         if err.is_empty() {
-            "<no data>".to_string()
+            "<empty revert data>".to_string()
         } else {
             trimmed_hex(err)
         }
