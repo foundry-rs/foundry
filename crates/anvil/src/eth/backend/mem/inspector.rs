@@ -5,19 +5,20 @@ use ethers::types::Log;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
-    inspectors::{LogCollector, Tracer},
+    inspectors::{LogCollector, TracingInspector},
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
         primitives::{Address, Bytes, B256},
         EVMData,
     },
+    traces::TracingInspectorConfig,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
 pub struct Inspector {
-    pub tracer: Option<Tracer>,
+    pub tracer: Option<TracingInspector>,
     /// collects all `console.sol` logs
     pub log_collector: LogCollector,
 }
@@ -34,15 +35,13 @@ impl Inspector {
 
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_tracing(mut self) -> Self {
-        self.tracer = Some(Default::default());
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
         self
     }
 
     /// Enables steps recording for `Tracer`.
-    pub fn with_steps_tracing(mut self) -> Self {
-        let tracer = self.tracer.get_or_insert_with(Default::default);
-        tracer.record_steps();
-        self
+    pub fn with_steps_tracing(self) -> Self {
+        self.with_tracing()
     }
 }
 

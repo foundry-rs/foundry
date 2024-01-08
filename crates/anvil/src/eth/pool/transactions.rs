@@ -1,6 +1,7 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_primitives::{Address, TxHash, U256};
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
-use ethers::types::{Address, TxHash, U256};
+use foundry_common::types::ToAlloy;
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,
@@ -44,7 +45,7 @@ impl TransactionOrder {
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
             TransactionOrder::Fifo => TransactionPriority::default(),
-            TransactionOrder::Fees => TransactionPriority(tx.gas_price()),
+            TransactionOrder::Fees => TransactionPriority(tx.gas_price().to_alloy()),
         }
     }
 }
@@ -87,13 +88,13 @@ pub struct PoolTransaction {
 
 impl PoolTransaction {
     /// Returns the hash of this transaction
-    pub fn hash(&self) -> &TxHash {
-        self.pending_transaction.hash()
+    pub fn hash(&self) -> TxHash {
+        self.pending_transaction.hash().to_alloy()
     }
 
     /// Returns the gas pric of this transaction
     pub fn gas_price(&self) -> U256 {
-        self.pending_transaction.transaction.gas_price()
+        self.pending_transaction.transaction.gas_price().to_alloy()
     }
 }
 
@@ -143,7 +144,7 @@ impl PendingTransactions {
     pub fn add_transaction(&mut self, tx: PendingPoolTransaction) -> Result<(), PoolError> {
         assert!(!tx.is_ready(), "transaction must not be ready");
         assert!(
-            !self.waiting_queue.contains_key(tx.transaction.hash()),
+            !self.waiting_queue.contains_key(&tx.transaction.hash()),
             "transaction is already added"
         );
 
@@ -163,13 +164,13 @@ impl PendingTransactions {
 
         // add all missing markers
         for marker in &tx.missing_markers {
-            self.required_markers.entry(marker.clone()).or_default().insert(*tx.transaction.hash());
+            self.required_markers.entry(marker.clone()).or_default().insert(tx.transaction.hash());
         }
 
         // also track identifying markers
-        self.waiting_markers.insert(tx.transaction.provides.clone(), *tx.transaction.hash());
+        self.waiting_markers.insert(tx.transaction.provides.clone(), tx.transaction.hash());
         // add tx to the queue
-        self.waiting_queue.insert(*tx.transaction.hash(), tx);
+        self.waiting_queue.insert(tx.transaction.hash(), tx);
 
         Ok(())
     }
@@ -309,7 +310,7 @@ impl TransactionsIterator {
             self.independent.insert(tx_ref);
         } else {
             // otherwise we're still awaiting for some deps
-            self.awaiting.insert(*tx_ref.transaction.hash(), (satisfied, tx_ref));
+            self.awaiting.insert(tx_ref.transaction.hash(), (satisfied, tx_ref));
         }
     }
 }
@@ -324,7 +325,7 @@ impl Iterator for TransactionsIterator {
             let hash = best.transaction.hash();
 
             let ready =
-                if let Some(ready) = self.all.get(hash).cloned() { ready } else { continue };
+                if let Some(ready) = self.all.get(&hash).cloned() { ready } else { continue };
 
             // Insert transactions that just got unlocked.
             for hash in &ready.unlocks {
@@ -409,14 +410,14 @@ impl ReadyTransactions {
     ) -> Result<Vec<Arc<PoolTransaction>>, PoolError> {
         assert!(tx.is_ready(), "transaction must be ready",);
         assert!(
-            !self.ready_tx.read().contains_key(tx.transaction.hash()),
+            !self.ready_tx.read().contains_key(&tx.transaction.hash()),
             "transaction already included"
         );
 
         let (replaced_tx, unlocks) = self.replaced_transactions(&tx.transaction)?;
 
         let id = self.next_id();
-        let hash = *tx.transaction.hash();
+        let hash = tx.transaction.hash();
 
         let mut independent = true;
         let mut requires_offset = 0;
@@ -473,12 +474,14 @@ impl ReadyTransactions {
             // construct a list of unlocked transactions
             // also check for transactions that shouldn't be replaced because underpriced
             let ready = self.ready_tx.read();
-            for to_remove in remove_hashes.iter().filter_map(|hash| ready.get(hash)) {
+            for to_remove in remove_hashes.iter().filter_map(|hash| ready.get(*hash)) {
                 // if we're attempting to replace a transaction that provides the exact same markers
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.gas_price().to_alloy() <=
+                        to_remove.gas_price()
+                    {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
                     } else {
@@ -534,7 +537,7 @@ impl ReadyTransactions {
                         let prev_hash = self.provided_markers.get(marker)?;
                         let tx2 = ready.get_mut(prev_hash)?;
                         // remove hash
-                        if let Some(idx) = tx2.unlocks.iter().position(|i| i == hash) {
+                        if let Some(idx) = tx2.unlocks.iter().position(|i| i == &hash) {
                             tx2.unlocks.swap_remove(idx);
                         }
                         if tx2.unlocks.is_empty() {
@@ -566,7 +569,7 @@ impl ReadyTransactions {
                 for marker in &tx.provides {
                     let removed = self.provided_markers.remove(marker);
                     assert_eq!(
-                        removed.as_ref(),
+                        removed,
                         if current_marker == marker { None } else { Some(tx.hash()) },
                         "The pool contains exactly one transaction providing given tag; the removed transaction
 						claims to provide that tag, so it has to be mapped to it's hash; qed"

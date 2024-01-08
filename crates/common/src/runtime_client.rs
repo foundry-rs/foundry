@@ -1,5 +1,5 @@
 //! Wrap different providers
-
+// todo: remove
 use async_trait::async_trait;
 use ethers_core::types::U256;
 use ethers_providers::{
@@ -261,7 +261,7 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
     if url_str.starts_with(PREFIX) {
         let pipe_name = &url_str[PREFIX.len()..];
         let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
-        return Ok(PathBuf::from(pipe_path))
+        return Ok(PathBuf::from(pipe_path));
     }
 
     url.to_file_path()

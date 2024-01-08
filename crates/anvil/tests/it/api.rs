@@ -1,11 +1,13 @@
 //! general eth api tests
 
 use crate::abi::{MulticallContract, SimpleStorage};
+use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::{CallInput, CallRequest};
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
 };
-use anvil_core::eth::{state::AccountOverride, transaction::EthTransactionRequest};
+use anvil_core::eth::{state::AccountOverride, transaction::to_alloy_state_override};
 use ethers::{
     abi::{Address, Tokenizable},
     prelude::{builders::ContractCall, decode_function_data, Middleware, SignerMiddleware},
@@ -13,6 +15,7 @@ use ethers::{
     types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, H256, U256},
     utils::get_contract_address,
 };
+use foundry_common::types::ToAlloy;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,18 +23,18 @@ async fn can_get_block_number() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let block_num = api.block_number().unwrap();
-    assert_eq!(block_num, U256::zero());
+    assert_eq!(block_num, U256::zero().to_alloy());
 
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let num = provider.get_block_number().await.unwrap();
-    assert_eq!(num, block_num.as_u64().into());
+    assert_eq!(num, block_num.to::<u64>().into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
@@ -43,7 +46,7 @@ async fn can_dev_get_balance() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let _ = provider.get_gas_price().await.unwrap();
 }
@@ -51,7 +54,7 @@ async fn can_get_price() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let _ = provider.get_accounts().await.unwrap();
 }
@@ -59,7 +62,7 @@ async fn can_get_accounts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_client_version() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let version = provider.client_version().await.unwrap();
     assert_eq!(CLIENT_VERSION, version);
@@ -68,7 +71,7 @@ async fn can_get_client_version() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, CHAIN_ID.into());
@@ -77,7 +80,7 @@ async fn can_get_chain_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_modify_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(Chain::Goerli))).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, Chain::Goerli.into());
@@ -97,7 +100,7 @@ async fn can_get_network_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
@@ -119,7 +122,7 @@ async fn can_get_block_by_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let accounts: Vec<_> = handle.dev_wallets().collect();
 
     let block = provider.get_block(BlockNumber::Pending).await.unwrap().unwrap();
@@ -153,7 +156,7 @@ async fn can_get_pending_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 0u64);
@@ -182,36 +185,41 @@ async fn can_call_on_pending_block() {
 
     let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
     for i in 1..10 {
-        api.anvil_set_coinbase(accounts[i % accounts.len()]).await.unwrap();
-        api.evm_set_block_gas_limit((30_000_000 + i).into()).unwrap();
+        api.anvil_set_coinbase(accounts[i % accounts.len()].to_alloy()).await.unwrap();
+        api.evm_set_block_gas_limit(rU256::from(30_000_000 + i)).unwrap();
 
-        api.anvil_mine(Some(1.into()), None).await.unwrap();
+        api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     // Ensure that the right header values are set when calling a past block
-    for block_number in 1..(api.block_number().unwrap().as_usize() + 1) {
-        let block_number = BlockNumber::Number(block_number.into());
-        let block = api.block_by_number(block_number).await.unwrap().unwrap();
+    for block_number in 1..(api.block_number().unwrap().to::<usize>() + 1) {
+        let block_number_alloy = alloy_rpc_types::BlockNumberOrTag::Number(block_number as u64);
+        let block_number_ethers = BlockNumber::Number((block_number as u64).into());
+        let block = api.block_by_number(block_number_alloy).await.unwrap().unwrap();
 
         let block_timestamp = pending_contract
             .get_current_block_timestamp()
-            .block(block_number)
+            .block(block_number_ethers)
             .call()
             .await
             .unwrap();
-        assert_eq!(block.timestamp, block_timestamp);
+        assert_eq!(block.header.timestamp, block_timestamp.to_alloy());
 
         let block_gas_limit = pending_contract
             .get_current_block_gas_limit()
-            .block(block_number)
+            .block(block_number_ethers)
             .call()
             .await
             .unwrap();
-        assert_eq!(block.gas_limit, block_gas_limit);
+        assert_eq!(block.header.gas_limit, block_gas_limit.to_alloy());
 
-        let block_coinbase =
-            pending_contract.get_current_block_coinbase().block(block_number).call().await.unwrap();
-        assert_eq!(block.author.unwrap(), block_coinbase);
+        let block_coinbase = pending_contract
+            .get_current_block_coinbase()
+            .block(block_number_ethers)
+            .call()
+            .await
+            .unwrap();
+        assert_eq!(block.header.miner, block_coinbase.to_alloy());
     }
 }
 
@@ -226,13 +234,13 @@ where
 {
     let result = api
         .call(
-            EthTransactionRequest {
-                data: call.tx.data().cloned(),
-                to: Some(to),
+            CallRequest {
+                input: CallInput::maybe_input(call.tx.data().cloned().map(|b| b.0.into())),
+                to: Some(to.to_alloy()),
                 ..Default::default()
             },
             None,
-            Some(overrides),
+            Some(to_alloy_state_override(overrides)),
         )
         .await
         .unwrap();
@@ -242,7 +250,7 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     api.anvil_set_auto_mine(true).await.unwrap();
 

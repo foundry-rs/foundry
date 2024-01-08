@@ -128,6 +128,7 @@ impl InspectArgs {
             ContractArtifactField::Errors => {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
+                    let abi = &abi;
                     // Print the signature of all errors
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
                         let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
@@ -144,6 +145,8 @@ impl InspectArgs {
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
+                    let abi = &abi;
+
                     // print the signature of all events including anonymous
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();

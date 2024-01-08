@@ -562,7 +562,7 @@ impl Executor {
             // network conditions - the actual gas price is kept in `self.block` and is applied by
             // the cheatcode handler if it is enabled
             block: BlockEnv {
-                basefee: U256::from(0),
+                basefee: U256::ZERO,
                 gas_limit: self.gas_limit,
                 ..self.env.block.clone()
             },
@@ -572,7 +572,7 @@ impl Executor {
                 data,
                 value,
                 // As above, we set the gas price to 0.
-                gas_price: U256::from(0),
+                gas_price: U256::ZERO,
                 gas_priority_fee: None,
                 gas_limit: self.gas_limit.to(),
                 ..self.env.tx.clone()

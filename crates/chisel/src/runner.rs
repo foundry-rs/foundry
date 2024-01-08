@@ -168,7 +168,7 @@ impl ChiselRunner {
                         {
                             // update the gas
                             gas_used = highest_gas_limit;
-                            break
+                            break;
                         }
                         last_highest_gas_limit = highest_gas_limit;
                     }
@@ -203,8 +203,7 @@ impl ChiselRunner {
             traces: traces
                 .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    // TODO: For chisel, we may not want to perform this adjustment.
-                    // traces.arena[0].trace.gas_cost = gas_used;
+
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),

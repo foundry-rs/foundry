@@ -36,6 +36,11 @@ trie-db = "0.23"
 hash-db = "0.15"
 memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types.workspace = true
+alloy-rpc-trace-types.workspace = true
+alloy-providers.workspace = true
+alloy-transport.workspace = true
+alloy-chains.workspace = true
 
 # axum related
 axum.workspace = true
@@ -62,6 +67,7 @@ yansi = "0.5"
 tempfile = "3"
 itertools.workspace = true
 rand = "0.8"
+eyre.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }

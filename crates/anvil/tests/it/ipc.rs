@@ -1,7 +1,8 @@
 //! IPC tests
 
+use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
-use ethers::{core::rand, prelude::Middleware, types::U256};
+use ethers::{core::rand, prelude::Middleware};
 use futures::StreamExt;
 
 pub fn rand_ipc_endpoint() -> String {
@@ -22,19 +23,19 @@ async fn can_get_block_number_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
     let block_num = api.block_number().unwrap();
-    assert_eq!(block_num, U256::zero());
+    assert_eq!(block_num, U256::ZERO);
 
-    let provider = handle.ipc_provider().unwrap();
+    let provider = handle.ethers_ipc_provider().unwrap();
 
     let num = provider.get_block_number().await.unwrap();
-    assert_eq!(num, block_num.as_u64().into());
+    assert_eq!(num.as_u64(), block_num.to::<u64>());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
-    let provider = handle.ipc_provider().unwrap();
+    let provider = handle.ethers_ipc_provider().unwrap();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 

@@ -14,8 +14,8 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
+    provider::ethers::RetryProvider,
     types::{ToAlloy, ToEthers},
-    RetryProvider,
 };
 use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
 use foundry_config::{
@@ -85,7 +85,7 @@ impl StorageArgs {
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
             println!("{}", cast.storage(address, slot.to_ethers(), block).await?);
-            return Ok(())
+            return Ok(());
         }
 
         // No slot was provided
@@ -109,7 +109,7 @@ impl StorageArgs {
             let artifact =
                 out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address.clone(), artifact, true).await
+                return fetch_and_print_storage(provider, address.clone(), artifact, true).await;
             }
         }
 

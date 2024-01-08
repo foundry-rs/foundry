@@ -42,6 +42,7 @@ mod summary;
 use summary::TestSummaryReporter;
 
 pub use filter::FilterArgs;
+use forge::traces::render_trace_arena;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -222,6 +223,8 @@ impl TestArgs {
 
         if should_debug {
             let tests = outcome.clone().into_tests();
+            // todo(onbjerg): why do we bother decoding everything and having multiple decoders if
+            // we are only going to use the first one? (see `DebuggerArgs` below)
             let mut decoders = Vec::new();
             for test in tests {
                 let mut result = test.result;
@@ -247,31 +250,9 @@ impl TestArgs {
                         EtherscanIdentifier::new(&config, remote_chain_id)?;
 
                     // Decode the traces
-                    for (kind, trace) in &mut result.traces {
+                    for (_, trace) in &mut result.traces {
                         decoder.identify(trace, &mut local_identifier);
                         decoder.identify(trace, &mut etherscan_identifier);
-
-                        let should_include = match kind {
-                            // At verbosity level 3, we only display traces for failed tests
-                            // At verbosity level 4, we also display the setup trace for failed
-                            // tests At verbosity level 5, we display
-                            // all traces for all tests
-                            TraceKind::Setup => {
-                                (verbosity >= 5) ||
-                                    (verbosity == 4 && result.status == TestStatus::Failure)
-                            }
-                            TraceKind::Execution => {
-                                verbosity > 3 ||
-                                    (verbosity == 3 && result.status == TestStatus::Failure)
-                            }
-                            _ => false,
-                        };
-
-                        // We decode the trace if we either need to build a gas report or we need
-                        // to print it
-                        if should_include || self.gas_report {
-                            decoder.decode(trace).await;
-                        }
                     }
                 }
 
@@ -360,7 +341,7 @@ impl TestArgs {
         if self.json {
             let results = runner.test_collect(filter, test_options).await;
             println!("{}", serde_json::to_string(&results)?);
-            return Ok(TestOutcome::new(results, self.allow_failure))
+            return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
         // Set up identifiers
@@ -418,7 +399,7 @@ impl TestArgs {
                 }
 
                 if result.traces.is_empty() {
-                    continue
+                    continue;
                 }
 
                 // Identify addresses in each trace
@@ -436,9 +417,9 @@ impl TestArgs {
 
                 // Decode the traces
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, trace) in &mut result.traces {
-                    decoder.identify(trace, &mut local_identifier);
-                    decoder.identify(trace, &mut etherscan_identifier);
+                for (kind, arena) in &mut result.traces {
+                    decoder.identify(arena, &mut local_identifier);
+                    decoder.identify(arena, &mut etherscan_identifier);
 
                     // verbosity:
                     // - 0..3: nothing
@@ -455,24 +436,18 @@ impl TestArgs {
                         TraceKind::Deployment => false,
                     };
 
-                    // Decode the trace if we either need to build a gas report or we need to print
-                    // it
-                    if should_include || self.gas_report {
-                        decoder.decode(trace).await;
-                    }
-
                     if should_include {
-                        decoded_traces.push(trace.to_string());
+                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
                     }
                 }
 
                 if !decoded_traces.is_empty() {
-                    println!("Traces:");
-                    decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
+                    shell::println("Traces:")?;
+                    decoded_traces.into_iter().try_for_each(shell::println)?;
                 }
 
                 if self.gas_report {
-                    gas_report.analyze(&result.traces);
+                    gas_report.analyze(&result.traces, &decoder).await;
                 }
 
                 // If the test failed, we want to stop processing the rest of the tests
@@ -489,7 +464,7 @@ impl TestArgs {
             total_failed += block_outcome.failures().count();
             total_skipped += block_outcome.skips().count();
 
-            println!("{}", block_outcome.summary());
+            shell::println(block_outcome.summary())?;
 
             if self.summary {
                 suite_results.push(block_outcome.clone());
@@ -497,25 +472,22 @@ impl TestArgs {
         }
 
         if self.gas_report {
-            println!("{}", gas_report.finalize());
+            shell::println(gas_report.finalize())?;
         }
 
         let num_test_suites = results.len();
 
         if num_test_suites > 0 {
-            println!(
-                "{}",
-                format_aggregated_summary(
-                    num_test_suites,
-                    total_passed,
-                    total_failed,
-                    total_skipped
-                )
-            );
+            shell::println(format_aggregated_summary(
+                num_test_suites,
+                total_passed,
+                total_failed,
+                total_skipped,
+            ))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
-                println!("\n\nTest Summary:");
+                shell::println("\n\nTest Summary:")?;
                 summary_table.print_summary(suite_results);
             }
         }
@@ -654,7 +626,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         if !shell::verbosity().is_normal() {
@@ -662,27 +634,27 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        println!();
-        println!("Failing tests:");
+        shell::println("")?;
+        shell::println("Failing tests:")?;
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue
+                continue;
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
-            println!("Encountered {failures} failing {term} in {suite_name}");
+            shell::println(format!("Encountered {failures} failing {term} in {suite_name}"))?;
             for (name, result) in suite.failures() {
                 short_test_result(name, result);
             }
-            println!();
+            shell::println("")?;
         }
         let successes = self.successes().count();
-        println!(
+        shell::println(format!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             Paint::red(failures.to_string()),
             Paint::green(successes.to_string())
-        );
+        ))?;
 
         std::process::exit(1);
     }
@@ -708,7 +680,7 @@ impl TestOutcome {
 }
 
 fn short_test_result(name: &str, result: &TestResult) {
-    println!("{result} {name} {}", result.kind.report());
+    shell::println(format!("{result} {name} {}", result.kind.report())).unwrap();
 }
 
 /// Formats the aggregated summary of all test suites into a string (for printing).

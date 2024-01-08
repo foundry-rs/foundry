@@ -10,9 +10,13 @@ use foundry_config::{
     InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{
-    decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
+    decode::decode_console_logs,
+    inspectors::CheatsConfig,
+    revm::primitives::SpecId,
+    traces::{render_trace_arena, CallTraceDecoderBuilder},
 };
 use foundry_test_utils::{init_tracing, Filter};
+use futures::future::join_all;
 use itertools::Itertools;
 use std::{collections::BTreeMap, path::Path};
 
@@ -78,14 +82,25 @@ impl TestConfig {
                 {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
-
+                    let call_trace_decoder = CallTraceDecoderBuilder::default().build();
+                    let decoded_traces = join_all(
+                        result
+                            .traces
+                            .iter()
+                            .map(|(_, a)| render_trace_arena(a, &call_trace_decoder))
+                            .collect::<Vec<_>>(),
+                    )
+                    .await
+                    .into_iter()
+                    .map(|x| x.unwrap())
+                    .collect::<Vec<_>>();
                     eyre::bail!(
                         "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,
                         outcome,
                         result.reason,
                         logs.join("\n"),
-                        result.traces.iter().map(|(_, a)| a).format("\n"),
+                        decoded_traces.into_iter().format("\n"),
                     )
                 }
             }

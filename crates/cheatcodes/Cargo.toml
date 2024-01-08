@@ -22,9 +22,10 @@ alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+alloy-providers.workspace = true
+alloy-rpc-types.workspace = true
 
 ethers-core.workspace = true
-ethers-providers.workspace = true
 ethers-signers.workspace = true
 
 eyre.workspace = true

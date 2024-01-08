@@ -36,11 +36,10 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
+use alloy_primitives::{TxHash, U64};
+use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
-use ethers::{
-    prelude::TxpoolStatus,
-    types::{TxHash, U64},
-};
+use foundry_common::types::ToAlloy;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -77,8 +76,8 @@ impl Pool {
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending = self.ready_transactions().count().into();
-        let queued = self.inner.read().pending_transactions.len().into();
+        let pending = U64::from(self.ready_transactions().count());
+        let queued = U64::from(self.inner.read().pending_transactions.len());
         TxpoolStatus { pending, queued }
     }
 
@@ -89,7 +88,7 @@ impl Pool {
         let MinedBlockOutcome { block_number, included, invalid } = outcome;
 
         // remove invalid transactions from the pool
-        self.remove_invalid(invalid.into_iter().map(|tx| *tx.hash()).collect());
+        self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
         // prune all the markers the mined transactions provide
         let res = self
@@ -158,7 +157,7 @@ impl Pool {
 
         let mut dropped = None;
         if !removed.is_empty() {
-            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
+            dropped = removed.into_iter().find(|t| t.pending_transaction.hash().to_alloy() == tx);
         }
         dropped
     }
@@ -226,7 +225,7 @@ impl PoolInner {
     }
 
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
-        if self.contains(tx.hash()) {
+        if self.contains(&tx.hash()) {
             warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
@@ -236,7 +235,7 @@ impl PoolInner {
 
         // If all markers are not satisfied import to future
         if !tx.is_ready() {
-            let hash = *tx.transaction.hash();
+            let hash = tx.transaction.hash();
             self.pending_transactions.add_transaction(tx)?;
             return Ok(AddedTransaction::Pending { hash })
         }
@@ -248,7 +247,7 @@ impl PoolInner {
         &mut self,
         tx: PendingPoolTransaction,
     ) -> Result<AddedTransaction, PoolError> {
-        let hash = *tx.transaction.hash();
+        let hash = tx.transaction.hash();
         trace!(target: "txpool", "adding ready transaction [{:?}]", hash);
         let mut ready = ReadyTransaction::new(hash);
 
@@ -263,7 +262,7 @@ impl PoolInner {
                 self.pending_transactions.mark_and_unlock(&current_tx.transaction.provides),
             );
 
-            let current_hash = *current_tx.transaction.hash();
+            let current_hash = current_tx.transaction.hash();
             // try to add the transaction to the ready pool
             match self.ready_transactions.add_transaction(current_tx) {
                 Ok(replaced_transactions) => {
@@ -316,7 +315,7 @@ impl PoolInner {
         let mut promoted = vec![];
         let mut failed = vec![];
         for tx in imports {
-            let hash = *tx.transaction.hash();
+            let hash = tx.transaction.hash();
             match self.add_ready_transaction(tx) {
                 Ok(res) => promoted.push(res),
                 Err(e) => {

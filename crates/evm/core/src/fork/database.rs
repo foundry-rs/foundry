@@ -6,7 +6,7 @@ use crate::{
     snapshot::Snapshots,
 };
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::BlockId;
+use alloy_rpc_types::BlockId;
 use parking_lot::Mutex;
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -267,7 +267,7 @@ impl DatabaseRef for ForkDbSnapshot {
 mod tests {
     use super::*;
     use crate::fork::BlockchainDbMeta;
-    use foundry_common::get_http_provider;
+    use foundry_common::provider::alloy::get_http_provider;
     use std::collections::BTreeSet;
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the

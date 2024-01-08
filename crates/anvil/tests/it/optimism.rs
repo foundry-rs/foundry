@@ -10,13 +10,14 @@ use ethers::{
     },
 };
 use ethers_core::types::{Bytes, H256};
+use foundry_common::types::ToAlloy;
 use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
     // optimism disabled by default
     let (_, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
     let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
@@ -52,14 +53,14 @@ async fn test_send_value_deposit_transaction() {
     // enable the Optimism flag
     let (api, handle) =
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let send_value = U256::from(1234);
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
     let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
 
     // fund the sender
-    api.anvil_set_balance(from_addr, send_value).await.unwrap();
+    api.anvil_set_balance(from_addr.to_alloy(), send_value.to_alloy()).await.unwrap();
 
     let deposit_tx: TypedTransaction = TypedTransaction::DepositTransaction(DepositTransaction {
         tx: TransactionRequest {
@@ -81,12 +82,13 @@ async fn test_send_value_deposit_transaction() {
     });
 
     let pending = provider.send_transaction(deposit_tx.clone(), None).await.unwrap();
-    let receipt = pending.await.unwrap().expect("dropped");
-    assert_eq!(receipt.from, from_addr);
-    assert_eq!(receipt.to, Some(to_addr));
 
     // mine block
     api.evm_mine(None).await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
+    assert_eq!(receipt.from, from_addr);
+    assert_eq!(receipt.to, Some(to_addr));
 
     // the recipient should have received the value
     let balance = provider.get_balance(to_addr, None).await.unwrap();
@@ -98,14 +100,14 @@ async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag
     let (api, handle) =
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let send_value = U256::from(1234);
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
     let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
 
     // fund the sender
-    api.anvil_set_balance(from_addr, send_value).await.unwrap();
+    api.anvil_set_balance(from_addr.to_alloy(), send_value.to_alloy()).await.unwrap();
 
     let deposit_tx: TypedTransaction = TypedTransaction::DepositTransaction(DepositTransaction {
         tx: TransactionRequest {
@@ -128,12 +130,13 @@ async fn test_send_value_raw_deposit_transaction() {
 
     let rlpbytes = deposit_tx.rlp();
     let pending = provider.send_raw_transaction(rlpbytes).await.unwrap();
-    let receipt = pending.await.unwrap().expect("dropped");
-    assert_eq!(receipt.from, from_addr);
-    assert_eq!(receipt.to, Some(to_addr));
 
     // mine block
     api.evm_mine(None).await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
+    assert_eq!(receipt.from, from_addr);
+    assert_eq!(receipt.to, Some(to_addr));
 
     // the recipient should have received the value
     let balance = provider.get_balance(to_addr, None).await.unwrap();

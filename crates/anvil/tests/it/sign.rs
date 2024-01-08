@@ -283,7 +283,7 @@ async fn can_sign_typed_data_os() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_different_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = SignerMiddleware::new(provider, wallet.with_chain_id(Chain::Mainnet));
@@ -299,7 +299,7 @@ async fn rejects_different_chain_id() {
 async fn rejects_invalid_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap().with_chain_id(99u64);
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let client = SignerMiddleware::new(provider, wallet);
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
     let res = client.send_transaction(tx, None).await;

@@ -18,9 +18,8 @@ use forge::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceCallData, TraceKind, TraceRetData, Traces,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
-    utils::CallKind,
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
@@ -29,9 +28,10 @@ use foundry_common::{
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
+    provider::ethers::RpcUrl,
     shell,
     types::{ToAlloy, ToEthers},
-    ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -291,7 +291,7 @@ impl ScriptArgs {
             }
 
             shell::println("Traces:")?;
-            for (kind, trace) in &mut result.traces {
+            for (kind, trace) in &result.traces {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
                     TraceKind::Execution => verbosity > 3,
@@ -299,8 +299,7 @@ impl ScriptArgs {
                 } || !result.success;
 
                 if should_include {
-                    decoder.decode(trace).await;
-                    shell::println(format!("{trace}"))?;
+                    shell::println(render_trace_arena(trace, decoder).await?)?;
                 }
             }
             shell::println(String::new())?;
@@ -355,7 +354,7 @@ impl ScriptArgs {
             return Err(eyre::eyre!(
                 "script failed: {}",
                 decode::decode_revert(&result.returned[..], None, None)
-            ))
+            ));
         }
 
         Ok(())
@@ -395,7 +394,7 @@ impl ScriptArgs {
                                 if let Some(ns) = new_sender {
                                     if sender != ns {
                                         shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
-                                        return Ok(None)
+                                        return Ok(None);
                                     }
                                 } else if sender != evm_opts.sender {
                                     new_sender = Some(sender);
@@ -483,13 +482,13 @@ impl ScriptArgs {
         // From artifacts
         for (artifact, bytecode) in known_contracts.iter() {
             if bytecode.bytecode.object.is_unlinked() {
-                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into())
+                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into());
             }
             let init_code = bytecode.bytecode.object.as_bytes().unwrap();
             // Ignore abstract contracts
             if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
                 if deployed_code.object.is_unlinked() {
-                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into())
+                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into());
                 }
                 let deployed_code = deployed_code.object.as_bytes().unwrap();
                 bytecodes.push((artifact.name.clone(), init_code, deployed_code));
@@ -498,27 +497,17 @@ impl ScriptArgs {
 
         // From traces
         let create_nodes = result.traces.iter().flat_map(|(_, traces)| {
-            traces
-                .arena
-                .iter()
-                .filter(|node| matches!(node.kind(), CallKind::Create | CallKind::Create2))
+            traces.nodes().iter().filter(|node| node.trace.kind.is_any_create())
         });
         let mut unknown_c = 0usize;
         for node in create_nodes {
-            // Calldata == init code
-            if let TraceCallData::Raw(ref init_code) = node.trace.data {
-                // Output is the runtime code
-                if let TraceRetData::Raw(ref deployed_code) = node.trace.output {
-                    // Only push if it was not present already
-                    if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
-                        bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
-                        unknown_c += 1;
-                    }
-                    continue
-                }
+            let init_code = &node.trace.data;
+            let deployed_code = &node.trace.output;
+            if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
+                bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
+                unknown_c += 1;
             }
-            // Both should be raw and not decoded since it's just bytecode
-            eyre::bail!("Create node returned decoded data: {:?}", node);
+            continue;
         }
 
         let mut prompt_user = false;
@@ -544,7 +533,7 @@ impl ScriptArgs {
                     offset = 32;
                 }
             } else if to.is_some() {
-                continue
+                continue;
             }
 
             // Find artifact with a deployment code same as the data.

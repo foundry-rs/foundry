@@ -4,10 +4,9 @@ use crate::{
         StateDb,
     },
     revm::primitives::AccountInfo,
-    Address, U256,
 };
-use ethers::{prelude::H256, types::BlockId};
-use foundry_common::types::{ToAlloy, ToEthers};
+use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{DatabaseResult, RevertSnapshotAction, StateSnapshot},
     fork::{database::ForkDbSnapshot, BlockchainDb},
@@ -24,12 +23,12 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address.to_alloy())?;
+        let _ = Database::basic(self, address)?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
-    fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner().block_hashes().write().insert(number.to_alloy(), hash.to_alloy());
+    fn insert_block_hash(&mut self, number: U256, hash: B256) {
+        self.inner().block_hashes().write().insert(number, hash);
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -47,16 +46,12 @@ impl Db for ForkedDatabase {
                 }
                 .to_checked();
                 Ok((
-                    k.to_ethers(),
+                    k,
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance.to_ethers(),
-                        code: code.bytes()[..code.len()].to_vec().into(),
-                        storage: v
-                            .storage
-                            .into_iter()
-                            .map(|kv| (kv.0.to_ethers(), kv.1.to_ethers()))
-                            .collect(),
+                        balance: v.info.balance,
+                        code: code.original_bytes(),
+                        storage: v.storage.into_iter().collect(),
                     },
                 ))
             })
@@ -65,11 +60,11 @@ impl Db for ForkedDatabase {
     }
 
     fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot().to_ethers()
+        self.insert_snapshot()
     }
 
     fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        self.revert_snapshot(id.to_alloy(), action)
+        self.revert_snapshot(id, action)
     }
 
     fn current_state(&self) -> StateDb {

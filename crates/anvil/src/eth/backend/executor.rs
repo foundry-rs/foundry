@@ -20,12 +20,13 @@ use ethers::{
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
+    inspectors::{TracingInspector, TracingInspectorConfig},
     revm,
     revm::{
         interpreter::InstructionResult,
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
-    traces::{CallTraceArena, CallTraceNode},
+    traces::CallTraceNode,
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use std::sync::Arc;
@@ -164,14 +165,14 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
             let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {
-                transaction_hash: *transaction.hash(),
+                transaction_hash: transaction.hash().to_ethers(),
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
                 contract_address: contract_address.map(|c| c.to_ethers()),
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
-                traces: CallTraceArena { arena: traces },
+                traces,
                 exit,
                 out: match out {
                     Some(Output::Call(b)) => Some(ethers::types::Bytes(b.0)),
@@ -192,7 +193,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let partial_header = PartialHeader {
             parent_hash,
             beneficiary: beneficiary.to_ethers(),
-            state_root: self.db.maybe_state_root().unwrap_or_default(),
+            state_root: self.db.maybe_state_root().unwrap_or_default().to_ethers(),
             receipts_root,
             logs_bloom: bloom,
             difficulty: difficulty.to_ethers(),
@@ -321,7 +322,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             out,
             gas_used,
             logs: logs.unwrap_or_default().into_iter().map(Into::into).collect(),
-            traces: inspector.tracer.unwrap_or_default().traces.arena,
+            traces: inspector
+                .tracer
+                .unwrap_or(TracingInspector::new(TracingInspectorConfig::all()))
+                .get_traces()
+                .clone()
+                .into_nodes(),
             nonce,
         };
 

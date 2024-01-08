@@ -26,10 +26,9 @@ impl RpcEndpoints {
             endpoints: endpoints
                 .into_iter()
                 .map(|(name, e)| match e.into() {
-                    RpcEndpointType::String(url) => (
-                        name.into(),
-                        RpcEndpointConfig { endpoint: url.into(), ..Default::default() },
-                    ),
+                    RpcEndpointType::String(url) => {
+                        (name.into(), RpcEndpointConfig { endpoint: url, ..Default::default() })
+                    }
                     RpcEndpointType::Config(config) => (name.into(), config),
                 })
                 .collect(),
@@ -79,7 +78,7 @@ impl RpcEndpointType {
     /// Returns the config variant
     pub fn as_endpoint_config(&self) -> Option<&RpcEndpointConfig> {
         match self {
-            RpcEndpointType::Config(config) => Some(&config),
+            RpcEndpointType::Config(config) => Some(config),
             RpcEndpointType::String(_) => None,
         }
     }
@@ -207,15 +206,15 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
     }
 }
 
-impl Into<RpcEndpointType> for RpcEndpoint {
-    fn into(self) -> RpcEndpointType {
-        RpcEndpointType::String(self)
+impl From<RpcEndpoint> for RpcEndpointType {
+    fn from(endpoint: RpcEndpoint) -> Self {
+        RpcEndpointType::String(endpoint)
     }
 }
 
-impl Into<RpcEndpointConfig> for RpcEndpoint {
-    fn into(self) -> RpcEndpointConfig {
-        RpcEndpointConfig { endpoint: self, ..Default::default() }
+impl From<RpcEndpoint> for RpcEndpointConfig {
+    fn from(endpoint: RpcEndpoint) -> Self {
+        RpcEndpointConfig { endpoint, ..Default::default() }
     }
 }
 
@@ -276,7 +275,7 @@ impl Serialize for RpcEndpointConfig {
             self.compute_units_per_second.is_none()
         {
             // serialize as endpoint if there's no additional config
-            return self.endpoint.serialize(serializer);
+            self.endpoint.serialize(serializer)
         } else {
             let mut map = serializer.serialize_map(Some(4))?;
             map.serialize_entry("endpoint", &self.endpoint)?;
@@ -317,9 +316,9 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
     }
 }
 
-impl Into<RpcEndpointType> for RpcEndpointConfig {
-    fn into(self) -> RpcEndpointType {
-        RpcEndpointType::Config(self)
+impl From<RpcEndpointConfig> for RpcEndpointType {
+    fn from(config: RpcEndpointConfig) -> Self {
+        RpcEndpointType::Config(config)
     }
 }
 

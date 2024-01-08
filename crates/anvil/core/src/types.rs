@@ -1,7 +1,6 @@
-use std::collections::BTreeMap;
-
-use ethers_core::types::{TxHash, H256, U256, U64};
+use alloy_primitives::{TxHash, B256, U256, U64};
 use revm::primitives::SpecId;
+use std::collections::BTreeMap;
 
 #[cfg(feature = "serde")]
 use serde::{de::Error, Deserializer, Serializer};
@@ -92,9 +91,9 @@ impl Default for EvmMineOptions {
 /// This may or may not include the block number
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Work {
-    pub pow_hash: H256,
-    pub seed_hash: H256,
-    pub target: H256,
+    pub pow_hash: B256,
+    pub seed_hash: B256,
+    pub target: B256,
     pub number: Option<u64>,
 }
 
@@ -180,7 +179,7 @@ impl<'a> serde::Deserialize<'a> for Index {
 pub struct NodeInfo {
     pub current_block_number: U64,
     pub current_block_timestamp: u64,
-    pub current_block_hash: H256,
+    pub current_block_hash: B256,
     pub hard_fork: SpecId,
     pub transaction_order: String,
     pub environment: NodeEnvironment,
@@ -215,11 +214,11 @@ pub struct NodeForkConfig {
 pub struct AnvilMetadata {
     pub client_version: &'static str,
     pub chain_id: u64,
-    pub instance_id: H256,
+    pub instance_id: B256,
     pub latest_block_number: u64,
-    pub latest_block_hash: H256,
+    pub latest_block_hash: B256,
     pub forked_network: Option<ForkedNetwork>,
-    pub snapshots: BTreeMap<U256, (u64, H256)>,
+    pub snapshots: BTreeMap<U256, (u64, B256)>,
 }
 
 /// Information about the forked network.

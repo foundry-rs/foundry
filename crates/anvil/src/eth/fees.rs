@@ -2,8 +2,9 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use alloy_primitives::{B256, U256};
 use anvil_core::eth::transaction::TypedTransaction;
-use ethers::types::{H256, U256};
+use foundry_common::types::ToAlloy;
 use foundry_evm::revm::primitives::SpecId;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -90,7 +91,7 @@ impl FeeManager {
         if self.is_eip1559() {
             *self.base_fee.read()
         } else {
-            U256::zero()
+            U256::ZERO
         }
     }
 
@@ -99,7 +100,7 @@ impl FeeManager {
     /// This mirrors geth's auto values for `SuggestGasTipCap` which is: `priority fee + 2x current
     /// basefee`.
     pub fn max_priority_fee_per_gas(&self) -> U256 {
-        self.suggested_priority_fee() + *self.base_fee.read() * 2
+        self.suggested_priority_fee() + *self.base_fee.read() * U256::from(2)
     }
 
     /// Returns the current gas price
@@ -125,13 +126,13 @@ impl FeeManager {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee() == U256::zero() {
+        if self.base_fee() == U256::ZERO {
             return 0
         }
         calculate_next_block_base_fee(
-            gas_used.as_u64(),
-            gas_limit.as_u64(),
-            last_fee_per_gas.as_u64(),
+            gas_used.to::<u64>(),
+            gas_limit.to::<u64>(),
+            last_fee_per_gas.to::<u64>(),
         )
     }
 }
@@ -202,7 +203,7 @@ impl FeeHistoryService {
     /// Create a new history entry for the block
     fn create_cache_entry(
         &self,
-        hash: H256,
+        hash: B256,
         elasticity: f64,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
@@ -221,7 +222,7 @@ impl FeeHistoryService {
         let mut block_number: Option<u64> = None;
         let base_fee = self.fees.base_fee();
         let mut item = FeeHistoryCacheItem {
-            base_fee: base_fee.as_u64(),
+            base_fee: base_fee.to::<u64>(),
             gas_used_ratio: 0f64,
             rewards: Vec::new(),
         };
@@ -247,15 +248,16 @@ impl FeeHistoryService {
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
                         Some(TypedTransaction::Legacy(t)) => {
-                            t.gas_price.saturating_sub(base_fee).as_u64()
+                            t.gas_price.to_alloy().saturating_sub(base_fee).to::<u64>()
                         }
                         Some(TypedTransaction::EIP2930(t)) => {
-                            t.gas_price.saturating_sub(base_fee).as_u64()
+                            t.gas_price.to_alloy().saturating_sub(base_fee).to::<u64>()
                         }
                         Some(TypedTransaction::EIP1559(t)) => t
                             .max_priority_fee_per_gas
-                            .min(t.max_fee_per_gas.saturating_sub(base_fee))
-                            .as_u64(),
+                            .to_alloy()
+                            .min(t.max_fee_per_gas.to_alloy().saturating_sub(base_fee))
+                            .to::<u64>(),
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
@@ -347,9 +349,9 @@ impl FeeDetails {
     /// All values zero
     pub fn zero() -> Self {
         Self {
-            gas_price: Some(U256::zero()),
-            max_fee_per_gas: Some(U256::zero()),
-            max_priority_fee_per_gas: Some(U256::zero()),
+            gas_price: Some(U256::ZERO),
+            max_fee_per_gas: Some(U256::ZERO),
+            max_priority_fee_per_gas: Some(U256::ZERO),
         }
     }
 
@@ -358,8 +360,8 @@ impl FeeDetails {
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
 
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
-        let gas_price = if no_fees { Some(U256::zero()) } else { gas_price };
-        let max_fee_per_gas = if no_fees { Some(U256::zero()) } else { max_fee_per_gas };
+        let gas_price = if no_fees { Some(U256::ZERO) } else { gas_price };
+        let max_fee_per_gas = if no_fees { Some(U256::ZERO) } else { max_fee_per_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas }
     }

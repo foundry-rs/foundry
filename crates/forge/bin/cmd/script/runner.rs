@@ -244,9 +244,9 @@ impl ScriptRunner {
                 gas_used,
                 logs,
                 traces: traces
-                    .map(|mut traces| {
+                    .map(|traces| {
                         // Manually adjust gas for the trace to add back the stipend/real used gas
-                        traces.arena[0].trace.gas_cost = gas_used;
+
                         vec![(TraceKind::Execution, traces)]
                     })
                     .unwrap_or_default(),
@@ -305,9 +305,9 @@ impl ScriptRunner {
             gas_used,
             logs,
             traces: traces
-                .map(|mut traces| {
+                .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas_used;
+
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
@@ -363,7 +363,7 @@ impl ScriptRunner {
                         {
                             // update the gas
                             gas_used = highest_gas_limit;
-                            break
+                            break;
                         }
                         last_highest_gas_limit = highest_gas_limit;
                     }

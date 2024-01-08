@@ -7,10 +7,9 @@ use crate::{
     },
     mem::state::{state_merkle_trie_root, storage_trie_db, trie_hash_db},
     revm::primitives::AccountInfo,
-    Address, U256,
 };
-use ethers::{prelude::H256, types::BlockId};
-use foundry_common::types::{ToAlloy, ToEthers};
+use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::BlockchainDb,
@@ -22,15 +21,15 @@ pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.inner.insert_account_info(address.to_alloy(), account)
+        self.inner.insert_account_info(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        self.inner.insert_account_storage(address.to_alloy(), slot.to_alloy(), val.to_alloy())
+        self.inner.insert_account_storage(address, slot, val)
     }
 
-    fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner.block_hashes.insert(number.to_alloy(), hash.to_alloy());
+    fn insert_block_hash(&mut self, number: U256, hash: B256) {
+        self.inner.block_hashes.insert(number, hash);
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -47,16 +46,12 @@ impl Db for MemDb {
                 }
                 .to_checked();
                 Ok((
-                    k.to_ethers(),
+                    k,
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance.to_ethers(),
-                        code: code.bytes()[..code.len()].to_vec().into(),
-                        storage: v
-                            .storage
-                            .into_iter()
-                            .map(|k| (k.0.to_ethers(), k.1.to_ethers()))
-                            .collect(),
+                        balance: v.info.balance,
+                        code: code.original_bytes(),
+                        storage: v.storage.into_iter().collect(),
                     },
                 ))
             })
@@ -69,13 +64,13 @@ impl Db for MemDb {
     fn snapshot(&mut self) -> U256 {
         let id = self.snapshots.insert(self.inner.clone());
         trace!(target: "backend::memdb", "Created new snapshot {}", id);
-        id.to_ethers()
+        id
     }
 
     fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        if let Some(snapshot) = self.snapshots.remove(id.to_alloy()) {
+        if let Some(snapshot) = self.snapshots.remove(id) {
             if action.is_keep() {
-                self.snapshots.insert_at(snapshot.clone(), id.to_alloy());
+                self.snapshots.insert_at(snapshot.clone(), id);
             }
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);
@@ -86,7 +81,7 @@ impl Db for MemDb {
         }
     }
 
-    fn maybe_state_root(&self) -> Option<H256> {
+    fn maybe_state_root(&self) -> Option<B256> {
         Some(state_merkle_trie_root(&self.inner.accounts))
     }
 
@@ -96,12 +91,12 @@ impl Db for MemDb {
 }
 
 impl MaybeHashDatabase for MemDb {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
         Some(trie_hash_db(&self.inner.accounts))
     }
 
-    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
-        if let Some(acc) = self.inner.accounts.get(&addr.to_alloy()) {
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, B256)> {
+        if let Some(acc) = self.inner.accounts.get(&addr) {
             Some(storage_trie_db(&acc.storage))
         } else {
             Some(storage_trie_db(&Default::default()))
@@ -141,11 +136,8 @@ mod tests {
     use crate::{
         eth::backend::db::{Db, SerializableAccountRecord, SerializableState},
         revm::primitives::AccountInfo,
-        Address,
     };
-    use alloy_primitives::{Bytes, U256 as rU256};
-    use ethers::types::U256;
-    use foundry_common::types::ToAlloy;
+    use alloy_primitives::{Address, Bytes, U256};
     use foundry_evm::{
         backend::MemDb,
         revm::primitives::{Bytecode, KECCAK_EMPTY},
@@ -166,7 +158,7 @@ mod tests {
         dump_db.insert_account(
             test_addr,
             AccountInfo {
-                balance: rU256::from(123456),
+                balance: U256::from(123456),
                 code_hash: KECCAK_EMPTY,
                 code: Some(contract_code.clone()),
                 nonce: 1234,
@@ -181,15 +173,12 @@ mod tests {
 
         load_db.load_state(state).unwrap();
 
-        let loaded_account = load_db.basic_ref(test_addr.to_alloy()).unwrap().unwrap();
+        let loaded_account = load_db.basic_ref(test_addr).unwrap().unwrap();
 
-        assert_eq!(loaded_account.balance, rU256::from(123456));
+        assert_eq!(loaded_account.balance, U256::from(123456));
         assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(
-            load_db.storage_ref(test_addr.to_alloy(), rU256::from(1234567)).unwrap(),
-            rU256::from(1)
-        );
+        assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::from(1));
     }
 
     // verifies that multiple accounts can be loaded at a time, and storage is merged within those
@@ -208,7 +197,7 @@ mod tests {
         db.insert_account(
             test_addr,
             AccountInfo {
-                balance: rU256::from(123456),
+                balance: U256::from(123456),
                 code_hash: KECCAK_EMPTY,
                 code: Some(contract_code.clone()),
                 nonce: 1234,
@@ -236,7 +225,7 @@ mod tests {
         new_state.accounts.insert(
             test_addr,
             SerializableAccountRecord {
-                balance: 100100.into(),
+                balance: U256::from(100100),
                 code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
                 nonce: 100,
                 storage: new_storage,
@@ -245,21 +234,15 @@ mod tests {
 
         db.load_state(new_state).unwrap();
 
-        let loaded_account = db.basic_ref(test_addr.to_alloy()).unwrap().unwrap();
-        let loaded_account2 = db.basic_ref(test_addr2.to_alloy()).unwrap().unwrap();
+        let loaded_account = db.basic_ref(test_addr).unwrap().unwrap();
+        let loaded_account2 = db.basic_ref(test_addr2).unwrap().unwrap();
 
         assert_eq!(loaded_account2.nonce, 1);
 
-        assert_eq!(loaded_account.balance, rU256::from(100100));
+        assert_eq!(loaded_account.balance, U256::from(100100));
         assert_eq!(db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(
-            db.storage_ref(test_addr.to_alloy(), rU256::from(1234567)).unwrap(),
-            rU256::from(1)
-        );
-        assert_eq!(
-            db.storage_ref(test_addr.to_alloy(), rU256::from(1234568)).unwrap(),
-            rU256::from(5)
-        );
+        assert_eq!(db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::from(1));
+        assert_eq!(db.storage_ref(test_addr, U256::from(1234568)).unwrap(), U256::from(5));
     }
 }

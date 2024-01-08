@@ -1,6 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
@@ -58,6 +59,8 @@ pub enum BlockchainError {
     FeeHistory(#[from] FeeHistoryError),
     #[error(transparent)]
     ForkProvider(#[from] ProviderError),
+    #[error(transparent)]
+    AlloyForkProvider(#[from] TransportError),
     #[error("EVM error {0:?}")]
     EvmError(InstructionResult),
     #[error("Invalid url {0:?}")]
@@ -369,6 +372,10 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 ),
                 BlockchainError::ForkProvider(err) => {
                     error!(%err, "fork provider error");
+                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
+                }
+                BlockchainError::AlloyForkProvider(err) => {
+                    error!(%err, "alloy fork provider error");
                     RpcError::internal_error_with(format!("Fork Error: {err:?}"))
                 }
                 err @ BlockchainError::EvmError(_) => {

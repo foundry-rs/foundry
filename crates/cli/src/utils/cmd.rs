@@ -17,7 +17,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
@@ -93,7 +93,7 @@ pub fn get_cached_entry_by_name(
     }
 
     if let Some(entry) = cached_entry {
-        return Ok(entry)
+        return Ok(entry);
     }
 
     let mut err = format!("could not find artifact: `{name}`");
@@ -175,7 +175,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::Moonriver |
                 NamedChain::Moonbase |
                 NamedChain::MoonbeamDev
-        )
+        );
     }
     false
 }
@@ -189,7 +189,7 @@ pub fn has_batch_support(chain_id: u64) -> bool {
                 NamedChain::ArbitrumTestnet |
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia
-        )
+        );
     }
     true
 }
@@ -374,7 +374,6 @@ pub async fn handle_traces(
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
-    verbose: bool,
     debug: bool,
 ) -> Result<()> {
     let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
@@ -384,7 +383,7 @@ pub async fn handle_traces(
 
         if let Some(addr) = iter.next() {
             if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                return Some((address, label.to_string()))
+                return Some((address, label.to_string()));
             }
         }
         None
@@ -415,29 +414,20 @@ pub async fn handle_traces(
             .build();
         debugger.try_run()?;
     } else {
-        print_traces(&mut result, &decoder, verbose).await?;
+        print_traces(&mut result, &decoder).await?;
     }
 
     Ok(())
 }
 
-pub async fn print_traces(
-    result: &mut TraceResult,
-    decoder: &CallTraceDecoder,
-    verbose: bool,
-) -> Result<()> {
+pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
     if result.traces.is_empty() {
         panic!("No traces found")
     }
 
     println!("Traces:");
-    for (_, trace) in &mut result.traces {
-        decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
-        } else {
-            println!("{trace:#}");
-        }
+    for (_, arena) in &result.traces {
+        println!("{}", render_trace_arena(arena, decoder).await?);
     }
     println!();
 

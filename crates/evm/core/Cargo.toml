@@ -31,9 +31,12 @@ revm = { workspace = true, default-features = false, features = [
     "arbitrary",
     "optimism",
 ] }
+alloy-providers = { workspace = true }
+alloy-transport = { workspace = true }
+alloy-rpc-types = { workspace = true }
+ethers = { workspace = true, features = ["ethers-solc"] }
 
 ethers-core.workspace = true
-ethers-providers.workspace = true
 
 derive_more.workspace = true
 eyre = "0.6"

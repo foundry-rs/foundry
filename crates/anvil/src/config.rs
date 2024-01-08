@@ -15,28 +15,30 @@ use crate::{
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
+use alloy_primitives::{hex, U256};
+use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::BlockNumberOrTag;
+use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Wallet, U256},
-    providers::Middleware,
+    prelude::{rand::thread_rng, Wallet},
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
     },
-    types::BlockNumber,
-    utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
+    utils::WEI_IN_ETHER,
 };
 use foundry_common::{
-    types::{ToAlloy, ToEthers},
-    ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::alloy::ProviderBuilder, types::ToAlloy, ALCHEMY_FREE_TIER_CUPS,
+    NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
-    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
+    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
@@ -192,13 +194,10 @@ Available Accounts
 ==================
 "#
         );
-        let balance = format_ether(self.genesis_balance);
+        let balance = alloy_primitives::utils::format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(
-                config_string,
-                "\n({idx}) {:?} ({balance} ETH)",
-                to_checksum(&wallet.address(), None)
-            );
+            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address().to_alloy())
+                .unwrap();
         }
 
         let _ = write!(
@@ -375,7 +374,7 @@ impl Default for NodeConfig {
             genesis_timestamp: None,
             genesis_accounts,
             // 100ETH default balance
-            genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
+            genesis_balance: WEI_IN_ETHER.to_alloy().saturating_mul(U256::from(100u64)),
             block_time: None,
             no_mining: false,
             port: NODE_PORT,
@@ -418,12 +417,12 @@ impl NodeConfig {
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee
             .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
-            .unwrap_or_else(|| INITIAL_BASE_FEE.into())
+            .unwrap_or_else(|| U256::from(INITIAL_BASE_FEE))
     }
 
     /// Returns the base fee to use
     pub fn get_gas_price(&self) -> U256 {
-        self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.into())
+        self.gas_price.unwrap_or_else(|| U256::from(INITIAL_GAS_PRICE))
     }
 
     /// Returns the base fee to use
@@ -473,9 +472,9 @@ impl NodeConfig {
 
     /// Sets the gas limit
     #[must_use]
-    pub fn with_gas_limit<U: Into<U256>>(mut self, gas_limit: Option<U>) -> Self {
+    pub fn with_gas_limit(mut self, gas_limit: Option<U256>) -> Self {
         if let Some(gas_limit) = gas_limit {
-            self.gas_limit = gas_limit.into();
+            self.gas_limit = gas_limit;
         }
         self
     }
@@ -491,7 +490,7 @@ impl NodeConfig {
 
     /// Sets the gas price
     #[must_use]
-    pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
+    pub fn with_gas_price(mut self, gas_price: Option<U256>) -> Self {
         self.gas_price = gas_price.map(Into::into);
         self
     }
@@ -515,7 +514,7 @@ impl NodeConfig {
 
     /// Sets the base fee
     #[must_use]
-    pub fn with_base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
+    pub fn with_base_fee(mut self, base_fee: Option<U256>) -> Self {
         self.base_fee = base_fee.map(Into::into);
         self
     }
@@ -660,7 +659,7 @@ impl NodeConfig {
 
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
-    pub fn with_fork_chain_id<U: Into<U256>>(mut self, fork_chain_id: Option<U>) -> Self {
+    pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
         self.fork_chain_id = fork_chain_id.map(Into::into);
         self
     }
@@ -769,7 +768,7 @@ impl NodeConfig {
             .expect("Failed writing json");
         }
         if self.silent {
-            return
+            return;
         }
 
         println!("{}", self.as_string(fork))
@@ -780,7 +779,7 @@ impl NodeConfig {
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
         if self.no_storage_caching || self.eth_rpc_url.is_none() {
-            return None
+            return None;
         }
         let chain_id = self.get_chain_id();
 
@@ -815,8 +814,8 @@ impl NodeConfig {
         let mut env = revm::primitives::Env {
             cfg,
             block: BlockEnv {
-                gas_limit: self.gas_limit.to_alloy(),
-                basefee: self.get_base_fee().to_alloy(),
+                gas_limit: self.gas_limit,
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
@@ -837,8 +836,8 @@ impl NodeConfig {
 
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
-            balance: self.genesis_balance.to_alloy(),
-            accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
+            balance: self.genesis_balance,
+            accounts: self.genesis_accounts.iter().map(|acc| acc.address().to_alloy()).collect(),
             fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
         };
@@ -862,7 +861,7 @@ impl NodeConfig {
         // if the option is not disabled and we are not forking.
         if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
             backend
-                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER.to_ethers())
+                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .expect("Failed to create default create2 deployer");
         }
@@ -936,13 +935,13 @@ impl NodeConfig {
                 // auto adjust hardfork if not specified
                 // but only if we're forking mainnet
                 let chain_id =
-                    provider.get_chainid().await.expect("Failed to fetch network chain id");
-                if chain_id == ethers::types::Chain::Mainnet.into() {
+                    provider.get_chain_id().await.expect("Failed to fetch network chain ID");
+                if alloy_chains::NamedChain::Mainnet == chain_id.to::<u64>() {
                     let hardfork: Hardfork = fork_block_number.into();
                     env.cfg.spec_id = hardfork.into();
                     self.hardfork = Some(hardfork);
                 }
-                Some(chain_id)
+                Some(U256::from(chain_id))
             } else {
                 None
             };
@@ -950,14 +949,13 @@ impl NodeConfig {
             (fork_block_number, chain_id)
         } else {
             // pick the last block number but also ensure it's not pending anymore
-            (
-                find_latest_fork_block(&provider).await.expect("Failed to get fork block number"),
-                None,
-            )
+            let bn =
+                find_latest_fork_block(&provider).await.expect("Failed to get fork block number");
+            (bn, None)
         };
 
         let block = provider
-            .get_block(BlockNumber::Number(fork_block_number.into()))
+            .get_block(BlockNumberOrTag::Number(fork_block_number).into(), false)
             .await
             .expect("Failed to get fork block");
 
@@ -972,7 +970,7 @@ latest block number: {latest_block}"
                 // If the `eth_getBlockByNumber` call succeeds, but returns null instead of
                 // the block, and the block number is less than equal the latest block, then
                 // the user is forking from a non-archive node with an older block number.
-                if fork_block_number <= latest_block.as_u64() {
+                if fork_block_number <= latest_block {
                     message.push_str(&format!("\n{}", NON_ARCHIVE_NODE_WARNING));
                 }
                 panic!("{}", message);
@@ -983,18 +981,18 @@ latest block number: {latest_block}"
         // we only use the gas limit value of the block if it is non-zero and the block gas
         // limit is enabled, since there are networks where this is not used and is always
         // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-        let gas_limit = if self.disable_block_gas_limit || block.gas_limit.is_zero() {
-            rU256::from(u64::MAX)
+        let gas_limit = if self.disable_block_gas_limit || block.header.gas_limit.is_zero() {
+            U256::from(u64::MAX)
         } else {
-            block.gas_limit.to_alloy()
+            block.header.gas_limit
         };
 
         env.block = BlockEnv {
-            number: rU256::from(fork_block_number),
-            timestamp: block.timestamp.to_alloy(),
-            difficulty: block.difficulty.to_alloy(),
+            number: U256::from(fork_block_number),
+            timestamp: block.header.timestamp,
+            difficulty: block.header.difficulty,
             // ensures prevrandao is set
-            prevrandao: Some(block.mix_hash.unwrap_or_default()).map(|h| h.to_alloy()),
+            prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
             coinbase: env.block.coinbase,
@@ -1007,18 +1005,18 @@ latest block number: {latest_block}"
 
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
-            if let Some(base_fee) = block.base_fee_per_gas {
+            if let Some(base_fee) = block.header.base_fee_per_gas {
                 self.base_fee = Some(base_fee);
-                env.block.basefee = base_fee.to_alloy();
+                env.block.basefee = base_fee;
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.gas_used,
-                    block.gas_limit,
-                    block.base_fee_per_gas.unwrap_or_default(),
+                    block.header.gas_used,
+                    block.header.gas_limit,
+                    block.header.base_fee_per_gas.unwrap_or_default(),
                 );
                 // update next base fee
-                fees.set_base_fee(next_block_base_fee.into());
+                fees.set_base_fee(U256::from(next_block_base_fee));
             }
         }
 
@@ -1030,17 +1028,16 @@ latest block number: {latest_block}"
             }
         }
 
-        let block_hash = block.hash.unwrap_or_default();
+        let block_hash = block.header.hash.unwrap_or_default();
 
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
         } else {
             let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id
+                fork_chain_id.to::<u64>()
             } else {
-                provider.get_chainid().await.unwrap()
-            }
-            .as_u64();
+                provider.get_chain_id().await.unwrap().to::<u64>()
+            };
 
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
@@ -1072,8 +1069,8 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            timestamp: block.timestamp.as_u64(),
-            base_fee: block.base_fee_per_gas,
+            timestamp: block.header.timestamp.to::<u64>(),
+            base_fee: block.header.base_fee_per_gas,
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
@@ -1192,15 +1189,15 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
-async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Error> {
-    let mut num = provider.get_block_number().await?.as_u64();
+async fn find_latest_fork_block<P: TempProvider>(provider: P) -> Result<u64, TransportError> {
+    let mut num = provider.get_block_number().await?;
 
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num).await? {
-            if block.hash.is_some() {
-                break
+        if let Some(block) = provider.get_block(num.into(), false).await? {
+            if block.header.hash.is_some() {
+                break;
             }
         }
         // block not actually finalized, so we try the block before

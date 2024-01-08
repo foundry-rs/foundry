@@ -6,7 +6,7 @@ use ethers_signers::{
     AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Signer, Trezor, TrezorHDPath,
 };
 use eyre::{Context, ContextCompat, Result};
-use foundry_common::{types::ToAlloy, RetryProvider};
+use foundry_common::{provider::ethers::RetryProvider, types::ToAlloy};
 use foundry_config::Config;
 use itertools::izip;
 use rusoto_core::{
@@ -239,7 +239,7 @@ impl MultiWallet {
                     local_wallets.insert(address.to_alloy(), signer);
 
                     if addresses.is_empty() {
-                        return Ok(local_wallets)
+                        return Ok(local_wallets);
                     }
                 } else {
                     // Just to show on error.
@@ -270,7 +270,7 @@ impl MultiWallet {
             for _ in 0..self.interactives {
                 wallets.push(self.get_from_interactive()?);
             }
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }
@@ -281,7 +281,7 @@ impl MultiWallet {
             for private_key in private_keys.iter() {
                 wallets.push(self.get_from_private_key(private_key.trim())?);
             }
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }
@@ -317,7 +317,7 @@ impl MultiWallet {
                 let wallet = self.get_from_keystore(Some(&path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?;
                 wallets.push(wallet);
             }
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }
@@ -352,7 +352,7 @@ impl MultiWallet {
                     mnemonic_index,
                 )?)
             }
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }
@@ -369,7 +369,7 @@ impl MultiWallet {
             }
 
             create_hw_wallets!(args, chain_id, get_from_ledger, wallets);
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }
@@ -377,7 +377,7 @@ impl MultiWallet {
     pub async fn trezors(&self, chain_id: u64) -> Result<Option<Vec<Trezor>>> {
         if self.trezor {
             create_hw_wallets!(self, chain_id, get_from_trezor, wallets);
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }
@@ -399,7 +399,7 @@ impl MultiWallet {
                 wallets.push(aws_signer)
             }
 
-            return Ok(Some(wallets))
+            return Ok(Some(wallets));
         }
         Ok(None)
     }

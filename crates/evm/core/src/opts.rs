@@ -1,10 +1,14 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::{Block, TxHash};
-use ethers_providers::{Middleware, Provider};
+use alloy_rpc_types::Block;
+use ethers::providers::{Middleware, Provider};
 use eyre::WrapErr;
-use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{
+    self,
+    provider::alloy::{ProviderBuilder, RpcUrl},
+    ALCHEMY_FREE_TIER_CUPS,
+};
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
@@ -75,7 +79,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block<TxHash>)> {
+    ) -> eyre::Result<(revm::primitives::Env, Block)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -158,7 +162,7 @@ impl EvmOpts {
     ///   - mainnet otherwise
     pub fn get_chain_id(&self) -> u64 {
         if let Some(id) = self.env.chain_id {
-            return id
+            return id;
         }
         self.get_remote_chain_id().unwrap_or(Chain::mainnet()).id()
     }
@@ -171,7 +175,7 @@ impl EvmOpts {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
-            return cups
+            return cups;
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }

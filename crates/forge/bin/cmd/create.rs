@@ -20,8 +20,8 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::ProjectCompiler,
-    estimate_eip1559_fees,
     fmt::parse_tokens,
+    provider::ethers::estimate_eip1559_fees,
     types::{ToAlloy, ToEthers},
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
@@ -312,7 +312,7 @@ impl CreateArgs {
         };
 
         if !self.verify {
-            return Ok(())
+            return Ok(());
         }
 
         println!("Starting contract verification...");

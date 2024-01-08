@@ -104,7 +104,7 @@ impl RunArgs {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 tx.hash
-            ))
+            ));
         }
 
         let tx_block_number = tx
@@ -148,13 +148,13 @@ impl RunArgs {
                             Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
-                        continue
+                        continue;
                     }
                     if tx.hash == tx_hash {
-                        break
+                        break;
                     }
 
-                    configure_tx_env(&mut env, &tx);
+                    configure_tx_env(&mut env, &tx.clone().to_alloy());
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
@@ -191,7 +191,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx);
+            configure_tx_env(&mut env, &tx.clone().to_alloy());
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
@@ -205,7 +205,7 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.verbose, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.debug).await?;
 
         Ok(())
     }

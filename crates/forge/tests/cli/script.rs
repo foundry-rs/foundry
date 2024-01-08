@@ -1,9 +1,9 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_common::{rpc, types::ToEthers};
+use foundry_common::rpc;
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
 use regex::Regex;
 use serde_json::Value;
@@ -561,10 +561,8 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
 
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
-        foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_ethers(),
-        ethers_core::types::Bytes::from_static(
-            foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-        ),
+        foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER,
+        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
     )
     .await
     .unwrap();
@@ -653,7 +651,7 @@ forgetest_async!(
         // Prepare CREATE2 Deployer
         let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
         let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr.to_ethers(), code).await.unwrap();
+        api.anvil_set_code(addr, code).await.unwrap();
 
         tester
             .load_private_keys(&[0])

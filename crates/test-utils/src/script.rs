@@ -4,9 +4,8 @@ use ethers_core::types::NameOrAddress;
 use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_common::{
-    get_http_provider,
+    provider::ethers::{get_http_provider, RetryProvider},
     types::{ToAlloy, ToEthers},
-    RetryProvider,
 };
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 

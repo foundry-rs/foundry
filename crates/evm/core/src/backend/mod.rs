@@ -7,15 +7,9 @@ use crate::{
     utils::configure_tx_env,
 };
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
-use ethers_core::{
-    types::{Block, BlockNumber, Transaction},
-    utils::GenesisAccount,
-};
-use foundry_common::{
-    is_known_system_sender,
-    types::{ToAlloy, ToEthers},
-    SYSTEM_TRANSACTION_TYPE,
-};
+use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use ethers::utils::GenesisAccount;
+use foundry_common::{is_known_system_sender, types::ToAlloy, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -306,7 +300,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
     fn ensure_cheatcode_access(&self, account: Address) -> Result<(), DatabaseError> {
         if !self.has_cheatcode_access(account) {
-            return Err(DatabaseError::NoCheats(account))
+            return Err(DatabaseError::NoCheats(account));
         }
         Ok(())
     }
@@ -315,7 +309,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// in forking mode
     fn ensure_cheatcode_access_forking_mode(&self, account: Address) -> Result<(), DatabaseError> {
         if self.is_forked_mode() {
-            return self.ensure_cheatcode_access(account)
+            return self.ensure_cheatcode_access(account);
         }
         Ok(())
     }
@@ -626,7 +620,7 @@ impl Backend {
                 .cloned()
                 .unwrap_or_default()
                 .present_value();
-            return value.as_le_bytes()[1] != 0
+            return value.as_le_bytes()[1] != 0;
         }
 
         false
@@ -639,7 +633,7 @@ impl Backend {
         if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
             let slot: U256 = GLOBAL_FAILURE_SLOT.into();
             let value = account.storage.get(&slot).cloned().unwrap_or_default().present_value();
-            return value == revm::primitives::U256::from(1)
+            return value == revm::primitives::U256::from(1);
         }
 
         false
@@ -741,7 +735,7 @@ impl Backend {
                         all_logs.extend(f.journaled_state.logs.clone())
                     }
                 });
-            return all_logs
+            return all_logs;
         }
 
         logs
@@ -846,26 +840,27 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(U64, Block<Transaction>)> {
+    ) -> eyre::Result<(U64, Block)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
-            let block = fork.db.db.get_full_block(BlockNumber::Number(tx_block))?;
+            let block = fork.db.db.get_full_block(tx_block.to::<u64>())?;
 
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
-            let fork_block = tx_block - 1;
-            Ok((U64::from(fork_block.as_u64()), block))
+            let fork_block = tx_block.to::<u64>() - 1;
+            Ok((U64::from(fork_block), block))
         } else {
-            let block = fork.db.db.get_full_block(BlockNumber::Latest)?;
+            let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block
+                .header
                 .number
-                .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumber::Latest.into()))?;
+                .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
 
-            Ok((U64::from(number.as_u64()), block))
+            Ok((number.to::<U64>(), block))
         }
     }
 
@@ -884,27 +879,33 @@ impl Backend {
         let fork_id = self.ensure_fork_id(id)?.clone();
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        let full_block = fork
-            .db
-            .db
-            .get_full_block(BlockNumber::Number(env.block.number.to_ethers().as_u64().into()))?;
+        let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
-        for tx in full_block.transactions.into_iter() {
-            // System transactions such as on L2s don't contain any pricing info so we skip them
-            // otherwise this would cause reverts
-            if is_known_system_sender(tx.from.to_alloy()) ||
-                tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
-            {
-                continue
+        if let BlockTransactions::Full(txs) = full_block.transactions {
+            for tx in txs.into_iter() {
+                // System transactions such as on L2s don't contain any pricing info so we skip them
+                // otherwise this would cause reverts
+                if is_known_system_sender(tx.from) ||
+                    tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
+                {
+                    continue;
+                }
+
+                if tx.hash == tx_hash {
+                    // found the target transaction
+                    return Ok(Some(tx))
+                }
+                trace!(tx=?tx.hash, "committing transaction");
+
+                commit_transaction(
+                    tx,
+                    env.clone(),
+                    journaled_state,
+                    fork,
+                    &fork_id,
+                    NoOpInspector,
+                )?;
             }
-
-            if tx.hash == tx_hash.to_ethers() {
-                // found the target transaction
-                return Ok(Some(tx))
-            }
-            trace!(tx=?tx.hash, "committing transaction");
-
-            commit_transaction(tx, env.clone(), journaled_state, fork, &fork_id, NoOpInspector)?;
         }
 
         Ok(None)
@@ -1048,7 +1049,7 @@ impl DatabaseExt for Backend {
         trace!(?id, "select fork");
         if self.is_active_fork(id) {
             // nothing to do
-            return Ok(())
+            return Ok(());
         }
 
         let fork_id = self.ensure_fork_id(id).cloned()?;
@@ -1209,13 +1210,13 @@ impl DatabaseExt for Backend {
         self.roll_fork(Some(id), fork_block.to(), env, journaled_state)?;
 
         // update the block's env accordingly
-        env.block.timestamp = block.timestamp.to_alloy();
-        env.block.coinbase = block.author.unwrap_or_default().to_alloy();
-        env.block.difficulty = block.difficulty.to_alloy();
-        env.block.prevrandao = block.mix_hash.map(|h| h.to_alloy());
-        env.block.basefee = block.base_fee_per_gas.unwrap_or_default().to_alloy();
-        env.block.gas_limit = block.gas_limit.to_alloy();
-        env.block.number = block.number.map(|n| n.to_alloy()).unwrap_or(fork_block).to();
+        env.block.timestamp = block.header.timestamp;
+        env.block.coinbase = block.header.miner;
+        env.block.difficulty = block.header.difficulty;
+        env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+        env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+        env.block.gas_limit = block.header.gas_limit;
+        env.block.number = block.header.number.map(|n| n.to()).unwrap_or(fork_block.to());
 
         // replay all transactions that came before
         let env = env.clone();
@@ -1263,7 +1264,7 @@ impl DatabaseExt for Backend {
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
         if let Some(id) = id {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
-                return Ok(id)
+                return Ok(id);
             }
             eyre::bail!("Requested fork `{}` does not exit", id)
         }
@@ -1289,7 +1290,7 @@ impl DatabaseExt for Backend {
         if self.inner.forks.len() == 1 {
             // we only want to provide additional diagnostics here when in multifork mode with > 1
             // forks
-            return None
+            return None;
         }
 
         if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
@@ -1316,7 +1317,7 @@ impl DatabaseExt for Backend {
                     active: active_id,
                     available_on,
                 })
-            }
+            };
         }
         None
     }
@@ -1506,7 +1507,7 @@ impl Fork {
     pub fn is_contract(&self, acc: Address) -> bool {
         if let Ok(Some(acc)) = self.db.basic_ref(acc) {
             if acc.code_hash != KECCAK_EMPTY {
-                return true
+                return true;
             }
         }
         is_contract_in_state(&self.journaled_state, acc)
@@ -1844,7 +1845,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
         acc
     } else {
         // Account does not exist
-        return
+        return;
     };
 
     if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
