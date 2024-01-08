@@ -1916,6 +1916,27 @@ impl SimpleCast {
         }
     }
 
+    /// Extracts function selectors and arguments from bytecode
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
+    /// let selectors = Cast::extract_selectors(bytecode)?;
+    /// assert_eq!(selectors, vec![("0x2125b65b".to_string(), "uint32,address,uint224".to_string())]);
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn extract_selectors(bytecode: &str) -> Result<Vec<(String, String)>> {
+        let code = hex::decode(strip_0x(bytecode))?;
+        let s = evmole::function_selectors(&code, 0);
+
+        Ok(s.iter()
+            .map(|s| (hex::encode_prefixed(s), evmole::function_arguments(&code, s, 0)))
+            .collect())
+    }
+
     /// Decodes a raw EIP2718 transaction payload
     /// Returns details about the typed transaction and ECSDA signature components
     ///
