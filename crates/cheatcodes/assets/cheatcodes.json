@@ -2257,9 +2257,9 @@
       "func": {
         "id": "getLabel",
         "description": "Gets the label for the specified address.",
-        "declaration": "function getLabel(address account) external returns (string memory currentLabel);",
+        "declaration": "function getLabel(address account) external view returns (string memory currentLabel);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getLabel(address)",
         "selector": "0x28a249b0",
         "selectorBytes": [

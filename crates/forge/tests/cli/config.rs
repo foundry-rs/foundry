@@ -111,6 +111,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         fmt: Default::default(),
         doc: Default::default(),
         fs_permissions: Default::default(),
+        labels: Default::default(),
         cancun: true,
         __non_exhaustive: (),
         __warnings: vec![],
@@ -603,10 +604,10 @@ forgetest!(config_emit_warnings, |prj, cmd| {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr)
             .lines()
-            .filter(|line| { line.contains("Unknown section [default]") })
+            .filter(|line| line.contains("unknown config section") && line.contains("[default]"))
             .count(),
-        1
-    )
+        1,
+    );
 });
 
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {

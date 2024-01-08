@@ -36,8 +36,7 @@ pub struct CallArgs {
     /// Data for the transaction.
     #[clap(
         long,
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
-        conflicts_with_all = & ["sig", "args"]
+        conflicts_with_all = &["sig", "args"]
     )]
     data: Option<String>,
 

@@ -48,14 +48,10 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     let status = response.status();
                     if !status.is_success() {
                         let error: serde_json::Value = response.json().await?;
-                        eprintln!(
-                            "Sourcify verification request for address ({}) failed with status code {}\nDetails: {:#}",
-                            format_args!("{:?}", args.address),
-                            status,
-                            error
+                        eyre::bail!(
+                            "Sourcify verification request for address ({}) failed with status code {status}\nDetails: {error:#}",
+                            args.address,
                         );
-                        warn!("Failed verify submission: {:?}", error);
-                        std::process::exit(1);
                     }
 
                     let text = response.text().await?;
@@ -65,8 +61,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             })
             .await?;
 
-        self.process_sourcify_response(resp.map(|r| r.result));
-        Ok(())
+        self.process_sourcify_response(resp.map(|r| r.result))
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
@@ -83,11 +78,10 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
                     let response = reqwest::get(url).await?;
                     if !response.status().is_success() {
-                        eprintln!(
+                        eyre::bail!(
                             "Failed to request verification status with status code {}",
                             response.status()
                         );
-                        std::process::exit(1);
                     };
 
                     Ok(Some(response.json::<Vec<SourcifyResponseElement>>().await?))
@@ -96,8 +90,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             })
             .await?;
 
-        self.process_sourcify_response(resp);
-        Ok(())
+        self.process_sourcify_response(resp)
     }
 }
 
@@ -165,22 +158,26 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
         Ok(req)
     }
 
-    fn process_sourcify_response(&self, response: Option<Vec<SourcifyResponseElement>>) {
-        let response = response.unwrap().remove(0);
-        if response.status == "perfect" {
-            if let Some(ts) = response.storage_timestamp {
-                println!("Contract source code already verified. Storage Timestamp: {ts}");
-            } else {
-                println!("Contract successfully verified")
+    fn process_sourcify_response(
+        &self,
+        response: Option<Vec<SourcifyResponseElement>>,
+    ) -> Result<()> {
+        let Some([response, ..]) = response.as_deref() else { return Ok(()) };
+        match response.status.as_str() {
+            "perfect" => {
+                if let Some(ts) = &response.storage_timestamp {
+                    println!("Contract source code already verified. Storage Timestamp: {ts}");
+                } else {
+                    println!("Contract successfully verified");
+                }
             }
-        } else if response.status == "partial" {
-            println!("The recompiled contract partially matches the deployed version")
-        } else if response.status == "false" {
-            println!("Contract source code is not verified")
-        } else {
-            eprintln!("Unknown status from sourcify. Status: {}", response.status);
-            std::process::exit(1);
+            "partial" => {
+                println!("The recompiled contract partially matches the deployed version");
+            }
+            "false" => println!("Contract source code is not verified"),
+            s => eyre::bail!("Unknown status from sourcify. Status: {s:?}"),
         }
+        Ok(())
     }
 }
 

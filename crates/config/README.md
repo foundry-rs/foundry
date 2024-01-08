@@ -56,7 +56,7 @@ The selected profile is the value of the `FOUNDRY_PROFILE` environment variable,
 
 ### All Options
 
-The following is a foundry.toml file with all configuration options set. See also [/config/src/lib.rs](/config/src/lib.rs) and [/cli/tests/it/config.rs](/cli/tests/it/config.rs).
+The following is a foundry.toml file with all configuration options set. See also [/config/src/lib.rs](./src/lib.rs) and [/cli/tests/it/config.rs](../forge/tests/it/config.rs).
 
 ```toml
 ## defaults for _all_ profiles
