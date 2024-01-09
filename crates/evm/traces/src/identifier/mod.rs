@@ -1,4 +1,4 @@
-use alloy_json_abi::JsonAbi as Abi;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use foundry_compilers::ArtifactId;
 use std::borrow::Cow;
@@ -23,7 +23,7 @@ pub struct AddressIdentity<'a> {
     /// Note: This may be in the format `"<artifact>:<contract>"`.
     pub contract: Option<String>,
     /// The ABI of the contract at this address
-    pub abi: Option<Cow<'a, Abi>>,
+    pub abi: Option<Cow<'a, JsonAbi>>,
     /// The artifact ID of the contract, if any.
     pub artifact_id: Option<ArtifactId>,
 }

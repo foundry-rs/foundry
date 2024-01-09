@@ -1,6 +1,6 @@
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_config::FuzzConfig;
@@ -60,7 +60,7 @@ impl FuzzedExecutor {
         func: &Function,
         address: Address,
         should_fail: bool,
-        errors: Option<&Abi>,
+        errors: Option<&JsonAbi>,
     ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();

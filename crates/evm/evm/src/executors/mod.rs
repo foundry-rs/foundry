@@ -10,7 +10,7 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use ethers_core::types::Log;
 use ethers_signers::LocalWallet;
@@ -223,7 +223,7 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&Abi>,
+        abi: Option<&JsonAbi>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
@@ -255,7 +255,7 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&Abi>,
+        abi: Option<&JsonAbi>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
@@ -276,7 +276,7 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&Abi>,
+        abi: Option<&JsonAbi>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
@@ -353,7 +353,7 @@ impl Executor {
     pub fn deploy_with_env(
         &mut self,
         env: Env,
-        abi: Option<&Abi>,
+        abi: Option<&JsonAbi>,
     ) -> Result<DeployResult, EvmError> {
         debug_assert!(
             matches!(env.tx.transact_to, TransactTo::Create(_)),
@@ -442,7 +442,7 @@ impl Executor {
         from: Address,
         code: Bytes,
         value: U256,
-        abi: Option<&Abi>,
+        abi: Option<&JsonAbi>,
     ) -> Result<DeployResult, EvmError> {
         let env = self.build_test_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         self.deploy_with_env(env, abi)
@@ -825,7 +825,7 @@ fn convert_executed_result(
 }
 
 fn convert_call_result(
-    abi: Option<&Abi>,
+    abi: Option<&JsonAbi>,
     func: &Function,
     call_result: RawCallResult,
 ) -> Result<CallResult, EvmError> {

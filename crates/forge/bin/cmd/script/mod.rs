@@ -1,7 +1,7 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use alloy_dyn_abi::FunctionExt;
-use alloy_json_abi::{Function, InternalType, JsonAbi as Abi};
+use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
@@ -439,7 +439,7 @@ impl ScriptArgs {
     /// corresponding function by matching the selector, first 4 bytes in the calldata.
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
-    fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
+    fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
         let (func, data) = if let Ok(func) = get_func(&self.sig) {
             (
                 abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(

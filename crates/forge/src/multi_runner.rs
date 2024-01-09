@@ -5,7 +5,7 @@ use crate::{
     result::SuiteResult,
     ContractRunner, TestFilter, TestOptions,
 };
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
@@ -30,15 +30,15 @@ use std::{
     sync::{mpsc, Arc},
 };
 
-pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
+pub type DeployableContracts = BTreeMap<ArtifactId, (JsonAbi, Bytes, Vec<Bytes>)>;
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
-    /// Mapping of contract name to Abi, creation bytecode and library bytecode which
+    /// Mapping of contract name to JsonAbi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
-    /// Compiled contracts by name that have an Abi and runtime bytecode
+    /// Compiled contracts by name that have an JsonAbi and runtime bytecode
     pub known_contracts: ContractsByArtifact,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
@@ -47,7 +47,7 @@ pub struct MultiContractRunner {
     /// The EVM spec
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
-    pub errors: Option<Abi>,
+    pub errors: Option<JsonAbi>,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Option<Address>,
     /// A map of contract names to absolute source file paths
@@ -208,7 +208,7 @@ impl MultiContractRunner {
     fn run_tests(
         &self,
         name: &str,
-        contract: &Abi,
+        contract: &JsonAbi,
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],

@@ -5,7 +5,7 @@ use crate::{
     CallTrace, CallTraceArena, DecodedCallData, DecodedCallLog, DecodedCallTrace,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function, JsonAbi as Abi};
+use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{Address, Log, Selector, B256};
 use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
 use foundry_evm_core::{
@@ -114,7 +114,7 @@ pub struct CallTraceDecoder {
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// All known errors.
-    pub errors: Abi,
+    pub errors: JsonAbi,
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
