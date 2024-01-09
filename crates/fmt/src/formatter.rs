@@ -3077,27 +3077,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     })
                 });
 
-                if is_constructor || is_contract_base {
-                    if is_contract_base {
-                        base.visit(self)?;
-                    } else {
-                        // This is ambiguous because the modifier can either by an inherited
-                        // contract modifiers with empty parenthesis are
-                        // valid, but not required so we make the assumption
-                        // here that modifiers are lowercase
-                        let mut base_or_modifier =
-                            self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
-                        let is_lowercase = base_or_modifier
-                            .content
-                            .chars()
-                            .next()
-                            .map_or(false, |c| c.is_lowercase());
-                        if is_lowercase && base_or_modifier.content.ends_with("()") {
-                            base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
-                        }
-
-                        self.write_chunk(&base_or_modifier)?;
+                if is_contract_base {
+                    base.visit(self)?;
+                } else if is_constructor {
+                    // This is ambiguous because the modifier can either by an inherited
+                    // contract modifiers with empty parenthesis are
+                    // valid, but not required so we make the assumption
+                    // here that modifiers are lowercase
+                    let mut base_or_modifier =
+                        self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
+                    let is_lowercase =
+                        base_or_modifier.content.chars().next().map_or(false, |c| c.is_lowercase());
+                    if is_lowercase && base_or_modifier.content.ends_with("()") {
+                        base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
                     }
+
+                    self.write_chunk(&base_or_modifier)?;
                 } else {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
