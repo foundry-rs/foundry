@@ -346,8 +346,8 @@ impl DebuggerContext<'_> {
                 let mut source_map = bytecode.source_map()?.ok()?;
 
                 let pc_ic_map = if is_create { create_map } else { rt_map };
-                let ic = pc_ic_map.get(&pc)?;
-                let source_element = source_map.swap_remove(*ic);
+                let ic = pc_ic_map.get(pc)?;
+                let source_element = source_map.swap_remove(ic);
                 (*file_id == source_element.index?).then_some((source_element, source_code))
             })
         else {

@@ -17,7 +17,9 @@ use foundry_common::{
     provider::ethers::RetryProvider,
     types::{ToAlloy, ToEthers},
 };
-use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
+use foundry_compilers::{
+    artifacts::StorageLayout, Artifact, ConfigurableContractArtifact, Project, Solc,
+};
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
@@ -101,13 +103,9 @@ impl StorageArgs {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
             let out = ProjectCompiler::new().compile(&project)?;
-            let match_code = |artifact: &ConfigurableContractArtifact| -> Option<bool> {
-                let bytes =
-                    artifact.deployed_bytecode.as_ref()?.bytecode.as_ref()?.object.as_bytes()?;
-                Some(bytes == &address_code)
-            };
-            let artifact =
-                out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
+            let artifact = out.artifacts().find(|(_, artifact)| {
+                artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
+            });
             if let Some((_, artifact)) = artifact {
                 return fetch_and_print_storage(provider, address.clone(), artifact, true).await;
             }

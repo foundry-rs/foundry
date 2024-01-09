@@ -6,6 +6,7 @@
 
 #[macro_use]
 extern crate tracing;
+
 use alloy_primitives::{Log, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;

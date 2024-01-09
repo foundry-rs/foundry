@@ -11,7 +11,7 @@ use forge::{
     opts::EvmOpts,
     result::SuiteResult,
     revm::primitives::SpecId,
-    utils::{build_ic_pc_map, ICPCMap},
+    utils::IcPcMap,
     MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_cli::{
@@ -233,15 +233,15 @@ impl CoverageArgs {
         // Since our coverage inspector collects hit data using program counters, the anchors also
         // need to be based on program counters.
         // TODO: Index by contract ID
-        let ic_pc_maps: HashMap<ContractId, (ICPCMap, ICPCMap)> = bytecodes
+        let ic_pc_maps: HashMap<ContractId, (IcPcMap, IcPcMap)> = bytecodes
             .iter()
             .map(|(id, bytecodes)| {
                 // TODO: Creation bytecode as well
                 (
                     id.clone(),
                     (
-                        build_ic_pc_map(SpecId::LATEST, bytecodes.0.as_ref()),
-                        build_ic_pc_map(SpecId::LATEST, bytecodes.1.as_ref()),
+                        IcPcMap::new(SpecId::LATEST, bytecodes.0.as_ref()),
+                        IcPcMap::new(SpecId::LATEST, bytecodes.1.as_ref()),
                     ),
                 )
             })

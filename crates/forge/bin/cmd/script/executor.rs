@@ -44,7 +44,6 @@ impl ScriptArgs {
         let abi = abi.ok_or_else(|| eyre::eyre!("no ABI found for contract"))?;
         let bytecode = bytecode
             .ok_or_else(|| eyre::eyre!("no bytecode found for contract"))?
-            .object
             .into_bytes()
             .ok_or_else(|| {
                 eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")

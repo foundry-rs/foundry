@@ -8,10 +8,7 @@ use crossterm::{
 };
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm_core::{
-    debug::DebugNodeFlat,
-    utils::{build_pc_ic_map, PCICMap},
-};
+use foundry_evm_core::{debug::DebugNodeFlat, utils::PcIcMap};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
@@ -50,7 +47,7 @@ pub struct Debugger {
     /// Source map of contract sources
     contracts_sources: ContractSources,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
-    pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
+    pc_ic_maps: BTreeMap<String, (PcIcMap, PcIcMap)>,
     breakpoints: Breakpoints,
 }
 
@@ -76,20 +73,8 @@ impl Debugger {
                     Some((
                         contract_name.clone(),
                         (
-                            build_pc_ic_map(
-                                SpecId::LATEST,
-                                contract.bytecode.object.as_bytes()?.as_ref(),
-                            ),
-                            build_pc_ic_map(
-                                SpecId::LATEST,
-                                contract
-                                    .deployed_bytecode
-                                    .bytecode
-                                    .as_ref()?
-                                    .object
-                                    .as_bytes()?
-                                    .as_ref(),
-                            ),
+                            PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
+                            PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
                         ),
                     ))
                 })
