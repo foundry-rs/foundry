@@ -97,6 +97,7 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
         "daily request count exceeded, request rate limited" => true,
         msg => {
             msg.contains("rate limit") ||
+                msg.contains("rate exceeded") ||
                 msg.contains("too many requests") ||
                 msg.contains("request limit")
         }
