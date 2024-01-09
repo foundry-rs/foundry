@@ -1333,6 +1333,7 @@ dependencies = [
  "ethers-core",
  "eyre",
  "forge-fmt",
+ "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
  "foundry-compilers",

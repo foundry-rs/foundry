@@ -163,10 +163,7 @@ fn test_load_cache() {
     assert!(new_env.is_ok());
     let new_env = new_env.unwrap();
     assert_eq!(new_env.id.unwrap(), String::from("0"));
-    assert_eq!(
-        new_env.session_source.unwrap().to_repl_source(),
-        env.session_source.unwrap().to_repl_source()
-    );
+    assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
 }
 
 #[test]
@@ -225,8 +222,5 @@ fn test_load_latest_cache() {
 
     // Validate the session
     assert_eq!(new_env.id.unwrap(), "1");
-    assert_eq!(
-        new_env.session_source.unwrap().to_repl_source(),
-        env.session_source.unwrap().to_repl_source()
-    );
+    assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
 }

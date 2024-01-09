@@ -182,8 +182,6 @@ async fn main() -> eyre::Result<()> {
         // Variable based on status of the last entry
         let prompt = dispatcher.get_prompt();
 
-        rl.helper_mut().unwrap().set_errored(dispatcher.errored);
-
         // Read the next line
         let next_string = rl.readline(prompt.as_ref());
 
@@ -195,7 +193,8 @@ async fn main() -> eyre::Result<()> {
                 interrupt = false;
 
                 // Dispatch and match results
-                dispatch_repl_line(&mut dispatcher, &line).await;
+                let errored = dispatch_repl_line(&mut dispatcher, &line).await;
+                rl.helper_mut().unwrap().set_errored(errored);
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
@@ -232,8 +231,9 @@ impl Provider for ChiselParser {
 }
 
 /// Evaluate a single Solidity line.
-async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) {
-    match dispatcher.dispatch(line).await {
+async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> bool {
+    let r = dispatcher.dispatch(line).await;
+    match &r {
         DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => {
             debug!(%line, ?msg, "dispatch success");
             if let Some(msg) = msg {
@@ -249,6 +249,7 @@ async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) {
         DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
         DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
     }
+    r.is_error()
 }
 
 /// Evaluate multiple Solidity source files contained within a
