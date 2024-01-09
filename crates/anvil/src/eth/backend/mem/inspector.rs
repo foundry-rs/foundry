@@ -35,13 +35,14 @@ impl Inspector {
 
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_tracing(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
         self
     }
 
     /// Enables steps recording for `Tracer`.
-    pub fn with_steps_tracing(self) -> Self {
-        self.with_tracing()
+    pub fn with_steps_tracing(mut self) -> Self {
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
+        self
     }
 }
 
