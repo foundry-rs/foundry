@@ -181,6 +181,7 @@ macro_rules! test_directories {
 
 test_directories! {
     ConstructorDefinition,
+    ConstructorModifierStyle,
     ContractDefinition,
     DocComments,
     EnumDefinition,
