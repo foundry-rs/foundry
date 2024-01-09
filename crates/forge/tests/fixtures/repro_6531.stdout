@@ -9,7 +9,7 @@ Traces:
     ├─ [0] VM::createSelectFork("<url>")
     │   └─ ← 0
     ├─ [10350] 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48::name() [staticcall]
-    │   ├─ [3061] 0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF::name() [delegatecall]
+    │   ├─ [3061] 0x43506849D7C04F9138D1A2050bbF3A0c054402dd::name() [delegatecall]
     │   │   └─ ← "USD Coin"
     │   └─ ← "USD Coin"
     └─ ← ()
