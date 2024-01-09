@@ -12,7 +12,7 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Write},
     time::Duration,
 };
@@ -127,7 +127,7 @@ pub struct TestResult {
     pub coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
 
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
@@ -266,7 +266,7 @@ pub struct TestSetup {
     /// Call traces of the setup
     pub traces: Traces,
     /// Addresses labeled during setup
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
     /// The reason the setup failed, if it did
     pub reason: Option<String>,
     /// Coverage info during setup
@@ -278,7 +278,7 @@ impl TestSetup {
         error: EvmError,
         mut logs: Vec<Log>,
         mut traces: Traces,
-        mut labeled_addresses: BTreeMap<Address, String>,
+        mut labeled_addresses: HashMap<Address, String>,
     ) -> Self {
         match error {
             EvmError::Execution(err) => {
@@ -301,7 +301,7 @@ impl TestSetup {
         address: Address,
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: BTreeMap<Address, String>,
+        labeled_addresses: HashMap<Address, String>,
         coverage: Option<HitMaps>,
     ) -> Self {
         Self { address, logs, traces, labeled_addresses, reason: None, coverage }
@@ -310,7 +310,7 @@ impl TestSetup {
     pub fn failed_with(
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: BTreeMap<Address, String>,
+        labeled_addresses: HashMap<Address, String>,
         reason: String,
     ) -> Self {
         Self {

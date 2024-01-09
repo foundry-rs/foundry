@@ -11,7 +11,7 @@ use foundry_evm::{
     traces::{CallTraceArena, TraceKind},
 };
 use revm::interpreter::{return_ok, InstructionResult};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 /// The function selector of the REPL contract's entrypoint, the `run()` function.
 static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
@@ -44,7 +44,7 @@ pub struct ChiselResult {
     /// Amount of gas used in the transaction
     pub gas_used: u64,
     /// Map of addresses to their labels
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
     /// Return data
     pub returned: Bytes,
     /// Called address

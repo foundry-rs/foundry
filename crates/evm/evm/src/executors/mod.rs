@@ -33,7 +33,7 @@ use revm::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
 };
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -593,7 +593,7 @@ pub struct ExecutionErr {
     pub logs: Vec<Log>,
     pub traces: Option<CallTraceArena>,
     pub debug: Option<DebugArena>,
-    pub labels: BTreeMap<Address, String>,
+    pub labels: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
     pub state_changeset: Option<StateChangeset>,
     pub script_wallets: Vec<LocalWallet>,
@@ -653,7 +653,7 @@ pub struct CallResult {
     /// The logs emitted during the call
     pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
-    pub labels: BTreeMap<Address, String>,
+    pub labels: HashMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
     /// The coverage info collected during the call
@@ -698,7 +698,7 @@ pub struct RawCallResult {
     /// The logs emitted during the call
     pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
-    pub labels: BTreeMap<Address, String>,
+    pub labels: HashMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
     /// The coverage info collected during the call
@@ -735,7 +735,7 @@ impl Default for RawCallResult {
             gas_refunded: 0,
             stipend: 0,
             logs: Vec::new(),
-            labels: BTreeMap::new(),
+            labels: HashMap::new(),
             traces: None,
             coverage: None,
             debug: None,

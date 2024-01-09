@@ -15,7 +15,7 @@ use revm::{
     primitives::{BlockEnv, Env},
     EVMData, Inspector,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -185,7 +185,7 @@ macro_rules! call_inspectors {
 /// The collected results of [`InspectorStack`].
 pub struct InspectorData {
     pub logs: Vec<Log>,
-    pub labels: BTreeMap<Address, String>,
+    pub labels: HashMap<Address, String>,
     pub traces: Option<CallTraceArena>,
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,

@@ -590,7 +590,7 @@ pub struct ScriptResult {
     pub traces: Traces,
     pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
