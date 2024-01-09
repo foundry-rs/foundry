@@ -165,10 +165,7 @@ impl ScriptRunner {
                 returned: Bytes::new(),
                 success,
                 gas_used,
-                labeled_addresses: labeled_addresses
-                    .into_iter()
-                    .map(|l| (l.0, l.1))
-                    .collect::<BTreeMap<_, _>>(),
+                labeled_addresses,
                 transactions,
                 logs,
                 traces,

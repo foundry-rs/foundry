@@ -157,7 +157,7 @@ impl<'a> ContractRunner<'a> {
                 }
                 Err(err) => {
                     error!(reason=%err, contract=%address, "setUp failed");
-                    (Vec::new(), None, BTreeMap::new(), Some(format!("setup failed: {err}")), None)
+                    (Vec::new(), None, HashMap::new(), Some(format!("setup failed: {err}")), None)
                 }
             };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
@@ -563,7 +563,7 @@ impl<'a> ContractRunner<'a> {
         let fuzzed_executor =
             FuzzedExecutor::new(self.executor.clone(), runner.clone(), self.sender, fuzz_config);
         let state = fuzzed_executor.build_fuzz_state();
-        let mut result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
+        let result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();
@@ -631,8 +631,8 @@ impl<'a> ContractRunner<'a> {
         };
 
         // Record logs, labels and traces
-        logs.append(&mut result.logs);
-        labeled_addresses.append(&mut result.labeled_addresses);
+        logs.extend(result.logs);
+        labeled_addresses.extend(result.labeled_addresses);
         traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
         coverage = merge_coverages(coverage, result.coverage);
 

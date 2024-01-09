@@ -15,7 +15,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt};
+use std::{collections::HashMap, fmt};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -143,7 +143,7 @@ pub struct FuzzTestResult {
     pub decoded_logs: Vec<String>,
 
     /// Labeled addresses
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
 
     /// Exemplary traces for a fuzz run of the test function
     ///
