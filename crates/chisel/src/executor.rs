@@ -10,7 +10,6 @@ use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
-
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
