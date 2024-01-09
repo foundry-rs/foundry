@@ -23,7 +23,6 @@ use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::ToEthers}
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
-    utils::get_create_address,
 };
 use itertools::Itertools;
 use revm::{
@@ -258,7 +257,7 @@ impl Cheatcodes {
             .get(&inputs.caller)
             .map(|acc| acc.info.nonce)
             .unwrap_or_default();
-        let created_address = get_create_address(inputs, old_nonce);
+        let created_address = inputs.created_address(old_nonce);
 
         if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
             // we only grant cheat code access for new contracts if the caller also has

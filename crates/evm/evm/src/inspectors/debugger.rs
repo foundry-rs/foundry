@@ -4,7 +4,7 @@ use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
-    utils::{gas_used, get_create_address, CallKind},
+    utils::{gas_used, CallKind},
 };
 use revm::{
     interpreter::{
@@ -133,7 +133,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.enter(
             data.journaled_state.depth() as usize,
-            get_create_address(call, nonce),
+            call.created_address(nonce),
             CallKind::Create,
         );
 
