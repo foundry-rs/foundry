@@ -3,7 +3,7 @@ use crate::{
     inspectors::Fuzzer,
 };
 use alloy_dyn_abi::DynSolValue;
-use alloy_json_abi::JsonAbi as Abi;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, FixedBytes, U256};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -324,7 +324,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_contract_artifacts(
         &mut self,
         invariant_address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
     ) -> eyre::Result<()> {
         // targetArtifactSelectors -> (string, bytes4[])[].
         let targeted_abi = self
@@ -450,7 +450,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_contracts_and_senders(
         &self,
         invariant_address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
     ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
         let [targeted_senders, excluded_senders, selected, excluded] =
             ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"].map(
@@ -497,7 +497,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn target_interfaces(
         &self,
         invariant_address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         let interfaces = self.get_list::<(Address, Vec<String>)>(
@@ -570,7 +570,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_selectors(
         &self,
         address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         // `targetArtifactSelectors() -> (string, bytes4[])[]`.
@@ -661,7 +661,7 @@ impl<'a> InvariantExecutor<'a> {
     fn get_list<T>(
         &self,
         address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
         method_name: &str,
         f: fn(DynSolValue) -> Vec<T>,
     ) -> Vec<T> {

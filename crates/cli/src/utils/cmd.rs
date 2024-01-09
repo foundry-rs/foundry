@@ -1,4 +1,4 @@
-use alloy_json_abi::JsonAbi as Abi;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
@@ -29,7 +29,7 @@ use yansi::Paint;
 pub fn remove_contract(
     output: &mut ProjectCompileOutput,
     info: &ContractInfo,
-) -> Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
+) -> Result<(JsonAbi, CompactBytecode, CompactDeployedBytecode)> {
     let contract = if let Some(contract) = output.remove_contract(info) {
         contract
     } else {
@@ -108,7 +108,7 @@ pub fn get_cached_entry_by_name(
 }
 
 /// Returns error if constructor has arguments.
-pub fn ensure_clean_constructor(abi: &Abi) -> Result<()> {
+pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
     if let Some(constructor) = &abi.constructor {
         if !constructor.inputs.is_empty() {
             eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
@@ -117,7 +117,7 @@ pub fn ensure_clean_constructor(abi: &Abi) -> Result<()> {
     Ok(())
 }
 
-pub fn needs_setup(abi: &Abi) -> bool {
+pub fn needs_setup(abi: &JsonAbi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
     for setup_fn in setup_fns.iter() {

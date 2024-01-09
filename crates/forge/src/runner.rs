@@ -4,7 +4,7 @@ use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
@@ -42,9 +42,9 @@ pub struct ContractRunner<'a> {
     /// The deployed contract's code
     pub code: Bytes,
     /// The test contract's ABI
-    pub contract: &'a Abi,
+    pub contract: &'a JsonAbi,
     /// All known errors, used to decode reverts
-    pub errors: Option<&'a Abi>,
+    pub errors: Option<&'a JsonAbi>,
     /// The initial balance of the test contract
     pub initial_balance: U256,
     /// The address which will be used as the `from` field in all EVM calls
@@ -58,11 +58,11 @@ impl<'a> ContractRunner<'a> {
     pub fn new(
         name: &'a str,
         executor: Executor,
-        contract: &'a Abi,
+        contract: &'a JsonAbi,
         code: Bytes,
         initial_balance: U256,
         sender: Option<Address>,
-        errors: Option<&'a Abi>,
+        errors: Option<&'a JsonAbi>,
         predeploy_libs: &'a [Bytes],
         debug: bool,
     ) -> Self {

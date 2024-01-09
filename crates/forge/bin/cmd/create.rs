@@ -1,6 +1,6 @@
 use super::{retry::RetryArgs, verify};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
-use alloy_json_abi::{Constructor, JsonAbi as Abi};
+use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
 use ethers_contract::ContractError;
@@ -204,7 +204,7 @@ impl CreateArgs {
     /// Deploys the contract
     async fn deploy<M: Middleware + 'static>(
         self,
-        abi: Abi,
+        abi: JsonAbi,
         bin: BytecodeObject,
         args: Vec<DynSolValue>,
         provider: M,
@@ -407,7 +407,7 @@ impl<B, M, C> From<Deployer<B, M>> for ContractDeploymentTx<B, M, C> {
 pub struct Deployer<B, M> {
     /// The deployer's transaction, exposed for overriding the defaults
     pub tx: TypedTransaction,
-    abi: Abi,
+    abi: JsonAbi,
     client: B,
     confs: usize,
     block: BlockNumber,
@@ -513,7 +513,7 @@ where
 #[derive(Debug)]
 pub struct DeploymentTxFactory<B, M> {
     client: B,
-    abi: Abi,
+    abi: JsonAbi,
     bytecode: Bytes,
     _m: PhantomData<M>,
 }
@@ -540,7 +540,7 @@ where
     /// Creates a factory for deployment of the Contract with bytecode, and the
     /// constructor defined in the abi. The client will be used to send any deployment
     /// transaction.
-    pub fn new(abi: Abi, bytecode: Bytes, client: B) -> Self {
+    pub fn new(abi: JsonAbi, bytecode: Bytes, client: B) -> Self {
         Self { client, abi, bytecode, _m: PhantomData }
     }
 

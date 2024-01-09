@@ -1,6 +1,6 @@
 //! Commonly used contract types and functions.
 
-use alloy_json_abi::{Event, Function, JsonAbi as Abi};
+use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{hex, Address, B256};
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
@@ -14,11 +14,11 @@ use std::{
     path::PathBuf,
 };
 
-type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a (Abi, Vec<u8>));
+type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a (JsonAbi, Vec<u8>));
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
 #[derive(Clone, Default)]
-pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, (Abi, Vec<u8>)>);
+pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, (JsonAbi, Vec<u8>)>);
 
 impl ContractsByArtifact {
     /// Finds a contract which has a similar bytecode as `code`.
@@ -44,7 +44,7 @@ impl ContractsByArtifact {
     }
 
     /// Flattens a group of contracts into maps of all events and functions
-    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<B256, Event>, Abi) {
+    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<B256, Event>, JsonAbi) {
         let flattened_funcs: BTreeMap<[u8; 4], Function> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
@@ -64,7 +64,7 @@ impl ContractsByArtifact {
             .collect();
 
         // We need this for better revert decoding, and want it in abi form
-        let mut errors_abi = Abi::default();
+        let mut errors_abi = JsonAbi::default();
         self.iter().for_each(|(_name, (abi, _code))| {
             abi.errors().for_each(|error| {
                 let entry =
@@ -77,7 +77,7 @@ impl ContractsByArtifact {
 }
 
 impl Deref for ContractsByArtifact {
-    type Target = BTreeMap<ArtifactId, (Abi, Vec<u8>)>;
+    type Target = BTreeMap<ArtifactId, (JsonAbi, Vec<u8>)>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -91,7 +91,7 @@ impl DerefMut for ContractsByArtifact {
 }
 
 /// Wrapper type that maps an address to a contract identifier and contract ABI.
-pub type ContractsByAddress = BTreeMap<Address, (String, Abi)>;
+pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 
 /// Very simple fuzzy matching of contract bytecode.
 ///
@@ -113,7 +113,7 @@ pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
     diff_chars as f64 / cutoff_len as f64
 }
 
-/// Flattens the contracts into  (`id` -> (`Abi`, `Vec<u8>`)) pairs
+/// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
 pub fn flatten_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     deployed_code: bool,

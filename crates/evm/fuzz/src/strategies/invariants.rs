@@ -3,7 +3,7 @@ use crate::{
     invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, SenderFilters},
     strategies::{fuzz_calldata, fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
 };
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use parking_lot::RwLock;
 use proptest::prelude::*;
@@ -119,7 +119,7 @@ fn select_random_sender(
 /// Strategy to randomly select a contract from the `contracts` list that has at least 1 function
 fn select_random_contract(
     contracts: FuzzRunIdentifiedContracts,
-) -> impl Strategy<Value = (Address, Abi, Vec<Function>)> {
+) -> impl Strategy<Value = (Address, JsonAbi, Vec<Function>)> {
     let selectors = any::<prop::sample::Selector>();
     selectors.prop_map(move |selector| {
         let contracts = contracts.lock();
@@ -133,7 +133,10 @@ fn select_random_contract(
 ///
 /// If `targeted_functions` is not empty, select one from it. Otherwise, take any
 /// of the available abi functions.
-fn select_random_function(abi: Abi, targeted_functions: Vec<Function>) -> BoxedStrategy<Function> {
+fn select_random_function(
+    abi: JsonAbi,
+    targeted_functions: Vec<Function>,
+) -> BoxedStrategy<Function> {
     let selectors = any::<prop::sample::Selector>();
     let possible_funcs: Vec<Function> = abi
         .functions()
