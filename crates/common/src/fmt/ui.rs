@@ -412,6 +412,7 @@ pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String
         "nonce" => Some(block.nonce.pretty()),
         "number" => Some(block.number.pretty()),
         "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
+        "transactionsRoot" | "transactions_root" => Some(block.transactions_root.pretty()),
         "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
         "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
         "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
@@ -444,6 +445,7 @@ mixHash              {}
 nonce                {}
 number               {}
 parentHash           {}
+transactionsRoot     {}
 receiptsRoot         {}
 sealFields           {}
 sha3Uncles           {}
@@ -464,6 +466,7 @@ totalDifficulty      {}{}",
         block.nonce.pretty(),
         block.number.pretty(),
         block.parent_hash.pretty(),
+        block.transactions_root.pretty(),
         block.receipts_root.pretty(),
         block.seal_fields.pretty(),
         block.uncles_hash.pretty(),
@@ -724,6 +727,10 @@ value                0".to_string();
         assert_eq!(
             Some("0x9646252be9520f6e71339a8df9c55e4d7619deeb018d2a3f2d21fc165dde5eb5".to_string()),
             get_pretty_block_attr(&block, "parentHash")
+        );
+        assert_eq!(
+            Some("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".to_string()),
+            get_pretty_block_attr(&block, "transactionsRoot")
         );
         assert_eq!(
             Some("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".to_string()),
