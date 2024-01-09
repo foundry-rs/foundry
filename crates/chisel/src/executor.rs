@@ -10,7 +10,7 @@ use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
-use foundry_common::types::ToEthers;
+
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
@@ -237,7 +237,7 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
+        let mut offset = stack.data().last().unwrap().to::<usize>();
         let mem_offset = &memory[offset..offset + 32];
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
