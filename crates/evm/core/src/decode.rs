@@ -26,7 +26,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
     let topics = unsafe {
         &*(topics as *const [ethers_core::types::H256] as *const [alloy_primitives::B256])
     };
-    Console::ConsoleEvents::decode_log(topics, &log.data, false)
+    Console::ConsoleEvents::decode_raw_log(topics, &log.data, false)
         .ok()
         .map(|decoded| decoded.to_string())
 }
