@@ -24,8 +24,8 @@ use identifier::LocalTraceIdentifier;
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
-use reth_revm_inspectors::tracing::types::LogCallOrder;
-pub use reth_revm_inspectors::tracing::{
+use revm_inspectors::tracing::types::LogCallOrder;
+pub use revm_inspectors::tracing::{
     types::{CallKind, CallTrace, CallTraceNode},
     CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
     TracingInspectorConfig,

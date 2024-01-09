@@ -131,6 +131,7 @@ foundry-compilers = { version = "0.1.4", default-features = false }
 # no default features to avoid c-kzg
 revm = { version = "3", default-features = false }
 revm-primitives = { version = "1", default-features = false }
+revm-inspectors = { version = "0.1", default-features = false }
 
 ## ethers
 ethers = { version = "2.0", default-features = false }
@@ -223,3 +224,5 @@ revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+
+revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors" }
