@@ -1,7 +1,5 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use alloy_primitives::Bytes;
-use foundry_common::types::ToEthers;
-use foundry_evm_core::utils;
 use revm::{
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
     Database, EVMData, Inspector,
@@ -73,7 +71,7 @@ impl Fuzzer {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
-            state.values_mut().insert(utils::u256_to_h256_be(slot.to_ethers()).into());
+            state.values_mut().insert(slot.to_be_bytes());
         }
 
         // TODO: disabled for now since it's flooding the dictionary

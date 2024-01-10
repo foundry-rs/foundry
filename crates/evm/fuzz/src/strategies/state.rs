@@ -4,10 +4,7 @@ use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers_core::types::Log;
-use foundry_common::{
-    contracts::{ContractsByAddress, ContractsByArtifact},
-    types::ToEthers,
-};
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use hashbrown::HashSet;
@@ -232,7 +229,7 @@ fn collect_push_bytes(code: &[u8]) -> Vec<[u8; 32]> {
             }
 
             let push_value = U256::try_from_be_slice(&code[push_start..push_end]).unwrap();
-            bytes.push(push_value.to_ethers().into());
+            bytes.push(push_value.to_be_bytes());
             // also add the value below and above the push value to the dictionary.
             if push_value != U256::ZERO {
                 bytes.push((push_value - U256::from(1)).to_be_bytes());
