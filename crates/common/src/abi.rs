@@ -2,7 +2,7 @@
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function};
-use alloy_primitives::{hex, Address, Log};
+use alloy_primitives::{hex, Address, LogData};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use foundry_config::Chain;
@@ -98,7 +98,7 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
 /// proper indexed parameters. Otherwise, it returns the original event.
-pub fn get_indexed_event(mut event: Event, raw_log: &Log) -> Event {
+pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
     if !event.anonymous && raw_log.topics().len() > 1 {
         let indexed_params = raw_log.topics().len() - 1;
         let num_inputs = event.inputs.len();
@@ -186,7 +186,7 @@ fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{LogData, B256, U256};
 
     #[test]
     fn test_get_func() {
@@ -216,7 +216,8 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log = Log::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
+        let log =
+            LogData::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);
@@ -237,7 +238,7 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log = Log::new_unchecked(
+        let log = LogData::new_unchecked(
             vec![event.selector(), param0, B256::from_slice(&param1), param2],
             vec![].into(),
         );
