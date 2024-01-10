@@ -29,6 +29,7 @@ foundry-evm.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-json-abi.workspace = true
+alloy-rpc-types.workspace = true
 
 ethers-core.workspace = true
 

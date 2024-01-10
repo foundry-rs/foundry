@@ -4,7 +4,7 @@
 //! and calling the REPL contract on a in-memory REVM instance.
 
 use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::Log;
+use alloy_rpc_types::Log;
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},

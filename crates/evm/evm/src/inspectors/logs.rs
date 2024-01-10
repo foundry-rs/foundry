@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, B256};
+use alloy_rpc_types::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
-use ethers_core::types::Log;
-use foundry_common::{fmt::ConsoleFmt, types::ToEthers, ErrorExt};
+use foundry_common::{fmt::ConsoleFmt, ErrorExt};
 use foundry_evm_core::{
     abi::{patch_hh_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -41,10 +41,10 @@ impl LogCollector {
 impl<DB: Database> Inspector<DB> for LogCollector {
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
-            address: address.to_ethers(),
-            topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
-            data: data.clone().to_ethers(),
-            ..Default::default()
+            address: address.clone(),
+            topics: topics.iter().copied().collect(),
+            data: data.clone(),
+            ..default_log()
         });
     }
 
@@ -67,8 +67,22 @@ fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     let fmt = call.fmt(Default::default());
     Log {
-        topics: vec![Console::log::SIGNATURE_HASH.to_ethers()],
+        topics: vec![Console::log::SIGNATURE_HASH],
         data: fmt.abi_encode().into(),
-        ..Default::default()
+        ..default_log()
+    }
+}
+
+fn default_log() -> Log {
+    Log {
+        address: Address::default(),
+        topics: Vec::default(),
+        data: Bytes::default(),
+        block_hash: None,
+        block_number: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: None,
+        removed: false,
     }
 }

@@ -3,8 +3,8 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
+use alloy_rpc_types::Log;
 use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
-use ethers_core::types::Log;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
@@ -23,9 +23,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
     let topics = log.topics.as_slice();
     // SAFETY: Same type
     // TODO: Remove when `ethers::Log` has been replaced
-    let topics = unsafe {
-        &*(topics as *const [ethers_core::types::H256] as *const [alloy_primitives::B256])
-    };
+    let topics = topics;
     Console::ConsoleEvents::decode_log(topics, &log.data, false)
         .ok()
         .map(|decoded| decoded.to_string())
@@ -64,7 +62,7 @@ pub fn maybe_decode_revert(
             None
         } else {
             Some(format!("custom error bytes {}", hex::encode_prefixed(err)))
-        }
+        };
     }
 
     if err == crate::constants::MAGIC_SKIP {

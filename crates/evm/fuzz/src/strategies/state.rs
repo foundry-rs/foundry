@@ -3,7 +3,7 @@ use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use ethers_core::types::Log;
+use alloy_rpc_types::Log;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     types::ToEthers,

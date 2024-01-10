@@ -15,7 +15,11 @@ name = "forge"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { version = "8", default-features = false, features = [
+  "build",
+  "git",
+  "git2",
+] }
 
 [dependencies]
 # lib
@@ -48,6 +52,7 @@ foundry-debugger.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -89,13 +94,19 @@ paste = "1.0"
 path-slash = "0.2"
 pretty_assertions.workspace = true
 serial_test = "2"
-svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
+svm = { package = "svm-rs", version = "0.3", default-features = false, features = [
+  "rustls",
+] }
 tempfile = "3"
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [features]
 default = ["rustls"]
-rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
+rustls = [
+  "foundry-cli/rustls",
+  "reqwest/rustls-tls",
+  "reqwest/rustls-tls-native-roots",
+]
 openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 
 # feature for heavy (long-running) integration tests

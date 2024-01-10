@@ -2,7 +2,10 @@
 
 use crate::{config::*, test_helpers::PROJECT};
 use alloy_primitives::{address, Address};
-use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use ethers_core::{
+    abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token},
+    types::H256,
+};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
@@ -123,8 +126,18 @@ test_repro!(3347, false, None, |res| {
         ],
         anonymous: false,
     };
-    let raw_log =
-        RawLog { topics: test.logs[0].topics.clone(), data: test.logs[0].data.clone().to_vec() };
+    let raw_log = RawLog {
+        topics: test.logs[0]
+            .topics
+            .iter()
+            .map(|topic| {
+                // Convert `topic` from `alloy_primitives::FixedBytes<32>` to `H256`
+                // The exact conversion method depends on the types and might be different
+                H256::from_slice(topic.as_slice())
+            })
+            .collect(),
+        data: test.logs[0].data.clone().to_vec(),
+    };
     let log = event.parse_log(raw_log).unwrap();
     assert_eq!(
         log,

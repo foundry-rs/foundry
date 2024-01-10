@@ -9,7 +9,7 @@ extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::Log;
+use alloy_rpc_types::Log;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
@@ -75,7 +75,7 @@ impl BaseCounterExample {
                         contract_name: Some(name.clone()),
                         traces,
                         args,
-                    }
+                    };
                 }
             }
         }
