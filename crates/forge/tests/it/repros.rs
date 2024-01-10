@@ -2,11 +2,9 @@
 
 use crate::{config::*, test_helpers::PROJECT};
 use alloy_primitives::{address, Address};
-use ethers_core::{
-    abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token},
-    types::H256,
-};
+use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
+use foundry_common::types::ToEthers;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -127,11 +125,7 @@ test_repro!(3347, false, None, |res| {
         anonymous: false,
     };
     let raw_log = RawLog {
-        topics: test.logs[0]
-            .topics
-            .iter()
-            .map(|topic| H256::from_slice(topic.as_slice()))
-            .collect(),
+        topics: test.logs[0].topics.iter().map(|t| t.to_ethers()).collect(),
         data: test.logs[0].data.clone().to_vec(),
     };
     let log = event.parse_log(raw_log).unwrap();
