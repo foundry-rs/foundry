@@ -130,11 +130,7 @@ test_repro!(3347, false, None, |res| {
         topics: test.logs[0]
             .topics
             .iter()
-            .map(|topic| {
-                // Convert `topic` from `alloy_primitives::FixedBytes<32>` to `H256`
-                // The exact conversion method depends on the types and might be different
-                H256::from_slice(topic.as_slice())
-            })
+            .map(|topic| H256::from_slice(topic.as_slice()))
             .collect(),
         data: test.logs[0].data.clone().to_vec(),
     };
