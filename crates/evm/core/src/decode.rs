@@ -21,9 +21,6 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 #[instrument(level = "debug", skip_all, fields(topics=?log.topics, data=%log.data), ret)]
 pub fn decode_console_log(log: &Log) -> Option<String> {
     let topics = log.topics.as_slice();
-    // SAFETY: Same type
-    // TODO: Remove when `ethers::Log` has been replaced
-    let topics = topics;
     Console::ConsoleEvents::decode_log(topics, &log.data, false)
         .ok()
         .map(|decoded| decoded.to_string())
