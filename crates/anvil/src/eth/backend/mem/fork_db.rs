@@ -14,6 +14,7 @@ use foundry_evm::{
 };
 
 pub use foundry_evm::fork::database::ForkedDatabase;
+use foundry_evm::revm::primitives::BlockEnv;
 
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
@@ -31,7 +32,7 @@ impl Db for ForkedDatabase {
         self.inner().block_hashes().write().insert(number, hash);
     }
 
-    fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
+    fn dump_state(&self, at: BlockEnv) -> DatabaseResult<Option<SerializableState>> {
         let mut db = self.database().clone();
         let accounts = self
             .database()
@@ -56,7 +57,7 @@ impl Db for ForkedDatabase {
                 ))
             })
             .collect::<Result<_, _>>()?;
-        Ok(Some(SerializableState { accounts }))
+        Ok(Some(SerializableState { block: Some(at), accounts }))
     }
 
     fn snapshot(&mut self) -> U256 {

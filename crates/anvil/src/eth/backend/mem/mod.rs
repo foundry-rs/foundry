@@ -718,7 +718,8 @@ impl Backend {
 
     /// Get the current state.
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
-        let state = self.db.read().await.dump_state()?;
+        let at = self.env.read().block.clone();
+        let state = self.db.read().await.dump_state(at)?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -735,8 +736,25 @@ impl Backend {
         Ok(encoder.finish().unwrap_or_default().into())
     }
 
+    /// Apply [SerializableState] data to the backend storage.
+    pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
+        // reset the block env
+        if let Some(block) = state.block.clone() {
+            self.env.write().block = block;
+        }
+
+        if !self.db.write().await.load_state(state)? {
+            Err(RpcError::invalid_params(
+                "Loading state not supported with the current configuration",
+            )
+            .into())
+        } else {
+            Ok(true)
+        }
+    }
+
     /// Deserialize and add all chain data to the backend storage
-    pub async fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
+    pub async fn load_state_bytes(&self, buf: Bytes) -> Result<bool, BlockchainError> {
         let orig_buf = &buf.0[..];
         let mut decoder = GzDecoder::new(orig_buf);
         let mut decoded_data = Vec::new();
@@ -751,14 +769,7 @@ impl Backend {
         })
         .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
-        if !self.db.write().await.load_state(state)? {
-            Err(RpcError::invalid_params(
-                "Loading state not supported with the current configuration",
-            )
-            .into())
-        } else {
-            Ok(true)
-        }
+        self.load_state(state).await
     }
 
     /// Returns the environment for the next block
@@ -1060,15 +1071,14 @@ impl Backend {
             env.block.basefee = base;
         }
 
-        let gas_price =
-            gas_price.map(|g| g).or(max_fee_per_gas.map(|g| g)).unwrap_or_else(|| self.gas_price());
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
             caller: caller.to_alloy(),
             gas_limit: gas_limit.as_u64(),
             gas_price,
-            gas_priority_fee: max_priority_fee_per_gas.map(|f| f),
+            gas_priority_fee: max_priority_fee_per_gas,
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr.to_alloy()),
                 None => TransactTo::Create(CreateScheme::Create),

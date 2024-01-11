@@ -1,4 +1,5 @@
 use crate::{
+    cmd::StateFile,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -48,7 +49,7 @@ use std::{
     fmt::Write as FmtWrite,
     fs::File,
     net::{IpAddr, Ipv4Addr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -437,10 +438,17 @@ impl NodeConfig {
         self
     }
 
-    /// Sets a custom code size limit
+    /// Sets the init state if any
     #[must_use]
     pub fn with_init_state(mut self, init_state: Option<SerializableState>) -> Self {
         self.init_state = init_state;
+        self
+    }
+
+    /// Loads the init state from a file if it exists
+    #[must_use]
+    pub fn with_init_state_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.init_state = StateFile::parse_path(path).ok().and_then(|file| file.state);
         self
     }
 
@@ -866,13 +874,8 @@ impl NodeConfig {
                 .expect("Failed to create default create2 deployer");
         }
 
-        if let Some(ref state) = self.init_state {
-            backend
-                .get_db()
-                .write()
-                .await
-                .load_state(state.clone())
-                .expect("Failed to load init state");
+        if let Some(state) = self.init_state.clone() {
+            backend.load_state(state).await.expect("Failed to load init state");
         }
 
         backend

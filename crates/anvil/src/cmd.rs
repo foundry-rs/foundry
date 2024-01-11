@@ -19,7 +19,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use std::{
     future::Future,
     net::IpAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     str::FromStr,
     sync::{
@@ -119,8 +119,8 @@ pub struct NodeArgs {
 
     /// This is an alias for both --load-state and --dump-state.
     ///
-    /// It initializes the chain with the state stored at the file, if it exists, and dumps the
-    /// chain's state on exit.
+    /// It initializes the chain with the state and block environment stored at the file, if it
+    /// exists, and dumps the chain's state on exit.
     #[clap(
         long,
         value_name = "PATH",
@@ -133,13 +133,13 @@ pub struct NodeArgs {
     )]
     pub state: Option<StateFile>,
 
-    /// Interval in seconds at which the status is to be dumped to disk.
+    /// Interval in seconds at which the state and block environment is to be dumped to disk.
     ///
     /// See --state and --dump-state
     #[clap(short, long, value_name = "SECONDS")]
     pub state_interval: Option<u64>,
 
-    /// Dump the state of chain on exit to the given file.
+    /// Dump the state and block environment of chain on exit to the given file.
     ///
     /// If the value is a directory, the state will be written to `<VALUE>/state.json`.
     #[clap(long, value_name = "PATH", conflicts_with = "init")]
@@ -616,7 +616,12 @@ impl StateFile {
     /// This is used as the clap `value_parser` implementation to parse from file but only if it
     /// exists
     fn parse(path: &str) -> Result<Self, String> {
-        let mut path = PathBuf::from(path);
+        Self::parse_path(path)
+    }
+
+    /// Parse from file but only if it exists
+    pub fn parse_path(path: impl AsRef<Path>) -> Result<Self, String> {
+        let mut path = path.as_ref().to_path_buf();
         if path.is_dir() {
             path = path.join("state.json");
         }
