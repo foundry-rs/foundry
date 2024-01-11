@@ -14,7 +14,6 @@ use ethers_core::types::transaction::eip712::TypedData;
 pub mod block;
 pub mod proof;
 pub mod receipt;
-pub mod state;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;

@@ -1,21 +1,23 @@
 //! general eth api tests
 
 use crate::abi::{MulticallContract, SimpleStorage};
-use alloy_primitives::U256 as rU256;
-use alloy_rpc_types::{CallInput, CallRequest};
+use alloy_primitives::{B256, U256 as rU256};
+use alloy_rpc_types::{
+    state::{AccountOverride, StateOverride},
+    CallInput, CallRequest,
+};
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
 };
-use anvil_core::eth::{state::AccountOverride, transaction::to_alloy_state_override};
 use ethers::{
     abi::{Address, Tokenizable},
     prelude::{builders::ContractCall, decode_function_data, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, H256, U256},
+    types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, U256},
     utils::get_contract_address,
 };
-use foundry_common::types::ToAlloy;
+use foundry_common::types::{ToAlloy, ToEthers};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -227,7 +229,7 @@ async fn call_with_override<M, D>(
     api: &EthApi,
     call: ContractCall<M, D>,
     to: Address,
-    overrides: HashMap<Address, AccountOverride>,
+    overrides: StateOverride,
 ) -> D
 where
     D: Tokenizable,
@@ -240,7 +242,7 @@ where
                 ..Default::default()
             },
             None,
-            Some(to_alloy_state_override(overrides)),
+            Some(overrides),
         )
         .await
         .unwrap();
@@ -268,25 +270,28 @@ async fn can_call_with_state_override() {
         .unwrap();
 
     // Test the `balance` account override
-    let balance = 42u64.into();
+    let balance = rU256::from(42u64);
     let result = call_with_override(
         &api,
         multicall.get_eth_balance(account),
         multicall.address(),
         HashMap::from([(
-            account,
+            account.to_alloy(),
             AccountOverride { balance: Some(balance), ..Default::default() },
         )]),
     )
     .await;
-    assert_eq!(result, balance);
+    assert_eq!(result, balance.to_ethers());
 
     // Test the `state_diff` account override
     let overrides = HashMap::from([(
-        simple_storage.address(),
+        simple_storage.address().to_alloy(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state_diff: Some(HashMap::from([(H256::from_low_u64_be(0), account.into())])),
+            state_diff: Some(HashMap::from([(
+                B256::ZERO,
+                rU256::from_be_slice(B256::from(account.to_alloy().into_word()).as_slice()),
+            )])),
             ..Default::default()
         },
     )]);
@@ -317,10 +322,13 @@ async fn can_call_with_state_override() {
 
     // Test the `state` account override
     let overrides = HashMap::from([(
-        simple_storage.address(),
+        simple_storage.address().to_alloy(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state: Some(HashMap::from([(H256::from_low_u64_be(0), account.into())])),
+            state: Some(HashMap::from([(
+                B256::ZERO,
+                rU256::from_be_slice(B256::from(account.to_alloy().into_word()).as_slice()),
+            )])),
             ..Default::default()
         },
     )]);
