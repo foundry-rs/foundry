@@ -7,7 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Log, U256};
+use alloy_primitives::{LogData, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
@@ -24,8 +24,8 @@ use identifier::LocalTraceIdentifier;
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
-use reth_revm_inspectors::tracing::types::LogCallOrder;
-pub use reth_revm_inspectors::tracing::{
+use revm_inspectors::tracing::types::LogCallOrder;
+pub use revm_inspectors::tracing::{
     types::{CallKind, CallTrace, CallTraceNode},
     CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
     TracingInspectorConfig,
@@ -50,7 +50,7 @@ pub struct DecodedCallTrace {
 #[derive(Debug)]
 pub enum DecodedCallLog<'a> {
     /// A raw log.
-    Raw(&'a Log),
+    Raw(&'a LogData),
     /// A decoded log.
     ///
     /// The first member of the tuple is the event name, and the second is a vector of decoded
@@ -214,7 +214,7 @@ pub async fn render_trace(
 
 /// Render a trace log.
 async fn render_trace_log(
-    log: &Log,
+    log: &LogData,
     decoder: &CallTraceDecoder,
 ) -> Result<String, std::fmt::Error> {
     let mut s = String::new();

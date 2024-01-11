@@ -124,13 +124,14 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.1.3", default-features = false }
-foundry-compilers = { version = "0.1.4", default-features = false }
+foundry-block-explorers = { version = "0.2.0", default-features = false }
+foundry-compilers = { version = "0.2.1", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
 revm = { version = "3", default-features = false }
 revm-primitives = { version = "1", default-features = false }
+revm-inspectors = { version = "0.1", default-features = false }
 
 ## ethers
 ethers = { version = "2.0", default-features = false }
@@ -143,21 +144,22 @@ ethers-middleware = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-alloy-providers = "0.1.0"
-alloy-transport = "0.1.0"
-alloy-transport-http = "0.1.0"
-alloy-transport-ws = "0.1.0"
-alloy-transport-ipc = "0.1.0"
-alloy-rpc-types = "0.1.0"
-alloy-rpc-trace-types = "0.1.0"
+alloy-consensus = "0.1.0"
 alloy-json-rpc = "0.1.0"
+alloy-providers = "0.1.0"
 alloy-pubsub = "0.1.0"
 alloy-rpc-client = "0.1.0"
-alloy-primitives = "0.5.1"
-alloy-dyn-abi = "0.5.1"
-alloy-json-abi = "0.5.1"
-alloy-sol-types = "0.5.1"
-syn-solidity = "0.5.0"
+alloy-rpc-trace-types = "0.1.0"
+alloy-rpc-types = "0.1.0"
+alloy-transport = "0.1.0"
+alloy-transport-http = "0.1.0"
+alloy-transport-ipc = "0.1.0"
+alloy-transport-ws = "0.1.0"
+alloy-primitives = "0.6.0"
+alloy-dyn-abi = "0.6.0"
+alloy-json-abi = "0.6.0"
+alloy-sol-types = "0.6.0"
+syn-solidity = "0.6.0"
 
 alloy-chains = "0.1.5"
 alloy-rlp = "0.3.3"
@@ -208,18 +210,22 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 
-alloy-providers = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy/" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy/" }
+# alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
+alloy-providers = { git = "https://github.com/alloy-rs/alloy" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
+alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy" }
 
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+
+revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors" }
