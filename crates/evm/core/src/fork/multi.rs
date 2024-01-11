@@ -258,7 +258,7 @@ impl MultiForkHandler {
             let backend = fork.backend.clone();
             let env = fork.opts.env.clone();
             self.forks.insert(unique_fork_id.clone(), fork);
-            let _ = sender.send(Ok((fork_id, backend, env)));
+            let _ = sender.send(Ok((unique_fork_id, backend, env)));
         } else {
             // there could already be a task for the requested fork in progress
             if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
