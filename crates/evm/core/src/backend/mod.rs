@@ -993,20 +993,9 @@ impl DatabaseExt for Backend {
         self.inner.snapshots.clear()
     }
 
-    fn create_fork(&mut self, mut create_fork: CreateFork) -> eyre::Result<LocalForkId> {
+    fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork, _) = self.forks.create_fork(create_fork.clone())?;
-
-        // Check for an edge case where the fork_id already exists, which would mess with the
-        // internal mappings. This can happen when two forks are created with the same
-        // endpoint and block number <https://github.com/foundry-rs/foundry/issues/5935>
-        // This is a hacky solution but a simple fix to ensure URLs are unique
-        if self.inner.contains_fork(&fork_id) {
-            // ensure URL is unique
-            create_fork.url.push('/');
-            debug!(?fork_id, "fork id already exists. making unique");
-            return self.create_fork(create_fork)
-        }
+        let (fork_id, fork, _) = self.forks.create_fork(create_fork)?;
 
         let fork_db = ForkDB::new(fork);
         let (id, _) =
@@ -1134,7 +1123,8 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing fork
+    /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing
+    /// [ForkId] that is mapped to the [LocalForkId]
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
@@ -1576,11 +1566,6 @@ pub struct BackendInner {
 // === impl BackendInner ===
 
 impl BackendInner {
-    /// Returns `true` if the given [ForkId] already exists.
-    fn contains_fork(&self, id: &ForkId) -> bool {
-        self.created_forks.contains_key(id)
-    }
-
     pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.issued_local_fork_ids
             .get(&id)
