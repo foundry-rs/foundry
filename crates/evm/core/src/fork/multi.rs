@@ -22,16 +22,24 @@ use std::{
     fmt,
     pin::Pin,
     sync::{
+        atomic::AtomicUsize,
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
         Arc,
     },
     time::Duration,
 };
 
-/// The identifier for a specific fork, this could be the name of the network a custom descriptive
-/// name.
+/// The _unique_ identifier for a specific fork, this could be the name of the network a custom
+/// descriptive name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ForkId(pub String);
+
+impl ForkId {
+    /// Returns the identifier of the fork
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl fmt::Display for ForkId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -165,7 +173,7 @@ enum Request {
     CreateFork(Box<CreateFork>, CreateSender),
     /// Returns the Fork backend for the `ForkId` if it exists
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
-    /// Adjusts the block that's being forked
+    /// Adjusts the block that's being forked, by creating a new fork at the new block
     RollFork(ForkId, u64, CreateSender),
     /// Returns the environment of the fork
     GetEnv(ForkId, GetEnvSender),
@@ -194,7 +202,10 @@ pub struct MultiForkHandler {
     // tasks currently in progress
     pending_tasks: Vec<ForkTask>,
 
-    /// All created Forks in order to reuse them
+    /// All _unique_ forkids mapped to their corresponding backend.
+    ///
+    /// Note: The backend can be shared by multiple ForkIds if the target the same provider and
+    /// block number.
     forks: HashMap<ForkId, CreatedFork>,
 
     /// Optional periodic interval to flush rpc cache
@@ -238,9 +249,16 @@ impl MultiForkHandler {
         let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
         trace!(?fork_id, "created new forkId");
 
-        if let Some(fork) = self.forks.get_mut(&fork_id) {
-            fork.num_senders += 1;
-            let _ = sender.send(Ok((fork_id, fork.backend.clone(), fork.opts.env.clone())));
+        if let Some(fork) = self.forks.get(&fork_id).cloned() {
+            // assign a new unique fork id but reuse the existing backend
+            let unique_fork_id: ForkId =
+                format!("{}-{}", fork_id.as_str(), fork.num_senders()).into();
+            trace!(?fork_id, ?unique_fork_id, "created new unique forkId");
+            fork.inc_senders();
+            let backend = fork.backend.clone();
+            let env = fork.opts.env.clone();
+            self.forks.insert(unique_fork_id.clone(), fork);
+            let _ = sender.send(Ok((fork_id, backend, env)));
         } else {
             // there could already be a task for the requested fork in progress
             if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
@@ -323,14 +341,21 @@ impl Future for MultiForkHandler {
                                 pin.handlers.push((id.clone(), handler));
                                 let backend = fork.backend.clone();
                                 let env = fork.opts.env.clone();
-                                pin.forks.insert(id.clone(), fork);
+                                pin.forks.insert(id.clone(), fork.clone());
 
                                 let _ = sender.send(Ok((id.clone(), backend.clone(), env.clone())));
 
-                                // also notify all additional senders
+                                // also notify all additional senders and track unique forkIds
                                 for sender in additional_senders {
-                                    let _ =
-                                        sender.send(Ok((id.clone(), backend.clone(), env.clone())));
+                                    fork.inc_senders();
+                                    let unique_fork_id: ForkId =
+                                        format!("{}-{}", id.as_str(), fork.num_senders()).into();
+                                    pin.forks.insert(unique_fork_id.clone(), fork.clone());
+                                    let _ = sender.send(Ok((
+                                        unique_fork_id,
+                                        backend.clone(),
+                                        env.clone(),
+                                    )));
                                 }
                             }
                             Err(err) => {
@@ -394,7 +419,7 @@ impl Future for MultiForkHandler {
 }
 
 /// Tracks the created Fork
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CreatedFork {
     /// How the fork was initially created
     opts: CreateFork,
@@ -402,14 +427,22 @@ struct CreatedFork {
     backend: SharedBackend,
     /// How many consumers there are, since a `SharedBacked` can be used by multiple
     /// consumers
-    num_senders: usize,
+    num_senders: Arc<AtomicUsize>,
 }
 
 // === impl CreatedFork ===
 
 impl CreatedFork {
     pub fn new(opts: CreateFork, backend: SharedBackend) -> Self {
-        Self { opts, backend, num_senders: 1 }
+        Self { opts, backend, num_senders: Arc::new(AtomicUsize::new(1)) }
+    }
+
+    fn inc_senders(&self) {
+        self.num_senders.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn num_senders(&self) -> usize {
+        self.num_senders.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
