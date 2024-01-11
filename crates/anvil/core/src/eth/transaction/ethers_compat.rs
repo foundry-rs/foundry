@@ -27,6 +27,23 @@ use ethers_core::types::{
 };
 use foundry_common::types::{ToAlloy, ToEthers};
 
+pub fn to_alloy_signature(signature: ethers_core::types::Signature) -> alloy_rpc_types::Signature {
+    alloy_rpc_types::Signature {
+        r: signature.r.to_alloy(),
+        s: signature.s.to_alloy(),
+        v: signature.v.to_alloy().to::<rU256>(),
+        y_parity: None,
+    }
+}
+
+pub fn to_ethers_signature(signature: alloy_rpc_types::Signature) -> ethers_core::types::Signature {
+    ethers_core::types::Signature {
+        r: signature.r.to_ethers(),
+        s: signature.s.to_ethers(),
+        v: signature.v.to::<u64>(),
+    }
+}
+
 pub fn to_alloy_proof(proof: AccountProof) -> alloy_rpc_types::EIP1186AccountProofResponse {
     alloy_rpc_types::EIP1186AccountProofResponse {
         address: proof.address.to_alloy(),

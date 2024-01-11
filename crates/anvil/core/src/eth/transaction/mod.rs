@@ -4,6 +4,10 @@ use crate::eth::{
     receipt::Log,
     utils::{enveloped, to_revm_access_list},
 };
+#[cfg(feature = "impersonated-tx")]
+use alloy_primitives::U256 as rU256;
+#[cfg(feature = "impersonated-tx")]
+use alloy_rpc_types::Signature as AlloySignature;
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
@@ -26,14 +30,14 @@ use std::ops::Deref;
 mod ethers_compat;
 
 pub use ethers_compat::{
-    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
-    to_internal_tx_request,
+    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_alloy_signature,
+    to_ethers_access_list, to_ethers_signature, to_internal_tx_request,
 };
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
-pub const IMPERSONATED_SIGNATURE: Signature =
-    Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 };
+pub const IMPERSONATED_SIGNATURE: AlloySignature =
+    AlloySignature { r: rU256::ZERO, s: rU256::ZERO, v: rU256::ZERO, y_parity: None };
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -790,7 +794,7 @@ impl TypedTransaction {
     /// Returns true if the transaction was impersonated (using the impersonate Signature)
     #[cfg(feature = "impersonated-tx")]
     pub fn is_impersonated(&self) -> bool {
-        self.signature() == IMPERSONATED_SIGNATURE
+        to_alloy_signature(self.signature()) == IMPERSONATED_SIGNATURE
     }
 
     /// Returns the hash if the transaction is impersonated (using a fake signature)

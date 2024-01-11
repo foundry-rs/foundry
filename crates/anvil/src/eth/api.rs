@@ -47,8 +47,8 @@ use anvil_core::{
         block::BlockInfo,
         transaction::{
             call_to_internal_tx_request, to_alloy_proof, to_ethers_access_list,
-            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
-            TypedTransaction, TypedTransactionRequest,
+            to_ethers_signature, EthTransactionRequest, LegacyTransaction, PendingTransaction,
+            TransactionKind, TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -562,9 +562,15 @@ impl EthApi {
     pub fn accounts(&self) -> Result<Vec<Address>> {
         node_info!("eth_accounts");
         let mut unique = HashSet::new();
-        let mut accounts = Vec::new();
+        let mut accounts: Vec<Address> = Vec::new();
         for signer in self.signers.iter() {
-            accounts.extend(signer.accounts().into_iter().filter(|acc| unique.insert(*acc)));
+            accounts.extend(
+                signer
+                    .accounts()
+                    .into_iter()
+                    .map(|a| a.to_alloy())
+                    .filter(|acc| unique.insert(*acc)),
+            );
         }
         accounts.extend(
             self.backend
@@ -573,7 +579,7 @@ impl EthApi {
                 .into_iter()
                 .filter(|acc| unique.insert(*acc)),
         );
-        Ok(accounts.into_iter().map(|acc| acc.to_alloy()).collect())
+        Ok(accounts.into_iter().map(|acc| acc).collect())
     }
 
     /// Returns the number of most recent block.
@@ -895,7 +901,8 @@ impl EthApi {
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
-            let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            let transaction =
+                sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from.to_ethers())
@@ -1985,7 +1992,8 @@ impl EthApi {
         let request = self.build_typed_tx_request(request, nonce)?;
 
         let bypass_signature = self.backend.cheats().bypass_signature();
-        let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+        let transaction =
+            sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -2521,7 +2529,7 @@ impl EthApi {
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        self.backend.cheats().is_impersonated(addr.to_ethers())
+        self.backend.cheats().is_impersonated(addr)
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`
