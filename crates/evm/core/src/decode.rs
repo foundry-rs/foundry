@@ -3,6 +3,7 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::Log as PrimitivesLog;
 use alloy_rpc_types::Log;
 use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
 use foundry_common::SELECTOR_LEN;
@@ -20,8 +21,9 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// `console.log`.
 #[instrument(level = "debug", skip_all, fields(topics=?log.topics, data=%log.data), ret)]
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    let topics = log.topics.as_slice();
-    Console::ConsoleEvents::decode_log(topics, &log.data, false)
+    let primitives_log =
+        PrimitivesLog::new(log.address, log.topics.clone(), log.data.clone()).unwrap();
+    Console::ConsoleEvents::decode_log(&primitives_log, false)
         .ok()
         .map(|decoded| decoded.to_string())
 }
