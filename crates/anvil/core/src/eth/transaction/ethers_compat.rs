@@ -3,7 +3,6 @@
 use super::EthTransactionRequest;
 use crate::eth::{
     proof::AccountProof,
-    state::{AccountOverride, StateOverride as EthStateOverride},
     transaction::{
         DepositTransactionRequest, EIP1559TransactionRequest, EIP2930TransactionRequest,
         LegacyTransactionRequest, MaybeImpersonatedTransaction, TypedTransaction,
@@ -12,7 +11,6 @@ use crate::eth::{
 };
 use alloy_primitives::{U128 as rU128, U256 as rU256, U64 as rU64};
 use alloy_rpc_types::{
-    state::{AccountOverride as AlloyAccountOverride, StateOverride},
     transaction::request::TransactionRequest as AlloyTransactionRequest,
     AccessList as AlloyAccessList, CallRequest, Signature, Transaction as AlloyTransaction,
 };
@@ -116,56 +114,6 @@ pub fn to_ethers_access_list(access_list: AlloyAccessList) -> AccessList {
 
 pub fn from_ethers_access_list(access_list: AccessList) -> AlloyAccessList {
     AlloyAccessList(access_list.0.into_iter().map(ToAlloy::to_alloy).collect())
-}
-
-pub fn to_ethers_state_override(ov: StateOverride) -> EthStateOverride {
-    ov.into_iter()
-        .map(|(addr, o)| {
-            (
-                addr.to_ethers(),
-                AccountOverride {
-                    nonce: o.nonce.map(|n| n.to::<u64>()),
-                    balance: o.balance.map(|b| b.to_ethers()),
-                    code: o.code.map(|c| c.0.into()),
-                    state_diff: o.state_diff.map(|s| {
-                        s.into_iter()
-                            .map(|(k, v)| (k.to_ethers(), H256::from_uint(&v.to_ethers())))
-                            .collect()
-                    }),
-                    state: o.state.map(|s| {
-                        s.into_iter()
-                            .map(|(k, v)| (k.to_ethers(), H256::from_uint(&v.to_ethers())))
-                            .collect()
-                    }),
-                },
-            )
-        })
-        .collect()
-}
-
-pub fn to_alloy_state_override(ov: EthStateOverride) -> StateOverride {
-    ov.into_iter()
-        .map(|(addr, o)| {
-            (
-                addr.to_alloy(),
-                AlloyAccountOverride {
-                    nonce: o.nonce.map(rU64::from),
-                    balance: o.balance.map(|b| b.to_alloy()),
-                    code: o.code.map(|c| c.0.into()),
-                    state_diff: o.state_diff.map(|s| {
-                        s.into_iter()
-                            .map(|(k, v)| (k.to_alloy(), rU256::from_be_bytes(v.to_alloy().0)))
-                            .collect()
-                    }),
-                    state: o.state.map(|s| {
-                        s.into_iter()
-                            .map(|(k, v)| (k.to_alloy(), rU256::from_be_bytes(v.to_alloy().0)))
-                            .collect()
-                    }),
-                },
-            )
-        })
-        .collect()
 }
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
