@@ -11,8 +11,7 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_rpc_types::Log;
+use alloy_primitives::{Address, Bytes, Log, U256};
 use ethers_signers::LocalWallet;
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use foundry_evm_core::{

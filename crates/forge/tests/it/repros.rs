@@ -125,8 +125,8 @@ test_repro!(3347, false, None, |res| {
         anonymous: false,
     };
     let raw_log = RawLog {
-        topics: test.logs[0].topics.iter().map(|t| t.to_ethers()).collect(),
-        data: test.logs[0].data.clone().to_vec(),
+        topics: test.logs[0].data.topics().iter().map(|t| t.to_ethers()).collect(),
+        data: test.logs[0].data.data.clone().to_vec(),
     };
     let log = event.parse_log(raw_log).unwrap();
     assert_eq!(

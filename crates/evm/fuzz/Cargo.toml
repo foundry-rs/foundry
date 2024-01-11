@@ -21,7 +21,6 @@ foundry-evm-traces.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
-alloy-rpc-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",

@@ -2,8 +2,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_rpc_types::Log;
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use ethers_signers::LocalWallet;
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;

@@ -2,8 +2,7 @@ use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_rpc_types::Log;
+use alloy_primitives::{Address, Bytes, Log, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_core::types::{

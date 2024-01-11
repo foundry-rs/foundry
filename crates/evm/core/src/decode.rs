@@ -3,8 +3,7 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Log as PrimitivesLog;
-use alloy_rpc_types::Log;
+use alloy_primitives::Log;
 use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
@@ -19,13 +18,9 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
-#[instrument(level = "debug", skip_all, fields(topics=?log.topics, data=%log.data), ret)]
+#[instrument(level = "debug", skip_all, fields(topics=?log.data.topics(), data=%log.data.data), ret)]
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    let primitives_log =
-        PrimitivesLog::new(log.address, log.topics.clone(), log.data.clone()).unwrap();
-    Console::ConsoleEvents::decode_log(&primitives_log, false)
-        .ok()
-        .map(|decoded| decoded.to_string())
+    Console::ConsoleEvents::decode_log(log, false).ok().map(|decoded| decoded.to_string())
 }
 
 /// Tries to decode an error message from the given revert bytes.

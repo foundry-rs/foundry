@@ -2,8 +2,7 @@ use super::fuzz_param_from_state;
 use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_rpc_types::Log;
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
@@ -189,10 +188,10 @@ pub fn collect_state_from_call(
 
         // Insert log topics and data
         for log in logs {
-            log.topics.iter().for_each(|topic| {
+            log.data.topics().iter().for_each(|topic| {
                 state.values_mut().insert(topic.0);
             });
-            log.data.0.chunks(32).for_each(|chunk| {
+            log.data.data.chunks(32).for_each(|chunk| {
                 let mut buffer: [u8; 32] = [0; 32];
                 let _ = (&mut buffer[..])
                     .write(chunk)
