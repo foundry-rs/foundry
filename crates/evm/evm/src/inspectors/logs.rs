@@ -44,7 +44,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
             address: address.clone(),
             topics: topics.iter().copied().collect(),
             data: data.clone(),
-            ..default_log()
+            ..Default::default()
         });
     }
 
@@ -69,20 +69,6 @@ fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
     Log {
         topics: vec![Console::log::SIGNATURE_HASH],
         data: fmt.abi_encode().into(),
-        ..default_log()
-    }
-}
-
-fn default_log() -> Log {
-    Log {
-        address: Address::default(),
-        topics: Vec::default(),
-        data: Bytes::default(),
-        block_hash: None,
-        block_number: None,
-        transaction_hash: None,
-        transaction_index: None,
-        log_index: None,
-        removed: false,
+        ..Default::default()
     }
 }
