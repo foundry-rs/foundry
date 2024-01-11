@@ -1,7 +1,7 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::{eth::macros::node_info, revm::Database};
-use ethers::types::Log;
+use alloy_primitives::Log;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,

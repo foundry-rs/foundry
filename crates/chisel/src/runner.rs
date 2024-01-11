@@ -3,8 +3,7 @@
 //! This module contains the `ChiselRunner` struct, which assists with deploying
 //! and calling the REPL contract on a in-memory REVM instance.
 
-use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::Log;
+use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},

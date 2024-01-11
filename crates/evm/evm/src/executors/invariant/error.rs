@@ -1,11 +1,8 @@
 use super::{BasicTxDetails, InvariantContract};
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes};
-use ethers_core::{
-    rand::{seq, thread_rng, Rng},
-    types::Log,
-};
+use alloy_primitives::{Address, Bytes, Log};
+use ethers_core::rand::{seq, thread_rng, Rng};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::{constants::CALLER, decode::decode_revert};

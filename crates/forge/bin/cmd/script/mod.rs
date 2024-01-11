@@ -2,11 +2,11 @@ use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, Log, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, Log, NameOrAddress, TransactionRequest,
+    transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
 use ethers_providers::{Http, Middleware};
 use ethers_signers::LocalWallet;
