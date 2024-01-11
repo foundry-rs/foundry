@@ -16,8 +16,8 @@ use foundry_evm::{
 };
 
 // reexport for convenience
-use foundry_evm::backend::RevertSnapshotAction;
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
+use foundry_evm::{backend::RevertSnapshotAction, revm::primitives::BlockEnv};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -32,7 +32,7 @@ impl Db for MemDb {
         self.inner.block_hashes.insert(number, hash);
     }
 
-    fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
+    fn dump_state(&self, at: BlockEnv) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
             .accounts
@@ -57,7 +57,7 @@ impl Db for MemDb {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(Some(SerializableState { accounts }))
+        Ok(Some(SerializableState { block: Some(at), accounts }))
     }
 
     /// Creates a new snapshot
@@ -167,7 +167,7 @@ mod tests {
 
         dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
-        let state = dump_db.dump_state().unwrap().unwrap();
+        let state = dump_db.dump_state(Default::default()).unwrap().unwrap();
 
         let mut load_db = MemDb::default();
 

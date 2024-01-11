@@ -1721,7 +1721,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
-        self.backend.load_state(buf).await
+        self.backend.load_state_bytes(buf).await
     }
 
     /// Retrieves the Anvil node configuration params.
