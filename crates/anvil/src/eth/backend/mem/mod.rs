@@ -1060,15 +1060,14 @@ impl Backend {
             env.block.basefee = base;
         }
 
-        let gas_price =
-            gas_price.map(|g| g).or(max_fee_per_gas.map(|g| g)).unwrap_or_else(|| self.gas_price());
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
             caller: caller.to_alloy(),
             gas_limit: gas_limit.as_u64(),
             gas_price,
-            gas_priority_fee: max_priority_fee_per_gas.map(|f| f),
+            gas_priority_fee: max_priority_fee_per_gas,
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr.to_alloy()),
                 None => TransactTo::Create(CreateScheme::Create),

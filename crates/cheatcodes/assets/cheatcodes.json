@@ -1357,9 +1357,9 @@
       "func": {
         "id": "envOr_0",
         "description": "Gets the environment variable `name` and parses it as `bool`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, bool defaultValue) external returns (bool value);",
+        "declaration": "function envOr(string calldata name, bool defaultValue) external view returns (bool value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,bool)",
         "selector": "0x4777f3cf",
         "selectorBytes": [
@@ -1377,9 +1377,9 @@
       "func": {
         "id": "envOr_1",
         "description": "Gets the environment variable `name` and parses it as `uint256`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, uint256 defaultValue) external returns (uint256 value);",
+        "declaration": "function envOr(string calldata name, uint256 defaultValue) external view returns (uint256 value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,uint256)",
         "selector": "0x5e97348f",
         "selectorBytes": [
@@ -1397,9 +1397,9 @@
       "func": {
         "id": "envOr_10",
         "description": "Gets the environment variable `name` and parses it as an array of `address`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, address[] calldata defaultValue) external returns (address[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, address[] calldata defaultValue) external view returns (address[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,address[])",
         "selector": "0xc74e9deb",
         "selectorBytes": [
@@ -1417,9 +1417,9 @@
       "func": {
         "id": "envOr_11",
         "description": "Gets the environment variable `name` and parses it as an array of `bytes32`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, bytes32[] calldata defaultValue) external returns (bytes32[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, bytes32[] calldata defaultValue) external view returns (bytes32[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,bytes32[])",
         "selector": "0x2281f367",
         "selectorBytes": [
@@ -1437,9 +1437,9 @@
       "func": {
         "id": "envOr_12",
         "description": "Gets the environment variable `name` and parses it as an array of `string`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, string[] calldata defaultValue) external returns (string[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, string[] calldata defaultValue) external view returns (string[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,string[])",
         "selector": "0x859216bc",
         "selectorBytes": [
@@ -1457,9 +1457,9 @@
       "func": {
         "id": "envOr_13",
         "description": "Gets the environment variable `name` and parses it as an array of `bytes`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, bytes[] calldata defaultValue) external returns (bytes[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, bytes[] calldata defaultValue) external view returns (bytes[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,bytes[])",
         "selector": "0x64bc3e64",
         "selectorBytes": [
@@ -1477,9 +1477,9 @@
       "func": {
         "id": "envOr_2",
         "description": "Gets the environment variable `name` and parses it as `int256`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, int256 defaultValue) external returns (int256 value);",
+        "declaration": "function envOr(string calldata name, int256 defaultValue) external view returns (int256 value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,int256)",
         "selector": "0xbbcb713e",
         "selectorBytes": [
@@ -1497,9 +1497,9 @@
       "func": {
         "id": "envOr_3",
         "description": "Gets the environment variable `name` and parses it as `address`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, address defaultValue) external returns (address value);",
+        "declaration": "function envOr(string calldata name, address defaultValue) external view returns (address value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,address)",
         "selector": "0x561fe540",
         "selectorBytes": [
@@ -1517,9 +1517,9 @@
       "func": {
         "id": "envOr_4",
         "description": "Gets the environment variable `name` and parses it as `bytes32`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, bytes32 defaultValue) external returns (bytes32 value);",
+        "declaration": "function envOr(string calldata name, bytes32 defaultValue) external view returns (bytes32 value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,bytes32)",
         "selector": "0xb4a85892",
         "selectorBytes": [
@@ -1537,9 +1537,9 @@
       "func": {
         "id": "envOr_5",
         "description": "Gets the environment variable `name` and parses it as `string`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata defaultValue) external returns (string memory value);",
+        "declaration": "function envOr(string calldata name, string calldata defaultValue) external view returns (string memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string)",
         "selector": "0xd145736c",
         "selectorBytes": [
@@ -1557,9 +1557,9 @@
       "func": {
         "id": "envOr_6",
         "description": "Gets the environment variable `name` and parses it as `bytes`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, bytes calldata defaultValue) external returns (bytes memory value);",
+        "declaration": "function envOr(string calldata name, bytes calldata defaultValue) external view returns (bytes memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,bytes)",
         "selector": "0xb3e47705",
         "selectorBytes": [
@@ -1577,9 +1577,9 @@
       "func": {
         "id": "envOr_7",
         "description": "Gets the environment variable `name` and parses it as an array of `bool`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, bool[] calldata defaultValue) external returns (bool[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, bool[] calldata defaultValue) external view returns (bool[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,bool[])",
         "selector": "0xeb85e83b",
         "selectorBytes": [
@@ -1597,9 +1597,9 @@
       "func": {
         "id": "envOr_8",
         "description": "Gets the environment variable `name` and parses it as an array of `uint256`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, uint256[] calldata defaultValue) external returns (uint256[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, uint256[] calldata defaultValue) external view returns (uint256[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,uint256[])",
         "selector": "0x74318528",
         "selectorBytes": [
@@ -1617,9 +1617,9 @@
       "func": {
         "id": "envOr_9",
         "description": "Gets the environment variable `name` and parses it as an array of `int256`, delimited by `delim`.\nReverts if the variable could not be parsed.\nReturns `defaultValue` if the variable was not found.",
-        "declaration": "function envOr(string calldata name, string calldata delim, int256[] calldata defaultValue) external returns (int256[] memory value);",
+        "declaration": "function envOr(string calldata name, string calldata delim, int256[] calldata defaultValue) external view returns (int256[] memory value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "envOr(string,string,int256[])",
         "selector": "0x4700d74b",
         "selectorBytes": [
