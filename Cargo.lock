@@ -544,6 +544,7 @@ dependencies = [
  "hash256-std-hasher",
  "keccak-hasher",
  "open-fastrlp",
+ "rand 0.8.5",
  "reference-trie",
  "revm",
  "serde",
