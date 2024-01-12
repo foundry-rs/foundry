@@ -1983,7 +1983,7 @@ impl Backend {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
-        for transaction in block.transactions{
+        for transaction in block.transactions {
             let receipt = self.mined_transaction_receipt(transaction.hash().to_alloy())?;
             receipts.push(receipt.inner);
         }
@@ -2096,7 +2096,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            let number=  self.convert_block_number(Some(number));
+            let number = self.convert_block_number(Some(number));
 
             if fork.predates_fork_inclusive(number) {
                 let receipts = fork

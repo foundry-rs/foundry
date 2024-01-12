@@ -995,19 +995,11 @@ async fn test_block_receipts() {
     let (api, _) = spawn(fork_config()).await;
 
     // Receipts from the forked block (14608400)
-    let receipts = api
-        .block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER))
-        .await
-        .unwrap();
-
+    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER)).await.unwrap();
     assert!(receipts.is_some());
 
     // Receipts from a block in the future (14608401)
-    let receipts = api
-        .block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER + 1))
-        .await
-        .unwrap();
-
+    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER + 1)).await.unwrap();
     assert!(receipts.is_none());
 }
 

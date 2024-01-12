@@ -1165,7 +1165,10 @@ impl EthApi {
     /// Returns block receipts by block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
-    pub async fn block_receipts(&self, number: BlockNumber) -> Result<Option<Vec<TransactionReceipt>>> {
+    pub async fn block_receipts(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
