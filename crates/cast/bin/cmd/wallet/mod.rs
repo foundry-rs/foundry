@@ -140,8 +140,8 @@ pub enum WalletSubcommands {
     List,
 
 
-    #[clap(name = "get-private-key", visible_aliases = &["--get-private-key"])]
-    GetPrivateKey {
+    #[clap(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
+    DerivePrivateKey {
         mnemonic: String,
         mnemonic_index: Option<u8>,
     }
@@ -360,7 +360,7 @@ flag to set your key via:
                     Err(e) => return Err(e),
                 }
             }
-            WalletSubcommands::GetPrivateKey { mnemonic, mnemonic_index } => {
+            WalletSubcommands::DerivePrivateKey { mnemonic, mnemonic_index } => {
                 let phrase = Mnemonic::<English>::new_from_phrase(mnemonic.as_str())?.to_phrase();
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
