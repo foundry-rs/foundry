@@ -360,7 +360,6 @@ flag to set your key via:
                 let phrase = Mnemonic::<English>::new_from_phrase(mnemonic.as_str())?.to_phrase();
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
-                
                 let index = if let Some(i) = mnemonic_index { i } else { 0 };
                 let wallet = builder
                     .clone()
