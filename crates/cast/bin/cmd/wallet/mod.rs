@@ -138,6 +138,13 @@ pub enum WalletSubcommands {
     /// List all the accounts in the keystore default directory
     #[clap(visible_alias = "ls")]
     List,
+
+
+    #[clap(name = "get-private-key", visible_aliases = &["--get-private-key"])]
+    GetPrivateKey {
+        mnemonic: String,
+        mnemonic_index: Option<u8>,
+    }
 }
 
 impl WalletSubcommands {
@@ -352,6 +359,17 @@ flag to set your key via:
                     }
                     Err(e) => return Err(e),
                 }
+            }
+            WalletSubcommands::GetPrivateKey { mnemonic, mnemonic_index } => {
+                let phrase = Mnemonic::<English>::new_from_phrase(mnemonic.as_str())?.to_phrase();
+                let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
+                let derivation_path = "m/44'/60'/0'/0/";
+                
+                let index = if let Some(i) = mnemonic_index { i } else {0};
+                let wallet = builder.clone().derivation_path(&format!("{derivation_path}{index}"))?.build()?;
+                println!("- Account:");
+                println!("Address:     {}", wallet.address().to_alloy());
+                println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
             }
         };
 
