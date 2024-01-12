@@ -145,6 +145,7 @@ ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
 alloy-consensus = "0.1.0"
+alloy-network = "0.1.0"
 alloy-json-rpc = "0.1.0"
 alloy-providers = "0.1.0"
 alloy-pubsub = "0.1.0"
@@ -210,14 +211,15 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 
-# alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
+alloy-network = { git = "https://github.com/alloy-rs/alloy" }
 alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-providers = { git = "https://github.com/alloy-rs/alloy" }
 alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
-# alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }

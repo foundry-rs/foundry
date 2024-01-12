@@ -24,7 +24,7 @@ use std::ops::Deref;
 
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
-
+pub mod alloy;
 pub use ethers_compat::{
     call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
 };
@@ -507,7 +507,7 @@ impl Encodable for DepositTransactionRequest {
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
 /// [TypedTransaction::impersonated_hash] can be created.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MaybeImpersonatedTransaction {
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -612,7 +612,7 @@ impl Deref for MaybeImpersonatedTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TypedTransaction {
     /// Legacy transaction type
