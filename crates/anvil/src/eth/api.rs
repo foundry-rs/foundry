@@ -241,6 +241,9 @@ impl EthApi {
             EthRequest::EthGetTransactionReceipt(tx) => {
                 self.transaction_receipt(tx).await.to_rpc_result()
             }
+            EthRequest::EthGetBlockReceipts(number) => {
+                self.block_receipts(number).await.to_rpc_result()
+            }
             EthRequest::EthGetUncleByBlockHashAndIndex(hash, index) => {
                 self.uncle_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
@@ -1157,6 +1160,14 @@ impl EthApi {
             return Ok(None);
         }
         self.backend.transaction_receipt(hash).await
+    }
+
+    /// Returns block receipts by block number.
+    ///
+    /// Handler for ETH RPC call: `eth_getBlockReceipts`
+    pub async fn block_receipts(&self, number: BlockNumber) -> Result<Option<Vec<TransactionReceipt>>> {
+        node_info!("eth_getBlockReceipts");
+        self.backend.block_receipts(number).await
     }
 
     /// Returns an uncles at given block and index.

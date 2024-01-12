@@ -1978,6 +1978,19 @@ impl Backend {
         Some(receipts)
     }
 
+    /// Returns all transaction receipts of the block
+    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<TransactionReceipt>> {
+        let mut receipts = Vec::new();
+        let block = self.get_block(id)?;
+
+        for transaction in block.transactions{
+            let receipt = self.mined_transaction_receipt(transaction.hash().to_alloy())?;
+            receipts.push(receipt.inner);
+        }
+
+        Some(receipts)
+    }
+
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
@@ -2071,6 +2084,31 @@ impl Backend {
         );
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
+    }
+
+    /// Returns the blocks receipts for the given number
+    pub async fn block_receipts(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<Vec<TransactionReceipt>>, BlockchainError> {
+        if let Some(receipts) = self.mined_block_receipts(number) {
+            return Ok(Some(receipts));
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number=  self.convert_block_number(Some(number));
+
+            if fork.predates_fork_inclusive(number) {
+                let receipts = fork
+                    .block_receipts(number)
+                    .await
+                    .map_err(BlockchainError::AlloyForkProvider)?;
+
+                return Ok(receipts);
+            }
+        }
+
+        Ok(None)
     }
 
     pub async fn transaction_by_block_number_and_index(

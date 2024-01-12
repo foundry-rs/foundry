@@ -111,7 +111,7 @@ dependencies = [
 [[package]]
 name = "alloy-eips"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -134,7 +134,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "alloy-network"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-eips",
  "alloy-json-rpc",
@@ -184,7 +184,7 @@ dependencies = [
 [[package]]
 name = "alloy-providers"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "alloy-pubsub"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -241,7 +241,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -258,7 +258,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-trace-types"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -272,7 +272,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -327,10 +327,10 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-json-rpc",
- "base64 0.21.6",
+ "base64 0.21.7",
  "serde",
  "serde_json",
  "thiserror",
@@ -343,7 +343,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -356,7 +356,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ipc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -374,7 +374,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ws"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
 dependencies = [
  "alloy-pubsub",
  "alloy-transport",
@@ -423,9 +423,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
-version = "0.6.5"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d664a92ecae85fd0a7392615844904654d1d5f5514837f471ddef4a057aba1b6"
+checksum = "4cd2405b3ac1faab2990b74d728624cd9fd115651fcecc7c2d8daf01376275ba"
 dependencies = [
  "anstyle",
  "anstyle-parse",
@@ -872,7 +872,7 @@ checksum = "3b829e4e32b91e643de6eafe82b1d90675f5874230191a4ffbc1b336dec4d6bf"
 dependencies = [
  "async-trait",
  "axum-core",
- "base64 0.21.6",
+ "base64 0.21.7",
  "bitflags 1.3.2",
  "bytes",
  "futures-util",
@@ -945,9 +945,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "base64"
-version = "0.21.6"
+version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c79fed4cdb43e993fcdadc7e58a09fd0e3e649c4436fa11da71c9f1f3ee7feb9"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64ct"
@@ -1406,9 +1406,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.4.14"
+version = "4.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33e92c5c1a78c62968ec57dbc2440366a2d6e5a23faf829970ff1585dc6b18e2"
+checksum = "c12ed66a79a555082f595f7eb980d08669de95009dd4b3d61168c573ebe38fc9"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1416,9 +1416,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.4.14"
+version = "4.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4323769dc8a61e2c39ad7dc26f6f2800524691a44d74fe3d1071a5c24db6370"
+checksum = "0f4645eab3431e5a8403a96bea02506a8b35d28cd0f0330977dd5d22f9c84f43"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1528,7 +1528,7 @@ version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5286a0843c21f8367f7be734f89df9b822e0321d8bcce8d6e735aadff7d74979"
 dependencies = [
- "base64 0.21.6",
+ "base64 0.21.7",
  "bech32",
  "bs58",
  "digest 0.10.7",
@@ -2165,7 +2165,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe81b5c06ecfdbc71dd845216f225f53b62a10cb8a16c946836a3467f701d05b"
 dependencies = [
- "base64 0.21.6",
+ "base64 0.21.7",
  "bytes",
  "hex",
  "k256",
@@ -2480,7 +2480,7 @@ source = "git+https://github.com/gakonst/ethers-rs?rev=f0e5b194f09c533feb10d1a68
 dependencies = [
  "async-trait",
  "auto_impl",
- "base64 0.21.6",
+ "base64 0.21.7",
  "bytes",
  "const-hex",
  "enr",
@@ -3785,9 +3785,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.3.22"
+version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d6250322ef6e60f93f9a2162799302cd6f68f79f6e5d85c8c16f14d1d958178"
+checksum = "b553656127a00601c8ae5590fcfdc118e4083a7924b6cf4ffc1ea4b99dc429d7"
 dependencies = [
  "bytes",
  "fnv",
@@ -4355,7 +4355,7 @@ version = "8.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6971da4d9c3aa03c3d8f3ff0f4155b534aad021292003895a469716b2a230378"
 dependencies = [
- "base64 0.21.6",
+ "base64 0.21.7",
  "pem",
  "ring 0.16.20",
  "serde",
@@ -6013,7 +6013,7 @@ version = "0.11.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b1ae8d9ac08420c66222fb9096fc5de435c3c48542bc5336c51892cffafb41"
 dependencies = [
- "base64 0.21.6",
+ "base64 0.21.7",
  "bytes",
  "encoding_rs",
  "futures-core",
@@ -6426,7 +6426,7 @@ version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c74cae0a4cf6ccbbf5f359f08efdf8ee7e1dc532573bf0db71968cb56b1448c"
 dependencies = [
- "base64 0.21.6",
+ "base64 0.21.7",
 ]
 
 [[package]]
@@ -8388,9 +8388,9 @@ checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
 
 [[package]]
 name = "winnow"
-version = "0.5.33"
+version = "0.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7520bbdec7211caa7c4e682eb1fbe07abe20cee6756b6e00f537c82c11816aa"
+checksum = "b7cf47b659b318dccbd69cc4797a39ae128f533dce7902a1096044d1967b9c16"
 dependencies = [
  "memchr",
 ]
@@ -8543,4 +8543,4 @@ dependencies = [
 [[patch.unused]]
 name = "alloy-signer"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#50e38e845afb27fc311a74d2260dd087f8e972f3"
+source = "git+https://github.com/alloy-rs/alloy#4db40b051a1f2443b9c18fa0cf62d0ac24d07012"
