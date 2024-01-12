@@ -310,20 +310,20 @@ impl Backend {
     ///
     /// Returns `true` if the account is already impersonated
     pub async fn impersonate(&self, addr: Address) -> DatabaseResult<bool> {
-        if self.cheats.impersonated_accounts().contains(&addr.to_ethers()) {
+        if self.cheats.impersonated_accounts().contains(&addr) {
             return Ok(true);
         }
         // Ensure EIP-3607 is disabled
         let mut env = self.env.write();
         env.cfg.disable_eip3607 = true;
-        Ok(self.cheats.impersonate(addr.to_ethers()))
+        Ok(self.cheats.impersonate(addr))
     }
 
     /// Removes the account that from the impersonated set
     ///
     /// If the impersonated `addr` is a contract then we also reset the code here
     pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
-        self.cheats.stop_impersonating(&addr.to_ethers());
+        self.cheats.stop_impersonating(&addr);
         Ok(())
     }
 
