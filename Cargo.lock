@@ -3145,6 +3145,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-rpc-types",
  "alloy-sol-types",
  "const-hex",
  "ethers-core",
