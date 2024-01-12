@@ -4,10 +4,6 @@ use crate::eth::{
     receipt::Log,
     utils::{enveloped, to_revm_access_list},
 };
-#[cfg(feature = "impersonated-tx")]
-use alloy_primitives::U256 as rU256;
-#[cfg(feature = "impersonated-tx")]
-use alloy_rpc_types::Signature as AlloySignature;
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
@@ -36,8 +32,12 @@ pub use ethers_compat::{
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
-pub const IMPERSONATED_SIGNATURE: AlloySignature =
-    AlloySignature { r: rU256::ZERO, s: rU256::ZERO, v: rU256::ZERO, y_parity: None };
+pub const IMPERSONATED_SIGNATURE: alloy_rpc_types::Signature = alloy_rpc_types::Signature {
+    r: alloy_primitives::U256::ZERO,
+    s: alloy_primitives::U256::ZERO,
+    v: alloy_primitives::U256::ZERO,
+    y_parity: None,
+};
 
 /// Container type for various Ethereum transaction requests
 ///
