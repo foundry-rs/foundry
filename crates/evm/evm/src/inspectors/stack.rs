@@ -316,6 +316,7 @@ impl InspectorStack {
             traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
+            #[allow(clippy::useless_asref)] // https://github.com/rust-lang/rust-clippy/issues/12135
             script_wallets: self
                 .cheatcodes
                 .as_ref()

@@ -217,7 +217,7 @@ alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
+# alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
