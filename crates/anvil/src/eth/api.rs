@@ -46,8 +46,9 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            call_to_internal_tx_request, to_alloy_proof, EthTransactionRequest, LegacyTransaction,
-            PendingTransaction, TransactionKind, TypedTransaction, TypedTransactionRequest,
+            call_to_internal_tx_request, to_alloy_proof, to_ethers_signature,
+            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
+            TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -581,7 +582,7 @@ impl EthApi {
                 .into_iter()
                 .filter(|acc| unique.insert(*acc)),
         );
-        Ok(accounts.into_iter().map(|acc| acc).collect())
+        Ok(accounts.into_iter().collect())
     }
 
     /// Returns the number of most recent block.
