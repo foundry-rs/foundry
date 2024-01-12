@@ -989,6 +989,20 @@ async fn test_transaction_receipt() {
     assert!(receipt.is_none());
 }
 
+// <https://etherscan.io/block/14608400>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_receipts() {
+    let (api, _) = spawn(fork_config()).await;
+
+    // Receipts from the forked block (14608400)
+    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER)).await.unwrap();
+    assert!(receipts.is_some());
+
+    // Receipts from a block in the future (14608401)
+    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER + 1)).await.unwrap();
+    assert!(receipts.is_none());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
