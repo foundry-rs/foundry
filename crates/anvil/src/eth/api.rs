@@ -2302,7 +2302,7 @@ impl EthApi {
         let gas: U256 = U256::from(gas);
         // Get the starting lowest gas needed depending on the transaction kind.
         let mut lowest_gas_limit =
-            determine_base_gas_by_kind(call_to_internal_tx_request(&request.clone()));
+            determine_base_gas_by_kind(call_to_internal_tx_request(&request));
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit = std::cmp::min(
