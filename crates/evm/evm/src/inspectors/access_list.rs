@@ -25,7 +25,7 @@ impl AccessListTracer {
             access_list: access_list
                 .0
                 .iter()
-                .map(|v| (v.address, v.storage_keys.iter().copied().map(|k| k.into()).collect()))
+                .map(|v| (v.address, v.storage_keys.iter().copied().collect()))
                 .collect(),
         }
     }
@@ -36,7 +36,7 @@ impl AccessListTracer {
                 .iter()
                 .map(|(address, slots)| AccessListItem {
                     address: *address,
-                    storage_keys: slots.iter().copied().map(|k| k.into()).collect(),
+                    storage_keys: slots.iter().copied().collect(),
                 })
                 .collect::<Vec<AccessListItem>>(),
         )
