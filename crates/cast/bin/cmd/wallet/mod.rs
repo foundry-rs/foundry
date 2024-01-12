@@ -139,12 +139,8 @@ pub enum WalletSubcommands {
     #[clap(visible_alias = "ls")]
     List,
 
-
     #[clap(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
-    DerivePrivateKey {
-        mnemonic: String,
-        mnemonic_index: Option<u8>,
-    }
+    DerivePrivateKey { mnemonic: String, mnemonic_index: Option<u8> },
 }
 
 impl WalletSubcommands {
@@ -365,8 +361,11 @@ flag to set your key via:
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
                 
-                let index = if let Some(i) = mnemonic_index { i } else {0};
-                let wallet = builder.clone().derivation_path(&format!("{derivation_path}{index}"))?.build()?;
+                let index = if let Some(i) = mnemonic_index { i } else { 0 };
+                let wallet = builder
+                    .clone()
+                    .derivation_path(&format!("{derivation_path}{index}"))?
+                    .build()?;
                 println!("- Account:");
                 println!("Address:     {}", wallet.address().to_alloy());
                 println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
