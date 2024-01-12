@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, U256};
+use alloy_rpc_types::AccessListItem as AlloyAccessListItem;
 use ethers_core::{
     types::transaction::eip2930::AccessListItem,
     utils::{
@@ -24,5 +25,11 @@ pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>
                 item.storage_keys.into_iter().map(|k| k.to_alloy().into()).collect(),
             )
         })
+        .collect()
+}
+
+pub fn alloy_to_revm_access_list(list: Vec<AlloyAccessListItem>) -> Vec<(Address, Vec<U256>)> {
+    list.into_iter()
+        .map(|item| (item.address, item.storage_keys.into_iter().map(|k| k.into()).collect()))
         .collect()
 }
