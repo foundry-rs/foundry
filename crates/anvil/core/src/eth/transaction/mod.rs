@@ -26,8 +26,7 @@ use std::ops::Deref;
 mod ethers_compat;
 
 pub use ethers_compat::{
-    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_alloy_signature,
-    to_ethers_access_list, to_ethers_signature, to_internal_tx_request,
+    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
 };
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC

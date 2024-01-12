@@ -36,8 +36,8 @@ use alloy_rpc_trace_types::{
 };
 use alloy_rpc_types::{
     state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
-    BlockNumberOrTag as BlockNumber, Filter, FilteredParams, Header as AlloyHeader, Log,
-    Transaction, TransactionReceipt,
+    BlockNumberOrTag as BlockNumber, CallRequest, Filter, FilteredParams, Header as AlloyHeader,
+    Log, Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{
@@ -45,18 +45,16 @@ use anvil_core::{
         proof::{AccountProof, BasicAccount, StorageProof},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{
-            from_ethers_access_list, EthTransactionRequest, MaybeImpersonatedTransaction,
-            PendingTransaction, TransactionInfo, TypedTransaction,
+            MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedTransaction,
         },
         trie::RefTrieDB,
-        utils::to_revm_access_list,
+        utils::alloy_to_revm_access_list,
     },
     types::{Forking, Index},
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    types::transaction::eip2930::AccessList as EthersAccessList,
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -1024,14 +1022,14 @@ impl Backend {
         outcome
     }
 
-    /// Executes the `EthTransactionRequest` without writing to the DB
+    /// Executes the [CallRequest] without writing to the DB
     ///
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
     pub async fn call(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         overrides: Option<StateOverride>,
@@ -1052,15 +1050,15 @@ impl Backend {
 
     fn build_call_env(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Env {
-        let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
+        let CallRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit.to_ethers());
+        let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
@@ -1075,19 +1073,19 @@ impl Backend {
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
-            caller: caller.to_alloy(),
-            gas_limit: gas_limit.as_u64(),
+            caller,
+            gas_limit: gas_limit.to::<u64>(),
             gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr.to_alloy()),
+                Some(addr) => TransactTo::Call(addr),
                 None => TransactTo::Create(CreateScheme::Create),
             },
-            value: value.unwrap_or_default().to_alloy(),
-            data: data.unwrap_or_default().to_vec().into(),
+            value: value.unwrap_or_default(),
+            data: input.into_input().unwrap_or_default(),
             chain_id: None,
-            nonce: nonce.map(|n| n.as_u64()),
-            access_list: to_revm_access_list(access_list.unwrap_or_default()),
+            nonce: nonce.map(|n| n.to::<u64>()),
+            access_list: alloy_to_revm_access_list(access_list.unwrap_or_default().0),
             ..Default::default()
         };
 
@@ -1103,7 +1101,7 @@ impl Backend {
     pub fn call_with_state<D>(
         &self,
         state: D,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError>
@@ -1149,7 +1147,7 @@ impl Backend {
 
     pub async fn call_with_tracing(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         opts: GethDefaultTracingOptions,
@@ -1189,23 +1187,23 @@ impl Backend {
     pub fn build_access_list_with_state<D>(
         &self,
         state: D,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let from = request.from.unwrap_or_default().to_alloy();
+        let from = request.from.unwrap_or_default();
         let to = if let Some(to) = request.to {
-            to.to_alloy()
+            to
         } else {
             let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
             from.create(nonce)
         };
 
         let mut tracer = AccessListTracer::new(
-            EthersAccessList(request.access_list.clone().unwrap_or_default()),
+            request.access_list.clone().unwrap_or_default(),
             from,
             to,
             self.precompiles(),
@@ -1230,7 +1228,7 @@ impl Backend {
             }
         };
         let access_list = tracer.access_list();
-        Ok((exit_reason, out, gas_used, from_ethers_access_list(access_list)))
+        Ok((exit_reason, out, gas_used, access_list))
     }
 
     /// returns all receipts for the given transactions
@@ -1978,6 +1976,19 @@ impl Backend {
         Some(receipts)
     }
 
+    /// Returns all transaction receipts of the block
+    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<TransactionReceipt>> {
+        let mut receipts = Vec::new();
+        let block = self.get_block(id)?;
+
+        for transaction in block.transactions {
+            let receipt = self.mined_transaction_receipt(transaction.hash().to_alloy())?;
+            receipts.push(receipt.inner);
+        }
+
+        Some(receipts)
+    }
+
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
@@ -2071,6 +2082,31 @@ impl Backend {
         );
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
+    }
+
+    /// Returns the blocks receipts for the given number
+    pub async fn block_receipts(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<Vec<TransactionReceipt>>, BlockchainError> {
+        if let Some(receipts) = self.mined_block_receipts(number) {
+            return Ok(Some(receipts));
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number = self.convert_block_number(Some(number));
+
+            if fork.predates_fork_inclusive(number) {
+                let receipts = fork
+                    .block_receipts(number)
+                    .await
+                    .map_err(BlockchainError::AlloyForkProvider)?;
+
+                return Ok(receipts);
+            }
+        }
+
+        Ok(None)
     }
 
     pub async fn transaction_by_block_number_and_index(

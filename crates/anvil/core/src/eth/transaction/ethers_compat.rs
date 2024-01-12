@@ -11,7 +11,6 @@ use crate::eth::{
 };
 use alloy_primitives::{U128 as rU128, U256 as rU256, U64 as rU64};
 use alloy_rpc_types::{
-    transaction::request::TransactionRequest as AlloyTransactionRequest,
     AccessList as AlloyAccessList, CallRequest, Signature, Transaction as AlloyTransaction,
 };
 use ethers_core::types::{
@@ -61,29 +60,6 @@ pub fn to_alloy_storage_proof(proof: &StorageProof) -> alloy_rpc_types::EIP1186S
         key: rU256::from_be_bytes(proof.key.to_alloy().0).into(),
         proof: proof.proof.iter().map(|b| b.clone().0.into()).collect(),
         value: proof.value.to_alloy(),
-    }
-}
-
-pub fn to_internal_tx_request(request: &AlloyTransactionRequest) -> EthTransactionRequest {
-    EthTransactionRequest {
-        from: request.from.map(|a| a.to_ethers()),
-        to: request.to.map(|a| a.to_ethers()),
-        gas_price: request.gas_price.map(|g| alloy_primitives::U256::from(g).to_ethers()),
-        max_fee_per_gas: request
-            .max_fee_per_gas
-            .map(|g| alloy_primitives::U256::from(g).to_ethers()),
-        max_priority_fee_per_gas: request
-            .max_priority_fee_per_gas
-            .map(|g| alloy_primitives::U256::from(g).to_ethers()),
-        gas: request.gas.map(|g| g.to_ethers()),
-        value: request.value.map(|v| v.to_ethers()),
-        data: request.data.clone().map(|b| b.clone().0.into()),
-        nonce: request.nonce.map(|n| n.to::<u64>().into()),
-        chain_id: None,
-        access_list: request.access_list.clone().map(|a| to_ethers_access_list(a.clone()).0),
-        transaction_type: request.transaction_type.map(|t| t.to::<u64>().into()),
-        // TODO: Should this be none?
-        optimism_fields: None,
     }
 }
 

@@ -420,6 +420,29 @@ impl ClientFork {
         Ok(None)
     }
 
+    pub async fn block_receipts(
+        &self,
+        number: u64,
+    ) -> Result<Option<Vec<TransactionReceipt>>, TransportError> {
+        if let receipts @ Some(_) = self.storage_read().block_receipts.get(&number).cloned() {
+            return Ok(receipts);
+        }
+
+        // TODO Needs to be removed.
+        // Since alloy doesn't indicate in the result whether the block exists,
+        // this is being temporarily implemented in anvil.
+        if self.predates_fork_inclusive(number) {
+            let receipts = self.provider().get_block_receipts(BlockNumber::Number(number)).await?;
+
+            let mut storage = self.storage_write();
+            storage.block_receipts.insert(number, receipts.clone());
+
+            return Ok(Some(receipts));
+        }
+
+        Ok(None)
+    }
+
     pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, TransportError> {
         if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
             block.transactions.convert_to_hashes();
@@ -647,6 +670,7 @@ pub struct ForkedStorage {
     pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: HashMap<B256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
+    pub block_receipts: HashMap<u64, Vec<TransactionReceipt>>,
     pub eth_gas_estimations: HashMap<(Arc<CallRequest>, u64), U256>,
     pub eth_call: HashMap<(Arc<CallRequest>, u64), Bytes>,
     pub code_at: HashMap<(Address, u64), Bytes>,
