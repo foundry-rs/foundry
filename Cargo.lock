@@ -2931,6 +2931,7 @@ dependencies = [
  "alloy-providers",
  "alloy-rpc-types",
  "alloy-sol-types",
+ "base64 0.21.7",
  "const-hex",
  "ethers-core",
  "ethers-signers",
