@@ -6059,7 +6059,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/paradigmxyz/evm-inspectors#b9e6e4ea25b00e0ddcbe1f295c8a69a6d2a08e39"
+source = "git+https://github.com/paradigmxyz/evm-inspectors#5028bdbc01a3ead97f7ebf742afaf8d058bee2ae"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-trace-types",
@@ -6105,11 +6105,9 @@ dependencies = [
  "bitflags 2.4.1",
  "bitvec",
  "c-kzg",
- "derive_more",
  "enumn",
  "hashbrown 0.14.3",
  "hex",
- "once_cell",
  "serde",
 ]
 
