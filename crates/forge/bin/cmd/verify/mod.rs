@@ -252,8 +252,8 @@ mod tests {
             "foundry-cli",
             "0x0000000000000000000000000000000000000000",
             "src/Domains.sol:Domains",
-            "--via-ir"
+            "--via-ir",
         ]);
-        assert_eq!(args.via_ir, true);
+        assert!(args.via_ir);
     }
 }
