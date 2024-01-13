@@ -18,6 +18,7 @@ pub struct VerifyBundle {
     pub etherscan: EtherscanOpts,
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
+    pub via_ir: bool,
 }
 
 impl VerifyBundle {
@@ -44,6 +45,8 @@ impl VerifyBundle {
             config_path: if config_path.exists() { Some(config_path) } else { None },
         };
 
+        let via_ir = config.via_ir;
+
         VerifyBundle {
             num_of_optimizations,
             known_contracts,
@@ -51,6 +54,7 @@ impl VerifyBundle {
             project_paths,
             retry,
             verifier,
+            via_ir,
         }
     }
 
@@ -109,6 +113,7 @@ impl VerifyBundle {
                     libraries: libraries.to_vec(),
                     root: None,
                     verifier: self.verifier.clone(),
+                    via_ir: self.via_ir,
                     show_standard_json_input: false,
                 };
 

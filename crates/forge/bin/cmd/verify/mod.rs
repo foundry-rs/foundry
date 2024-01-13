@@ -107,6 +107,10 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
+
+    /// Use the Yul intermediate representation compilation pipeline.
+    #[clap(long)]
+    pub via_ir: bool,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -128,6 +132,9 @@ impl figment::Provider for VerifyArgs {
                 "optimizer_runs".to_string(),
                 figment::value::Value::serialize(optimizer_runs)?,
             );
+        }
+        if self.via_ir {
+            dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
         }
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
@@ -237,5 +244,16 @@ mod tests {
         assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
+    }
+
+    #[test]
+    fn can_parse_verify_contract() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--via-ir"
+        ]);
+        assert_eq!(args.via_ir, true);
     }
 }
