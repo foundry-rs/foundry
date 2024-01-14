@@ -105,7 +105,7 @@ pub enum Group {
     Json,
     /// Utility cheatcodes that deal with encoding and decoding Base64.
     ///
-    /// Examples: `toBase64`, .
+    /// Examples: `toBase64`, `toBase64URL`.
     ///
     /// Safety: safe.
     Base64,
