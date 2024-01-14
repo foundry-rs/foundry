@@ -2437,7 +2437,6 @@ source = "git+https://github.com/gakonst/ethers-rs?rev=f0e5b194f09c533feb10d1a68
 dependencies = [
  "chrono",
  "ethers-core",
- "ethers-solc",
  "reqwest",
  "semver 1.0.21",
  "serde",
@@ -3180,8 +3179,8 @@ dependencies = [
  "alloy-transport",
  "const-hex",
  "derive_more",
- "ethers",
  "ethers-core",
+ "ethers-providers",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",

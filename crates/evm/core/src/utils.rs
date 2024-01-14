@@ -1,7 +1,7 @@
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::FixedBytes;
 use alloy_rpc_types::{Block, Transaction};
-use ethers::types::{ActionType, CallType, Chain, H256, U256};
+use ethers_core::types::{ActionType, CallType, Chain, H256, U256};
 use eyre::ContextCompat;
 use foundry_common::types::ToAlloy;
 use revm::{
