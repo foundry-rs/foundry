@@ -4535,6 +4535,46 @@
     },
     {
       "func": {
+        "id": "toBase64",
+        "description": "Encodes a `bytes` value to base64 string",
+        "declaration": "function toBase64(bytes calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64(bytes)",
+        "selector": "0xa5cbfe65",
+        "selectorBytes": [
+          165,
+          203,
+          254,
+          101
+        ]
+      },
+      "group": "base64",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64URL",
+        "description": "Encodes a `bytes` value to base64url string",
+        "declaration": "function toBase64URL(bytes calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64URL(bytes)",
+        "selector": "0xc8bd0e4a",
+        "selectorBytes": [
+          200,
+          189,
+          14,
+          74
+        ]
+      },
+      "group": "base64",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "toString_0",
         "description": "Converts the given value to a `string`.",
         "declaration": "function toString(address value) external pure returns (string memory stringifiedValue);",

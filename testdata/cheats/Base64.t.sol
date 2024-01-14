@@ -17,7 +17,7 @@ contract Base64Test is DSTest {
 
     function test_toBase64URL() public {
         bytes memory input = hex"00112233445566778899aabbccddeeff";
-        string memory expected = "ABEiM0RVZneImaq7zN3u_w";
+        string memory expected = "ABEiM0RVZneImaq7zN3u_w==";
         string memory actual = vm.toBase64URL(input);
         assertEq(actual, expected);
     }
