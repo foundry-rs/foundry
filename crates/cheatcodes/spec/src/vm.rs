@@ -1234,17 +1234,9 @@ interface Vm {
     #[cheatcode(group = Base64)]
     function toBase64(bytes calldata data) external pure returns (string memory);
 
-    /// Encodes a `string` value to base64 string
-    #[cheatcode(group = Base64)]
-    function toBase64(string calldata data) external pure returns (string memory);
-
     /// Encodes a `bytes` value to base64url string
     #[cheatcode(group = Base64)]
     function toBase64URL(bytes calldata data) external pure returns (string memory);
-
-    /// Encodes a `string` value to base64url string
-    #[cheatcode(group = Base64)]
-    function toBase64URL(string calldata data) external pure returns (string memory);
 
     // -------- Key Management --------
 
