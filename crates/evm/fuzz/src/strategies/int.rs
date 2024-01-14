@@ -17,6 +17,7 @@ pub struct IntValueTree {
     /// If true cannot be simplified or complexified
     fixed: bool,
 }
+
 impl IntValueTree {
     /// Create a new tree
     /// # Arguments
@@ -37,6 +38,7 @@ impl IntValueTree {
             true
         }
     }
+
     fn magnitude_greater(lhs: I256, rhs: I256) -> bool {
         if lhs.is_zero() {
             return false
@@ -44,11 +46,14 @@ impl IntValueTree {
         (lhs > rhs) ^ (lhs.is_negative())
     }
 }
+
 impl ValueTree for IntValueTree {
     type Value = I256;
+
     fn current(&self) -> Self::Value {
         self.curr
     }
+
     fn simplify(&mut self) -> bool {
         if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
             return false
@@ -56,6 +61,7 @@ impl ValueTree for IntValueTree {
         self.hi = self.curr;
         self.reposition()
     }
+
     fn complicate(&mut self) -> bool {
         if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
             return false
@@ -66,6 +72,7 @@ impl ValueTree for IntValueTree {
         self.reposition()
     }
 }
+
 /// Value tree for signed ints (up to int256).
 /// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
@@ -85,6 +92,7 @@ pub struct IntStrategy {
     /// The weight for purely random values
     random_weight: usize,
 }
+
 impl IntStrategy {
     /// Create a new strategy.
     /// #Arguments
@@ -99,6 +107,7 @@ impl IntStrategy {
             random_weight: 50usize,
         }
     }
+
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
 
@@ -117,6 +126,7 @@ impl IntStrategy {
         };
         Ok(IntValueTree::new(start, false))
     }
+
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         // generate edge cases if there's no fixtures
         if self.fixtures.is_empty() {
@@ -125,8 +135,10 @@ impl IntStrategy {
         let idx = runner.rng().gen_range(0..self.fixtures.len());
         Ok(IntValueTree::new(self.fixtures[idx], false))
     }
+
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
+
         // generate random number of bits uniformly
         let bits = rng.gen_range(0..=self.bits);
 
@@ -137,6 +149,7 @@ impl IntStrategy {
         // init 2 128-bit randoms
         let mut higher: u128 = rng.gen_range(0..=u128::MAX);
         let mut lower: u128 = rng.gen_range(0..=u128::MAX);
+
         // cut 2 randoms according to bits size
         match bits - 1 {
             x if x < 128 => {
@@ -154,17 +167,20 @@ impl IntStrategy {
         inner[1] = (lower >> 64) as u64;
         inner[2] = (higher & mask64) as u64;
         inner[3] = (higher >> 64) as u64;
-        let sign = if rng.gen_bool(0.5) { Sign::Positive } else { Sign::Negative };
+
         // we have a small bias here, i.e. intN::min will never be generated
         // but it's ok since it's generated in `fn generate_edge_tree(...)`
+        let sign = if rng.gen_bool(0.5) { Sign::Positive } else { Sign::Negative };
         let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256::from_limbs(inner));
 
         Ok(IntValueTree::new(start, false))
     }
 }
+
 impl Strategy for IntStrategy {
     type Tree = IntValueTree;
     type Value = I256;
+
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
         let bias = runner.rng().gen_range(0..total_weight);
