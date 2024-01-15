@@ -1228,6 +1228,16 @@ interface Vm {
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
 
+    // -------- Base64 --------
+
+    /// Encodes a `bytes` value to base64 string
+    #[cheatcode(group = Base64)]
+    function toBase64(bytes calldata data) external pure returns (string memory);
+
+    /// Encodes a `bytes` value to base64url string
+    #[cheatcode(group = Base64)]
+    function toBase64URL(bytes calldata data) external pure returns (string memory);
+
     // -------- Key Management --------
 
     /// Derives a private key from the name, labels the account with that name, and returns the wallet.

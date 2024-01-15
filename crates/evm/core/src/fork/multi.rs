@@ -6,9 +6,8 @@
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
 use alloy_providers::provider::Provider;
 use alloy_transport::BoxTransport;
-use ethers::types::BlockNumber;
+use ethers_core::types::BlockNumber;
 use foundry_common::provider::alloy::ProviderBuilder;
-
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},

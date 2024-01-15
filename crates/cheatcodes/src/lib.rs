@@ -26,6 +26,7 @@ pub use config::CheatsConfig;
 mod inspector;
 pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
 
+mod base64;
 mod env;
 mod evm;
 mod fs;
