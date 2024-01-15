@@ -1,5 +1,4 @@
-use std::ops::Deref;
-
+use crate::eth::utils::eip_to_revm_access_list;
 use alloy_consensus::{ReceiptWithBloom, TxEip1559, TxEip2930, TxLegacy};
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U256};
@@ -10,8 +9,7 @@ use revm::{
     interpreter::InstructionResult,
     primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
 };
-
-use crate::eth::utils::eip_to_revm_access_list;
+use std::ops::Deref;
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
@@ -514,6 +512,7 @@ impl PendingTransaction {
     }
 }
 
+/// Container type for signed, typed transactions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypedTransaction {
     /// Legacy transaction type
@@ -801,6 +800,8 @@ impl Decodable for TypedTransaction {
     }
 }
 
+/// An op-stack deposit transaction.
+/// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DepositTransaction {
     pub nonce: U256,
@@ -1047,6 +1048,7 @@ impl Decodable for TypedReceipt {
     }
 }
 
+/// Translates an EIP-2930 access list to an alloy-rpc-types access list.
 pub fn to_alloy_access_list(
     access_list: alloy_eips::eip2930::AccessList,
 ) -> alloy_rpc_types::AccessList {
@@ -1062,6 +1064,7 @@ pub fn to_alloy_access_list(
     )
 }
 
+/// Translates an alloy-rpc-types access list to an EIP-2930 access list.
 pub fn to_eip_access_list(
     access_list: alloy_rpc_types::AccessList,
 ) -> alloy_eips::eip2930::AccessList {
