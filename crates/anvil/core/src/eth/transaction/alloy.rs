@@ -21,6 +21,7 @@ pub fn impersonated_signature() -> Signature {
 
 pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTransactionRequest> {
     let TransactionRequest {
+        from,
         to,
         gas_price,
         max_fee_per_gas,
@@ -31,11 +32,24 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         nonce,
         mut access_list,
         transaction_type,
+        other,
         ..
     } = tx;
     let transaction_type = transaction_type.map(|id| id.to::<u64>());
 
-    // TODO: Optimism Deposit Tx support
+    // Special case: OP-stack deposit tx
+    if transaction_type == Some(126) {
+        return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
+            from: from.unwrap_or_default(),
+            source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
+            kind: TxKind::Create,
+            mint: other.get_deserialized::<U256>("mint")?.ok()?,
+            value: value.unwrap_or_default(),
+            gas_limit: gas.unwrap_or_default(),
+            is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
+            input: data.unwrap_or_default(),
+        }))
+    }
 
     match (
         transaction_type,
@@ -117,8 +131,6 @@ pub fn call_request_to_typed(tx: CallRequest) -> Option<TypedTransactionRequest>
     } = tx;
     let chain_id = chain_id.map(|id| id.to::<u64>());
     let transaction_type = transaction_type.map(|id| id.to::<u64>());
-
-    // TODO: Optimism Deposit TX support
 
     match (
         transaction_type,
