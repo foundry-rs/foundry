@@ -243,6 +243,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` with `privateKey` using the secp25621 curve.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
+
     // -------- Record Storage --------
 
     /// Records all storage reads and writes.
