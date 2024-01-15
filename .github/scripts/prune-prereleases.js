@@ -38,15 +38,15 @@ module.exports = async ({ github, context }) => {
     //   1. only keep the earliest release of the month
     //   2. to keep the newest 3 nightlies
     // 
-    // This addresses https://github.com/foundry-rs/foundry/issues/6732)
+    // This addresses https://github.com/foundry-rs/foundry/issues/6732
 
     // group releases by months
     const groups = groupBy(nightlies, i => i.created_at.slice(0, 7));
-    const toPrune = Object.values(groups)
+    const nightliesToPrune = Object.values(groups)
         .reduce((acc, cur) => acc.concat(cur.slice(0, -1)), [])
         .slice(3);
 
-    for (const nightly of nightlies) {
+    for (const nightly of nightliesToPrune) {
         console.log(`Deleting nightly: ${nightly.tag_name}`);
         await github.rest.repos.deleteRelease({
             owner: context.repo.owner,
