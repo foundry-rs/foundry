@@ -541,6 +541,7 @@ name = "anvil-core"
 version = "0.2.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",

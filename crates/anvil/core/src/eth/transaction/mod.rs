@@ -22,9 +22,9 @@ use revm::{
 };
 use std::ops::Deref;
 
+pub mod alloy;
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
-pub mod alloy;
 pub use ethers_compat::{
     call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
 };

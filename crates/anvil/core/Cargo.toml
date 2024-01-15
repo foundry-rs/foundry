@@ -18,6 +18,7 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types = { workspace = true }
 alloy-rpc-trace-types.workspace = true
 alloy-rlp.workspace = true
+alloy-eips.workspace = true
 alloy-network = { workspace = true, features = ["k256"] }
 alloy-consensus.workspace = true
 ethers-core = { workspace = true, features = ["optimism"] }

@@ -152,6 +152,7 @@ alloy-pubsub = "0.1.0"
 alloy-rpc-client = "0.1.0"
 alloy-rpc-trace-types = "0.1.0"
 alloy-rpc-types = "0.1.0"
+alloy-eips = "0.1.0"
 alloy-transport = "0.1.0"
 alloy-transport-http = "0.1.0"
 alloy-transport-ipc = "0.1.0"
@@ -219,6 +220,7 @@ alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy" }
 alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
