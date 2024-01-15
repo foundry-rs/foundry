@@ -279,6 +279,7 @@ mod tests {
 
     #[test]
     fn test_sign_p256_pk_too_large() {
+        // max n from https://neuromancer.sk/std/secg/secp256r1
         let pk =
             "0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551".parse().unwrap();
         let digest = FixedBytes::from_hex(
