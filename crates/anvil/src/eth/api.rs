@@ -1562,7 +1562,7 @@ impl EthApi {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.to::<u64>());
         let blocks = num_blocks.unwrap_or(U256::from(1));
-        if blocks == U256::ZERO {
+        if blocks.is_zero() {
             return Ok(());
         }
 

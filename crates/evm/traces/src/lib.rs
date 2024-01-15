@@ -7,7 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{LogData, U256};
+use alloy_primitives::LogData;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
@@ -200,7 +200,7 @@ pub async fn render_trace(
             "{addr}::{func_name}{opt_value}({inputs}){action}",
             addr = color.paint(decoded.label.as_deref().unwrap_or(&address)),
             func_name = color.paint(func_name),
-            opt_value = if trace.value == U256::ZERO {
+            opt_value = if trace.value.is_zero() {
                 String::new()
             } else {
                 format!("{{value: {}}}", trace.value)
