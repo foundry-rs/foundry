@@ -23,9 +23,9 @@ use revm::{
 use std::ops::Deref;
 
 pub mod alloy;
-pub mod optimism;
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
+pub mod optimism;
 pub use ethers_compat::{
     call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_alloy_signature,
     to_ethers_access_list, to_ethers_signature,

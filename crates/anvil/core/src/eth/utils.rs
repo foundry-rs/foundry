@@ -35,6 +35,7 @@ pub fn alloy_to_revm_access_list(list: Vec<AlloyAccessListItem>) -> Vec<(Address
         .collect()
 }
 
+/// Translates a vec of [AlloyEipAccessListItem] to a revm style Access List.
 pub fn eip_to_revm_access_list(list: Vec<AlloyEipAccessListItem>) -> Vec<(Address, Vec<U256>)> {
     list.into_iter()
         .map(|item| (item.address, item.storage_keys.into_iter().map(|k| k.into()).collect()))

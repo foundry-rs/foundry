@@ -1,4 +1,7 @@
-use crate::eth::{utils::eip_to_revm_access_list, transaction::optimism::{DepositTransaction, DepositTransactionRequest}};
+use crate::eth::{
+    transaction::optimism::{DepositTransaction, DepositTransactionRequest},
+    utils::eip_to_revm_access_list,
+};
 use alloy_consensus::{ReceiptWithBloom, TxEip1559, TxEip2930, TxLegacy};
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U256};
