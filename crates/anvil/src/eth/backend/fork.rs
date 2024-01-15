@@ -434,10 +434,12 @@ impl ClientFork {
         if self.predates_fork_inclusive(number) {
             let receipts = self.provider().get_block_receipts(BlockNumber::Number(number)).await?;
 
-            let mut storage = self.storage_write();
-            storage.block_receipts.insert(number, receipts.clone());
+            if let Some(receipts) = receipts.clone() {
+                let mut storage = self.storage_write();
+                storage.block_receipts.insert(number, receipts);
+            }
 
-            return Ok(Some(receipts));
+            return Ok(receipts);
         }
 
         Ok(None)
