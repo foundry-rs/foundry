@@ -482,8 +482,11 @@ name = "anvil"
 version = "0.2.0"
 dependencies = [
  "alloy-chains",
+ "alloy-consensus",
+ "alloy-network",
  "alloy-primitives",
  "alloy-providers",
+ "alloy-rlp",
  "alloy-rpc-trace-types",
  "alloy-rpc-types",
  "alloy-transport",

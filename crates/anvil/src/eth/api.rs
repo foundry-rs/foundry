@@ -29,6 +29,8 @@ use crate::{
     revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
+use alloy_consensus::TxLegacy;
+use alloy_network::Signed;
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
@@ -47,8 +49,9 @@ use anvil_core::{
         block::BlockInfo,
         transaction::{
             call_to_internal_tx_request, to_alloy_proof, to_ethers_signature,
-            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
+            EthTransactionRequest, LegacyTransaction, TransactionKind,
             TypedTransaction, TypedTransactionRequest,
+            alloy::{PendingTransaction, TypedTransaction as AlloyTypedTransaction}
         },
         EthRequest,
     },
@@ -908,7 +911,7 @@ impl EthApi {
                 sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
-            PendingTransaction::with_impersonated(transaction, from.to_ethers())
+            PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
             self.ensure_typed_transaction_supported(&transaction)?;
@@ -936,8 +939,8 @@ impl EthApi {
         }
         let transaction = if data[0] > 0x7f {
             // legacy transaction
-            match rlp::decode::<LegacyTransaction>(data) {
-                Ok(transaction) => TypedTransaction::Legacy(transaction),
+            match <Signed<TxLegacy> as alloy_rlp::Decodable>::decode(&mut data) {
+                Ok(transaction) => AlloyTypedTransaction::Legacy(transaction),
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
             }
         } else {
@@ -945,15 +948,15 @@ impl EthApi {
             // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
             // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
             // version byte
-            let extend = rlp::encode(&data);
-            let tx = match rlp::decode::<TypedTransaction>(&extend[..]) {
+            let extend = alloy_rlp::encode(&data);
+            let tx = match <AlloyTypedTransaction as alloy_rlp::Decodable>::decode(&mut &extend[..]) {
                 Ok(transaction) => transaction,
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
             };
 
-            self.ensure_typed_transaction_supported(&tx)?;
-
-            tx
+            // self.ensure_typed_transaction_supported(&tx)?;
+            todo!()
+            // tx
         };
 
         let pending_transaction = PendingTransaction::new(transaction)?;
@@ -962,15 +965,15 @@ impl EthApi {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let on_chain_nonce =
-            self.backend.current_nonce(pending_transaction.sender().to_alloy()).await?;
+            self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
-        let nonce = *pending_transaction.transaction.nonce();
-        let requires = required_marker(nonce.to_alloy(), on_chain_nonce, from.to_alloy());
+        let nonce = pending_transaction.transaction.nonce();
+        let requires = required_marker(nonce, on_chain_nonce, from);
 
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction = PoolTransaction {
             requires,
-            provides: vec![to_marker(nonce.as_u64(), pending_transaction.sender().to_alloy())],
+            provides: vec![to_marker(nonce.to::<u64>(), *pending_transaction.sender())],
             pending_transaction,
             priority,
         };
@@ -1112,7 +1115,7 @@ impl EthApi {
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
             let mut tx = transaction_build(
-                Some(pending.hash().to_alloy()),
+                Some(pending.hash()),
                 pending.transaction,
                 None,
                 None,
@@ -1120,7 +1123,7 @@ impl EthApi {
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from.to_alloy();
+            tx.from = from;
             tx
         });
         if tx.is_none() {
@@ -2040,10 +2043,10 @@ impl EthApi {
 
         fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
-            let to = tx.to().copied().map(ToAlloy::to_alloy);
-            let gas_price = tx.gas_price().to_alloy();
-            let value = tx.value().to_alloy();
-            let gas = tx.gas_limit().to_alloy();
+            let to = tx.to();
+            let gas_price = tx.gas_price();
+            let value = tx.value();
+            let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
@@ -2055,13 +2058,13 @@ impl EthApi {
         // with the same From address.
         for pending in self.pool.ready_transactions() {
             let entry =
-                inspect.pending.entry(pending.pending_transaction.sender().to_alloy()).or_default();
+                inspect.pending.entry(pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
             let entry =
-                inspect.pending.entry(queued.pending_transaction.sender().to_alloy()).or_default();
+                inspect.pending.entry(queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }
@@ -2089,19 +2092,19 @@ impl EthApi {
 
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from.to_alloy();
+            tx.from = from;
             tx
         }
 
         for pending in self.pool.ready_transactions() {
             let entry =
-                content.pending.entry(pending.pending_transaction.sender().to_alloy()).or_default();
+                content.pending.entry(pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
             let entry =
-                content.pending.entry(queued.pending_transaction.sender().to_alloy()).or_default();
+                content.pending.entry(queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }

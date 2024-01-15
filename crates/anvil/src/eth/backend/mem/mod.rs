@@ -44,9 +44,7 @@ use anvil_core::{
         block::{Block, BlockInfo, Header},
         proof::{AccountProof, BasicAccount, StorageProof},
         receipt::{EIP658Receipt, TypedReceipt},
-        transaction::{
-            MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedTransaction,
-        },
+        transaction::alloy::{PendingTransaction, TypedTransaction, TransactionInfo, MaybeImpersonatedTransaction},
         trie::RefTrieDB,
         utils::alloy_to_revm_access_list,
     },
@@ -1829,7 +1827,7 @@ impl Backend {
         block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
         if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
-            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address.to_ethers())
+            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address)
             {
                 return Ok(value);
             }
@@ -2018,14 +2016,14 @@ impl Backend {
         let transaction_type = transaction.transaction.r#type();
 
         let effective_gas_price = match transaction.transaction {
-            TypedTransaction::Legacy(t) => t.gas_price.to_alloy(),
-            TypedTransaction::EIP2930(t) => t.gas_price.to_alloy(),
+            TypedTransaction::Legacy(t) => t.gas_price,
+            TypedTransaction::EIP2930(t) => t.gas_price,
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
                 .map(|f| f.to_alloy())
                 .unwrap_or(self.base_fee())
-                .checked_add(t.max_priority_fee_per_gas.to_alloy())
+                .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or(U256::MAX),
             TypedTransaction::Deposit(_) => U256::from(0),
         };
@@ -2317,14 +2315,14 @@ impl Backend {
 /// Get max nonce from transaction pool by address
 fn get_pool_transactions_nonce(
     pool_transactions: &[Arc<PoolTransaction>],
-    address: ethers::types::H160,
+    address: Address,
 ) -> Option<U256> {
     let highest_nonce_tx = pool_transactions
         .iter()
         .filter(|tx| *tx.pending_transaction.sender() == address)
         .reduce(|accum, item| {
             let nonce = item.pending_transaction.nonce();
-            if nonce.gt(accum.pending_transaction.nonce()) {
+            if nonce.gt(&accum.pending_transaction.nonce()) {
                 item
             } else {
                 accum
@@ -2332,7 +2330,7 @@ fn get_pool_transactions_nonce(
         });
     if let Some(highest_nonce_tx) = highest_nonce_tx {
         return Some(
-            highest_nonce_tx.pending_transaction.nonce().to_alloy().saturating_add(U256::from(1)),
+            highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::from(1)),
         );
     }
     None
@@ -2345,7 +2343,7 @@ impl TransactionValidator for Backend {
         tx: &PendingTransaction,
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
-        let account = self.get_account(address.to_alloy()).await?;
+        let account = self.get_account(address).await?;
         let env = self.next_env();
         Ok(self.validate_pool_transaction_for(tx, &account, &env)?)
     }
@@ -2376,13 +2374,13 @@ impl TransactionValidator for Backend {
             }
         }
 
-        if tx.gas_limit() < MIN_TRANSACTION_GAS.to_ethers() {
+        if tx.gas_limit() < MIN_TRANSACTION_GAS {
             warn!(target: "backend", "[{:?}] gas too low", tx.hash());
             return Err(InvalidTransactionError::GasTooLow);
         }
 
         // Check gas limit, iff block gas limit is set.
-        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.to_ethers() {
+        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                 detail: String::from("tx.gas_limit > env.block.gas_limit"),
@@ -2490,11 +2488,11 @@ pub fn transaction_build(
     // can't recover the sender, instead we use the sender from the executed transaction and set the
     // impersonated hash.
     if eth_transaction.is_impersonated() {
-        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default().to_alloy();
+        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
         transaction.hash =
-            eth_transaction.impersonated_hash(transaction.from.to_ethers()).to_alloy();
+            eth_transaction.impersonated_hash(transaction.from);
     } else {
-        transaction.from = eth_transaction.recover().expect("can recover signed tx").to_alloy();
+        transaction.from = eth_transaction.recover().expect("can recover signed tx");
     }
 
     // if a specific hash was provided we update the transaction's hash
@@ -2508,9 +2506,7 @@ pub fn transaction_build(
 
     transaction.to = info
         .as_ref()
-        .map_or(eth_transaction.to().cloned(), |status| status.to)
-        .map(|t| t.to_alloy());
-
+        .map_or(eth_transaction.to(), |status| status.to);
     transaction
 }
 
