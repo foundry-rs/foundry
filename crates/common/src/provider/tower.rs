@@ -108,13 +108,16 @@ impl Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
 
                 match fut {
                     Ok(res) => {
-                        this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
-                        return Ok(res)
+                        if let Some(e) = res.as_error() {
+                            err = TransportError::ErrorResp(e.clone())
+                        } else {
+                            this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
+                            return Ok(res)
+                        }
                     }
                     Err(e) => err = e,
                 }
 
-                let err = TransportError::from(err);
                 let should_retry = this.policy.should_retry(&err);
                 if should_retry {
                     rate_limit_retry_number += 1;
@@ -159,7 +162,7 @@ impl Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
                     }
 
                     this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
-                    return Err(TransportErrorKind::custom_str("Max retries exceeded"))
+                    return Err(err)
                 }
             }
         })
