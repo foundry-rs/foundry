@@ -201,8 +201,8 @@ impl Cheatcode for assertEq_25Call {
 impl Cheatcode for assertEq_26Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { a, b } = self;
-        let a = a.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
-        let b = b.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
+        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
         assert_eq_array(&a, &b, None)
     }
 }
@@ -210,8 +210,8 @@ impl Cheatcode for assertEq_26Call {
 impl Cheatcode for assertEq_27Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { a, b, error } = self;
-        let a = a.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
-        let b = b.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
+        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
         assert_eq_array(&a, &b, Some(error))
     }
 }
@@ -401,8 +401,8 @@ impl Cheatcode for assertNotEq_25Call {
 impl Cheatcode for assertNotEq_26Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { a, b } = self;
-        let a = a.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
-        let b = b.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
+        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
         assert_not_eq_array(&a, &b, None)
     }
 }
@@ -410,8 +410,8 @@ impl Cheatcode for assertNotEq_26Call {
 impl Cheatcode for assertNotEq_27Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { a, b, error } = self;
-        let a = a.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
-        let b = b.iter().map(|x| hex::encode_prefixed(x)).collect::<Vec<_>>();
+        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
         assert_not_eq_array(&a, &b, Some(error))
     }
 }
@@ -571,7 +571,7 @@ fn assert_eq_array<T: Display + PartialEq>(
     } else {
         bail!(get_revert_string(
             error_message,
-            format!("[{}] != [{}]", a.into_iter().join(", "), b.into_iter().join(", "))
+            format!("[{}] != [{}]", a.iter().join(", "), b.iter().join(", "))
         ))
     }
 }
@@ -586,7 +586,7 @@ fn assert_not_eq_array<T: Display + PartialEq>(
     } else {
         bail!(get_revert_string(
             error_message,
-            format!("[{}] == [{}]", a.into_iter().join(", "), b.into_iter().join(", "))
+            format!("[{}] == [{}]", a.iter().join(", "), b.iter().join(", "))
         ))
     }
 }
