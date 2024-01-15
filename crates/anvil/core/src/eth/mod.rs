@@ -12,6 +12,7 @@ use alloy_rpc_types::{
 use ethers_core::types::transaction::eip712::TypedData;
 
 pub mod block;
+pub mod alloy_block;
 pub mod proof;
 pub mod receipt;
 pub mod subscription;
