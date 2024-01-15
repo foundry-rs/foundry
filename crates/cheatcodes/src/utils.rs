@@ -243,11 +243,8 @@ mod tests {
     use crate::CheatsConfig;
     use alloy_primitives::FixedBytes;
     use hex::FromHex;
-    use p256::ecdsa::{
-        signature::{hazmat::PrehashVerifier, Keypair},
-        Signature,
-    };
-    use std::{io::Read, path::PathBuf, str::FromStr, sync::Arc};
+    use p256::ecdsa::{signature::hazmat::PrehashVerifier, Signature};
+    use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -274,7 +271,7 @@ mod tests {
         let result_bytes: [u8; 64] = result.try_into().unwrap();
         let signature = Signature::from_bytes(&result_bytes.into()).unwrap();
         let verifying_key = VerifyingKey::from(&signing_key);
-        assert!(verifying_key.verify_prehash(&digest.as_slice(), &signature).is_ok());
+        assert!(verifying_key.verify_prehash(digest.as_slice(), &signature).is_ok());
     }
 
     #[test]
