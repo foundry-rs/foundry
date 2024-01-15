@@ -2,13 +2,14 @@ use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
     StorageInfo,
 };
-use alloy_primitives::{TxHash, B256, U256};
+use alloy_primitives::{Log, TxHash, B256, U256};
 use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::{
-    block::Block,
-    receipt::{EIP658Receipt, Log, TypedReceipt},
+    alloy_block::Block,
+    transaction::alloy::TypedReceipt,
     subscription::SubscriptionId,
 };
+use alloy_consensus::ReceiptWithBloom;
 use anvil_rpc::{request::Version, response::ResponseResult};
 use foundry_common::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
@@ -156,7 +157,7 @@ pub fn filter_logs(
     /// Determines whether to add this log
     fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
         let log = AlloyLog {
-            address: l.address.to_alloy(),
+            address: l.address,
             topics: l.topics.clone().into_iter().map(|t| t.to_alloy()).collect::<Vec<_>>(),
             data: l.data.clone().0.into(),
             block_hash: None,
@@ -167,7 +168,7 @@ pub fn filter_logs(
             removed: false,
         };
         if params.filter.is_some() {
-            let block_number = block.header.number.as_u64();
+            let block_number = block.header.number.to::<u64>();
             if !params.filter_block_range(block_number) ||
                 !params.filter_block_hash(block_hash) ||
                 !params.filter_address(&log) ||
@@ -183,21 +184,21 @@ pub fn filter_logs(
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let receipt: EIP658Receipt = receipt.into();
+        let receipt: ReceiptWithBloom = receipt.into();
         let receipt_logs = receipt.logs;
         let transaction_hash: Option<B256> = if !receipt_logs.is_empty() {
-            Some(block.transactions[receipt_index].hash().to_alloy())
+            Some(block.transactions[receipt_index].hash())
         } else {
             None
         };
         for log in receipt_logs.into_iter() {
             if add_log(block_hash.to_alloy(), &log, &block, filter) {
                 logs.push(AlloyLog {
-                    address: log.address.to_alloy(),
+                    address: log.address,
                     topics: log.topics.into_iter().map(|t| t.to_alloy()).collect::<Vec<_>>(),
                     data: log.data.0.into(),
                     block_hash: Some(block_hash.to_alloy()),
-                    block_number: Some(U256::from(block.header.number.as_u64())),
+                    block_number: Some(U256::from(block.header.number.to::<u64>())),
                     transaction_hash,
                     transaction_index: Some(U256::from(receipt_index)),
                     log_index: Some(U256::from(log_index)),

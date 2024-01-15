@@ -3,7 +3,7 @@
 use crate::mem::Backend;
 use alloy_primitives::B256;
 use alloy_rpc_types::Block as AlloyBlock;
-use anvil_core::eth::{block::Block, receipt::TypedReceipt};
+use anvil_core::eth::{alloy_block::Block, transaction::alloy::TypedReceipt};
 use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.

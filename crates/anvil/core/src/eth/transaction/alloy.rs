@@ -795,6 +795,17 @@ impl TypedReceipt {
     }
 }
 
+impl Into<ReceiptWithBloom> for TypedReceipt {
+    fn into(self) -> ReceiptWithBloom {
+        match self {
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::Deposit(r) => r,
+        }
+    }
+}
+
 impl Encodable for TypedReceipt {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         use alloy_rlp::Header;

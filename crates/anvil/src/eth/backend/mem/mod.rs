@@ -851,8 +851,8 @@ impl Backend {
             pending: pool_transactions.into_iter(),
             block_env: env.block.clone(),
             cfg_env: env.cfg,
-            parent_hash: storage.best_hash.to_ethers(),
-            gas_used: U256::ZERO.to_ethers(),
+            parent_hash: storage.best_hash,
+            gas_used: U256::ZERO,
             enable_steps_tracing: self.enable_steps_tracing,
         };
 
@@ -910,8 +910,8 @@ impl Backend {
                     pending: pool_transactions.into_iter(),
                     block_env: env.block.clone(),
                     cfg_env: env.cfg.clone(),
-                    parent_hash: best_hash.to_ethers(),
-                    gas_used: U256::ZERO.to_ethers(),
+                    parent_hash: best_hash,
+                    gas_used: U256::ZERO,
                     enable_steps_tracing: self.enable_steps_tracing,
                 };
                 let executed_tx = executor.execute();
@@ -1283,9 +1283,9 @@ impl Backend {
 
             for log in logs.into_iter() {
                 let mut log = Log {
-                    address: log.address.to_alloy(),
+                    address: log.address,
                     topics: log.topics().into_iter().map(|t| *t).collect(),
-                    data: log.data.0.into(),
+                    data: log.data.data,
                     block_hash: None,
                     block_number: None,
                     transaction_hash: None,
@@ -1307,9 +1307,9 @@ impl Backend {
                 }
 
                 if is_match {
-                    log.block_hash = Some(block_hash.to_alloy());
+                    log.block_hash = Some(block_hash);
                     log.block_number = Some(block.header.number.to_alloy());
-                    log.transaction_hash = Some(transaction_hash.to_alloy());
+                    log.transaction_hash = Some(transaction_hash);
                     log.transaction_index = Some(U256::from(transaction.transaction_index));
                     log.log_index = Some(U256::from(block_log_index));
                     all_logs.push(log);
@@ -1432,11 +1432,11 @@ impl Backend {
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
         for hash in block.transactions.iter().map(|tx| tx.hash()) {
-            let info = storage.transactions.get(&hash.to_alloy())?.info.clone();
+            let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
             let tx = transaction_build(
-                Some(hash.to_alloy()),
+                Some(hash),
                 tx,
                 Some(block),
                 Some(info),
@@ -1546,7 +1546,7 @@ impl Backend {
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
     pub fn convert_block(&self, block: Block) -> AlloyBlock {
-        let size = U256::from(rlp::encode(&block).len() as u32);
+        let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
 
@@ -1577,22 +1577,22 @@ impl Backend {
         AlloyBlock {
             total_difficulty: Some(self.total_difficulty()),
             header: AlloyHeader {
-                hash: Some(hash.to_alloy()),
-                parent_hash: parent_hash.to_alloy(),
-                uncles_hash: ommers_hash.to_alloy(),
-                miner: beneficiary.to_alloy(),
-                state_root: state_root.to_alloy(),
-                transactions_root: transactions_root.to_alloy(),
-                receipts_root: receipts_root.to_alloy(),
+                hash: Some(hash),
+                parent_hash: parent_hash,
+                uncles_hash: ommers_hash,
+                miner: beneficiary,
+                state_root: state_root,
+                transactions_root: transactions_root,
+                receipts_root: receipts_root,
                 number: Some(number.to_alloy()),
                 gas_used: gas_used.to_alloy(),
                 gas_limit: gas_limit.to_alloy(),
                 extra_data: extra_data.0.into(),
-                logs_bloom: Bloom::from_slice(logs_bloom.as_bytes()),
+                logs_bloom,
                 timestamp: U256::from(timestamp),
-                difficulty: difficulty.to_alloy(),
-                mix_hash: Some(mix_hash.to_alloy()),
-                nonce: Some(B64::from_slice(nonce.as_bytes())),
+                difficulty: difficulty,
+                mix_hash: Some(mix_hash),
+                nonce: Some(B64::from(nonce)),
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
                 withdrawals_root: None,
                 blob_gas_used: None,
@@ -1601,7 +1601,7 @@ impl Backend {
             },
             size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
-                transactions.into_iter().map(|tx| tx.hash().to_alloy()).collect(),
+                transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
             uncles: vec![],
             withdrawals: None,
@@ -1884,7 +1884,7 @@ impl Backend {
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
         for tx in block.transactions {
-            traces.extend(storage.transactions.get(&tx.hash().to_alloy())?.parity_traces());
+            traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
     }
@@ -1982,7 +1982,7 @@ impl Backend {
         let block = self.get_block(id)?;
 
         for transaction in block.transactions {
-            let receipt = self.mined_transaction_receipt(transaction.hash().to_alloy())?;
+            let receipt = self.mined_transaction_receipt(transaction.hash())?;
             receipts.push(receipt.inner);
         }
 
@@ -2003,11 +2003,11 @@ impl Backend {
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
 
         // TODO store cumulative gas used in receipt instead
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash().to_alloy()));
+        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
 
         let mut cumulative_gas_used = U256::ZERO;
         for receipt in receipts.iter().take(index + 1) {
-            cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used().to_alloy());
+            cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
         }
 
         // cumulative_gas_used = cumulative_gas_used.saturating_sub(gas_used);
@@ -2025,11 +2025,11 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .map(|f| f.to_alloy())
-                .unwrap_or(self.base_fee())
+                .map(|b| b as u128)
+                .unwrap_or(self.base_fee().to::<u128>())
                 .checked_add(t.max_priority_fee_per_gas)
-                .unwrap_or(U256::MAX),
-            TypedTransaction::Deposit(_) => U256::from(0),
+                .unwrap_or(u128::MAX) as u128,
+            TypedTransaction::Deposit(_) => 0 as u128,
         };
 
         let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
@@ -2038,7 +2038,7 @@ impl Backend {
             transaction_hash: Some(info.transaction_hash),
             transaction_index: U64::from(info.transaction_index),
             block_hash: Some(block_hash),
-            block_number: Some(U256::from(block.header.number.as_u64())),
+            block_number: Some(U256::from(block.header.number)),
             from: info.from,
             to: info.to,
             cumulative_gas_used,
@@ -2054,12 +2054,12 @@ impl Backend {
                 logs.iter()
                     .enumerate()
                     .map(|(i, log)| Log {
-                        address: log.address.to_alloy(),
+                        address: log.address,
                         topics: log.topics().clone().into_iter().map(|t| *t).collect(),
-                        data: log.data.clone().0.into(),
+                        data: log.data.data.clone().into(),
                         block_hash: Some(block_hash),
-                        block_number: Some(U256::from(block.header.number.as_u64())),
-                        transaction_hash: Some(info.transaction_hash.to_alloy()),
+                        block_number: Some(U256::from(block.header.number)),
+                        transaction_hash: Some(info.transaction_hash),
                         transaction_index: Some(U256::from(info.transaction_index)),
                         log_index: Some(U256::from(
                             (pre_receipts_log_index.unwrap_or(0)) + i as u32,
@@ -2070,9 +2070,9 @@ impl Backend {
             },
             status_code: Some(U64::from(success)),
             state_root: None,
-            logs_bloom: Bloom::from_slice(logs_bloom.as_bytes()),
+            logs_bloom,
             transaction_type: transaction_type.map(U8::from).unwrap_or_default(),
-            effective_gas_price: effective_gas_price.to::<U128>(),
+            effective_gas_price: U128::from(effective_gas_price),
             blob_gas_price: None,
             blob_gas_used: None,
             other: Default::default(),
@@ -2162,12 +2162,12 @@ impl Backend {
             let block = storage.blocks.get(&block_hash).cloned()?;
             let index: usize = index.into();
             let tx = block.transactions.get(index)?.clone();
-            let info = storage.transactions.get(&tx.hash().to_alloy())?.info.clone();
+            let info = storage.transactions.get(&tx.hash())?.info.clone();
             (info, block, tx)
         };
 
         Some(transaction_build(
-            Some(info.transaction_hash.to_alloy()),
+            Some(info.transaction_hash),
             tx,
             Some(&block),
             Some(info),
@@ -2202,7 +2202,7 @@ impl Backend {
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(
-            Some(info.transaction_hash.to_alloy()),
+            Some(info.transaction_hash),
             tx,
             Some(&block),
             Some(info),
@@ -2393,14 +2393,14 @@ impl TransactionValidator for Backend {
         let is_deposit_tx =
             matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce: u64 =
-            (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
+            (tx.nonce().to::<u64>()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.to_ethers() && !is_deposit_tx {
+            if tx.gas_price() < env.block.basefee && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
             }
@@ -2424,7 +2424,7 @@ impl TransactionValidator for Backend {
             InvalidTransactionError::InsufficientFunds
         })?;
 
-        if account.balance < req_funds.to_alloy() {
+        if account.balance < req_funds {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::InsufficientFunds);
         }
@@ -2438,7 +2438,7 @@ impl TransactionValidator for Backend {
         env: &Env,
     ) -> Result<(), InvalidTransactionError> {
         self.validate_pool_transaction_for(tx, account, env)?;
-        if tx.nonce().as_u64() > account.nonce {
+        if tx.nonce().to::<u64>() > account.nonce {
             return Err(InvalidTransactionError::NonceTooHigh);
         }
         Ok(())
@@ -2479,9 +2479,9 @@ pub fn transaction_build(
     }
 
     transaction.block_hash =
-        block.as_ref().map(|block| B256::from(keccak256(&rlp::encode(&block.header))));
+        block.as_ref().map(|block| B256::from(keccak256(&alloy_rlp::encode(&block.header))));
 
-    transaction.block_number = block.as_ref().map(|block| U256::from(block.header.number.as_u64()));
+    transaction.block_number = block.as_ref().map(|block| U256::from(block.header.number));
 
     transaction.transaction_index =
         info.as_ref().map(|status| U256::from(status.transaction_index));
