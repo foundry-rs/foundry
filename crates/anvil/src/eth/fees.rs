@@ -126,7 +126,7 @@ impl FeeManager {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee() == U256::ZERO {
+        if self.base_fee().is_zero() {
             return 0
         }
         calculate_next_block_base_fee(

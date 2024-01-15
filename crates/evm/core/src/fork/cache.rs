@@ -301,7 +301,7 @@ impl MemDb {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.present_value() == U256::from(0) {
+                    if value.present_value().is_zero() {
                         acc_storage.remove(&index);
                     } else {
                         acc_storage.insert(index, value.present_value());
