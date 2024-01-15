@@ -594,7 +594,9 @@ impl ClientFork {
 #[derive(Clone, Debug)]
 pub struct ClientForkConfig {
     pub eth_rpc_url: String,
+    /// The block number of the forked block
     pub block_number: u64,
+    /// The hash of the forked block
     pub block_hash: B256,
     // TODO make provider agnostic
     pub provider: Arc<RetryProvider>,
