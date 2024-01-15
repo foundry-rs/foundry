@@ -946,7 +946,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
     function assertGt(uint256 a, uint256 b) external pure;
-    
+
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]

@@ -561,7 +561,11 @@ fn assert_not_eq<T: Display + PartialEq>(a: &T, b: &T, error_message: Option<&st
     }
 }
 
-fn assert_eq_array<T: Display + PartialEq>(a: &Vec<T>, b: &Vec<T>, error_message: Option<&str>) -> Result {
+fn assert_eq_array<T: Display + PartialEq>(
+    a: &Vec<T>,
+    b: &Vec<T>,
+    error_message: Option<&str>,
+) -> Result {
     if a == b {
         Ok(Default::default())
     } else {
