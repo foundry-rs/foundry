@@ -29,6 +29,7 @@ use crate::{
     },
     NodeConfig,
 };
+use alloy_network::Sealable;
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
@@ -39,12 +40,12 @@ use alloy_rpc_types::{
     BlockNumberOrTag as BlockNumber, CallRequest, Filter, FilteredParams, Header as AlloyHeader,
     Log, Transaction, TransactionReceipt,
 };
+use alloy_consensus::{Header, ReceiptWithBloom, Receipt};
 use anvil_core::{
     eth::{
-        block::{Block, BlockInfo, Header},
+        alloy_block::{Block, BlockInfo},
         proof::{AccountProof, BasicAccount, StorageProof},
-        receipt::{EIP658Receipt, TypedReceipt},
-        transaction::alloy::{PendingTransaction, TypedTransaction, TransactionInfo, MaybeImpersonatedTransaction},
+        transaction::alloy::{PendingTransaction, TypedTransaction, TransactionInfo, MaybeImpersonatedTransaction, TypedReceipt},
         trie::RefTrieDB,
         utils::alloy_to_revm_access_list,
     },
@@ -675,7 +676,7 @@ impl Backend {
                     if let Some(hash) = storage.hashes.remove(&n) {
                         if let Some(block) = storage.blocks.remove(&hash) {
                             for tx in block.transactions {
-                                let _ = storage.transactions.remove(&tx.hash().to_alloy());
+                                let _ = storage.transactions.remove(&tx.hash());
                             }
                         }
                     }
@@ -915,8 +916,8 @@ impl Backend {
                 // we also need to update the new blockhash in the db itself
                 let block_hash = executed_tx.block.block.header.hash();
                 db.insert_block_hash(
-                    executed_tx.block.block.header.number.to_alloy(),
-                    block_hash.to_alloy(),
+                    U256::from(executed_tx.block.block.header.number),
+                    block_hash,
                 );
 
                 (executed_tx, block_hash)
@@ -940,16 +941,16 @@ impl Backend {
             let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
-            storage.best_hash = block_hash.to_alloy();
+            storage.best_hash = block_hash;
             // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with
             // prevrandao. https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
             if !self.is_eip3675() {
                 storage.total_difficulty =
-                    storage.total_difficulty.saturating_add(header.difficulty.to_alloy());
+                    storage.total_difficulty.saturating_add(header.difficulty);
             }
 
-            storage.blocks.insert(block_hash.to_alloy(), block);
-            storage.hashes.insert(block_number, block_hash.to_alloy());
+            storage.blocks.insert(block_hash, block);
+            storage.hashes.insert(block_number, block_hash);
 
             node_info!("");
             // insert all transactions
@@ -962,7 +963,7 @@ impl Backend {
                 node_info!("    Gas used: {}", receipt.gas_used());
                 if !info.exit.is_ok() {
                     let r = decode_revert(
-                        info.out.as_deref().unwrap_or_default(),
+                        &info.out.clone().unwrap_or_default().to_vec(),
                         None,
                         Some(info.exit),
                     );
@@ -973,10 +974,10 @@ impl Backend {
                 let mined_tx = MinedTransaction {
                     info,
                     receipt,
-                    block_hash: block_hash.to_alloy(),
+                    block_hash: block_hash,
                     block_number: block_number.to::<u64>(),
                 };
-                storage.transactions.insert(mined_tx.info.transaction_hash.to_alloy(), mined_tx);
+                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
 
             // remove old transactions that exceed the transaction block keeper
@@ -1012,7 +1013,7 @@ impl Backend {
         );
 
         // notify all listeners
-        self.notify_on_new_block(header, block_hash.to_alloy());
+        self.notify_on_new_block(header, block_hash);
 
         // update next base fee
         self.fees.set_base_fee(U256::from(next_block_base_fee));
@@ -1273,7 +1274,7 @@ impl Backend {
                 .transactions
                 .iter()
                 .filter_map(|tx| {
-                    storage.transactions.get(&tx.hash().to_alloy()).map(|tx| tx.info.clone())
+                    storage.transactions.get(&tx.hash()).map(|tx| tx.info.clone())
                 })
                 .collect()
         };
@@ -1285,7 +1286,7 @@ impl Backend {
             for log in logs.into_iter() {
                 let mut log = Log {
                     address: log.address.to_alloy(),
-                    topics: log.topics.into_iter().map(ToAlloy::to_alloy).collect(),
+                    topics: log.topics().into_iter().map(|t| *t).collect(),
                     data: log.data.0.into(),
                     block_hash: None,
                     block_number: None,
@@ -1569,6 +1570,10 @@ impl Backend {
             mix_hash,
             nonce,
             base_fee_per_gas,
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
         } = header;
 
         AlloyBlock {
@@ -1675,10 +1680,10 @@ impl Backend {
                         let block = block.block;
                         let block = BlockEnv {
                             number: block.header.number.to_alloy(),
-                            coinbase: block.header.beneficiary.to_alloy(),
+                            coinbase: block.header.beneficiary,
                             timestamp: rU256::from(block.header.timestamp),
-                            difficulty: block.header.difficulty.to_alloy(),
-                            prevrandao: Some(block.header.mix_hash).map(|h| h.to_alloy()),
+                            difficulty: block.header.difficulty,
+                            prevrandao: Some(block.header.mix_hash),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
                             gas_limit: block.header.gas_limit.to_alloy(),
                             ..Default::default()
@@ -1699,14 +1704,14 @@ impl Backend {
 
                 if let Some((state, block)) = self
                     .get_block(block_number.to::<u64>())
-                    .and_then(|block| Some((states.get(&block.header.hash().to_alloy())?, block)))
+                    .and_then(|block| Some((states.get(&block.header.hash())?, block)))
                 {
                     let block = BlockEnv {
                         number: block.header.number.to_alloy(),
-                        coinbase: block.header.beneficiary.to_alloy(),
+                        coinbase: block.header.beneficiary,
                         timestamp: rU256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty.to_alloy(),
-                        prevrandao: Some(block.header.mix_hash).map(|h| h.to_alloy()),
+                        difficulty: block.header.difficulty,
+                        prevrandao: Some(block.header.mix_hash),
                         basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
                         gas_limit: block.header.gas_limit.to_alloy(),
                         ..Default::default()
@@ -1992,7 +1997,9 @@ impl Backend {
         let MinedTransaction { info, receipt, block_hash, .. } =
             self.blockchain.get_transaction_by_hash(&hash)?;
 
-        let EIP658Receipt { status_code, gas_used, logs_bloom, logs } = receipt.into();
+        let ReceiptWithBloom { receipt, bloom, } = receipt.into();
+        let Receipt { success, cumulative_gas_used, logs } = receipt;
+        let logs_bloom = bloom;
 
         let index = info.transaction_index as usize;
 
@@ -2031,15 +2038,15 @@ impl Backend {
         let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
         let mut inner = TransactionReceipt {
-            transaction_hash: Some(info.transaction_hash.to_alloy()),
+            transaction_hash: Some(info.transaction_hash),
             transaction_index: U64::from(info.transaction_index),
             block_hash: Some(block_hash),
             block_number: Some(U256::from(block.header.number.as_u64())),
-            from: info.from.to_alloy(),
-            to: info.to.map(|t| t.to_alloy()),
+            from: info.from,
+            to: info.to,
             cumulative_gas_used,
-            gas_used: Some(gas_used.to_alloy()),
-            contract_address: info.contract_address.map(|t| t.to_alloy()),
+            gas_used: Some(cumulative_gas_used),
+            contract_address: info.contract_address,
             logs: {
                 let mut pre_receipts_log_index = None;
                 if !cumulative_receipts.is_empty() {
@@ -2051,7 +2058,7 @@ impl Backend {
                     .enumerate()
                     .map(|(i, log)| Log {
                         address: log.address.to_alloy(),
-                        topics: log.topics.clone().into_iter().map(|t| t.to_alloy()).collect(),
+                        topics: log.topics().clone().into_iter().map(|t| *t).collect(),
                         data: log.data.clone().0.into(),
                         block_hash: Some(block_hash),
                         block_number: Some(U256::from(block.header.number.as_u64())),
@@ -2064,7 +2071,7 @@ impl Backend {
                     })
                     .collect()
             },
-            status_code: Some(U64::from(status_code)),
+            status_code: Some(U64::from(success)),
             state_root: None,
             logs_bloom: Bloom::from_slice(logs_bloom.as_bytes()),
             transaction_type: transaction_type.map(U8::from).unwrap_or_default(),

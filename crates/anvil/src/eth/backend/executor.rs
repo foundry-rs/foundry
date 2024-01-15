@@ -7,17 +7,17 @@ use crate::{
     mem::inspector::Inspector,
 };
 use anvil_core::eth::{
-    block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{DepositReceipt, EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
-    transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
+    alloy_block::{Block, BlockInfo, PartialHeader},
+    transaction::alloy::{TypedReceipt, PendingTransaction, TransactionInfo, TypedTransaction},
     trie,
 };
+use alloy_consensus::Header;
 use ethers::{
     abi::ethereum_types::BloomInput,
     types::{Bloom, H256, U256},
     utils::rlp,
 };
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::types::ToEthers;
 use foundry_evm::{
     backend::DatabaseError,
     inspectors::{TracingInspector, TracingInspectorConfig},

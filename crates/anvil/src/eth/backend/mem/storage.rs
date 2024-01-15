@@ -15,9 +15,8 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo, TransactionReceipt,
 };
 use anvil_core::eth::{
-    block::{Block, PartialHeader},
-    receipt::TypedReceipt,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
+    alloy_block::{Block, PartialHeader},
+    transaction::alloy::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{

@@ -1,4 +1,4 @@
-use super::trie;
+use super::{trie, transaction::alloy::{TransactionInfo, TypedReceipt}};
 use alloy_consensus::Header;
 use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
@@ -9,6 +9,14 @@ use foundry_common::types::ToAlloy;
 type Transaction = crate::eth::transaction::alloy::TypedTransaction;
 #[cfg(feature = "impersonated-tx")]
 type Transaction = crate::eth::transaction::alloy::MaybeImpersonatedTransaction;
+
+/// Container type that gathers all block data
+#[derive(Clone, Debug)]
+pub struct BlockInfo {
+    pub block: Block,
+    pub transactions: Vec<TransactionInfo>,
+    pub receipts: Vec<TypedReceipt>,
+}
 
 /// An Ethereum Block
 #[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
