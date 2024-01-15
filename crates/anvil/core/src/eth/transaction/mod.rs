@@ -23,6 +23,7 @@ use revm::{
 use std::ops::Deref;
 
 pub mod alloy;
+pub mod optimism;
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
 pub use ethers_compat::{
