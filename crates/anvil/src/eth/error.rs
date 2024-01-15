@@ -365,7 +365,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
-                BlockchainError::AlloySignatureError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::AlloySignatureError(err) => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 BlockchainError::WalletError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")

@@ -29,6 +29,7 @@ use crate::{
     },
     NodeConfig,
 };
+use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_network::Sealable;
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_trace_types::{
@@ -40,12 +41,14 @@ use alloy_rpc_types::{
     BlockNumberOrTag as BlockNumber, CallRequest, Filter, FilteredParams, Header as AlloyHeader,
     Log, Transaction, TransactionReceipt,
 };
-use alloy_consensus::{Header, ReceiptWithBloom, Receipt};
 use anvil_core::{
     eth::{
         alloy_block::{Block, BlockInfo},
         proof::{AccountProof, BasicAccount, StorageProof},
-        transaction::alloy::{PendingTransaction, TypedTransaction, TransactionInfo, MaybeImpersonatedTransaction, TypedReceipt},
+        transaction::alloy::{
+            MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedReceipt,
+            TypedTransaction,
+        },
         trie::RefTrieDB,
         utils::alloy_to_revm_access_list,
     },
@@ -915,10 +918,7 @@ impl Backend {
 
                 // we also need to update the new blockhash in the db itself
                 let block_hash = executed_tx.block.block.header.hash();
-                db.insert_block_hash(
-                    U256::from(executed_tx.block.block.header.number),
-                    block_hash,
-                );
+                db.insert_block_hash(U256::from(executed_tx.block.block.header.number), block_hash);
 
                 (executed_tx, block_hash)
             };
@@ -974,7 +974,7 @@ impl Backend {
                 let mined_tx = MinedTransaction {
                     info,
                     receipt,
-                    block_hash: block_hash,
+                    block_hash,
                     block_number: block_number.to::<u64>(),
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
@@ -1273,9 +1273,7 @@ impl Backend {
             block
                 .transactions
                 .iter()
-                .filter_map(|tx| {
-                    storage.transactions.get(&tx.hash()).map(|tx| tx.info.clone())
-                })
+                .filter_map(|tx| storage.transactions.get(&tx.hash()).map(|tx| tx.info.clone()))
                 .collect()
         };
 
@@ -1832,8 +1830,7 @@ impl Backend {
         block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
         if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
-            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address)
-            {
+            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
                 return Ok(value);
             }
         }
@@ -1997,7 +1994,7 @@ impl Backend {
         let MinedTransaction { info, receipt, block_hash, .. } =
             self.blockchain.get_transaction_by_hash(&hash)?;
 
-        let ReceiptWithBloom { receipt, bloom, } = receipt.into();
+        let ReceiptWithBloom { receipt, bloom } = receipt.into();
         let Receipt { success, cumulative_gas_used, logs } = receipt;
         let logs_bloom = bloom;
 
@@ -2336,9 +2333,7 @@ fn get_pool_transactions_nonce(
             }
         });
     if let Some(highest_nonce_tx) = highest_nonce_tx {
-        return Some(
-            highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::from(1)),
-        );
+        return Some(highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::from(1)));
     }
     None
 }
@@ -2496,8 +2491,7 @@ pub fn transaction_build(
     // impersonated hash.
     if eth_transaction.is_impersonated() {
         transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
-        transaction.hash =
-            eth_transaction.impersonated_hash(transaction.from);
+        transaction.hash = eth_transaction.impersonated_hash(transaction.from);
     } else {
         transaction.from = eth_transaction.recover().expect("can recover signed tx");
     }
@@ -2511,9 +2505,7 @@ pub fn transaction_build(
         transaction.hash = tx_hash;
     }
 
-    transaction.to = info
-        .as_ref()
-        .map_or(eth_transaction.to(), |status| status.to);
+    transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
     transaction
 }
 

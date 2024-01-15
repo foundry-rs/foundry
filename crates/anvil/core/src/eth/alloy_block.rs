@@ -1,4 +1,7 @@
-use super::{trie, transaction::alloy::{TransactionInfo, TypedReceipt}};
+use super::{
+    transaction::alloy::{TransactionInfo, TypedReceipt},
+    trie,
+};
 use alloy_consensus::Header;
 use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};

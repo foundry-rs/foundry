@@ -48,10 +48,10 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
+            alloy::{PendingTransaction, TypedTransaction as AlloyTypedTransaction},
             call_to_internal_tx_request, to_alloy_proof, to_ethers_signature,
-            EthTransactionRequest, LegacyTransaction, TransactionKind,
-            TypedTransaction, TypedTransactionRequest,
-            alloy::{PendingTransaction, TypedTransaction as AlloyTypedTransaction}
+            EthTransactionRequest, LegacyTransaction, TransactionKind, TypedTransaction,
+            TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -949,7 +949,8 @@ impl EthApi {
             // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
             // version byte
             let extend = alloy_rlp::encode(&data);
-            let tx = match <AlloyTypedTransaction as alloy_rlp::Decodable>::decode(&mut &extend[..]) {
+            let tx = match <AlloyTypedTransaction as alloy_rlp::Decodable>::decode(&mut &extend[..])
+            {
                 Ok(transaction) => transaction,
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
             };
@@ -964,8 +965,7 @@ impl EthApi {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let on_chain_nonce =
-            self.backend.current_nonce(*pending_transaction.sender()).await?;
+        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
         let nonce = pending_transaction.transaction.nonce();
         let requires = required_marker(nonce, on_chain_nonce, from);
@@ -2057,14 +2057,12 @@ impl EthApi {
         // not in sequence. The transaction nonce is an incrementing number for each transaction
         // with the same From address.
         for pending in self.pool.ready_transactions() {
-            let entry =
-                inspect.pending.entry(pending.pending_transaction.sender()).or_default();
+            let entry = inspect.pending.entry(pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
-            let entry =
-                inspect.pending.entry(queued.pending_transaction.sender()).or_default();
+            let entry = inspect.pending.entry(queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }
@@ -2097,14 +2095,12 @@ impl EthApi {
         }
 
         for pending in self.pool.ready_transactions() {
-            let entry =
-                content.pending.entry(pending.pending_transaction.sender()).or_default();
+            let entry = content.pending.entry(pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
-            let entry =
-                content.pending.entry(queued.pending_transaction.sender()).or_default();
+            let entry = content.pending.entry(queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }
