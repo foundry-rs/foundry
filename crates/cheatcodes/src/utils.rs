@@ -17,7 +17,7 @@ use ethers_signers::{
 };
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use p256::ecdsa::{Signature, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner};
+use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -239,11 +239,15 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::FixedBytes;
     use super::*;
-    use hex::FromHex;
     use crate::CheatsConfig;
-    use std::{path::PathBuf, sync::Arc};
+    use alloy_primitives::FixedBytes;
+    use hex::FromHex;
+    use p256::ecdsa::{
+        signature::{hazmat::PrehashVerifier, Keypair},
+        Signature,
+    };
+    use std::{io::Read, path::PathBuf, str::FromStr, sync::Arc};
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -253,22 +257,34 @@ mod tests {
         };
         Cheatcodes { config: Arc::new(config), ..Default::default() }
     }
-    
+
     #[test]
     fn test_sign_p256() {
-        let pk = "0xA8568B74282DCC66FF70F10B4CE5CC7B391282F5381BBB4F4D8DD96974B16E6B".parse().unwrap();
-        let digest = FixedBytes::from_hex("0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad").unwrap();
-        let r =  <[u8; 32]>::from_hex("7C11C3641B19E7822DB644CBF76ED0420A013928C2FD3E36D8EF983B103BDFE1").unwrap();
-        let s =  <[u8; 32]>::from_hex("317D89879868D484810D4E508A96109F8C87617B7BE9337411348D7B786F945F").unwrap();
+        use p256::ecdsa::VerifyingKey;
+
+        let pk_u256: U256 = "1".parse().unwrap();
+        let signing_key = P256SigningKey::from_bytes(&pk_u256.to_be_bytes().into()).unwrap();
+        let digest = FixedBytes::from_hex(
+            "0x44acf6b7e36c1342c2c5897204fe09504e1e2efb1a900377dbc4e7a6a133ec56",
+        )
+        .unwrap();
         let mut cheats = cheats();
-        let result = sign_p256(&pk, &digest, &mut cheats).unwrap();
-        assert_eq!(result, (r, s).abi_encode());
+
+        let result = sign_p256(&pk_u256, &digest, &mut cheats).unwrap();
+        let result_bytes: [u8; 64] = result.try_into().unwrap();
+        let signature = Signature::from_bytes(&result_bytes.into()).unwrap();
+        let verifying_key = VerifyingKey::from(&signing_key);
+        assert!(verifying_key.verify_prehash(&digest.as_slice(), &signature).is_ok());
     }
 
     #[test]
     fn test_sign_p256_pk_too_large() {
-        let pk = "0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551".parse().unwrap();
-        let digest = FixedBytes::from_hex("0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad").unwrap();
+        let pk =
+            "0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551".parse().unwrap();
+        let digest = FixedBytes::from_hex(
+            "0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad",
+        )
+        .unwrap();
         let mut cheats = cheats();
         let result = sign_p256(&pk, &digest, &mut cheats);
         assert_eq!(result.err().unwrap().to_string(), "private key must be less than the secp256r1 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
@@ -276,7 +292,10 @@ mod tests {
 
     #[test]
     fn test_sign_p256_pk_0() {
-        let digest = FixedBytes::from_hex("0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad").unwrap();
+        let digest = FixedBytes::from_hex(
+            "0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad",
+        )
+        .unwrap();
         let mut cheats = cheats();
         let result = sign_p256(&U256::ZERO, &digest, &mut cheats);
         assert_eq!(result.err().unwrap().to_string(), "private key cannot be 0");
