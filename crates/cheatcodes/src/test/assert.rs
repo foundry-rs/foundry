@@ -21,38 +21,38 @@ enum ComparisonAssertionError<'a, T> {
 
 #[derive(thiserror::Error, Debug)]
 enum ApproxAssertionError<T, D> {
-    #[error("{a} !~= {b} (max delta: {expected_delta}, real delta: {delta})")]
-    EqAbs { a: T, b: T, expected_delta: D, delta: D },
+    #[error("{left} !~= {right} (max deltleft: {expected_delta}, real deltleft: {delta})")]
+    EqAbs { left: T, right: T, expected_delta: D, delta: D },
 }
 
 impl<'a, T: Display> ComparisonAssertionError<'a, T> {
     fn format_for_values(&self) -> String {
         match self {
-            Self::NotEq(a, b) => format!("{} == {}", a, b),
-            Self::Eq(a, b) => format!("{} != {}", a, b),    
-            Self::Ge(a, b) => format!("{} < {}", a, b),
-            Self::Gt(a, b) => format!("{} <= {}", a, b),
-            Self::Le(a, b) => format!("{} > {}", a, b),
-            Self::Lt(a, b) => format!("{} >= {}", a, b),
+            Self::NotEq(left, right) => format!("{} == {}", left, right),
+            Self::Eq(left, right) => format!("{} != {}", left, right),
+            Self::Ge(left, right) => format!("{} < {}", left, right),
+            Self::Gt(left, right) => format!("{} <= {}", left, right),
+            Self::Le(left, right) => format!("{} > {}", left, right),
+            Self::Lt(left, right) => format!("{} >= {}", left, right),
         }
     }
 }
 
 macro_rules! format_arrays {
-    ($a:expr, $b:expr, $c:literal) => {
-        format!("[{}] {} [{}]", $a.iter().join(", "), $c, $b.iter().join(", "))
+    ($left:expr, $right:expr, $c:literal) => {
+        format!("[{}] {} [{}]", $left.iter().join(", "), $c, $right.iter().join(", "))
     };
 }
 
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
         match self {
-            Self::NotEq(a, b) => format_arrays!(a, b, "=="),
-            Self::Eq(a, b) => format_arrays!(a, b, "!="),
-            Self::Ge(a, b) => format_arrays!(a, b, "<"),
-            Self::Gt(a, b) => format_arrays!(a, b, "<="),
-            Self::Le(a, b) => format_arrays!(a, b, ">"),
-            Self::Lt(a, b) => format_arrays!(a, b, ">="),
+            Self::NotEq(left, right) => format_arrays!(left, right, "=="),
+            Self::Eq(left, right) => format_arrays!(left, right, "!="),
+            Self::Ge(left, right) => format_arrays!(left, right, "<"),
+            Self::Gt(left, right) => format_arrays!(left, right, "<="),
+            Self::Le(left, right) => format_arrays!(left, right, ">"),
+            Self::Lt(left, right) => format_arrays!(left, right, ">="),
         }
     }
 }
@@ -85,559 +85,592 @@ impl Cheatcode for assertFalse_1Call {
 
 impl Cheatcode for assertEq_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_4Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_6Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_7Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_8Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_9Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_10Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(&hex::encode_prefixed(a), &hex::encode_prefixed(b))
+        let Self { left, right } = self;
+        Ok(assert_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_11Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(&hex::encode_prefixed(a), &hex::encode_prefixed(b))
+        let Self { left, right, error } = self;
+        Ok(assert_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
             .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_12Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(&hex::encode_prefixed(a), &hex::encode_prefixed(b))
+        let Self { left, right } = self;
+        Ok(assert_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(&hex::encode_prefixed(a), &hex::encode_prefixed(b))
+        let Self { left, right, error } = self;
+        Ok(assert_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
             .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertEq_14Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_15Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_16Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_17Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_18Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_19Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_20Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_21Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_22Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_23Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_24Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        Ok(assert_eq(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_25Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_26Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        Ok(assert_eq(&a, &b).map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
+        let Self { left, right } = self;
+        let left = left.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let right = right.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        Ok(assert_eq(&left, &right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertEq_27Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        Ok(assert_eq(&a, &b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        let left = left.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let right = right.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        Ok(assert_eq(&left, &right).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_4Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_6Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_7Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_8Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_9Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_10Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_11Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_12Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(&hex::encode_prefixed(a), &hex::encode_prefixed(b))
+        let Self { left, right } = self;
+        Ok(assert_not_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(&hex::encode_prefixed(a), &hex::encode_prefixed(b))
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
             .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_14Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_15Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_16Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_17Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_18Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_19Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_20Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_21Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_22Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_23Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_24Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_not_eq(a, b)
+        let Self { left, right } = self;
+        Ok(assert_not_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_25Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_not_eq(a, b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_not_eq(left, right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_26Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        Ok(assert_not_eq(&a, &b)
+        let Self { left, right } = self;
+        let left = left.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let right = right.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        Ok(assert_not_eq(&left, &right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertNotEq_27Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        let a = a.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        let b = b.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
-        Ok(assert_not_eq(&a, &b).map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
+        let Self { left, right, error } = self;
+        let left = left.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        let right = right.iter().map(hex::encode_prefixed).collect::<Vec<_>>();
+        Ok(assert_not_eq(&left, &right)
+            .map_err(|e| format!("{}: {}", error, e.format_for_arrays()))?)
     }
 }
 
 impl Cheatcode for assertGt_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_gt(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_gt(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGt_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_gt(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_gt(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGt_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_gt(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_gt(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGt_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_gt(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_gt(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGe_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_ge(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_ge(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGe_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_ge(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_ge(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGe_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_ge(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_ge(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertGe_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_ge(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_ge(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLt_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_lt(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_lt(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLt_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_lt(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_lt(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLt_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_lt(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_lt(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLt_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_lt(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_lt(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLe_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_le(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_le(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLe_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_le(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_le(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLe_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b } = self;
-        Ok(assert_le(a, b).map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
+        let Self { left, right } = self;
+        Ok(assert_le(left, right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertLe_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { a, b, error } = self;
-        Ok(assert_le(a, b).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        let Self { left, right, error } = self;
+        Ok(assert_le(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(uint_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+        Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
             .map_err(|e| format!("Assertion failed: {}", e.to_string()))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(uint_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+        Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
             .map_err(|e| format!("{}: {}", self.error, e.to_string()))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(int_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+        Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
             .map_err(|e| format!("Assertion failed: {}", e.to_string()))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(int_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+        Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
             .map_err(|e| format!("{}: {}", self.error, e.to_string()))?)
     }
 }
@@ -658,89 +691,89 @@ fn assert_false(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
     }
 }
 
-fn assert_eq<'a, T: PartialEq>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T> {
-    if a == b {
+fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
+    if left == right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Eq(a, b))
+        Err(ComparisonAssertionError::Eq(left, right))
     }
 }
 
-fn assert_not_eq<'a, T: PartialEq>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T> {
-    if a != b {
+fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
+    if left != right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::NotEq(a, b))
+        Err(ComparisonAssertionError::NotEq(left, right))
     }
 }
 
 fn uint_assert_approx_eq_abs(
-    a: U256,
-    b: U256,
+    left: U256,
+    right: U256,
     max_delta: U256,
 ) -> Result<Vec<u8>, ApproxAssertionError<U256, U256>> {
-    let delta = if a > b { a - b } else { b - a };
+    let delta = if left > right { left - right } else { right - left };
 
     if delta <= max_delta {
         Ok(Default::default())
     } else {
-        Err(ApproxAssertionError::EqAbs { a, b, expected_delta: max_delta, delta })
+        Err(ApproxAssertionError::EqAbs { left, right, expected_delta: max_delta, delta })
     }
 }
 
 fn int_assert_approx_eq_abs(
-    a: I256,
-    b: I256,
+    left: I256,
+    right: I256,
     max_delta: U256,
 ) -> Result<Vec<u8>, ApproxAssertionError<I256, U256>> {
-    let (a_sign, a_abs) = a.into_sign_and_abs();
-    let (b_sign, b_abs) = b.into_sign_and_abs();
+    let (left_sign, left_abs) = left.into_sign_and_abs();
+    let (right_sign, right_abs) = right.into_sign_and_abs();
 
-    let delta = if a_sign == b_sign {
-        if a_abs > b_abs {
-            a_abs - b_abs
+    let delta = if left_sign == right_sign {
+        if left_abs > right_abs {
+            left_abs - right_abs
         } else {
-            b_abs - a_abs
+            right_abs - left_abs
         }
     } else {
-        a_abs + b_abs
+        left_abs + right_abs
     };
 
     if delta <= max_delta {
         Ok(Default::default())
     } else {
-        Err(ApproxAssertionError::EqAbs { a, b, expected_delta: max_delta, delta })
+        Err(ApproxAssertionError::EqAbs { left, right, expected_delta: max_delta, delta })
     }
 }
 
-fn assert_gt<'a, T: PartialOrd>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T> {
-    if a > b {
+fn assert_gt<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
+    if left > right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Gt(a, b))
+        Err(ComparisonAssertionError::Gt(left, right))
     }
 }
 
-fn assert_ge<'a, T: PartialOrd>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T> {
-    if a >= b {
+fn assert_ge<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
+    if left >= right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Ge(a, b))
+        Err(ComparisonAssertionError::Ge(left, right))
     }
 }
 
-fn assert_lt<'a, T: PartialOrd>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T> {
-    if a < b {
+fn assert_lt<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
+    if left < right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Lt(a, b))
+        Err(ComparisonAssertionError::Lt(left, right))
     }
 }
 
-fn assert_le<'a, T: PartialOrd>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T> {
-    if a <= b {
+fn assert_le<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
+    if left <= right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Le(a, b))
+        Err(ComparisonAssertionError::Le(left, right))
     }
 }

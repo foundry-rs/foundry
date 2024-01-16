@@ -729,317 +729,317 @@ interface Vm {
 
     /// Asserts that two `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool a, bool b) external pure;
+    function assertEq(bool left, bool right) external pure;
 
     /// Asserts that two `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool a, bool b, string calldata error) external pure;
+    function assertEq(bool left, bool right, string calldata error) external pure;
 
     /// Asserts that two `uint256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256 a, uint256 b) external pure;
+    function assertEq(uint256 left, uint256 right) external pure;
 
     /// Asserts that two `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256 a, uint256 b, string calldata error) external pure;
+    function assertEq(uint256 left, uint256 right, string calldata error) external pure;
 
     /// Asserts that two `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256 a, int256 b) external pure;
+    function assertEq(int256 left, int256 right) external pure;
 
     /// Asserts that two `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256 a, int256 b, string calldata error) external pure;
+    function assertEq(int256 left, int256 right, string calldata error) external pure;
 
     /// Asserts that two `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address a, address b) external pure;
+    function assertEq(address left, address right) external pure;
 
     /// Asserts that two `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address a, address b, string calldata error) external pure;
+    function assertEq(address left, address right, string calldata error) external pure;
 
     /// Asserts that two `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32 a, bytes32 b) external pure;
+    function assertEq(bytes32 left, bytes32 right) external pure;
 
     /// Asserts that two `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32 a, bytes32 b, string calldata error) external pure;
+    function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;
 
     /// Asserts that two `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string calldata a, string calldata b) external pure;
+    function assertEq(string calldata left, string calldata right) external pure;
 
     /// Asserts that two `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string calldata a, string calldata b, string calldata error) external pure;
+    function assertEq(string calldata left, string calldata right, string calldata error) external pure;
 
     /// Asserts that two `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes calldata a, bytes calldata b) external pure;
+    function assertEq(bytes calldata left, bytes calldata right) external pure;
 
     /// Asserts that two `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes calldata a, bytes calldata b, string calldata error) external pure;
+    function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool[] calldata a, bool[] calldata b) external pure;
+    function assertEq(bool[] calldata left, bool[] calldata right) external pure;
 
     /// Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool[] calldata a, bool[] calldata b, string calldata error) external pure;
+    function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `uint256 values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256[] calldata a, uint256[] calldata b) external pure;
+    function assertEq(uint256[] calldata left, uint256[] calldata right) external pure;
 
     /// Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256[] calldata a, uint256[] calldata b, string calldata error) external pure;
+    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256[] calldata a, int256[] calldata b) external pure;
+    function assertEq(int256[] calldata left, int256[] calldata right) external pure;
 
     /// Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256[] calldata a, int256[] calldata b, string calldata error) external pure;
+    function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address[] calldata a, address[] calldata b) external pure;
+    function assertEq(address[] calldata left, address[] calldata right) external pure;
 
     /// Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address[] calldata a, address[] calldata b, string calldata error) external pure;
+    function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32[] calldata a, bytes32[] calldata b) external pure;
+    function assertEq(bytes32[] calldata left, bytes32[] calldata right) external pure;
 
     /// Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32[] calldata a, bytes32[] calldata b, string calldata error) external pure;
+    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string[] calldata a, string[] calldata b) external pure;
+    function assertEq(string[] calldata left, string[] calldata right) external pure;
 
     /// Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string[] calldata a, string[] calldata b, string calldata error) external pure;
+    function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes[] calldata a, bytes[] calldata b) external pure;
+    function assertEq(bytes[] calldata left, bytes[] calldata right) external pure;
 
     /// Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes[] calldata a, bytes[] calldata b, string calldata error) external pure;
+    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
 
     /// Asserts that two `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool a, bool b) external pure;
+    function assertNotEq(bool left, bool right) external pure;
 
     /// Asserts that two `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool a, bool b, string calldata error) external pure;
+    function assertNotEq(bool left, bool right, string calldata error) external pure;
 
     /// Asserts that two `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256 a, uint256 b) external pure;
+    function assertNotEq(uint256 left, uint256 right) external pure;
 
     /// Asserts that two `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256 a, uint256 b, string calldata error) external pure;
+    function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;
 
     /// Asserts that two `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256 a, int256 b) external pure;
+    function assertNotEq(int256 left, int256 right) external pure;
 
     /// Asserts that two `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256 a, int256 b, string calldata error) external pure;
+    function assertNotEq(int256 left, int256 right, string calldata error) external pure;
 
     /// Asserts that two `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address a, address b) external pure;
+    function assertNotEq(address left, address right) external pure;
 
     /// Asserts that two `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address a, address b, string calldata error) external pure;
+    function assertNotEq(address left, address right, string calldata error) external pure;
 
     /// Asserts that two `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32 a, bytes32 b) external pure;
+    function assertNotEq(bytes32 left, bytes32 right) external pure;
 
     /// Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32 a, bytes32 b, string calldata error) external pure;
+    function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;
 
     /// Asserts that two `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string calldata a, string calldata b) external pure;
+    function assertNotEq(string calldata left, string calldata right) external pure;
 
     /// Asserts that two `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string calldata a, string calldata b, string calldata error) external pure;
+    function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;
 
     /// Asserts that two `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes calldata a, bytes calldata b) external pure;
+    function assertNotEq(bytes calldata left, bytes calldata right) external pure;
 
     /// Asserts that two `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes calldata a, bytes calldata b, string calldata error) external pure;
+    function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool[] calldata a, bool[] calldata b) external pure;
+    function assertNotEq(bool[] calldata left, bool[] calldata right) external pure;
 
     /// Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool[] calldata a, bool[] calldata b, string calldata error) external pure;
+    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256[] calldata a, uint256[] calldata b) external pure;
+    function assertNotEq(uint256[] calldata left, uint256[] calldata right) external pure;
 
     /// Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256[] calldata a, uint256[] calldata b, string calldata error) external pure;
+    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256[] calldata a, int256[] calldata b) external pure;
+    function assertNotEq(int256[] calldata left, int256[] calldata right) external pure;
 
     /// Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256[] calldata a, int256[] calldata b, string calldata error) external pure;
+    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address[] calldata a, address[] calldata b) external pure;
+    function assertNotEq(address[] calldata left, address[] calldata right) external pure;
 
     /// Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address[] calldata a, address[] calldata b, string calldata error) external pure;
+    function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32[] calldata a, bytes32[] calldata b) external pure;
+    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right) external pure;
 
     /// Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32[] calldata a, bytes32[] calldata b, string calldata error) external pure;
+    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string[] calldata a, string[] calldata b) external pure;
+    function assertNotEq(string[] calldata left, string[] calldata right) external pure;
 
     /// Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string[] calldata a, string[] calldata b, string calldata error) external pure;
+    function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
 
     /// Asserts that two arrays of `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes[] calldata a, bytes[] calldata b) external pure;
+    function assertNotEq(bytes[] calldata left, bytes[] calldata right) external pure;
 
     /// Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes[] calldata a, bytes[] calldata b, string calldata error) external pure;
+    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(uint256 a, uint256 b) external pure;
+    function assertGt(uint256 left, uint256 right) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(uint256 a, uint256 b, string calldata error) external pure;
+    function assertGt(uint256 left, uint256 right, string calldata error) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(int256 a, int256 b) external pure;
+    function assertGt(int256 left, int256 right) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(int256 a, int256 b, string calldata error) external pure;
+    function assertGt(int256 left, int256 right, string calldata error) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(uint256 a, uint256 b) external pure;
+    function assertGe(uint256 left, uint256 right) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(uint256 a, uint256 b, string calldata error) external pure;
+    function assertGe(uint256 left, uint256 right, string calldata error) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(int256 a, int256 b) external pure;
+    function assertGe(int256 left, int256 right) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(int256 a, int256 b, string calldata error) external pure;
+    function assertGe(int256 left, int256 right, string calldata error) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(uint256 a, uint256 b) external pure;
+    function assertLt(uint256 left, uint256 right) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(uint256 a, uint256 b, string calldata error) external pure;
+    function assertLt(uint256 left, uint256 right, string calldata error) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(int256 a, int256 b) external pure;
+    function assertLt(int256 left, int256 right) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(int256 a, int256 b, string calldata error) external pure;
+    function assertLt(int256 left, int256 right, string calldata error) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(uint256 a, uint256 b) external pure;
+    function assertLe(uint256 left, uint256 right) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(uint256 a, uint256 b, string calldata error) external pure;
+    function assertLe(uint256 left, uint256 right, string calldata error) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(int256 a, int256 b) external pure;
+    function assertLe(int256 left, int256 right) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(int256 a, int256 b, string calldata error) external pure;
+    function assertLe(int256 left, int256 right, string calldata error) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta) external pure;
+    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta) external pure;
+    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;
 
     // ======== OS and Filesystem ========
 
