@@ -230,8 +230,8 @@ impl DebuggerContext<'_> {
                         .find_map(|(i, op)| {
                             if i > 0 {
                                 match (
-                                    prev_ops[i - 1].contains("JUMP")
-                                        && prev_ops[i - 1] != "JUMPDEST",
+                                    prev_ops[i - 1].contains("JUMP") &&
+                                        prev_ops[i - 1] != "JUMPDEST",
                                     &**op,
                                 ) {
                                     (true, "JUMPDEST") => Some(i - 1),
