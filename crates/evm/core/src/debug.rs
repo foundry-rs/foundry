@@ -1,6 +1,6 @@
-use crate::utils::CallKind;
 use alloy_primitives::{Address, U256};
 use revm::interpreter::OpCode;
+use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 

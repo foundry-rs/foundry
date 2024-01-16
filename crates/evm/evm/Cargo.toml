@@ -35,7 +35,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
 ] }
-
+revm-inspectors.workspace = true
 ethers-core.workspace = true
 ethers-signers.workspace = true
 itertools.workspace = true
