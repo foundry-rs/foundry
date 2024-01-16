@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use itertools::Itertools;
 
-use crate::{Cheatcode, Cheatcodes, Error, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 
 #[derive(Debug, thiserror::Error)]
 #[error("Assertion failed")]
