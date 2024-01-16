@@ -38,13 +38,14 @@ use alloy_rpc_trace_types::{
 };
 use alloy_rpc_types::{
     state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
-    BlockNumberOrTag as BlockNumber, CallRequest, Filter, FilteredParams, Header as AlloyHeader,
-    Log, Transaction, TransactionReceipt,
+    BlockNumberOrTag as BlockNumber, CallRequest, EIP1186AccountProofResponse as AccountProof,
+    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Log,
+    Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{
         alloy_block::{Block, BlockInfo},
-        proof::{AccountProof, BasicAccount, StorageProof},
+        alloy_proof::BasicAccount,
         transaction::alloy::{
             MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedReceipt,
             TypedTransaction,
@@ -2219,7 +2220,7 @@ impl Backend {
         keys: Vec<B256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
-        let account_key = B256::from(keccak256(address.to_ethers().as_bytes()));
+        let account_key = B256::from(alloy_primitives::utils::keccak256(address));
         let block_number = block_request.as_ref().map(|r| r.block_number());
 
         self.with_database_at(block_request, |block_db, _| {
@@ -2232,10 +2233,15 @@ impl Backend {
                 .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
 
             let maybe_account: Option<BasicAccount> = {
-                let acc_decoder = |bytes: &[u8]| {
-                    rlp::decode(bytes).unwrap_or_else(|_| {
-                        panic!("prove_account_at, could not query trie for account={:?}", &address)
-                    })
+                let acc_decoder = |mut bytes: &[u8]| {
+                    <BasicAccount as alloy_rlp::Decodable>::decode(&mut bytes).unwrap_or_else(
+                        |_| {
+                            panic!(
+                                "prove_account_at, could not query trie for account={:?}",
+                                &address
+                            )
+                        },
+                    )
                 };
                 let query = (&mut recorder, acc_decoder);
                 trie.get_with(account_key.to_ethers().as_bytes(), query)
@@ -2251,7 +2257,7 @@ impl Backend {
                     // proof is rlp encoded:
                     // <https://github.com/foundry-rs/foundry/issues/5004>
                     // <https://www.quicknode.com/docs/ethereum/eth_getProof>
-                    rlp::encode(&record).to_vec().into()
+                    alloy_rlp::encode(&record).to_vec().into()
                 })
                 .collect::<Vec<_>>();
 
@@ -2259,9 +2265,9 @@ impl Backend {
                 block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
 
             let account_proof = AccountProof {
-                address: address.to_ethers(),
+                address,
                 balance: account.balance,
-                nonce: account.nonce.as_u64().into(),
+                nonce: account.nonce.to::<U64>(),
                 code_hash: account.code_hash,
                 storage_hash: account.storage_root,
                 account_proof: proof,
@@ -2272,15 +2278,15 @@ impl Backend {
                         let key = B256::from(keccak256(storage_key));
                         prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key: storage_key.to_ethers(),
-                                value: storage_value.to_ethers().into_uint(),
+                                key: alloy_rpc_types::JsonStorageKey(storage_key),
+                                value: U256::from_be_bytes(storage_value.0),
                                 proof: storage_proof
                                     .into_iter()
                                     .map(|proof| {
                                         // proof is rlp encoded:
                                         // <https://github.com/foundry-rs/foundry/issues/5004>
                                         // <https://www.quicknode.com/docs/ethereum/eth_getProof>
-                                        rlp::encode(&proof).to_vec().into()
+                                        alloy_rlp::encode(&proof).to_vec().into()
                                     })
                                     .collect(),
                             },

@@ -812,7 +812,7 @@ impl EthApi {
         }
 
         let proof = self.backend.prove_account_at(address, keys, Some(block_request)).await?;
-        Ok(to_alloy_proof(proof))
+        Ok(proof)
     }
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
