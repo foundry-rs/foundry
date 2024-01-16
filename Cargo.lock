@@ -291,6 +291,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-signer"
+version = "0.1.0"
+source = "git+https://github.com/alloy-rs/alloy#c5e9371f1c00e7fd700e28bf2e95fc5e671d93c4"
+dependencies = [
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "async-trait",
+ "auto_impl",
+ "coins-bip32",
+ "coins-bip39",
+ "elliptic-curve",
+ "k256",
+ "rand 0.8.5",
+ "thiserror",
+]
+
+[[package]]
 name = "alloy-sol-macro"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -489,6 +507,8 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-trace-types",
  "alloy-rpc-types",
+ "alloy-signer",
+ "alloy-sol-types",
  "alloy-transport",
  "anvil-core",
  "anvil-rpc",
@@ -8554,8 +8574,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "alloy-signer"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#c5e9371f1c00e7fd700e28bf2e95fc5e671d93c4"

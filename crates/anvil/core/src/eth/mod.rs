@@ -1,5 +1,5 @@
 use crate::{
-    eth::subscription::SubscriptionId,
+    eth::{subscription::SubscriptionId, transaction::alloy::EthTransactionRequest},
     types::{EvmMineOptions, Forking, Index},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
@@ -26,7 +26,6 @@ pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
 use self::serde_helpers::*;
-use self::transaction::EthTransactionRequest;
 
 #[cfg(feature = "serde")]
 use foundry_common::serde_helpers::{

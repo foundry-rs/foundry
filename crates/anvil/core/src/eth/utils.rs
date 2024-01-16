@@ -43,7 +43,7 @@ pub fn from_eip_to_alloy_access_list(list: AlloyEipAccessList) -> AlloyAccessLis
             .into_iter()
             .map(|item| AlloyAccessListItem {
                 address: item.address,
-                storage_keys: item.storage_keys.into_iter().map(|k| k.into()).collect(),
+                storage_keys: item.storage_keys.into_iter().collect(),
             })
             .collect(),
     )

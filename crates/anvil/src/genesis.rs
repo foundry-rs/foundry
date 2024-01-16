@@ -1,7 +1,8 @@
 //! Bindings for geth's `genesis.json` format
 use crate::revm::primitives::AccountInfo;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use ethers::{signers::LocalWallet, types::serde_helpers::*};
+use alloy_signer::LocalWallet;
+use ethers::types::serde_helpers::*;
 use foundry_common::errors::FsPathError;
 use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256};
 use serde::{Deserialize, Serialize};
@@ -213,7 +214,9 @@ pub struct CliqueConfig {
 /// serde support for `secretKey` in genesis
 
 pub mod secret_key {
-    use ethers::{core::k256::SecretKey, signers::LocalWallet, types::Bytes};
+    use alloy_primitives::Bytes;
+    use alloy_signer::LocalWallet;
+    use k256::{ecdsa::SigningKey, SecretKey};
     use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(value: &Option<LocalWallet>, serializer: S) -> Result<S::Ok, S::Error>
@@ -221,7 +224,10 @@ pub mod secret_key {
         S: Serializer,
     {
         if let Some(wallet) = value {
-            Bytes::from(wallet.signer().to_bytes().as_ref()).serialize(serializer)
+            let signer: SigningKey = wallet.signer().clone();
+            let signer_bytes = signer.to_bytes();
+            let signer_bytes2: [u8; 32] = *signer_bytes.as_ref();
+            Bytes::from(signer_bytes2).serialize(serializer)
         } else {
             serializer.serialize_none()
         }

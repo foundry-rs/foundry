@@ -3,11 +3,11 @@ extern crate tracing;
 
 use crate::{
     eth::{
+        alloy_sign::{DevSigner, Signer as EthSigner},
         backend::{info::StorageInfo, mem},
         fees::{FeeHistoryService, FeeManager},
         miner::{Miner, MiningMode},
         pool::Pool,
-        sign::{DevSigner, Signer as EthSigner},
         EthApi,
     },
     filter::Filters,
@@ -16,19 +16,12 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
+use alloy_primitives::{Address, U256};
+use alloy_signer::{LocalWallet, Signer as AlloySigner};
 use eth::backend::fork::ClientFork;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::Wallet,
-    signers::Signer,
-    types::{Address, U256},
-};
-use foundry_common::{
-    provider::{
-        alloy::{ProviderBuilder, RetryProvider},
-        ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider},
-    },
-    types::ToEthers,
+use foundry_common::provider::{
+    alloy::{ProviderBuilder, RetryProvider},
+    ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider},
 };
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
@@ -314,7 +307,7 @@ impl NodeHandle {
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub fn dev_wallets(&self) -> impl Iterator<Item = Wallet<SigningKey>> + '_ {
+    pub fn dev_wallets(&self) -> impl Iterator<Item = LocalWallet> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 
@@ -325,12 +318,12 @@ impl NodeHandle {
 
     /// Native token balance of every genesis account in the genesis block
     pub fn genesis_balance(&self) -> U256 {
-        self.config.genesis_balance.to_ethers()
+        self.config.genesis_balance
     }
 
     /// Default gas price for all txs
     pub fn gas_price(&self) -> U256 {
-        self.config.get_gas_price().to_ethers()
+        self.config.get_gas_price()
     }
 
     /// Returns the shutdown signal

@@ -19,6 +19,7 @@ use crate::{
 use alloy_primitives::{hex, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
+use alloy_signer::{LocalWallet, Signer as AlloySigner};
 use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use ethers::{
@@ -105,13 +106,13 @@ pub struct NodeConfig {
     /// The hardfork to use
     pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
-    pub genesis_accounts: Vec<Wallet<SigningKey>>,
+    pub genesis_accounts: Vec<LocalWallet>,
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub signer_accounts: Vec<Wallet<SigningKey>>,
+    pub signer_accounts: Vec<LocalWallet>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
     /// Disable auto, interval mining mode uns use `MiningMode::None` instead
@@ -197,8 +198,7 @@ Available Accounts
         );
         let balance = alloy_primitives::utils::format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address().to_alloy())
-                .unwrap();
+            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address()).unwrap();
         }
 
         let _ = write!(
@@ -364,7 +364,7 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
+        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).alloy_gen();
         Self {
             chain_id: None,
             gas_limit: U256::from(30_000_000),
@@ -471,10 +471,10 @@ impl NodeConfig {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
         self.genesis_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(chain_id);
+            *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
         self.signer_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(chain_id);
+            *wallet = wallet.clone().with_chain_id(Some(chain_id));
         })
     }
 
@@ -559,14 +559,14 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn with_genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_genesis_accounts(mut self, accounts: Vec<LocalWallet>) -> Self {
         self.genesis_accounts = accounts;
         self
     }
 
     /// Sets the signer accounts
     #[must_use]
-    pub fn with_signer_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_signer_accounts(mut self, accounts: Vec<LocalWallet>) -> Self {
         self.signer_accounts = accounts;
         self
     }
@@ -575,7 +575,7 @@ impl NodeConfig {
     /// so that `genesis_accounts == accounts`
     #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
-        let accounts = generator.gen();
+        let accounts = generator.alloy_gen();
         self.account_generator = Some(generator);
         self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
     }
@@ -845,7 +845,7 @@ impl NodeConfig {
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
-            accounts: self.genesis_accounts.iter().map(|acc| acc.address().to_alloy()).collect(),
+            accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
         };
@@ -1163,7 +1163,7 @@ impl AccountGenerator {
     pub fn gen(&self) -> Vec<Wallet<SigningKey>> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
-        // use the
+        // use the derivation path
         let derivation_path = self.get_derivation_path();
 
         let mut wallets = Vec::with_capacity(self.amount);
@@ -1172,6 +1172,23 @@ impl AccountGenerator {
             let builder =
                 builder.clone().derivation_path(&format!("{derivation_path}{idx}")).unwrap();
             let wallet = builder.build().unwrap().with_chain_id(self.chain_id);
+            wallets.push(wallet)
+        }
+        wallets
+    }
+
+    pub fn alloy_gen(&self) -> Vec<LocalWallet> {
+        let builder =
+            alloy_signer::MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
+
+        // use the derivation path
+        let derivation_path = self.get_derivation_path();
+
+        let mut wallets = Vec::with_capacity(self.amount);
+        for idx in 0..self.amount {
+            let builder =
+                builder.clone().derivation_path(&format!("{derivation_path}{idx}")).unwrap();
+            let wallet = builder.build().unwrap().with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
         wallets

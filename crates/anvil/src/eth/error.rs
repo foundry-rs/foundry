@@ -2,6 +2,7 @@
 
 use crate::eth::pool::transactions::PoolTransaction;
 use alloy_primitives::SignatureError as AlloySignatureError;
+use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -51,6 +52,8 @@ pub enum BlockchainError {
     SignatureError(#[from] SignatureError),
     #[error(transparent)]
     AlloySignatureError(#[from] AlloySignatureError),
+    #[error(transparent)]
+    AlloySignerError(#[from] AlloySignerError),
     #[error(transparent)]
     WalletError(#[from] WalletError),
     #[error("Rpc Endpoint not implemented")]
@@ -365,6 +368,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::AlloySignerError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::AlloySignatureError(err) => {
                     RpcError::invalid_params(err.to_string())
                 }

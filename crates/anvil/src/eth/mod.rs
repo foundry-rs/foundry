@@ -1,3 +1,4 @@
+pub mod alloy_sign;
 pub mod api;
 pub mod otterscan;
 pub use api::EthApi;

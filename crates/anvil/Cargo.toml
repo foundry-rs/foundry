@@ -39,6 +39,8 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus.workspace = true
 alloy-network.workspace = true
 alloy-rlp.workspace = true
+alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-rpc-types.workspace = true
 alloy-rpc-trace-types.workspace = true
 alloy-providers.workspace = true
