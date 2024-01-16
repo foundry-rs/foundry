@@ -1189,6 +1189,74 @@ interface Vm {
         string calldata error
     ) external pure;
 
+    /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta) external pure;
+
+    /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    /// Includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
+
+    /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta) external pure;
+
+    /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    /// Includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
+
+    /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    /// Formats values with decimals in failure message.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRelDecimal(
+        uint256 left,
+        uint256 right,
+        uint256 maxPercentDelta,
+        uint256 decimals
+    ) external pure;
+
+    /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    /// Formats values with decimals in failure message. Includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRelDecimal(
+        uint256 left,
+        uint256 right,
+        uint256 maxPercentDelta,
+        uint256 decimals,
+        string calldata error
+    ) external pure;
+
+    /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    /// Formats values with decimals in failure message.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRelDecimal(
+        int256 left,
+        int256 right,
+        uint256 maxPercentDelta,
+        uint256 decimals
+    ) external pure;
+
+    /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
+    /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
+    /// Formats values with decimals in failure message. Includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqRelDecimal(
+        int256 left,
+        int256 right,
+        uint256 maxPercentDelta,
+        uint256 decimals,
+        string calldata error
+    ) external pure;
+
     // ======== OS and Filesystem ========
 
     // -------- Metadata --------

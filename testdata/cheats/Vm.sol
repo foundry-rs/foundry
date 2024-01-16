@@ -33,6 +33,14 @@ interface Vm {
     function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;
     function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta) external pure;
     function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals) external pure;
+    function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;
+    function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals) external pure;
+    function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta) external pure;
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta) external pure;
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
     function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;
     function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
     function assertEqDecimal(int256 left, int256 right, uint256 decimals) external pure;

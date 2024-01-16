@@ -715,6 +715,166 @@
     },
     {
       "func": {
+        "id": "assertApproxEqRelDecimal_0",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256)",
+        "selector": "0x21ed2977",
+        "selectorBytes": [
+          33,
+          237,
+          41,
+          119
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_1",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256,string)",
+        "selector": "0x82d6c8fd",
+        "selectorBytes": [
+          130,
+          214,
+          200,
+          253
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_2",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256)",
+        "selector": "0xabbf21cc",
+        "selectorBytes": [
+          171,
+          191,
+          33,
+          204
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_3",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256,string)",
+        "selector": "0xfccc11c4",
+        "selectorBytes": [
+          252,
+          204,
+          17,
+          196
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_0",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%",
+        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(uint256,uint256,uint256)",
+        "selector": "0x8cf25ef4",
+        "selectorBytes": [
+          140,
+          242,
+          94,
+          244
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_1",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(uint256,uint256,uint256,string)",
+        "selector": "0x1ecb7d33",
+        "selectorBytes": [
+          30,
+          203,
+          125,
+          51
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_2",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%",
+        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(int256,int256,uint256)",
+        "selector": "0xfea2d14f",
+        "selectorBytes": [
+          254,
+          162,
+          209,
+          79
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_3",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(int256,int256,uint256,string)",
+        "selector": "0xef277d72",
+        "selectorBytes": [
+          239,
+          39,
+          125,
+          114
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertEqDecimal_0",
         "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.",
         "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
