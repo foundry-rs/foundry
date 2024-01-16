@@ -40,11 +40,13 @@ module.exports = async ({ github, context }) => {
     // 
     // This addresses https://github.com/foundry-rs/foundry/issues/6732
 
-    // group releases by months
+    // Group releases by months.
+    // Per doc:
+    // > The latest release is the most recent non-prerelease, non-draft release, sorted by the created_at attribute.
     const groups = groupBy(nightlies, i => i.created_at.slice(0, 7));
     const nightliesToPrune = Object.values(groups)
-        .reduce((acc, cur) => acc.concat(cur.slice(0, -1)), [])
-        .slice(3);
+        .reduce((acc, cur) => acc.concat(cur.slice(0, -1)), []) // rule 1
+        .slice(3); // rule 2
 
     for (const nightly of nightliesToPrune) {
         console.log(`Deleting nightly: ${nightly.tag_name}`);
