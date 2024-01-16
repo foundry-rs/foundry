@@ -36,7 +36,7 @@ revm = { workspace = true, default-features = false, features = [
     "arbitrary",
 ] }
 revm-inspectors.workspace = true
-ethers-core.workspace = true
+
 ethers-signers.workspace = true
 itertools.workspace = true
 
@@ -47,3 +47,4 @@ proptest = "1"
 thiserror = "1"
 tracing = "0.1"
 rayon = "1"
+rand.workspace = true

@@ -74,7 +74,7 @@ use foundry_evm::{
         },
     },
     traces::{TracingInspector, TracingInspectorConfig},
-    utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
@@ -1757,7 +1757,7 @@ impl Backend {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
             let val = db.storage_ref(address, index)?;
-            Ok(u256_to_h256_be(val.to_ethers()).to_alloy())
+            Ok(val.into())
         })
         .await?
     }
