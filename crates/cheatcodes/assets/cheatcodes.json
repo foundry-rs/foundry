@@ -1115,6 +1115,46 @@
     },
     {
       "func": {
+        "id": "assertFalse_0",
+        "description": "Asserts that the given condition is false.",
+        "declaration": "function assertFalse(bool condition) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertFalse(bool)",
+        "selector": "0xa5982885",
+        "selectorBytes": [
+          165,
+          152,
+          40,
+          133
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertFalse_1",
+        "description": "Asserts that the given condition is false and includes error message into revert string on failure.",
+        "declaration": "function assertFalse(bool condition, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertFalse(bool,string)",
+        "selector": "0x7ba04809",
+        "selectorBytes": [
+          123,
+          160,
+          72,
+          9
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertGe_0",
         "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.",
         "declaration": "function assertGe(uint256 a, uint256 b) external pure;",

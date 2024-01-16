@@ -70,6 +70,18 @@ impl Cheatcode for assertTrue_1Call {
     }
 }
 
+impl Cheatcode for assertFalse_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_false(self.condition).map_err(|_| "Assertion failed")?)
+    }
+}
+
+impl Cheatcode for assertFalse_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_false(self.condition).map_err(|_| self.error.to_string())?)
+    }
+}
+
 impl Cheatcode for assertEq_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { a, b } = self;
@@ -603,6 +615,14 @@ impl Cheatcode for assertLe_3Call {
 
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
     if condition {
+        Ok(Default::default())
+    } else {
+        Err(SimpleAssertionError)
+    }
+}
+
+fn assert_false(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
+    if !condition {
         Ok(Default::default())
     } else {
         Err(SimpleAssertionError)

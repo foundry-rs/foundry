@@ -53,6 +53,8 @@ interface Vm {
     function assertEq(address a, address b, string calldata error) external pure;
     function assertEq(bytes32 a, bytes32 b) external pure;
     function assertEq(bytes32 a, bytes32 b, string calldata error) external pure;
+    function assertFalse(bool condition) external pure;
+    function assertFalse(bool condition, string calldata error) external pure;
     function assertGe(uint256 a, uint256 b) external pure;
     function assertGe(uint256 a, uint256 b, string calldata error) external pure;
     function assertGe(int256 a, int256 b) external pure;

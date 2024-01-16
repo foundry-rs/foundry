@@ -719,6 +719,14 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assertTrue(bool condition, string calldata error) external pure;
 
+    /// Asserts that the given condition is false.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertFalse(bool condition) external pure;
+
+    /// Asserts that the given condition is false and includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertFalse(bool condition, string calldata error) external pure;
+
     /// Asserts that two `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
     function assertEq(bool a, bool b) external pure;
