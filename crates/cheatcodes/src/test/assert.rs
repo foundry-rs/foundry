@@ -12,7 +12,7 @@ struct SimpleAssertionError;
 
 #[derive(thiserror::Error, Debug)]
 enum ComparisonAssertionError<'a, T> {
-    NotEq { left: &'a T, right: &'a T },
+    Ne { left: &'a T, right: &'a T },
     Eq { left: &'a T, right: &'a T },
     Ge { left: &'a T, right: &'a T },
     Gt { left: &'a T, right: &'a T },
@@ -23,7 +23,7 @@ enum ComparisonAssertionError<'a, T> {
 macro_rules! format_values {
     ($self:expr, $format_fn:expr) => {
         match $self {
-            Self::NotEq { left, right } => format!("{} == {}", $format_fn(left), $format_fn(right)),
+            Self::Ne { left, right } => format!("{} == {}", $format_fn(left), $format_fn(right)),
             Self::Eq { left, right } => format!("{} != {}", $format_fn(left), $format_fn(right)),
             Self::Ge { left, right } => format!("{} < {}", $format_fn(left), $format_fn(right)),
             Self::Gt { left, right } => format!("{} <= {}", $format_fn(left), $format_fn(right)),
@@ -42,26 +42,29 @@ impl<'a, T: Display> ComparisonAssertionError<'a, T> {
 #[allow(clippy::redundant_closure_call)]
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
-        format_values!(self, |v: &Vec<T>| format!("[{}]", v.iter().join(", ")))
+        let formatter = |v: &Vec<T>| v.iter().format(", ").to_string();
+        format_values!(self, formatter)
     }
 }
 
 #[allow(clippy::redundant_closure_call)]
 impl<'a> ComparisonAssertionError<'a, U256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
-        format_values!(self, |v: &U256| format_units_uint(v, decimals))
+        let formatter = |v: &U256| format_units_uint(v, decimals);
+        format_values!(self, formatter)
     }
 }
 
 #[allow(clippy::redundant_closure_call)]
 impl<'a> ComparisonAssertionError<'a, I256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
-        format_values!(self, |v: &I256| format_units_int(v, decimals))
+        let formatter = |v: &I256| format_units_int(v, decimals);
+        format_values!(self, formatter)
     }
 }
 
 #[derive(thiserror::Error, Debug)]
-#[error("Assertion failed: {left} !~= {right} (max delta: {max_delta}, real delta: {real_delta})")]
+#[error("{left} !~= {right} (max delta: {max_delta}, real delta: {real_delta})")]
 struct EqAbsAssertionError<T, D> {
     left: T,
     right: T,
@@ -935,7 +938,7 @@ fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResul
     if left != right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::NotEq { left, right })
+        Err(ComparisonAssertionError::Ne { left, right })
     }
 }
 
