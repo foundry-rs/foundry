@@ -31,8 +31,6 @@ alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitr
 alloy-json-abi.workspace = true
 alloy-rpc-types.workspace = true
 
-ethers-core.workspace = true
-
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs = "5"
 eyre.workspace = true
