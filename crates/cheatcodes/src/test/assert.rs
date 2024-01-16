@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use alloy_primitives::{I256, U256};
+use foundry_evm_core::abi::{format_units_int, format_units_uint};
 use itertools::Itertools;
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
@@ -11,49 +12,84 @@ struct SimpleAssertionError;
 
 #[derive(thiserror::Error, Debug)]
 enum ComparisonAssertionError<'a, T> {
-    NotEq(&'a T, &'a T),
-    Eq(&'a T, &'a T),
-    Ge(&'a T, &'a T),
-    Gt(&'a T, &'a T),
-    Le(&'a T, &'a T),
-    Lt(&'a T, &'a T),
+    NotEq { left: &'a T, right: &'a T },
+    Eq { left: &'a T, right: &'a T },
+    Ge { left: &'a T, right: &'a T },
+    Gt { left: &'a T, right: &'a T },
+    Le { left: &'a T, right: &'a T },
+    Lt { left: &'a T, right: &'a T },
 }
 
-#[derive(thiserror::Error, Debug)]
-enum ApproxAssertionError<T, D> {
-    #[error("{left} !~= {right} (max deltleft: {expected_delta}, real deltleft: {delta})")]
-    EqAbs { left: T, right: T, expected_delta: D, delta: D },
+macro_rules! format_values {
+    ($self:expr, $format_fn:expr) => {
+        match $self {
+            Self::NotEq { left, right } => format!("{} == {}", $format_fn(left), $format_fn(right)),
+            Self::Eq { left, right } => format!("{} != {}", $format_fn(left), $format_fn(right)),
+            Self::Ge { left, right } => format!("{} < {}", $format_fn(left), $format_fn(right)),
+            Self::Gt { left, right } => format!("{} <= {}", $format_fn(left), $format_fn(right)),
+            Self::Le { left, right } => format!("{} > {}", $format_fn(left), $format_fn(right)),
+            Self::Lt { left, right } => format!("{} >= {}", $format_fn(left), $format_fn(right)),
+        }
+    };
 }
 
 impl<'a, T: Display> ComparisonAssertionError<'a, T> {
     fn format_for_values(&self) -> String {
-        match self {
-            Self::NotEq(left, right) => format!("{} == {}", left, right),
-            Self::Eq(left, right) => format!("{} != {}", left, right),
-            Self::Ge(left, right) => format!("{} < {}", left, right),
-            Self::Gt(left, right) => format!("{} <= {}", left, right),
-            Self::Le(left, right) => format!("{} > {}", left, right),
-            Self::Lt(left, right) => format!("{} >= {}", left, right),
-        }
+        format_values!(self, T::to_string)
     }
 }
 
-macro_rules! format_arrays {
-    ($left:expr, $right:expr, $c:literal) => {
-        format!("[{}] {} [{}]", $left.iter().join(", "), $c, $right.iter().join(", "))
-    };
-}
-
+#[allow(clippy::redundant_closure_call)]
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
-        match self {
-            Self::NotEq(left, right) => format_arrays!(left, right, "=="),
-            Self::Eq(left, right) => format_arrays!(left, right, "!="),
-            Self::Ge(left, right) => format_arrays!(left, right, "<"),
-            Self::Gt(left, right) => format_arrays!(left, right, "<="),
-            Self::Le(left, right) => format_arrays!(left, right, ">"),
-            Self::Lt(left, right) => format_arrays!(left, right, ">="),
-        }
+        format_values!(self, |v: &Vec<T>| format!("[{}]", v.iter().join(", ")))
+    }
+}
+
+#[allow(clippy::redundant_closure_call)]
+impl<'a> ComparisonAssertionError<'a, U256> {
+    fn format_with_decimals(&self, decimals: &U256) -> String {
+        format_values!(self, |v: &U256| format_units_uint(v, decimals))
+    }
+}
+
+#[allow(clippy::redundant_closure_call)]
+impl<'a> ComparisonAssertionError<'a, I256> {
+    fn format_with_decimals(&self, decimals: &U256) -> String {
+        format_values!(self, |v: &I256| format_units_int(v, decimals))
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("Assertion failed: {left} !~= {right} (max delta: {max_delta}, real delta: {real_delta})")]
+struct EqAbsAssertionError<T, D> {
+    left: T,
+    right: T,
+    max_delta: D,
+    real_delta: D,
+}
+
+impl EqAbsAssertionError<U256, U256> {
+    fn format_with_decimals(&self, decimals: &U256) -> String {
+        format!(
+            "{} !~= {} (max delta: {}, real delta: {})",
+            format_units_uint(&self.left, decimals),
+            format_units_uint(&self.right, decimals),
+            format_units_uint(&self.max_delta, decimals),
+            format_units_uint(&self.real_delta, decimals),
+        )
+    }
+}
+
+impl EqAbsAssertionError<I256, U256> {
+    fn format_with_decimals(&self, decimals: &U256) -> String {
+        format!(
+            "{} !~= {} (max delta: {}, real delta: {})",
+            format_units_int(&self.left, decimals),
+            format_units_int(&self.right, decimals),
+            format_units_uint(&self.max_delta, decimals),
+            format_units_uint(&self.real_delta, decimals),
+        )
     }
 }
 
@@ -299,6 +335,34 @@ impl Cheatcode for assertEq_27Call {
     }
 }
 
+impl Cheatcode for assertEqDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_eq(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertEqDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_eq(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertEqDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_eq(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertEqDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_eq(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
 impl Cheatcode for assertNotEq_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right } = self;
@@ -527,6 +591,34 @@ impl Cheatcode for assertNotEq_27Call {
     }
 }
 
+impl Cheatcode for assertNotEqDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_not_eq(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertNotEqDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_not_eq(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertNotEqDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_not_eq(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertNotEqDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_not_eq(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
 impl Cheatcode for assertGt_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right } = self;
@@ -554,6 +646,34 @@ impl Cheatcode for assertGt_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right, error } = self;
         Ok(assert_gt(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+    }
+}
+
+impl Cheatcode for assertGtDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_gt(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertGtDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_gt(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertGtDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_gt(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertGtDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_gt(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
     }
 }
 
@@ -587,6 +707,34 @@ impl Cheatcode for assertGe_3Call {
     }
 }
 
+impl Cheatcode for assertGeDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_ge(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertGeDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_ge(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertGeDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_ge(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertGeDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_ge(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
 impl Cheatcode for assertLt_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right } = self;
@@ -614,6 +762,34 @@ impl Cheatcode for assertLt_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right, error } = self;
         Ok(assert_lt(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+    }
+}
+
+impl Cheatcode for assertLtDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_lt(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertLtDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_lt(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertLtDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_lt(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertLtDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_lt(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
     }
 }
 
@@ -647,31 +823,87 @@ impl Cheatcode for assertLe_3Call {
     }
 }
 
+impl Cheatcode for assertLeDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_le(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertLeDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_le(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertLeDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_le(&self.left, &self.right)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertLeDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(assert_le(&self.left, &self.right)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
 impl Cheatcode for assertApproxEqAbs_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
-            .map_err(|e| format!("Assertion failed: {}", e.to_string()))?)
+            .map_err(|e| format!("Assertion failed: {}", e))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
-            .map_err(|e| format!("{}: {}", self.error, e.to_string()))?)
+            .map_err(|e| format!("{}: {}", self.error, e))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
-            .map_err(|e| format!("Assertion failed: {}", e.to_string()))?)
+            .map_err(|e| format!("Assertion failed: {}", e))?)
     }
 }
 
 impl Cheatcode for assertApproxEqAbs_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
-            .map_err(|e| format!("{}: {}", self.error, e.to_string()))?)
+            .map_err(|e| format!("{}: {}", self.error, e))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbsDecimal_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbsDecimal_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbsDecimal_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
+            .map_err(|e| format!("Assertion failed: {}", e.format_with_decimals(&self.decimals)))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbsDecimal_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
+            .map_err(|e| format!("{}: {}", self.error, e.format_with_decimals(&self.decimals)))?)
     }
 }
 
@@ -695,7 +927,7 @@ fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a
     if left == right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Eq(left, right))
+        Err(ComparisonAssertionError::Eq { left, right })
     }
 }
 
@@ -703,7 +935,7 @@ fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResul
     if left != right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::NotEq(left, right))
+        Err(ComparisonAssertionError::NotEq { left, right })
     }
 }
 
@@ -711,13 +943,13 @@ fn uint_assert_approx_eq_abs(
     left: U256,
     right: U256,
     max_delta: U256,
-) -> Result<Vec<u8>, ApproxAssertionError<U256, U256>> {
+) -> Result<Vec<u8>, Box<EqAbsAssertionError<U256, U256>>> {
     let delta = if left > right { left - right } else { right - left };
 
     if delta <= max_delta {
         Ok(Default::default())
     } else {
-        Err(ApproxAssertionError::EqAbs { left, right, expected_delta: max_delta, delta })
+        Err(Box::new(EqAbsAssertionError { left, right, max_delta, real_delta: delta }))
     }
 }
 
@@ -725,7 +957,7 @@ fn int_assert_approx_eq_abs(
     left: I256,
     right: I256,
     max_delta: U256,
-) -> Result<Vec<u8>, ApproxAssertionError<I256, U256>> {
+) -> Result<Vec<u8>, Box<EqAbsAssertionError<I256, U256>>> {
     let (left_sign, left_abs) = left.into_sign_and_abs();
     let (right_sign, right_abs) = right.into_sign_and_abs();
 
@@ -742,7 +974,7 @@ fn int_assert_approx_eq_abs(
     if delta <= max_delta {
         Ok(Default::default())
     } else {
-        Err(ApproxAssertionError::EqAbs { left, right, expected_delta: max_delta, delta })
+        Err(Box::new(EqAbsAssertionError { left, right, max_delta, real_delta: delta }))
     }
 }
 
@@ -750,7 +982,7 @@ fn assert_gt<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'
     if left > right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Gt(left, right))
+        Err(ComparisonAssertionError::Gt { left, right })
     }
 }
 
@@ -758,7 +990,7 @@ fn assert_ge<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'
     if left >= right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Ge(left, right))
+        Err(ComparisonAssertionError::Ge { left, right })
     }
 }
 
@@ -766,7 +998,7 @@ fn assert_lt<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'
     if left < right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Lt(left, right))
+        Err(ComparisonAssertionError::Lt { left, right })
     }
 }
 
@@ -774,6 +1006,6 @@ fn assert_le<'a, T: PartialOrd>(left: &'a T, right: &'a T) -> ComparisonResult<'
     if left <= right {
         Ok(Default::default())
     } else {
-        Err(ComparisonAssertionError::Le(left, right))
+        Err(ComparisonAssertionError::Le { left, right })
     }
 }

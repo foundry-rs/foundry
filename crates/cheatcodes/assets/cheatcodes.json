@@ -555,6 +555,86 @@
     },
     {
       "func": {
+        "id": "assertApproxEqAbsDecimal_0",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256)",
+        "selector": "0x045c55ce",
+        "selectorBytes": [
+          4,
+          92,
+          85,
+          206
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbsDecimal_1",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256,string)",
+        "selector": "0x60429eb2",
+        "selectorBytes": [
+          96,
+          66,
+          158,
+          178
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbsDecimal_2",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256)",
+        "selector": "0x3d5bc8bc",
+        "selectorBytes": [
+          61,
+          91,
+          200,
+          188
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbsDecimal_3",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256,string)",
+        "selector": "0x6a5066d4",
+        "selectorBytes": [
+          106,
+          80,
+          102,
+          212
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertApproxEqAbs_0",
         "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.",
         "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta) external pure;",
@@ -627,6 +707,86 @@
           137,
           230,
           33
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_0",
+        "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.",
+        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(uint256,uint256,uint256)",
+        "selector": "0x27af7d9c",
+        "selectorBytes": [
+          39,
+          175,
+          125,
+          156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_1",
+        "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(uint256,uint256,uint256,string)",
+        "selector": "0xd0cbbdef",
+        "selectorBytes": [
+          208,
+          203,
+          189,
+          239
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_2",
+        "description": "Asserts that two `int256` values are equal, formatting them with decimals in failure message.",
+        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(int256,int256,uint256)",
+        "selector": "0x48016c04",
+        "selectorBytes": [
+          72,
+          1,
+          108,
+          4
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_3",
+        "description": "Asserts that two `int256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(int256,int256,uint256,string)",
+        "selector": "0x7e77b0c5",
+        "selectorBytes": [
+          126,
+          119,
+          176,
+          197
         ]
       },
       "group": "testing",
@@ -1235,6 +1395,86 @@
     },
     {
       "func": {
+        "id": "assertGeDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(uint256,uint256,uint256)",
+        "selector": "0x3d1fe08a",
+        "selectorBytes": [
+          61,
+          31,
+          224,
+          138
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(uint256,uint256,uint256,string)",
+        "selector": "0x8bff9133",
+        "selectorBytes": [
+          139,
+          255,
+          145,
+          51
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(int256,int256,uint256)",
+        "selector": "0xdc28c0f1",
+        "selectorBytes": [
+          220,
+          40,
+          192,
+          241
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(int256,int256,uint256,string)",
+        "selector": "0x5df93c9b",
+        "selectorBytes": [
+          93,
+          249,
+          60,
+          155
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertGe_0",
         "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.",
         "declaration": "function assertGe(uint256 left, uint256 right) external pure;",
@@ -1307,6 +1547,86 @@
           67,
           40,
           221
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(uint256,uint256,uint256)",
+        "selector": "0xeccd2437",
+        "selectorBytes": [
+          236,
+          205,
+          36,
+          55
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(uint256,uint256,uint256,string)",
+        "selector": "0x64949a8d",
+        "selectorBytes": [
+          100,
+          148,
+          154,
+          141
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(int256,int256,uint256)",
+        "selector": "0x78611f0e",
+        "selectorBytes": [
+          120,
+          97,
+          31,
+          14
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(int256,int256,uint256,string)",
+        "selector": "0x04a5c7ab",
+        "selectorBytes": [
+          4,
+          165,
+          199,
+          171
         ]
       },
       "group": "testing",
@@ -1395,6 +1715,86 @@
     },
     {
       "func": {
+        "id": "assertLeDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(uint256,uint256,uint256)",
+        "selector": "0xc304aab7",
+        "selectorBytes": [
+          195,
+          4,
+          170,
+          183
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(uint256,uint256,uint256,string)",
+        "selector": "0x7fefbbe0",
+        "selectorBytes": [
+          127,
+          239,
+          187,
+          224
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(int256,int256,uint256)",
+        "selector": "0x11d1364a",
+        "selectorBytes": [
+          17,
+          209,
+          54,
+          74
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(int256,int256,uint256,string)",
+        "selector": "0xaa5cf788",
+        "selectorBytes": [
+          170,
+          92,
+          247,
+          136
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertLe_0",
         "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.",
         "declaration": "function assertLe(uint256 left, uint256 right) external pure;",
@@ -1475,6 +1875,86 @@
     },
     {
       "func": {
+        "id": "assertLtDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be less than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(uint256,uint256,uint256)",
+        "selector": "0x2077337e",
+        "selectorBytes": [
+          32,
+          119,
+          51,
+          126
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(uint256,uint256,uint256,string)",
+        "selector": "0xa972d037",
+        "selectorBytes": [
+          169,
+          114,
+          208,
+          55
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be less than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(int256,int256,uint256)",
+        "selector": "0xdbe8d88b",
+        "selectorBytes": [
+          219,
+          232,
+          216,
+          139
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(int256,int256,uint256,string)",
+        "selector": "0x40f0b4e0",
+        "selectorBytes": [
+          64,
+          240,
+          180,
+          224
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertLt_0",
         "description": "Compares two `uint256` values. Expects first value to be less than second.",
         "declaration": "function assertLt(uint256 left, uint256 right) external pure;",
@@ -1547,6 +2027,86 @@
           245,
           49,
           227
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_0",
+        "description": "Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.",
+        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(uint256,uint256,uint256)",
+        "selector": "0x669efca7",
+        "selectorBytes": [
+          102,
+          158,
+          252,
+          167
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_1",
+        "description": "Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(uint256,uint256,uint256,string)",
+        "selector": "0xf5a55558",
+        "selectorBytes": [
+          245,
+          165,
+          85,
+          88
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_2",
+        "description": "Asserts that two `int256` values are not equal, formatting them with decimals in failure message.",
+        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(int256,int256,uint256)",
+        "selector": "0x14e75680",
+        "selectorBytes": [
+          20,
+          231,
+          86,
+          128
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_3",
+        "description": "Asserts that two `int256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(int256,int256,uint256,string)",
+        "selector": "0x33949f0b",
+        "selectorBytes": [
+          51,
+          148,
+          159,
+          11
         ]
       },
       "group": "testing",
