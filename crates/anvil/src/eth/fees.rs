@@ -252,10 +252,11 @@ impl FeeHistoryService {
                         Some(TypedTransaction::EIP2930(t)) => {
                             U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
                         }
-                        Some(TypedTransaction::EIP1559(t)) => U256::from(t
-                            .max_priority_fee_per_gas)
-                            .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
-                            .to::<u64>(),
+                        Some(TypedTransaction::EIP1559(t)) => {
+                            U256::from(t.max_priority_fee_per_gas)
+                                .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
+                                .to::<u64>()
+                        }
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };

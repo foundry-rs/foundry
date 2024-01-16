@@ -246,9 +246,9 @@ impl BlockchainStorage {
         Self {
             blocks: HashMap::from([(genesis_hash, block)]),
             hashes: HashMap::from([(best_number, genesis_hash)]),
-            best_hash: best_hash,
+            best_hash,
             best_number,
-            genesis_hash: genesis_hash,
+            genesis_hash,
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }

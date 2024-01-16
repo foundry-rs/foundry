@@ -46,12 +46,14 @@ use alloy_rpc_types::{
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
-        block::BlockInfo,
+        alloy_block::BlockInfo,
         transaction::{
-            alloy::{PendingTransaction, TypedTransaction as AlloyTypedTransaction},
+            alloy::{
+                PendingTransaction, TypedTransaction as AlloyTypedTransaction,
+                TypedTransactionRequest as AlloyTypedTransactionRequest,
+            },
             call_to_internal_tx_request, to_alloy_proof, to_ethers_signature,
-            EthTransactionRequest, LegacyTransaction, TransactionKind, TypedTransaction,
-            TypedTransactionRequest,
+            EthTransactionRequest, TransactionKind, TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -61,7 +63,7 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use ethers::{types::transaction::eip712::TypedData, utils::rlp};
+use ethers::types::transaction::eip712::TypedData;
 use foundry_common::{
     provider::alloy::ProviderBuilder,
     types::{ToAlloy, ToEthers},
@@ -901,31 +903,31 @@ impl EthApi {
                     .map(|a| a.to_ethers())
             })?
             .to_alloy();
+        todo!();
+        // let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        // let request = self.build_typed_tx_request(request, nonce)?;
+        // // if the sender is currently impersonated we need to "bypass" signing
+        // let pending_transaction = if self.is_impersonated(from) {
+        //     let bypass_signature = self.backend.cheats().bypass_signature();
+        //     let transaction =
+        //         sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
+        //     self.ensure_typed_transaction_supported(&transaction)?;
+        //     trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
+        //     PendingTransaction::with_impersonated(transaction, from)
+        // } else {
+        //     let transaction = self.sign_request(&from, request)?;
+        //     self.ensure_typed_transaction_supported(&transaction)?;
+        //     PendingTransaction::new(transaction)?
+        // };
 
-        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-        let request = self.build_typed_tx_request(request, nonce)?;
-        // if the sender is currently impersonated we need to "bypass" signing
-        let pending_transaction = if self.is_impersonated(from) {
-            let bypass_signature = self.backend.cheats().bypass_signature();
-            let transaction =
-                sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
-            self.ensure_typed_transaction_supported(&transaction)?;
-            trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
-            PendingTransaction::with_impersonated(transaction, from)
-        } else {
-            let transaction = self.sign_request(&from, request)?;
-            self.ensure_typed_transaction_supported(&transaction)?;
-            PendingTransaction::new(transaction)?
-        };
+        // // pre-validate
+        // self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
+        // let requires = required_marker(nonce, on_chain_nonce, from);
+        // let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        // debug_assert!(requires != provides);
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce.to::<u64>(), from)];
-        debug_assert!(requires != provides);
-
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        // self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Sends signed transaction, returning its hash.
@@ -933,7 +935,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         node_info!("eth_sendRawTransaction");
-        let data = tx.as_ref();
+        let mut data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
@@ -1115,7 +1117,7 @@ impl EthApi {
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
             let mut tx = transaction_build(
-                Some(pending.hash()),
+                Some(*pending.hash()),
                 pending.transaction,
                 None,
                 None,
@@ -1996,29 +1998,30 @@ impl EthApi {
         request: EthTransactionRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
+        Err(BlockchainError::RpcUnimplemented)
         // either use the impersonated account of the request's `from` field
-        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?.to_alloy();
+        // let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?.to_alloy();
 
-        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        // let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        let request = self.build_typed_tx_request(request, nonce)?;
+        // let request = self.build_typed_tx_request(request, nonce)?;
 
-        let bypass_signature = self.backend.cheats().bypass_signature();
-        let transaction =
-            sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
+        // let bypass_signature = self.backend.cheats().bypass_signature();
+        // let transaction =
+        //     sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
 
-        self.ensure_typed_transaction_supported(&transaction)?;
+        // self.ensure_typed_transaction_supported(&transaction)?;
 
-        let pending_transaction =
-            PendingTransaction::with_impersonated(transaction, from.to_ethers());
+        // let pending_transaction =
+        //     PendingTransaction::with_impersonated(transaction, from);
 
-        // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction).await?;
+        // // pre-validate
+        // self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        // let requires = required_marker(nonce, on_chain_nonce, from);
+        // let provides = vec![to_marker(nonce.to::<u64>(), from)];
 
-        self.add_pending_transaction(pending_transaction, requires, provides)
+        // self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
@@ -2057,12 +2060,12 @@ impl EthApi {
         // not in sequence. The transaction nonce is an incrementing number for each transaction
         // with the same From address.
         for pending in self.pool.ready_transactions() {
-            let entry = inspect.pending.entry(pending.pending_transaction.sender()).or_default();
+            let entry = inspect.pending.entry(*pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
-            let entry = inspect.pending.entry(queued.pending_transaction.sender()).or_default();
+            let entry = inspect.pending.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }
@@ -2095,12 +2098,12 @@ impl EthApi {
         }
 
         for pending in self.pool.ready_transactions() {
-            let entry = content.pending.entry(pending.pending_transaction.sender()).or_default();
+            let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
-            let entry = content.pending.entry(queued.pending_transaction.sender()).or_default();
+            let entry = content.pending.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }
@@ -2389,7 +2392,7 @@ impl EthApi {
     }
 
     /// Returns the priority of the transaction based on the current `TransactionOrder`
-    fn transaction_priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+    fn transaction_priority(&self, tx: &AlloyTypedTransaction) -> TransactionPriority {
         self.transaction_order.read().priority(tx)
     }
 
@@ -2470,7 +2473,7 @@ impl EthApi {
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
             let tx = transaction_build(
-                Some(info.transaction_hash.to_alloy()),
+                Some(info.transaction_hash),
                 tx,
                 Some(&block),
                 Some(info),

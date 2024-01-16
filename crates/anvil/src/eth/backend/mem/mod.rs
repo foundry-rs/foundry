@@ -1568,29 +1568,29 @@ impl Backend {
             mix_hash,
             nonce,
             base_fee_per_gas,
-            withdrawals_root: None,
-            blob_gas_used: None,
-            excess_blob_gas: None,
-            parent_beacon_block_root: None,
+            withdrawals_root,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
         } = header;
 
         AlloyBlock {
             total_difficulty: Some(self.total_difficulty()),
             header: AlloyHeader {
                 hash: Some(hash),
-                parent_hash: parent_hash,
+                parent_hash,
                 uncles_hash: ommers_hash,
                 miner: beneficiary,
-                state_root: state_root,
-                transactions_root: transactions_root,
-                receipts_root: receipts_root,
+                state_root,
+                transactions_root,
+                receipts_root,
                 number: Some(number.to_alloy()),
                 gas_used: gas_used.to_alloy(),
                 gas_limit: gas_limit.to_alloy(),
                 extra_data: extra_data.0.into(),
                 logs_bloom,
                 timestamp: U256::from(timestamp),
-                difficulty: difficulty,
+                difficulty,
                 mix_hash: Some(mix_hash),
                 nonce: Some(B64::from(nonce)),
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
@@ -2364,7 +2364,9 @@ impl TransactionValidator for Backend {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !legacy.meets_eip155(chain_id.to::<u64>())
+                        !legacy.signature().v().chain_id().unwrap_or_default() ==
+                            chain_id.to::<u64>()
+                    // meets_eip155(chain_id.to::<u64>())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2392,8 +2394,9 @@ impl TransactionValidator for Backend {
         // check nonce
         let is_deposit_tx =
             matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
-        let nonce: u64 =
-            (tx.nonce().to::<u64>()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
+        let nonce: u64 = (tx.nonce().to::<u64>())
+            .try_into()
+            .map_err(|_| InvalidTransactionError::NonceMaxValue)?;
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);

@@ -6,7 +6,9 @@ use alloy_consensus::{ReceiptWithBloom, TxEip1559, TxEip2930, TxLegacy};
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U256};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_rpc_types::{request::TransactionRequest, AccessList, CallRequest};
+use alloy_rpc_types::{
+    request::TransactionRequest, AccessList, CallRequest, Transaction as AlloyTransaction,
+};
 use foundry_evm::traces::CallTraceNode;
 use revm::{
     interpreter::InstructionResult,
