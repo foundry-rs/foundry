@@ -1155,6 +1155,26 @@
     },
     {
       "func": {
+        "id": "dumpState",
+        "description": "Writes the current state to a file in the project root.\n`pathToStateJson` is relative to the project root.",
+        "declaration": "function dumpState(string calldata pathToStateJson) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "dumpState(string)",
+        "selector": "0x70 9e cd 3f",
+        "selectorBytes": [
+          112,
+          158,
+          205,
+          63
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "envAddress_0",
         "description": "Gets the environment variable `name` and parses it as `address`.\nReverts if the variable was not found or could not be parsed.",
         "declaration": "function envAddress(string calldata name) external view returns (address value);",

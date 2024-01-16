@@ -227,6 +227,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
 
+    /// Dump a genesis JSON file's `allocs` to disk.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function dumpState(string calldata pathToStateJson) external;
+
     /// Gets the nonce of an account.
     #[cheatcode(group = Evm, safety = Safe)]
     function getNonce(address account) external view returns (uint64 nonce);
