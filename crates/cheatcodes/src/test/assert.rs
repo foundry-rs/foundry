@@ -39,7 +39,6 @@ impl<'a, T: Display> ComparisonAssertionError<'a, T> {
     }
 }
 
-#[allow(clippy::redundant_closure_call)]
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
         let formatter = |v: &Vec<T>| v.iter().format(", ").to_string();
@@ -47,7 +46,6 @@ impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     }
 }
 
-#[allow(clippy::redundant_closure_call)]
 impl<'a> ComparisonAssertionError<'a, U256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
         let formatter = |v: &U256| format_units_uint(v, decimals);
@@ -55,7 +53,6 @@ impl<'a> ComparisonAssertionError<'a, U256> {
     }
 }
 
-#[allow(clippy::redundant_closure_call)]
 impl<'a> ComparisonAssertionError<'a, I256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
         let formatter = |v: &I256| format_units_int(v, decimals);
