@@ -35,10 +35,11 @@ module.exports = async ({ github, context }) => {
     );
 
     // Pruning rules:
-    //   1. only keep the earliest release of the month
+    //   1. only keep the earliest (by created_at) release of the month
     //   2. to keep the newest 3 nightlies
-    // 
-    // This addresses https://github.com/foundry-rs/foundry/issues/6732
+    // Notes:
+    //   - This addresses https://github.com/foundry-rs/foundry/issues/6732
+    //   - Name of the release may deviate from created_at due to the usage of different timezones.
 
     // Group releases by months.
     // Per doc:
