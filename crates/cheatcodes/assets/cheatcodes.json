@@ -555,6 +555,86 @@
     },
     {
       "func": {
+        "id": "assertApproxEqAbs_0",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.",
+        "declaration": "function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(uint256,uint256,uint256)",
+        "selector": "0x16d207c6",
+        "selectorBytes": [
+          22,
+          210,
+          7,
+          198
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_1",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(uint256,uint256,uint256,string)",
+        "selector": "0xf710b062",
+        "selectorBytes": [
+          247,
+          16,
+          176,
+          98
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_2",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.",
+        "declaration": "function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(int256,int256,uint256)",
+        "selector": "0x240f839d",
+        "selectorBytes": [
+          36,
+          15,
+          131,
+          157
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_3",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(int256,int256,uint256,string)",
+        "selector": "0x8289e621",
+        "selectorBytes": [
+          130,
+          137,
+          230,
+          33
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertEq_0",
         "description": "Asserts that two `bool` values are equal.",
         "declaration": "function assertEq(bool a, bool b) external pure;",

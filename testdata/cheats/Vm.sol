@@ -25,6 +25,10 @@ interface Vm {
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
     function allowCheatcodes(address account) external;
+    function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta) external pure;
+    function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta) external pure;
+    function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta, string calldata error) external pure;
     function assertEq(bool a, bool b) external pure;
     function assertEq(bool a, bool b, string calldata error) external pure;
     function assertEq(string calldata a, string calldata b) external pure;

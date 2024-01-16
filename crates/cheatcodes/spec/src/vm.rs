@@ -1023,6 +1023,24 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assertLe(int256 a, int256 b, string calldata error) external pure;
 
+    /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta) external pure;
+
+    /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
+    /// Includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqAbs(uint256 a, uint256 b, uint256 maxDelta, string calldata error) external pure;
+
+    /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta) external pure;
+
+    /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
+    /// Includes error message into revert string on failure.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assertApproxEqAbs(int256 a, int256 b, uint256 maxDelta, string calldata error) external pure;
+
     // ======== OS and Filesystem ========
 
     // -------- Metadata --------

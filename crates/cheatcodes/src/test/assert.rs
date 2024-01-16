@@ -1,5 +1,6 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
+use alloy_primitives::{I256, U256};
 use itertools::Itertools;
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
@@ -16,6 +17,12 @@ enum ComparisonAssertionError<'a, T> {
     Gt(&'a T, &'a T),
     Le(&'a T, &'a T),
     Lt(&'a T, &'a T),
+}
+
+#[derive(thiserror::Error, Debug)]
+enum ApproxAssertionError<T, D> {
+    #[error("{a} !~= {b} (max delta: {expected_delta}, real delta: {delta})")]
+    EqAbs { a: T, b: T, expected_delta: D, delta: D },
 }
 
 impl<'a, T: Display> ComparisonAssertionError<'a, T> {
@@ -613,6 +620,34 @@ impl Cheatcode for assertLe_3Call {
     }
 }
 
+impl Cheatcode for assertApproxEqAbs_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(uint_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+            .map_err(|e| format!("Assertion failed: {}", e.to_string()))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbs_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(uint_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+            .map_err(|e| format!("{}: {}", self.error, e.to_string()))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbs_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(int_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+            .map_err(|e| format!("Assertion failed: {}", e.to_string()))?)
+    }
+}
+
+impl Cheatcode for assertApproxEqAbs_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(int_assert_approx_eq_abs(self.a, self.b, self.maxDelta)
+            .map_err(|e| format!("{}: {}", self.error, e.to_string()))?)
+    }
+}
+
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
     if condition {
         Ok(Default::default())
@@ -642,6 +677,45 @@ fn assert_not_eq<'a, T: PartialEq>(a: &'a T, b: &'a T) -> ComparisonResult<'a, T
         Ok(Default::default())
     } else {
         Err(ComparisonAssertionError::NotEq(a, b))
+    }
+}
+
+fn uint_assert_approx_eq_abs(
+    a: U256,
+    b: U256,
+    max_delta: U256,
+) -> Result<Vec<u8>, ApproxAssertionError<U256, U256>> {
+    let delta = if a > b { a - b } else { b - a };
+
+    if delta <= max_delta {
+        Ok(Default::default())
+    } else {
+        Err(ApproxAssertionError::EqAbs { a, b, expected_delta: max_delta, delta })
+    }
+}
+
+fn int_assert_approx_eq_abs(
+    a: I256,
+    b: I256,
+    max_delta: U256,
+) -> Result<Vec<u8>, ApproxAssertionError<I256, U256>> {
+    let (a_sign, a_abs) = a.into_sign_and_abs();
+    let (b_sign, b_abs) = b.into_sign_and_abs();
+
+    let delta = if a_sign == b_sign {
+        if a_abs > b_abs {
+            a_abs - b_abs
+        } else {
+            b_abs - a_abs
+        }
+    } else {
+        a_abs + b_abs
+    };
+
+    if delta <= max_delta {
+        Ok(Default::default())
+    } else {
+        Err(ApproxAssertionError::EqAbs { a, b, expected_delta: max_delta, delta })
     }
 }
 
