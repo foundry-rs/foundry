@@ -4,7 +4,7 @@ use super::context::DebuggerContext;
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::sourcemap::SourceElement;
-use foundry_evm_core::{debug::Instruction, utils::CallKind};
+use foundry_evm_core::debug::Instruction;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,6 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use revm::interpreter::opcode;
+use revm_inspectors::tracing::types::CallKind;
 use std::{cmp, collections::VecDeque, fmt::Write, io};
 
 impl DebuggerContext<'_> {

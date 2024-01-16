@@ -2847,6 +2847,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
+ "revm-inspectors",
  "semver 1.0.21",
  "serde",
  "serde_json",
@@ -3150,6 +3151,7 @@ dependencies = [
  "foundry-evm-traces",
  "ratatui",
  "revm",
+ "revm-inspectors",
  "tracing",
 ]
 
@@ -3180,6 +3182,7 @@ dependencies = [
  "proptest",
  "rayon",
  "revm",
+ "revm-inspectors",
  "thiserror",
  "tracing",
 ]
@@ -3210,6 +3213,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "revm",
+ "revm-inspectors",
  "serde",
  "serde_json",
  "thiserror",

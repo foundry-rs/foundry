@@ -3,10 +3,8 @@
 use crate::{Debugger, ExitReason};
 use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_evm_core::{
-    debug::{DebugNodeFlat, DebugStep},
-    utils::CallKind,
-};
+use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
+use revm_inspectors::tracing::types::CallKind;
 use std::{cell::RefCell, ops::ControlFlow};
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
@@ -232,8 +230,8 @@ impl DebuggerContext<'_> {
                         .find_map(|(i, op)| {
                             if i > 0 {
                                 match (
-                                    prev_ops[i - 1].contains("JUMP") &&
-                                        prev_ops[i - 1] != "JUMPDEST",
+                                    prev_ops[i - 1].contains("JUMP")
+                                        && prev_ops[i - 1] != "JUMPDEST",
                                     &**op,
                                 ) {
                                     (true, "JUMPDEST") => Some(i - 1),
@@ -271,7 +269,7 @@ impl DebuggerContext<'_> {
                     if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {
                         self.draw_memory.inner_call_index = i;
                         self.current_step = step;
-                        break
+                        break;
                     }
                 }
             }
