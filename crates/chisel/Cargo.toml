@@ -20,6 +20,7 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 [dependencies]
 # forge
 forge-fmt.workspace = true
+foundry-block-explorers.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
