@@ -29,7 +29,7 @@ impl<'a, T: Display> ComparisonAssertionError<'a, T> {
     fn format_for_values(&self) -> String {
         match self {
             Self::NotEq(a, b) => format!("{} == {}", a, b),
-            Self::Eq(a, b) => format!("{} != {}", a, b),
+            Self::Eq(a, b) => format!("{} != {}", a, b),    
             Self::Ge(a, b) => format!("{} < {}", a, b),
             Self::Gt(a, b) => format!("{} <= {}", a, b),
             Self::Le(a, b) => format!("{} > {}", a, b),
@@ -38,27 +38,21 @@ impl<'a, T: Display> ComparisonAssertionError<'a, T> {
     }
 }
 
+macro_rules! format_arrays {
+    ($a:expr, $b:expr, $c:literal) => {
+        format!("[{}] {} [{}]", $a.iter().join(", "), $c, $b.iter().join(", "))
+    };
+}
+
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
         match self {
-            Self::NotEq(a, b) => {
-                format!("[{}] == [{}]", a.iter().join(", "), b.iter().join(", "))
-            }
-            Self::Eq(a, b) => {
-                format!("[{}] != [{}]", a.iter().join(", "), b.iter().join(", "))
-            }
-            Self::Ge(a, b) => {
-                format!("[{}] < [{}]", a.iter().join(", "), b.iter().join(", "))
-            }
-            Self::Gt(a, b) => {
-                format!("[{}] <= [{}]", a.iter().join(", "), b.iter().join(", "))
-            }
-            Self::Le(a, b) => {
-                format!("[{}] > [{}]", a.iter().join(", "), b.iter().join(", "))
-            }
-            Self::Lt(a, b) => {
-                format!("[{}] >= [{}]", a.iter().join(", "), b.iter().join(", "))
-            }
+            Self::NotEq(a, b) => format_arrays!(a, b, "=="),
+            Self::Eq(a, b) => format_arrays!(a, b, "!="),
+            Self::Ge(a, b) => format_arrays!(a, b, "<"),
+            Self::Gt(a, b) => format_arrays!(a, b, "<="),
+            Self::Le(a, b) => format_arrays!(a, b, ">"),
+            Self::Lt(a, b) => format_arrays!(a, b, ">="),
         }
     }
 }
