@@ -17,7 +17,8 @@ use std::ops::Deref;
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
 pub fn impersonated_signature() -> Signature {
-    Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false).unwrap()
+    Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false)
+        .unwrap()
 }
 
 /// Represents _all_ transaction requests received from RPC

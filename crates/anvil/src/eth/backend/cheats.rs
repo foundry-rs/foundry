@@ -1,8 +1,7 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::Address;
-use alloy_rpc_types::Signature;
-use anvil_core::eth::transaction::IMPERSONATED_SIGNATURE;
+use alloy_primitives::{Address, Signature};
+use anvil_core::eth::transaction::alloy::impersonated_signature;
 use foundry_evm::hashbrown::HashSet;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -85,7 +84,7 @@ impl Default for CheatsState {
     fn default() -> Self {
         Self {
             impersonated_accounts: Default::default(),
-            bypass_signature: IMPERSONATED_SIGNATURE,
+            bypass_signature: impersonated_signature(),
             auto_impersonate_accounts: false,
         }
     }

@@ -422,8 +422,12 @@ impl EthApi {
         match request {
             TypedTransactionRequest::Deposit(_) => {
                 let NIL_SIGNATURE: alloy_primitives::Signature =
-                    alloy_primitives::Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false)
-                        .unwrap();
+                    alloy_primitives::Signature::from_scalars_and_parity(
+                        B256::with_last_byte(1),
+                        B256::with_last_byte(1),
+                        false,
+                    )
+                    .unwrap();
                 return build_typed_transaction(request, NIL_SIGNATURE)
             }
             _ => {
@@ -882,10 +886,7 @@ impl EthApi {
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
-            let transaction = alloy_sign::build_typed_transaction(
-                request,
-                to_primitive_signature(bypass_signature)?,
-            )?;
+            let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
