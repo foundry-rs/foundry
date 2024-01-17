@@ -82,7 +82,7 @@ impl RunArgs {
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::from_provider(figment).sanitized();
+        let mut config = Config::try_from(figment)?.sanitized();
 
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
