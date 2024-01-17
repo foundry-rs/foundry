@@ -1156,12 +1156,12 @@
     {
       "func": {
         "id": "dumpState",
-        "description": "Writes the current state to a file in the project root.\n`pathToStateJson` is relative to the project root.",
+        "description": "Dump a genesis JSON file's `allocs` to disk.",
         "declaration": "function dumpState(string calldata pathToStateJson) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "dumpState(string)",
-        "selector": "0x70 9e cd 3f",
+        "selector": "0x709ecd3f",
         "selectorBytes": [
           112,
           158,
