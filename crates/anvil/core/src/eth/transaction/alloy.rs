@@ -100,7 +100,10 @@ impl EthTransactionRequest {
             return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
                 from: from.unwrap_or_default(),
                 source_hash: optimism_fields.clone()?.source_hash,
-                kind: TxKind::Create,
+                kind: match to {
+                    Some(to) => TxKind::Call(to),
+                    None => TxKind::Create,
+                },
                 mint: optimism_fields.clone()?.mint,
                 value: value.unwrap_or_default(),
                 gas_limit: gas.unwrap_or_default(),
@@ -824,9 +827,12 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => *tx.signature(),
             TypedTransaction::EIP2930(tx) => *tx.signature(),
             TypedTransaction::EIP1559(tx) => *tx.signature(),
-            TypedTransaction::Deposit(_) => {
-                Signature::from_scalars_and_parity(B256::ZERO, B256::ZERO, false).unwrap()
-            }
+            TypedTransaction::Deposit(_) => Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                false,
+            )
+            .unwrap(),
         }
     }
 }

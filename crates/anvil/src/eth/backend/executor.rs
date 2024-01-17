@@ -317,7 +317,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
-        self.gas_used.saturating_add(U256::from(gas_used));
+        // self.gas_used = self.gas_used.saturating_add(U256::from(gas_used));
 
         trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 

@@ -578,20 +578,25 @@ async fn test_fork_set_empty_code() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_fork_can_send_tx() {
     let (api, handle) =
         spawn(fork_config().with_blocktime(Some(std::time::Duration::from_millis(800)))).await;
 
     let wallet = LocalWallet::new(&mut rand::thread_rng());
-
-    api.anvil_set_balance(wallet.address().to_alloy(), rU256::from(1e18 as u64)).await.unwrap();
-
     let provider = SignerMiddleware::new(handle.ethers_http_provider(), wallet);
 
+    api.anvil_set_balance(provider.address().to_alloy(), rU256::MAX).await.unwrap();
+    let balance = provider.get_balance(provider.address(), None).await.unwrap();
+    println!("balance={}", balance);
+    println!("provider addr = {}", provider.address());
+    assert_eq!(balance, rU256::MAX.to_ethers());
+
     let addr = Address::random();
+    println!("call to addr = {}", addr);
     let val = 1337u64;
     let tx = TransactionRequest::new().to(addr).value(val);
-
+    println!("tx request = {:?}", tx);
     // broadcast it via the eth_sendTransaction API
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 

@@ -47,12 +47,9 @@ use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         alloy_block::BlockInfo,
-        transaction::{
-            alloy::{
-                call_request_to_typed, EthTransactionRequest, PendingTransaction, TypedTransaction,
-                TypedTransactionRequest,
-            },
-            alloy_compat::to_primitive_signature,
+        transaction::alloy::{
+            call_request_to_typed, EthTransactionRequest, PendingTransaction, TypedTransaction,
+            TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -421,14 +418,14 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
-                let NIL_SIGNATURE: alloy_primitives::Signature =
+                let nil_signature: alloy_primitives::Signature =
                     alloy_primitives::Signature::from_scalars_and_parity(
                         B256::with_last_byte(1),
                         B256::with_last_byte(1),
                         false,
                     )
                     .unwrap();
-                return build_typed_transaction(request, NIL_SIGNATURE)
+                return build_typed_transaction(request, nil_signature)
             }
             _ => {
                 for signer in self.signers.iter() {
@@ -885,6 +882,7 @@ impl EthApi {
         let request = self.build_typed_tx_request(request, nonce)?;
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
+            println!("hello?????");
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
@@ -895,7 +893,7 @@ impl EthApi {
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
-
+        println!("pendingtx: {:#?}", pending_transaction);
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
@@ -935,7 +933,7 @@ impl EthApi {
             self.ensure_typed_transaction_supported(&tx)?;
             tx
         };
-
+        println!("tx: {:#?}", transaction);
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate

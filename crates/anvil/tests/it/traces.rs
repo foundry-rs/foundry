@@ -1,16 +1,18 @@
 use crate::fork::fork_config;
+use alloy_primitives::U256;
+use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::ContractInstance,
     prelude::{
         Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
-        TransactionRequest,
+        TransactionRequest, Wallet,
     },
     types::{ActionType, Address, GethDebugTracingCallOptions, Trace},
     utils::hex,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
-use foundry_common::types::ToAlloy;
+use foundry_common::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -18,12 +20,22 @@ async fn test_get_transfer_parity_traces() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let accounts = alloy_wallets
+        .into_iter()
+        .map(|w| {
+            Wallet::new_with_signer(
+                w.signer().clone(),
+                w.address().to_ethers(),
+                w.chain_id().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
     // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
 
     // broadcast it via the eth_sendTransaction API
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
@@ -35,7 +47,7 @@ async fn test_get_transfer_parity_traces() {
         Action::Call(ref call) => {
             assert_eq!(call.from, from);
             assert_eq!(call.to, to);
-            assert_eq!(call.value, amount);
+            assert_eq!(call.value, amount.to_ethers());
         }
         _ => unreachable!("unexpected action"),
     }
@@ -74,7 +86,17 @@ contract Contract {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let wallets = alloy_wallets
+        .into_iter()
+        .map(|w| {
+            Wallet::new_with_signer(
+                w.signer().clone(),
+                w.address().to_ethers(),
+                w.chain_id().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -122,7 +144,17 @@ contract Contract {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let wallets = alloy_wallets
+        .into_iter()
+        .map(|w| {
+            Wallet::new_with_signer(
+                w.signer().clone(),
+                w.address().to_ethers(),
+                w.chain_id().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully

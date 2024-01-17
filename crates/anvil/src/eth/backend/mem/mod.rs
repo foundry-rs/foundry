@@ -2352,6 +2352,7 @@ impl TransactionValidator for Backend {
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
         let account = self.get_account(address).await?;
+        println!("addr={}, account={:?}", address, account);
         let env = self.next_env();
         Ok(self.validate_pool_transaction_for(tx, &account, &env)?)
     }
@@ -2400,9 +2401,7 @@ impl TransactionValidator for Backend {
         // check nonce
         let is_deposit_tx =
             matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
-        let nonce: u64 = (tx.nonce().to::<u64>())
-            .try_into()
-            .map_err(|_| InvalidTransactionError::NonceMaxValue)?;
+        let nonce: u64 = tx.nonce().to::<u64>();
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
@@ -2427,12 +2426,15 @@ impl TransactionValidator for Backend {
         let max_cost = tx.max_cost();
         let value = tx.value();
         // check sufficient funds: `gas * price + value`
+        println!("max_cost={}, value={}", max_cost, value);
+        println!("tx={:?}", tx);
         let req_funds = max_cost.checked_add(value).ok_or_else(|| {
             warn!(target: "backend", "[{:?}] cost too high",
             tx.hash());
             InvalidTransactionError::InsufficientFunds
         })?;
-
+        println!("maybe?");
+        println!("account.balance={}, req_funds={}", account.balance, req_funds);
         if account.balance < req_funds {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::InsufficientFunds);

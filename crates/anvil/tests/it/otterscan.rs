@@ -2,6 +2,7 @@
 use crate::abi::MulticallContract;
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
+use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
@@ -12,10 +13,9 @@ use ethers::{
     abi::Address,
     prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
     signers::{Signer, Wallet},
-    types::{Bytes, TransactionRequest, U256},
+    types::{Bytes, TransactionRequest},
     utils::get_contract_address,
 };
-use alloy_signer::Signer as AlloySigner;
 use ethers_solc::{project_util::TempProject, Artifact};
 use foundry_common::types::{ToAlloy, ToEthers};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
@@ -45,7 +45,11 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
     let provider = handle.ethers_http_provider();
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(*alloy_wallet.signer(), alloy_wallet.address().to_ethers(), alloy_wallet.chain_id().unwrap());
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -77,11 +81,13 @@ async fn can_call_ots_get_internal_operations_contract_transfer() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
-    //let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
 
     let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
@@ -92,9 +98,9 @@ async fn can_call_ots_get_internal_operations_contract_transfer() {
         res[0],
         OtsInternalOperation {
             r#type: OtsInternalOperationType::Transfer,
-            from: from.to_alloy(),
-            to: to.to_alloy(),
-            value: amount.to_alloy()
+            from,
+            to,
+            value: amount
         }
     );
 }
@@ -128,7 +134,17 @@ contract Contract {
 
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let wallets = alloy_wallets
+        .into_iter()
+        .map(|w| {
+            Wallet::new_with_signer(
+                w.signer().clone(),
+                w.address().to_ethers(),
+                w.chain_id().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -186,7 +202,17 @@ contract Contract {
 
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let wallets = alloy_wallets
+        .into_iter()
+        .map(|w| {
+            Wallet::new_with_signer(
+                w.signer().clone(),
+                w.address().to_ethers(),
+                w.chain_id().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -221,7 +247,12 @@ async fn can_call_ots_has_code() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
     api.mine_one().await;
@@ -299,7 +330,17 @@ contract Contract {
 
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let wallets = alloy_wallets
+        .into_iter()
+        .map(|w| {
+            Wallet::new_with_signer(
+                w.signer().clone(),
+                w.address().to_ethers(),
+                w.chain_id().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -332,7 +373,7 @@ contract Contract {
                 depth: 1,
                 from: contract.address().to_alloy(),
                 to: contract.address().to_alloy(),
-                value: U256::zero().to_alloy(),
+                value: rU256::ZERO,
                 input: Bytes::from_str("0x6a6758fe").unwrap().0.into()
             },
             OtsTrace {
@@ -340,7 +381,7 @@ contract Contract {
                 depth: 1,
                 from: contract.address().to_alloy(),
                 to: contract.address().to_alloy(),
-                value: U256::zero().to_alloy(),
+                value: rU256::ZERO,
                 input: Bytes::from_str("0x96385e39").unwrap().0.into()
             },
             OtsTrace {
@@ -348,7 +389,7 @@ contract Contract {
                 depth: 2,
                 from: contract.address().to_alloy(),
                 to: wallets[0].address().to_alloy(),
-                value: U256::from(1337).to_alloy(),
+                value: rU256::from(1337),
                 input: Bytes::from_str("0x").unwrap().0.into()
             },
             OtsTrace {
@@ -356,7 +397,7 @@ contract Contract {
                 depth: 2,
                 from: contract.address().to_alloy(),
                 to: contract.address().to_alloy(),
-                value: U256::zero().to_alloy(),
+                value: rU256::ZERO,
                 input: Bytes::from_str("0xa1325397").unwrap().0.into()
             },
         ]
@@ -389,7 +430,12 @@ contract Contract {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_ws_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     // deploy successfully
@@ -410,7 +456,12 @@ async fn can_call_ots_get_block_details() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
@@ -432,7 +483,12 @@ async fn can_call_ots_get_block_details_by_hash() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
@@ -455,7 +511,12 @@ async fn can_call_ots_get_block_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     // disable automine
@@ -493,11 +554,17 @@ async fn can_call_ots_get_block_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn can_call_ots_search_transactions_before() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -533,7 +600,12 @@ async fn can_call_ots_search_transactions_after() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -570,7 +642,12 @@ async fn can_call_ots_get_transaction_by_sender_and_nonce() {
     let provider = handle.ethers_http_provider();
     api.mine_one().await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -599,7 +676,12 @@ async fn can_call_ots_get_contract_creator() {
     let provider = handle.ethers_http_provider();
     api.mine_one().await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

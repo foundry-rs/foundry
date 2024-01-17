@@ -9,8 +9,8 @@ use alloy_rlp::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DepositTransactionRequest {
-    pub from: Address,
     pub source_hash: B256,
+    pub from: Address,
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
@@ -303,7 +303,6 @@ impl DepositTransaction {
     /// Calculates the length of the RLP-encoded transaction's fields.
     pub(crate) fn fields_len(&self) -> usize {
         let mut len = 0;
-        len += self.nonce.length();
         len += self.source_hash.length();
         len += self.from.length();
         len += self.kind.length();
@@ -320,7 +319,6 @@ impl DepositTransaction {
     /// NOTE: This assumes a RLP header has already been decoded, and _just_ decodes the following
     /// RLP fields in the following order:
     ///
-    /// - `nonce`
     /// - `source_hash`
     /// - `from`
     /// - `kind`
@@ -331,7 +329,7 @@ impl DepositTransaction {
     /// - `input`
     pub fn decode_inner(buf: &mut &[u8]) -> Result<Self, DecodeError> {
         Ok(Self {
-            nonce: Decodable::decode(buf)?,
+            nonce: U256::from(0),
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,
