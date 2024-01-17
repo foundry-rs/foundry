@@ -625,6 +625,9 @@ pub enum Subcommands {
 
         #[clap(flatten)]
         rpc: RpcOpts,
+
+        #[clap(short, long)]
+        token: Option<Address>,
     },
 
     /// Get the basefee of a block.
