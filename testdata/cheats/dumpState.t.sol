@@ -46,8 +46,14 @@ contract DumpStateTest is DSTest {
         string[] memory slots = vm.parseJsonKeys(json, string.concat(".", key, ".storage"));
         assertEq(slots.length, 2);
 
-        assertEq(bytes32(uint256(0x40)), vm.parseJsonBytes32(json, string.concat(".", key, ".storage.", vm.toString(bytes32(uint256(0x20))))));
-        assertEq(bytes32(uint256(0x60)), vm.parseJsonBytes32(json, string.concat(".", key, ".storage.", vm.toString(bytes32(uint256(0x40))))));
+        assertEq(
+            bytes32(uint256(0x40)),
+            vm.parseJsonBytes32(json, string.concat(".", key, ".storage.", vm.toString(bytes32(uint256(0x20)))))
+        );
+        assertEq(
+            bytes32(uint256(0x60)),
+            vm.parseJsonBytes32(json, string.concat(".", key, ".storage.", vm.toString(bytes32(uint256(0x40)))))
+        );
 
         vm.removeFile(path);
     }
@@ -83,7 +89,12 @@ contract DumpStateTest is DSTest {
         assertEq(0, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x300)), ".balance")));
         assertEq(hex"", vm.parseJsonBytes(json, string.concat(".", vm.toString(address(0x300)), ".code")));
         assertEq(1, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x300)), ".storage")).length);
-        assertEq(2, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x300)), ".storage.", vm.toString(bytes32(uint256(1))))));
+        assertEq(
+            2,
+            vm.parseJsonUint(
+                json, string.concat(".", vm.toString(address(0x300)), ".storage.", vm.toString(bytes32(uint256(1))))
+            )
+        );
 
         assertEq(4, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x400)))).length);
         assertEq(0, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x400)), ".nonce")));
