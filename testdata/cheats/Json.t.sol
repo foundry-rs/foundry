@@ -155,7 +155,7 @@ contract ParseJsonTest is DSTest {
     function test_parseJsonKeys() public {
         string memory jsonString =
             '{"some_key_to_value": "some_value", "some_key_to_array": [1, 2, 3], "some_key_to_object": {"key1": "value1", "key2": 2}}';
-        
+
         string[] memory keys = vm.parseJsonKeys(jsonString, "$");
         string[] memory expected = new string[](3);
         expected[0] = "some_key_to_value";
