@@ -4575,28 +4575,8 @@
     },
     {
       "func": {
-        "id": "toBase64",
-        "description": "Encodes a `bytes` value to base64 string",
-        "declaration": "function toBase64(bytes calldata data) external pure returns (string memory);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "toBase64(bytes)",
-        "selector": "0xa5cbfe65",
-        "selectorBytes": [
-          165,
-          203,
-          254,
-          101
-        ]
-      },
-      "group": "base64",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "toBase64URL",
-        "description": "Encodes a `bytes` value to base64url string",
+        "id": "toBase64URL_0",
+        "description": "Encodes a `bytes` value to a base64url string.",
         "declaration": "function toBase64URL(bytes calldata data) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -4609,7 +4589,67 @@
           74
         ]
       },
-      "group": "base64",
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64URL_1",
+        "description": "Encodes a `string` value to a base64url string.",
+        "declaration": "function toBase64URL(string calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64URL(string)",
+        "selector": "0xae3165b3",
+        "selectorBytes": [
+          174,
+          49,
+          101,
+          179
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64_0",
+        "description": "Encodes a `bytes` value to a base64 string.",
+        "declaration": "function toBase64(bytes calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64(bytes)",
+        "selector": "0xa5cbfe65",
+        "selectorBytes": [
+          165,
+          203,
+          254,
+          101
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64_1",
+        "description": "Encodes a `string` value to a base64 string.",
+        "declaration": "function toBase64(string calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64(string)",
+        "selector": "0x3f8be2c8",
+        "selectorBytes": [
+          63,
+          139,
+          226,
+          200
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },
