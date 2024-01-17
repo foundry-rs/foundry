@@ -254,7 +254,7 @@ impl Cheatcode for assertEq_9Call {
 impl Cheatcode for assertEq_10Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right } = self;
-        Ok(assert_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
+        Ok(assert_eq(left, right)
             .map_err(|e| format!("Assertion failed: {}", e.format_for_values()))?)
     }
 }
@@ -262,8 +262,7 @@ impl Cheatcode for assertEq_10Call {
 impl Cheatcode for assertEq_11Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right, error } = self;
-        Ok(assert_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right))
-            .map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
+        Ok(assert_eq(left, right).map_err(|e| format!("{}: {}", error, e.format_for_values()))?)
     }
 }
 
@@ -1109,7 +1108,7 @@ fn uint_assert_approx_eq_rel(
     max_delta: U256,
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     let delta = get_delta_uint(left, right)
-    .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
+        .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
         .ok_or(EqRelAssertionError::Overflow)? /
         right;
 
