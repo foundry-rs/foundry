@@ -4195,8 +4195,28 @@
     },
     {
       "func": {
+        "id": "signP256",
+        "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
+        "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signP256(uint256,bytes32)",
+        "selector": "0x83211b40",
+        "selectorBytes": [
+          131,
+          33,
+          27,
+          64
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "sign_0",
-        "description": "Signs data.",
+        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.",
         "declaration": "function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
