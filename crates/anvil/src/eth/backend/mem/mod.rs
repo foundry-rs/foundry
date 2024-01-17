@@ -31,7 +31,7 @@ use crate::{
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_network::Sealable;
-use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -964,7 +964,7 @@ impl Backend {
                 node_info!("    Gas used: {}", receipt.gas_used());
                 if !info.exit.is_ok() {
                     let r = decode_revert(
-                        &info.out.clone().unwrap_or_default().to_vec(),
+                        info.out.clone().unwrap_or_default().as_ref(),
                         None,
                         Some(info.exit),
                     );
@@ -1285,7 +1285,7 @@ impl Backend {
             for log in logs.into_iter() {
                 let mut log = Log {
                     address: log.address,
-                    topics: log.topics().into_iter().map(|t| *t).collect(),
+                    topics: log.topics().to_vec(),
                     data: log.data.data,
                     block_hash: None,
                     block_number: None,
@@ -1569,10 +1569,10 @@ impl Backend {
             mix_hash,
             nonce,
             base_fee_per_gas,
-            withdrawals_root,
-            blob_gas_used,
-            excess_blob_gas,
-            parent_beacon_block_root,
+            withdrawals_root: _,
+            blob_gas_used: _,
+            excess_blob_gas: _,
+            parent_beacon_block_root: _,
         } = header;
 
         AlloyBlock {
@@ -1996,7 +1996,7 @@ impl Backend {
             self.blockchain.get_transaction_by_hash(&hash)?;
 
         let ReceiptWithBloom { receipt, bloom } = receipt.into();
-        let Receipt { success, cumulative_gas_used, logs } = receipt;
+        let Receipt { success, cumulative_gas_used: _, logs } = receipt;
         let logs_bloom = bloom;
 
         let index = info.transaction_index as usize;
@@ -2029,8 +2029,8 @@ impl Backend {
                 .map(|b| b as u128)
                 .unwrap_or(self.base_fee().to::<u128>())
                 .checked_add(t.max_priority_fee_per_gas)
-                .unwrap_or(u128::MAX) as u128,
-            TypedTransaction::Deposit(_) => 0 as u128,
+                .unwrap_or(u128::MAX),
+            TypedTransaction::Deposit(_) => 0_u128,
         };
 
         let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
@@ -2056,8 +2056,8 @@ impl Backend {
                     .enumerate()
                     .map(|(i, log)| Log {
                         address: log.address,
-                        topics: log.topics().clone().into_iter().map(|t| *t).collect(),
-                        data: log.data.data.clone().into(),
+                        topics: log.topics().to_vec(),
+                        data: log.data.data.clone(),
                         block_hash: Some(block_hash),
                         block_number: Some(U256::from(block.header.number)),
                         transaction_hash: Some(info.transaction_hash),
@@ -2257,7 +2257,7 @@ impl Backend {
                     // proof is rlp encoded:
                     // <https://github.com/foundry-rs/foundry/issues/5004>
                     // <https://www.quicknode.com/docs/ethereum/eth_getProof>
-                    alloy_rlp::encode(&record).to_vec().into()
+                    alloy_rlp::encode(record).to_vec().into()
                 })
                 .collect::<Vec<_>>();
 
@@ -2286,7 +2286,7 @@ impl Backend {
                                         // proof is rlp encoded:
                                         // <https://github.com/foundry-rs/foundry/issues/5004>
                                         // <https://www.quicknode.com/docs/ethereum/eth_getProof>
-                                        alloy_rlp::encode(&proof).to_vec().into()
+                                        alloy_rlp::encode(proof).to_vec().into()
                                     })
                                     .collect(),
                             },
@@ -2488,7 +2488,7 @@ pub fn transaction_build(
     }
 
     transaction.block_hash =
-        block.as_ref().map(|block| B256::from(keccak256(&alloy_rlp::encode(&block.header))));
+        block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
 
     transaction.block_number = block.as_ref().map(|block| U256::from(block.header.number));
 

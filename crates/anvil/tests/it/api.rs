@@ -1,11 +1,13 @@
 //! general eth api tests
 
 use crate::abi::{MulticallContract, SimpleStorage};
-use alloy_primitives::{B256, U256 as rU256};
+use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
     CallInput, CallRequest,
 };
+use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
@@ -13,7 +15,7 @@ use anvil::{
 use ethers::{
     abi::{Address, Tokenizable},
     prelude::{builders::ContractCall, decode_function_data, Middleware, SignerMiddleware},
-    signers::Signer,
+    signers::{Signer, Wallet},
     types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, U256},
     utils::get_contract_address,
 };
@@ -36,7 +38,7 @@ async fn can_get_block_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = handle.http_provider();
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
@@ -106,9 +108,12 @@ async fn can_get_block_by_number() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
     // send a dummy transactions
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block: Block<Transaction> = provider.get_block_with_txs(1u64).await.unwrap().unwrap();
@@ -138,7 +143,7 @@ async fn can_get_pending_block() {
 
     let from = accounts[0].address();
     let to = accounts[1].address();
-    let tx = TransactionRequest::new().to(to).value(100u64).from(from);
+    let tx = TransactionRequest::new().to(to.to_ethers()).value(100u64).from(from.to_ethers());
 
     let tx = provider.send_transaction(tx, None).await.unwrap();
 
@@ -165,7 +170,12 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -185,9 +195,9 @@ async fn can_call_on_pending_block() {
         pending_contract.aggregate(vec![]).block(BlockNumber::Pending).call().await.unwrap();
     assert_eq!(ret_block_number.as_u64(), 1u64);
 
-    let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
+    let accounts: Vec<rAddress> = handle.dev_wallets().map(|w| w.address()).collect();
     for i in 1..10 {
-        api.anvil_set_coinbase(accounts[i % accounts.len()].to_alloy()).await.unwrap();
+        api.anvil_set_coinbase(accounts[i % accounts.len()]).await.unwrap();
         api.evm_set_block_gas_limit(rU256::from(30_000_000 + i)).unwrap();
 
         api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
@@ -256,7 +266,12 @@ async fn can_call_with_state_override() {
 
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let account = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

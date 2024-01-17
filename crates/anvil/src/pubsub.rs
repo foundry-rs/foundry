@@ -156,7 +156,7 @@ pub fn filter_logs(
     fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
         let log = AlloyLog {
             address: l.address,
-            topics: l.topics().clone().into_iter().map(|t| *t).collect::<Vec<_>>(),
+            topics: l.topics().to_vec(),
             data: l.data.data.clone(),
             block_hash: None,
             block_number: None,
@@ -193,7 +193,7 @@ pub fn filter_logs(
             if add_log(block_hash, &log, &block, filter) {
                 logs.push(AlloyLog {
                     address: log.address,
-                    topics: log.topics().into_iter().map(|t| *t).collect::<Vec<_>>(),
+                    topics: log.topics().to_vec(),
                     data: log.data.data,
                     block_hash: Some(block_hash),
                     block_number: Some(U256::from(block.header.number)),

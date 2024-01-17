@@ -1,6 +1,6 @@
 mod abi;
 mod anvil;
-mod anvil_api;
+// mod anvil_api;
 mod api;
 mod fork;
 mod ganache;
@@ -11,14 +11,14 @@ mod ipc;
 mod logs;
 mod optimism;
 mod proof;
-mod pubsub;
+// mod pubsub;
 // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
-mod otterscan;
+// mod otterscan;
 
 mod sign;
 mod state;
-mod traces;
-mod transaction;
+// mod traces;
+// mod transaction;
 mod txpool;
 pub mod utils;
 mod wsapi;

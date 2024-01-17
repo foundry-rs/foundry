@@ -39,7 +39,13 @@ async fn can_get_default_dev_keys() {
     let provider = handle.ethers_http_provider();
 
     let dev_accounts = handle.dev_accounts().collect::<Vec<_>>();
-    let accounts = provider.get_accounts().await.unwrap();
+    let accounts = provider
+        .get_accounts()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|a| a.to_alloy())
+        .collect::<Vec<_>>();
     assert_eq!(dev_accounts, accounts);
 }
 

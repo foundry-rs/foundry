@@ -146,7 +146,8 @@ async fn can_impersonate_contract() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(*alloy_wallet.signer(), alloy_wallet.address().to_ethers(), alloy_wallet.chain_id().unwrap());
     let provider = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract =

@@ -17,7 +17,7 @@ use std::ops::Deref;
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
 pub fn impersonated_signature() -> Signature {
-    Signature::from_scalars_and_parity(B256::ZERO, B256::ZERO, false).unwrap()
+    Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false).unwrap()
 }
 
 /// Represents _all_ transaction requests received from RPC
@@ -104,7 +104,7 @@ impl EthTransactionRequest {
                 value: value.unwrap_or_default(),
                 gas_limit: gas.unwrap_or_default(),
                 is_system_tx: optimism_fields.clone()?.is_system_tx,
-                input: data.into(),
+                input: data,
             }))
         }
 
@@ -122,7 +122,7 @@ impl EthTransactionRequest {
                     gas_price: gas_price.unwrap_or_default().to::<u128>(),
                     gas_limit: gas.unwrap_or_default().to::<u64>(),
                     value: value.unwrap_or(U256::ZERO),
-                    input: data.into(),
+                    input: data,
                     to: match to {
                         Some(to) => TxKind::Call(to),
                         None => TxKind::Create,
@@ -137,7 +137,7 @@ impl EthTransactionRequest {
                     gas_price: gas_price.unwrap_or_default().to(),
                     gas_limit: gas.unwrap_or_default().to::<u64>(),
                     value: value.unwrap_or(U256::ZERO),
-                    input: data.into(),
+                    input: data,
                     to: match to {
                         Some(to) => TxKind::Call(to),
                         None => TxKind::Create,
@@ -160,7 +160,7 @@ impl EthTransactionRequest {
                         .to::<u128>(),
                     gas_limit: gas.unwrap_or_default().to::<u64>(),
                     value: value.unwrap_or(U256::ZERO),
-                    input: data.into(),
+                    input: data,
                     to: match to {
                         Some(to) => TxKind::Call(to),
                         None => TxKind::Create,

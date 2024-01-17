@@ -123,3 +123,13 @@ pub fn to_alloy_transaction_with_hash_and_sender(
         },
     }
 }
+
+pub fn to_primitive_signature(
+    signature: alloy_rpc_types::Signature,
+) -> Result<alloy_primitives::Signature, alloy_primitives::SignatureError> {
+    alloy_primitives::Signature::from_rs_and_parity(
+        signature.r,
+        signature.s,
+        signature.v.to::<u64>(),
+    )
+}

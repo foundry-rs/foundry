@@ -2,14 +2,16 @@
 
 use crate::{abi::*, utils};
 use alloy_primitives::U256 as rU256;
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockNumberOrTag, CallRequest};
+use alloy_signer::Signer as AlloySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
     core::rand,
     prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
     providers::{Http, Provider},
-    signers::Signer,
+    signers::{Signer, Wallet},
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
         U256,
@@ -188,15 +190,15 @@ async fn test_fork_reset() {
     let provider = handle.ethers_http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let from = accounts[0].address();
-    let to = accounts[1].address();
+    let from = accounts[0].address().to_ethers();
+    let to = accounts[1].address().to_ethers();
     let block_number = provider.get_block_number().await.unwrap();
     let balance_before = provider.get_balance(to, None).await.unwrap();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
     let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
 
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.transaction_index, 0u64.into());
@@ -205,7 +207,7 @@ async fn test_fork_reset() {
 
     assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
-    assert_eq!(balance_before.saturating_add(amount), to_balance);
+    assert_eq!(balance_before.saturating_add(amount.to_ethers()), to_balance);
     api.anvil_reset(Some(Forking {
         json_rpc_url: None,
         block_number: Some(block_number.as_u64()),
@@ -219,9 +221,9 @@ async fn test_fork_reset() {
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     assert_eq!(nonce, initial_nonce);
     let balance = provider.get_balance(from, None).await.unwrap();
-    assert_eq!(balance, handle.genesis_balance());
+    assert_eq!(balance, handle.genesis_balance().to_ethers());
     let balance = provider.get_balance(to, None).await.unwrap();
-    assert_eq!(balance, handle.genesis_balance());
+    assert_eq!(balance, handle.genesis_balance().to_ethers());
 
     // reset to latest
     api.anvil_reset(Some(Forking::default())).await.unwrap();
@@ -260,8 +262,7 @@ async fn test_fork_reset_setup() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.ethers_http_provider();
-
+    let provider = handle.http_provider();
     let snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -271,14 +272,20 @@ async fn test_fork_snapshotting() {
 
     let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
     let balance_before = provider.get_balance(to, None).await.unwrap();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let provider = handle.ethers_http_provider();
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
 
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
+    let provider = handle.http_provider();
+
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + 1);
+    assert_eq!(nonce, initial_nonce + rU256::from(1));
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -296,7 +303,7 @@ async fn test_fork_snapshotting() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_repeated() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = handle.http_provider();
 
     let snapshot = api.evm_snapshot().await.unwrap();
 
@@ -307,14 +314,17 @@ async fn test_fork_snapshotting_repeated() {
 
     let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
     let balance_before = provider.get_balance(to, None).await.unwrap();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(92u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
-
-    let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
+    let tx_provider = handle.ethers_http_provider();
+    let _ = tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + 1);
+    assert_eq!(nonce, initial_nonce + rU256::from(1));
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -342,7 +352,8 @@ async fn test_fork_snapshotting_repeated() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = handle.http_provider();
+    let tx_provider = handle.ethers_http_provider();
 
     // create a snapshot
     let snapshot = api.evm_snapshot().await.unwrap();
@@ -354,17 +365,20 @@ async fn test_fork_snapshotting_blocks() {
 
     let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
     let balance_before = provider.get_balance(to, None).await.unwrap();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
     // send the transaction
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
-    let _ = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
+    let _ = tx_provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
 
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + 1);
+    assert_eq!(nonce, initial_nonce + rU256::from(1));
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -376,14 +390,14 @@ async fn test_fork_snapshotting_blocks() {
     assert_eq!(block_number_after, block_number);
 
     // repeat transaction
-    let _ = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    let _ = tx_provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + 1);
+    assert_eq!(nonce, initial_nonce + rU256::from(1));
 
     // revert again: nothing to revert since snapshot gone
     assert!(!api.evm_revert(snapshot).await.unwrap());
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + 1);
+    assert_eq!(nonce, initial_nonce + rU256::from(1));
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
 }
@@ -425,7 +439,12 @@ async fn can_deploy_greeter_on_fork() {
     let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -448,49 +467,41 @@ async fn can_deploy_greeter_on_fork() {
 async fn can_reset_properly() {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let account = origin_handle.dev_accounts().next().unwrap();
-    let origin_provider = origin_handle.ethers_http_provider();
+    let origin_provider = origin_handle.http_provider();
     let origin_nonce = rU256::from(1u64);
-    origin_api.anvil_set_nonce(account.to_alloy(), origin_nonce).await.unwrap();
+    origin_api.anvil_set_nonce(account, origin_nonce).await.unwrap();
 
-    assert_eq!(
-        origin_nonce,
-        origin_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
-    );
+    assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
 
     let (fork_api, fork_handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
-    let fork_provider = fork_handle.ethers_http_provider();
-    assert_eq!(
-        origin_nonce,
-        fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
-    );
+    let fork_provider = fork_handle.http_provider();
+    let fork_tx_provider = fork_handle.ethers_http_provider();
+    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
 
     let to = Address::random();
-    let to_balance = fork_provider.get_balance(to, None).await.unwrap();
-    let tx = TransactionRequest::new().from(account).to(to).value(1337u64);
-    let tx = fork_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let to_balance = fork_provider.get_balance(to.to_alloy(), None).await.unwrap();
+    let tx = TransactionRequest::new().from(account.to_ethers()).to(to).value(1337u64);
+    let tx = fork_tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     // nonce incremented by 1
     assert_eq!(
         origin_nonce + rU256::from(1),
-        fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
+        fork_provider.get_transaction_count(account, None).await.unwrap()
     );
 
     // resetting to origin state
     fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     // nonce reset to origin
-    assert_eq!(
-        origin_nonce,
-        fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
-    );
+    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
 
     // balance is reset
-    assert_eq!(to_balance, fork_provider.get_balance(to, None).await.unwrap());
+    assert_eq!(to_balance, fork_provider.get_balance(to.to_alloy(), None).await.unwrap());
 
     // tx does not exist anymore
-    assert!(fork_provider.get_transaction(tx.transaction_hash).await.is_err())
+    assert!(fork_tx_provider.get_transaction(tx.transaction_hash).await.is_err())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -506,7 +517,7 @@ async fn test_fork_timestamp() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
 
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from.to_ethers());
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
@@ -526,7 +537,7 @@ async fn test_fork_timestamp() {
     let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
     assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
 
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from.to_ethers());
     let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
@@ -540,13 +551,13 @@ async fn test_fork_timestamp() {
         .await
         .unwrap();
     api.evm_set_next_block_timestamp(BLOCK_TIMESTAMP + 1).unwrap();
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from.to_ethers());
     let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
     assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP + 1);
 
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from.to_ethers());
     let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
@@ -706,7 +717,7 @@ async fn test_fork_base_fee() {
 
     let addr = Address::random();
     let val = 1337u64;
-    let tx = TransactionRequest::new().from(from).to(addr).value(val);
+    let tx = TransactionRequest::new().from(from.to_ethers()).to(addr).value(val);
 
     let _res = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 }
@@ -867,9 +878,9 @@ async fn test_fork_block_transaction_count() {
     // disable automine (so there are pending transactions)
     api.anvil_set_auto_mine(false).await.unwrap();
     // transfer: impersonate real sender
-    api.anvil_impersonate_account(sender.to_alloy()).await.unwrap();
+    api.anvil_impersonate_account(sender).await.unwrap();
 
-    let tx = TransactionRequest::new().from(sender).value(42u64).gas(100_000);
+    let tx = TransactionRequest::new().from(sender.to_ethers()).value(42u64).gas(100_000);
     provider.send_transaction(tx, None).await.unwrap();
 
     let pending_txs =
@@ -1014,7 +1025,12 @@ async fn can_override_fork_chain_id() {
     .await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(
+        alloy_wallet.signer().clone(),
+        alloy_wallet.address().to_ethers(),
+        alloy_wallet.chain_id().unwrap(),
+    );
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -1052,7 +1068,7 @@ async fn test_fork_reset_moonbeam() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
 
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from.to_ethers());
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
@@ -1064,7 +1080,7 @@ async fn test_fork_reset_moonbeam() {
     .await
     .unwrap();
 
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from.to_ethers());
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 }
@@ -1105,8 +1121,7 @@ async fn test_arbitrum_fork_dev_balance() {
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     for acc in accounts {
-        let balance =
-            api.balance(acc.address().to_alloy(), Some(Default::default())).await.unwrap();
+        let balance = api.balance(acc.address(), Some(Default::default())).await.unwrap();
         assert_eq!(balance, rU256::from(100000000000000000000u128));
     }
 }

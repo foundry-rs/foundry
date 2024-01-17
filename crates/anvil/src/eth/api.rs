@@ -37,7 +37,6 @@ use alloy_rpc_trace_types::{
     parity::LocalizedTransactionTrace,
 };
 use alloy_rpc_types::{
-    request::TransactionRequest,
     state::StateOverride,
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
@@ -53,7 +52,7 @@ use anvil_core::{
                 call_request_to_typed, EthTransactionRequest, PendingTransaction, TypedTransaction,
                 TypedTransactionRequest,
             },
-            call_to_internal_tx_request, to_alloy_proof, to_ethers_signature,
+            alloy_compat::to_primitive_signature,
         },
         EthRequest,
     },
@@ -64,10 +63,7 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::types::transaction::eip712::TypedData;
-use foundry_common::{
-    provider::alloy::ProviderBuilder,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{provider::alloy::ProviderBuilder, types::ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
     revm::{
@@ -426,14 +422,14 @@ impl EthApi {
         match request {
             TypedTransactionRequest::Deposit(_) => {
                 let NIL_SIGNATURE: alloy_primitives::Signature =
-                    alloy_primitives::Signature::from_rs_and_parity(U256::ZERO, U256::ZERO, false)
+                    alloy_primitives::Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false)
                         .unwrap();
                 return build_typed_transaction(request, NIL_SIGNATURE)
             }
             _ => {
                 for signer in self.signers.iter() {
-                    if signer.accounts().contains(&from) {
-                        let signature = signer.sign_transaction(request.clone(), &from)?;
+                    if signer.accounts().contains(from) {
+                        let signature = signer.sign_transaction(request.clone(), from)?;
                         return build_typed_transaction(request, signature)
                     }
                 }
@@ -833,7 +829,7 @@ impl EthApi {
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
     ///
     /// Handler for ETH RPC call: `eth_signTypedData_v4`
-    pub async fn sign_typed_data_v4(&self, address: Address, data: &TypedData) -> Result<String> {
+    pub async fn sign_typed_data_v4(&self, _address: Address, _data: &TypedData) -> Result<String> {
         node_info!("eth_signTypedData_v4");
         todo!()
         // let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
@@ -881,31 +877,32 @@ impl EthApi {
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
-        todo!();
-        // let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-        // let request = self.build_typed_tx_request(request, nonce)?;
-        // // if the sender is currently impersonated we need to "bypass" signing
-        // let pending_transaction = if self.is_impersonated(from) {
-        //     let bypass_signature = self.backend.cheats().bypass_signature();
-        //     let transaction =
-        //         sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
-        //     self.ensure_typed_transaction_supported(&transaction)?;
-        //     trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
-        //     PendingTransaction::with_impersonated(transaction, from)
-        // } else {
-        //     let transaction = self.sign_request(&from, request)?;
-        //     self.ensure_typed_transaction_supported(&transaction)?;
-        //     PendingTransaction::new(transaction)?
-        // };
+        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        let request = self.build_typed_tx_request(request, nonce)?;
+        // if the sender is currently impersonated we need to "bypass" signing
+        let pending_transaction = if self.is_impersonated(from) {
+            let bypass_signature = self.backend.cheats().bypass_signature();
+            let transaction = alloy_sign::build_typed_transaction(
+                request,
+                to_primitive_signature(bypass_signature)?,
+            )?;
+            self.ensure_typed_transaction_supported(&transaction)?;
+            trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
+            PendingTransaction::with_impersonated(transaction, from)
+        } else {
+            let transaction = self.sign_request(&from, request)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
+            PendingTransaction::new(transaction)?
+        };
 
-        // // pre-validate
-        // self.backend.validate_pool_transaction(&pending_transaction).await?;
+        // pre-validate
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        // let requires = required_marker(nonce, on_chain_nonce, from);
-        // let provides = vec![to_marker(nonce.to::<u64>(), from)];
-        // debug_assert!(requires != provides);
+        let requires = required_marker(nonce, on_chain_nonce, from);
+        let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        debug_assert!(requires != provides);
 
-        // self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Sends signed transaction, returning its hash.
@@ -928,15 +925,14 @@ impl EthApi {
             // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
             // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
             // version byte
-            let extend = alloy_rlp::encode(&data);
+            let extend = alloy_rlp::encode(data);
             let tx = match <TypedTransaction as alloy_rlp::Decodable>::decode(&mut &extend[..]) {
                 Ok(transaction) => transaction,
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
             };
 
-            // self.ensure_typed_transaction_supported(&tx)?;
-            todo!()
-            // tx
+            self.ensure_typed_transaction_supported(&tx)?;
+            tx
         };
 
         let pending_transaction = PendingTransaction::new(transaction)?;
@@ -1972,7 +1968,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        request: EthTransactionRequest,
+        _request: EthTransactionRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         Err(BlockchainError::RpcUnimplemented)

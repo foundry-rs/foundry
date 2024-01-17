@@ -1,5 +1,6 @@
 //! general eth api tests with websocket provider
 
+use alloy_providers::provider::TempProvider;
 use anvil::{spawn, NodeConfig};
 use ethers::{prelude::Middleware, types::U256};
 use foundry_common::types::ToAlloy;
@@ -19,7 +20,7 @@ async fn can_get_block_number_ws() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = handle.ws_provider();
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {

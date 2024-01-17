@@ -1,9 +1,9 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
+
 use alloy_network::{Signed, Transaction};
-use alloy_primitives::{Address, Signature, SignatureError, B256, U256};
+use alloy_primitives::{Address, Signature, U256};
 use alloy_signer::{LocalWallet, Signer as AlloySigner, SignerSync as AlloySignerSync};
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_sol_types::Eip712Domain;
 use anvil_core::eth::transaction::{
     alloy::{TypedTransaction, TypedTransactionRequest},
     optimism::{DepositTransaction, DepositTransactionRequest},
@@ -71,8 +71,8 @@ impl Signer for DevSigner {
 
     async fn sign_typed_data(
         &self,
-        address: Address,
-        payload: &Eip712Domain,
+        _address: Address,
+        _payload: &Eip712Domain,
     ) -> Result<Signature, BlockchainError> {
         Err(BlockchainError::RpcUnimplemented)
         // let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
@@ -86,18 +86,10 @@ impl Signer for DevSigner {
     ) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
         match request {
-            TypedTransactionRequest::Legacy(mut tx) => {
-                return Ok(signer.sign_transaction_sync(&mut tx)?)
-            }
-            TypedTransactionRequest::EIP2930(mut tx) => {
-                return Ok(signer.sign_transaction_sync(&mut tx)?)
-            }
-            TypedTransactionRequest::EIP1559(mut tx) => {
-                return Ok(signer.sign_transaction_sync(&mut tx)?)
-            }
-            TypedTransactionRequest::Deposit(mut tx) => {
-                return Ok(signer.sign_transaction_sync(&mut tx)?)
-            }
+            TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::Deposit(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
         }
     }
 }

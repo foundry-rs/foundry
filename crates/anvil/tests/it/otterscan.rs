@@ -11,10 +11,11 @@ use anvil::{
 use ethers::{
     abi::Address,
     prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
-    signers::Signer,
+    signers::{Signer, Wallet},
     types::{Bytes, TransactionRequest, U256},
     utils::get_contract_address,
 };
+use alloy_signer::Signer as AlloySigner;
 use ethers_solc::{project_util::TempProject, Artifact};
 use foundry_common::types::{ToAlloy, ToEthers};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
@@ -43,7 +44,8 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let alloy_wallet = handle.dev_wallets().next().unwrap();
+    let wallet = Wallet::new_with_signer(*alloy_wallet.signer(), alloy_wallet.address().to_ethers(), alloy_wallet.chain_id().unwrap());
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
