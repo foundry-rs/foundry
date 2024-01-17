@@ -50,6 +50,7 @@ macro_rules! test_repro {
 }
 
 async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
+    foundry_test_utils::init_tracing();
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 
     let mut config = Config::with_root(PROJECT.root());
@@ -279,6 +280,9 @@ test_repro!(6501, false, None, |res| {
         );
     }
 });
+
+// https://github.com/foundry-rs/foundry/issues/6538
+test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
