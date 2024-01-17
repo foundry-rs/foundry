@@ -207,6 +207,7 @@ interface Vm {
     function setEnv(string calldata name, string calldata value) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
+    function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;

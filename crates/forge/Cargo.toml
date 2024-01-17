@@ -35,6 +35,8 @@ ethers-middleware.workspace = true
 ethers-providers.workspace = true
 ethers-signers.workspace = true
 
+revm-inspectors.workspace = true
+
 comfy-table = "7"
 eyre.workspace = true
 proptest = "1"

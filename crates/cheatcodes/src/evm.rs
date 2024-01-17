@@ -93,6 +93,13 @@ impl Cheatcode for sign_0Call {
     }
 }
 
+impl Cheatcode for signP256Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { privateKey, digest } = self;
+        super::utils::sign_p256(privateKey, digest, ccx.state)
+    }
+}
+
 impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
