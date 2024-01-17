@@ -12,8 +12,8 @@ use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     fmt::format_tokens,
-    runtime_client::RuntimeClient,
     fs,
+    runtime_client::RuntimeClient,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
@@ -210,20 +210,28 @@ async fn main() -> Result<()> {
                 Some(token) => {
                     let chain = utils::get_chain(config.chain, &provider).await?;
                     let mut builder: TxBuilder<'_, Provider> = TxBuilder::new(
-                        &provider, NameOrAddress::Address(Address::ZERO.to_ethers()),
+                        &provider,
+                        NameOrAddress::Address(Address::ZERO.to_ethers()),
                         Some(NameOrAddress::Address(token.to_ethers())),
-                        chain, true,
-                    ).await?;
+                        chain,
+                        true,
+                    )
+                    .await?;
 
                     let account_addr = match who.into() {
                         NameOrAddress::Name(ens_name) => provider.resolve_name(&ens_name).await?,
                         NameOrAddress::Address(addr) => addr,
                     };
 
-                    builder.set_args("balanceOf(address) returns (uint256)", vec![format!("{account_addr:#x}")]).await?;
+                    builder
+                        .set_args(
+                            "balanceOf(address) returns (uint256)",
+                            vec![format!("{account_addr:#x}")],
+                        )
+                        .await?;
                     let builder_output = builder.build();
                     println!("{}", Cast::new(provider).call(builder_output, block).await?);
-                },
+                }
                 None => {
                     let value = Cast::new(provider).balance(who, block).await?;
                     if ether {
