@@ -110,38 +110,35 @@ impl Cheatcode for dumpStateCall {
                 key == &ccx.state.config.evm_opts.sender
         };
 
-        let accounts = ccx
+        let alloc = ccx
             .data
             .journaled_state
             .state()
-            .iter()
+            .into_iter()
             .filter(|(key, _)| !skip(key))
+            .map(|(key, val)| {
+                (
+                    key,
+                    GenesisAccount {
+                        nonce: Some(val.info.nonce),
+                        balance: val.info.balance.to_ethers(),
+                        code: Some(
+                            val.info.code.clone().unwrap_or_default().original_bytes().to_ethers(),
+                        ),
+                        storage: Some(
+                            val.storage
+                                .iter()
+                                .map(|(k, v)| {
+                                    let key = k.to_be_bytes::<32>();
+                                    let val = v.present_value().to_be_bytes::<32>();
+                                    (H256::from_slice(&key), H256::from_slice(&val))
+                                })
+                                .collect(),
+                        ),
+                    },
+                )
+            })
             .collect::<HashMap<_, _>>();
-
-        let mut alloc: HashMap<Address, GenesisAccount> = HashMap::with_capacity(accounts.len());
-
-        accounts.into_iter().for_each(|(key, val)| {
-            alloc.insert(
-                *key,
-                GenesisAccount {
-                    nonce: Some(val.info.nonce),
-                    balance: val.info.balance.to_ethers(),
-                    code: Some(
-                        val.info.code.clone().unwrap_or_default().original_bytes().to_ethers(),
-                    ),
-                    storage: Some(
-                        val.storage
-                            .iter()
-                            .map(|(k, v)| {
-                                let key = k.to_be_bytes::<32>();
-                                let val = v.present_value().to_be_bytes::<32>();
-                                (H256::from_slice(&key), H256::from_slice(&val))
-                            })
-                            .collect(),
-                    ),
-                },
-            );
-        });
 
         write_json_file(path, &alloc)?;
         Ok(Default::default())
