@@ -29,9 +29,10 @@ use crate::{
     revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxLegacy;
+use alloy_consensus::{TxLegacy, TxEnvelope};
 use alloy_network::{Signed, TxKind};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
+use alloy_rlp::Decodable;
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -909,30 +910,35 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         node_info!("eth_sendRawTransaction");
-        let mut data = tx.as_ref();
+        let data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
-        let transaction = if data[0] > 0x7f {
-            // legacy transaction
-            match <Signed<TxLegacy> as alloy_rlp::Decodable>::decode(&mut data) {
-                Ok(transaction) => TypedTransaction::Legacy(transaction),
-                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            }
-        } else {
-            // the [TypedTransaction] requires a valid rlp input,
-            // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
-            // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
-            // version byte
-            let extend = alloy_rlp::encode(data);
-            let tx = match <TypedTransaction as alloy_rlp::Decodable>::decode(&mut &extend[..]) {
-                Ok(transaction) => transaction,
-                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            };
-
-            self.ensure_typed_transaction_supported(&tx)?;
-            tx
+        let extend = alloy_rlp::encode(data);
+        let transaction = match TypedTransaction::decode(&mut &extend[..]) {
+            Ok(transaction) => transaction,
+            Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
         };
+        // let transaction = if data[0] > 0x7f {
+        //     // legacy transaction
+        //     match <Signed<TxLegacy> as alloy_rlp::Decodable>::decode(&mut data) {
+        //         Ok(transaction) => TypedTransaction::Legacy(transaction),
+        //         Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
+        //     }
+        // } else {
+        //     // the [TypedTransaction] requires a valid rlp input,
+        //     // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
+        //     // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
+        //     // version byte
+        //     let extend = alloy_rlp::encode(data);
+        //     let tx = match <TypedTransaction as alloy_rlp::Decodable>::decode(&mut &extend[..]) {
+        //         Ok(transaction) => transaction,
+        //         Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
+        //     };
+
+        //     self.ensure_typed_transaction_supported(&tx)?;
+        //     tx
+        // };
         println!("tx: {:#?}", transaction);
         let pending_transaction = PendingTransaction::new(transaction)?;
 
@@ -2576,10 +2582,13 @@ impl EthApi {
     /// additional validation against hardfork
     fn ensure_typed_transaction_supported(&self, tx: &TypedTransaction) -> Result<()> {
         match &tx {
-            TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
-            TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Enveloped(t) => match t {
+                TxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
+                TxEnvelope::Eip2930(_) => self.backend.ensure_eip2930_active(),
+                TxEnvelope::Legacy(_) => Ok(()),
+                TxEnvelope::TaggedLegacy(_) => Ok(()),
+            },
             TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
-            TypedTransaction::Legacy(_) => Ok(()),
         }
     }
 }
