@@ -438,7 +438,8 @@ fn expect_revert(state: &mut Cheatcodes, reason: Option<&[u8]>, depth: u64) -> R
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    state.expected_revert = Some(ExpectedRevert { reason: reason.map(<[_]>::to_vec), depth, pending: true });
+    state.expected_revert =
+        Some(ExpectedRevert { reason: reason.map(<[_]>::to_vec), depth, pending: true });
     Ok(Default::default())
 }
 
