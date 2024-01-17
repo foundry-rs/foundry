@@ -127,13 +127,34 @@ impl UIfmt for U64 {
 
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
-        format!(
+        let Self {
+            transaction_hash,
+            transaction_index,
+            block_hash,
+            block_number,
+            from,
+            to,
+            cumulative_gas_used,
+            gas_used,
+            contract_address,
+            logs,
+            status,
+            root,
+            logs_bloom,
+            transaction_type,
+            effective_gas_price,
+            other,
+            ..
+        } = self;
+
+        let mut pretty = format!(
             "
 blockHash               {}
 blockNumber             {}
 contractAddress         {}
 cumulativeGasUsed       {}
 effectiveGasPrice       {}
+from                    {}
 gasUsed                 {}
 logs                    {}
 logsBloom               {}
@@ -142,20 +163,32 @@ status                  {}
 transactionHash         {}
 transactionIndex        {}
 type                    {}",
-            self.block_hash.pretty(),
-            self.block_number.pretty(),
-            self.contract_address.pretty(),
-            self.cumulative_gas_used.pretty(),
-            self.effective_gas_price.pretty(),
-            self.gas_used.pretty(),
-            serde_json::to_string(&self.logs).unwrap(),
-            self.logs_bloom.pretty(),
-            self.root.pretty(),
-            self.status.pretty(),
-            self.transaction_hash.pretty(),
-            self.transaction_index.pretty(),
-            self.transaction_type.pretty()
-        )
+            block_hash.pretty(),
+            block_number.pretty(),
+            contract_address.pretty(),
+            cumulative_gas_used.pretty(),
+            effective_gas_price.pretty(),
+            from.pretty(),
+            gas_used.pretty(),
+            serde_json::to_string(logs).unwrap(),
+            logs_bloom.pretty(),
+            root.pretty(),
+            status.pretty(),
+            transaction_hash.pretty(),
+            transaction_index.pretty(),
+            transaction_type.pretty()
+        );
+
+        if let Some(to) = to {
+            pretty.push_str(&format!("\nto                      {}", to));
+        }
+
+        // additional captured fields
+        for (key, val) in other.iter() {
+            pretty.push_str(&format!("\n{}             {}", key, val));
+        }
+
+        pretty
     }
 }
 
