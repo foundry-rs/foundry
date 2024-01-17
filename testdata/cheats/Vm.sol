@@ -225,8 +225,10 @@ interface Vm {
     function stopMappingRecording() external;
     function stopPrank() external;
     function store(address target, bytes32 slot, bytes32 value) external;
-    function toBase64(bytes calldata data) external pure returns (string memory);
     function toBase64URL(bytes calldata data) external pure returns (string memory);
+    function toBase64URL(string calldata data) external pure returns (string memory);
+    function toBase64(bytes calldata data) external pure returns (string memory);
+    function toBase64(string calldata data) external pure returns (string memory);
     function toString(address value) external pure returns (string memory stringifiedValue);
     function toString(bytes calldata value) external pure returns (string memory stringifiedValue);
     function toString(bytes32 value) external pure returns (string memory stringifiedValue);
