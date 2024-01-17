@@ -528,8 +528,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
             .count();
         let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
-        write!(self.buf(), " * ")?;
-        self.write_comment_line(comment, &line[to_skip..])?;
+        write!(self.buf(), " *")?;
+        let content = &line[to_skip..];
+        if !content.trim().is_empty() {
+            write!(self.buf(), " ")?;
+            self.write_comment_line(comment, &line[to_skip..])?;
+        }
         self.write_whitespace_separator(true)?;
         Ok(())
     }
