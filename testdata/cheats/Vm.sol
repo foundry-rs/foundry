@@ -55,6 +55,7 @@ interface Vm {
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
+    function dumpState(string calldata pathToStateJson) external;
     function envAddress(string calldata name) external view returns (address value);
     function envAddress(string calldata name, string calldata delim) external view returns (address[] memory value);
     function envBool(string calldata name) external view returns (bool value);
