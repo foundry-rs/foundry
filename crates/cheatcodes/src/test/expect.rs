@@ -59,6 +59,9 @@ pub struct ExpectedRevert {
     pub reason: Option<Vec<u8>>,
     /// The depth at which the revert is expected
     pub depth: u64,
+    /// Flag which is being switched once we exit `expectRevert` call
+    /// Needed to not fail due to `expectRevert` not reverting
+    pub pending: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -435,7 +438,7 @@ fn expect_revert(state: &mut Cheatcodes, reason: Option<&[u8]>, depth: u64) -> R
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    state.expected_revert = Some(ExpectedRevert { reason: reason.map(<[_]>::to_vec), depth });
+    state.expected_revert = Some(ExpectedRevert { reason: reason.map(<[_]>::to_vec), depth, pending: true });
     Ok(Default::default())
 }
 

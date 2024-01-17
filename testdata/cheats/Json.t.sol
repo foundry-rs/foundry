@@ -155,11 +155,19 @@ contract ParseJsonTest is DSTest {
     function test_parseJsonKeys() public {
         string memory jsonString =
             '{"some_key_to_value": "some_value", "some_key_to_array": [1, 2, 3], "some_key_to_object": {"key1": "value1", "key2": 2}}';
+        
         string[] memory keys = vm.parseJsonKeys(jsonString, "$");
-        assertEq(abi.encode(keys), abi.encode(["some_key_to_value", "some_key_to_array", "some_key_to_object"]));
+        string[] memory expected = new string[](3);
+        expected[0] = "some_key_to_value";
+        expected[1] = "some_key_to_array";
+        expected[2] = "some_key_to_object";
+        assertEq(abi.encode(keys), abi.encode(expected));
 
         keys = vm.parseJsonKeys(jsonString, ".some_key_to_object");
-        assertEq(abi.encode(keys), abi.encode(["key1", "key2"]));
+        expected = new string[](2);
+        expected[0] = "key1";
+        expected[1] = "key2";
+        assertEq(abi.encode(keys), abi.encode(expected));
 
         vm.expectRevert("JSON value at \".some_key_to_array\" is not an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_array");
@@ -167,7 +175,7 @@ contract ParseJsonTest is DSTest {
         vm.expectRevert("JSON value at \".some_key_to_value\" is not an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_value");
 
-        vm.expectRevert("JSON value at \".*\" is not an object");
+        vm.expectRevert("key \".*\" must return exactly one JSON object");
         vm.parseJsonKeys(jsonString, ".*");
     }
 }

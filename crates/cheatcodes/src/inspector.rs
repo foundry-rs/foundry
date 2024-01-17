@@ -919,6 +919,30 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         status: InstructionResult,
         retdata: Bytes,
     ) -> (InstructionResult, Gas, Bytes) {
+        // Handle expected reverts
+        if let Some(expected_revert) = &self.expected_revert {
+            if data.journaled_state.depth() <= expected_revert.depth {
+                if expected_revert.pending {
+                    let expected_revert = self.expected_revert.as_mut().unwrap();
+                    expected_revert.pending = false;
+                } else {
+                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    return match expect::handle_expect_revert(
+                        false,
+                        expected_revert.reason.as_deref(),
+                        status,
+                        retdata,
+                    ) {
+                        Err(error) => {
+                            trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
+                            (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
+                        }
+                        Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
+                    };
+                }
+            }
+        }
+
         if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata);
         }
@@ -952,25 +976,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 if broadcast.single_call {
                     let _ = self.broadcast.take();
                 }
-            }
-        }
-
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
-                    false,
-                    expected_revert.reason.as_deref(),
-                    status,
-                    retdata,
-                ) {
-                    Err(error) => {
-                        trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
-                        (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
-                    }
-                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
-                };
             }
         }
 
