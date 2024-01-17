@@ -80,7 +80,7 @@ impl EstimateArgs {
         let EstimateArgs { from, to, sig, args, value, rpc, etherscan, command } = self;
 
         let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
-        let config = Config::from_provider(figment);
+        let config = Config::try_from(figment)?;
 
         let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
