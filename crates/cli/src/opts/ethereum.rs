@@ -12,7 +12,7 @@ use foundry_config::{
 use serde::Serialize;
 use std::borrow::Cow;
 
-const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
+const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
 #[derive(Clone, Debug, Default, Parser)]
 pub struct RpcOpts {
