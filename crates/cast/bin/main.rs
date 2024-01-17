@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
                     )
                     .await?;
 
-                    let account_addr = match who.into() {
+                    let account_addr = match who {
                         NameOrAddress::Name(ens_name) => provider.resolve_name(&ens_name).await?,
                         NameOrAddress::Address(addr) => addr,
                     };

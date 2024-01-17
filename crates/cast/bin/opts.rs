@@ -626,6 +626,7 @@ pub enum Subcommands {
         #[clap(flatten)]
         rpc: RpcOpts,
 
+        /// Token address to query, with the method `balanceOf(address) return (uint256)`
         #[clap(short, long)]
         token: Option<Address>,
     },
