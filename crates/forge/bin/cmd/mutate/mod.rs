@@ -2,6 +2,7 @@ use super::{
     install,
     test::{ProjectPathsAwareFilter, TestOutcome},
 };
+use alloy_primitives::U256;
 use crate::cmd::mutate::summary::{
     MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
 };
@@ -75,6 +76,13 @@ pub struct MutateTestArgs {
     /// List all matching functions instead of running them
     #[clap(long, short, help_heading = "Display options")]
     list: bool,
+
+    /// Set seed used to generate randomness during your fuzz runs.
+    #[clap(long)]
+    pub fuzz_seed: Option<U256>,
+
+    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    pub fuzz_runs: Option<u64>,
 
     #[clap(flatten)]
     evm_opts: EvmArgs,
@@ -441,7 +449,12 @@ impl Provider for MutateTestArgs {
         // We do not want fuzz and invariant tests to run once so the test
         // setup is faster.
         let mut fuzz_dict = Dict::default();
-        fuzz_dict.insert("runs".to_string(), 0.into());
+        if let Some(fuzz_seed) = self.fuzz_seed {
+            fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
+        }
+        if let Some(fuzz_runs) = self.fuzz_runs {
+            fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
+        }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::default();
