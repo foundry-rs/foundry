@@ -1313,23 +1313,23 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
-                if matches!(expected_revert.revert_type, ExpectedRevertType::Default) {
-                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                    return match expect::handle_expect_revert(
-                        true,
-                        expected_revert.reason.as_deref(),
-                        status,
-                        retdata,
-                    ) {
-                        Ok((address, retdata)) => {
-                            (InstructionResult::Return, address, remaining_gas, retdata)
-                        }
-                        Err(err) => {
-                            (InstructionResult::Revert, None, remaining_gas, err.abi_encode().into())
-                        }
-                    };
-                }
+            if data.journaled_state.depth() <= expected_revert.depth &&
+                matches!(expected_revert.revert_type, ExpectedRevertType::Default)
+            {
+                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                return match expect::handle_expect_revert(
+                    true,
+                    expected_revert.reason.as_deref(),
+                    status,
+                    retdata,
+                ) {
+                    Ok((address, retdata)) => {
+                        (InstructionResult::Return, address, remaining_gas, retdata)
+                    }
+                    Err(err) => {
+                        (InstructionResult::Revert, None, remaining_gas, err.abi_encode().into())
+                    }
+                };
             }
         }
 
