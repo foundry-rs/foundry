@@ -168,6 +168,8 @@ impl MutateTestArgs {
             BTreeMap::new();
 
         let mutation_project_root = project.root();
+        let mutant_fuzz_runs = self.fuzz_runs.unwrap_or(0) as u32;
+        let mutant_fuzz_seed = self.fuzz_seed.clone();
         for (contract_out_dir, contract_mutants) in mutants_output.into_iter() {
             let mut mutant_test_statuses: Vec<(Duration, MutantTestStatus)> =
                 Vec::with_capacity(contract_mutants.len());
@@ -177,6 +179,7 @@ impl MutateTestArgs {
             // we chunk there to prevent huge memory consumption
             // join_all which launches all the futures and polls
             let mut contract_mutants_iterator = contract_mutants.chunks(config.mutate.parallel);
+
 
             while let Some(mutant_chunks) = contract_mutants_iterator.next() {
                 let mutant_data_iterator = mutant_chunks.iter().map(|mutant| {
@@ -190,8 +193,14 @@ impl MutateTestArgs {
                 // we compile the projects here
                 let mutant_project_and_compile_output: Vec<_> =
                     try_join_all(mutant_data_iterator.map(|(root, file_name, mutant_contents)| {
-                        tokio::task::spawn_blocking(|| {
-                            setup_and_compile_mutant(root, file_name, mutant_contents)
+                        tokio::task::spawn_blocking(move || {
+                            setup_and_compile_mutant(
+                                root, 
+                                file_name,
+                                mutant_contents,
+                                mutant_fuzz_runs.clone(),
+                                mutant_fuzz_seed.clone()
+                            )
                         })
                     }))
                     .await?
@@ -470,6 +479,8 @@ pub fn setup_and_compile_mutant(
     mutation_project_root: PathBuf,
     mutant_file: String,
     mutant_contents: String,
+    fuzz_runs: u32,
+    fuzz_seed: Option<U256>
 ) -> Result<(TempProject, ProjectCompileOutput, Config)> {
     trace!(target: "forge::mutate", "setting up and compiling mutant");
 
@@ -488,7 +499,8 @@ pub fn setup_and_compile_mutant(
     // it's important
     config = config.canonic_at(temp_project_root);
     // override fuzz and invariant runs
-    config.fuzz.runs = 0;
+    config.fuzz.runs = fuzz_runs;
+    config.fuzz.seed = fuzz_seed;
     config.invariant.runs = 0;
 
     let mutant_file_path = temp_project_root.join(mutant_file);
