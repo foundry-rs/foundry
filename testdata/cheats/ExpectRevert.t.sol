@@ -188,7 +188,7 @@ contract ExpectRevertTest is DSTest {
     }
 
     function testExpectRevertCheatcode() public {
-        vm.expectRevertCheatcode("JSON value at \".a\" is not an object");
+        vm._expectRevertCheatcode("JSON value at \".a\" is not an object");
         vm.parseJsonKeys('{"a": "b"}', ".a");
     }
 }
