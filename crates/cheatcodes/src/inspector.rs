@@ -923,6 +923,40 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
+        if !cheatcode_call {
+            if data.journaled_state.depth() == 0 && self.skip {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    super::Error::from(MAGIC_SKIP).abi_encode().into(),
+                );
+            }
+    
+            // Clean up pranks
+            if let Some(prank) = &self.prank {
+                if data.journaled_state.depth() == prank.depth {
+                    data.env.tx.caller = prank.prank_origin;
+    
+                    // Clean single-call prank once we have returned to the original depth
+                    if prank.single_call {
+                        let _ = self.prank.take();
+                    }
+                }
+            }
+    
+            // Clean up broadcast
+            if let Some(broadcast) = &self.broadcast {
+                if data.journaled_state.depth() == broadcast.depth {
+                    data.env.tx.caller = broadcast.original_origin;
+    
+                    // Clean single-call broadcast once we have returned to the original depth
+                    if broadcast.single_call {
+                        let _ = self.broadcast.take();
+                    }
+                }
+            }
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
@@ -961,38 +995,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         if cheatcode_call {
             return (status, remaining_gas, retdata);
-        }
-
-        if data.journaled_state.depth() == 0 && self.skip {
-            return (
-                InstructionResult::Revert,
-                remaining_gas,
-                super::Error::from(MAGIC_SKIP).abi_encode().into(),
-            );
-        }
-
-        // Clean up pranks
-        if let Some(prank) = &self.prank {
-            if data.journaled_state.depth() == prank.depth {
-                data.env.tx.caller = prank.prank_origin;
-
-                // Clean single-call prank once we have returned to the original depth
-                if prank.single_call {
-                    let _ = self.prank.take();
-                }
-            }
-        }
-
-        // Clean up broadcast
-        if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() == broadcast.depth {
-                data.env.tx.caller = broadcast.original_origin;
-
-                // Clean single-call broadcast once we have returned to the original depth
-                if broadcast.single_call {
-                    let _ = self.broadcast.take();
-                }
-            }
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
