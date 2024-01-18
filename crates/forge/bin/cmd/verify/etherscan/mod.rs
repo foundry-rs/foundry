@@ -321,7 +321,8 @@ impl EtherscanVerificationProvider {
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
                 .constructor_arguments(constructor_args)
-                .code_format(code_format);
+                .code_format(code_format)
+                .via_ir(args.via_ir);
 
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
