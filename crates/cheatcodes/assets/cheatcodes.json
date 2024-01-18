@@ -415,6 +415,66 @@
   "cheatcodes": [
     {
       "func": {
+        "id": "_expectRevertCheatcode_0",
+        "description": "Expects an error on next cheatcode call with any revert data.",
+        "declaration": "function _expectRevertCheatcode() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "_expectRevertCheatcode()",
+        "selector": "0x71341a5a",
+        "selectorBytes": [
+          113,
+          52,
+          26,
+          90
+        ]
+      },
+      "group": "testing",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "_expectRevertCheatcode_1",
+        "description": "Expects an error on next cheatcode call that starts with the revert data.",
+        "declaration": "function _expectRevertCheatcode(bytes4 revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "_expectRevertCheatcode(bytes4)",
+        "selector": "0xd4f9215c",
+        "selectorBytes": [
+          212,
+          249,
+          33,
+          92
+        ]
+      },
+      "group": "testing",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "_expectRevertCheatcode_2",
+        "description": "Expects an error on next cheatcode call that exactly matches the revert data.",
+        "declaration": "function _expectRevertCheatcode(bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "_expectRevertCheatcode(bytes)",
+        "selector": "0x532a764a",
+        "selectorBytes": [
+          83,
+          42,
+          118,
+          74
+        ]
+      },
+      "group": "testing",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "accesses",
         "description": "Gets all accessed reads and write slot from a `vm.record` session, for a given address.",
         "declaration": "function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",

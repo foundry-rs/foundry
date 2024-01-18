@@ -9,7 +9,8 @@ use crate::{
     },
     script::Broadcast,
     test::expect::{
-        self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit, ExpectedRevert,
+        self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
+        ExpectedRevert, ExpectedRevertType,
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
@@ -919,7 +920,46 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         status: InstructionResult,
         retdata: Bytes,
     ) -> (InstructionResult, Gas, Bytes) {
-        if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
+        let cheatcode_call =
+            call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
+
+        // Handle expected reverts
+        if let Some(expected_revert) = &self.expected_revert {
+            if data.journaled_state.depth() <= expected_revert.depth {
+                let needs_processing: bool = match expected_revert.revert_type {
+                    ExpectedRevertType::Default => !cheatcode_call,
+                    ExpectedRevertType::Cheatcode { pending } => cheatcode_call && !pending,
+                };
+
+                if needs_processing {
+                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    return match expect::handle_expect_revert(
+                        false,
+                        expected_revert.reason.as_deref(),
+                        status,
+                        retdata,
+                    ) {
+                        Err(error) => {
+                            trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
+                            (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
+                        }
+                        Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
+                    };
+                }
+
+                // Flip `pending` flag for cheatcode revert expectations, marking that we've exited
+                // the `expectRevertCheatcode` call scope
+                if let ExpectedRevertType::Cheatcode { pending } =
+                    &mut self.expected_revert.as_mut().unwrap().revert_type
+                {
+                    if *pending {
+                        *pending = false;
+                    }
+                }
+            }
+        }
+
+        if cheatcode_call {
             return (status, remaining_gas, retdata);
         }
 
@@ -952,25 +992,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 if broadcast.single_call {
                     let _ = self.broadcast.take();
                 }
-            }
-        }
-
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
-                    false,
-                    expected_revert.reason.as_deref(),
-                    status,
-                    retdata,
-                ) {
-                    Err(error) => {
-                        trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
-                        (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
-                    }
-                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
-                };
             }
         }
 
