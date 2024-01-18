@@ -472,9 +472,8 @@ impl EthApi {
     /// Handler for ETH RPC call: `web3_sha3`
     pub fn sha3(&self, bytes: Bytes) -> Result<String> {
         node_info!("web3_sha3");
-        let hash = ethers::utils::keccak256(bytes.as_ref());
-        let hex_hash = alloy_primitives::utils::hex::encode(&hash[..]);
-        Ok(format!("0x{hex_hash}"))
+        let hash = alloy_primitives::keccak256(bytes.as_ref());
+        Ok(alloy_primitives::hex::encode_prefixed(&hash[..]))
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
