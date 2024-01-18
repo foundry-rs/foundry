@@ -10,7 +10,7 @@ use crate::{
     script::Broadcast,
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
-        ExpectedRevert, ExpectedRevertType,
+        ExpectedRevert, ExpectedRevertKind,
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
@@ -23,7 +23,7 @@ use ethers_signers::LocalWallet;
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::ToEthers};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
+    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
 };
 use itertools::Itertools;
 use revm::{
@@ -130,9 +130,6 @@ pub struct Cheatcodes {
 
     /// Remembered private keys
     pub script_wallets: Vec<LocalWallet>,
-
-    /// Whether the skip cheatcode was activated
-    pub skip: bool,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -923,15 +920,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
+        // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
+        // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
         if !cheatcode_call {
-            if data.journaled_state.depth() == 0 && self.skip {
-                return (
-                    InstructionResult::Revert,
-                    remaining_gas,
-                    super::Error::from(MAGIC_SKIP).abi_encode().into(),
-                );
-            }
-
             // Clean up pranks
             if let Some(prank) = &self.prank {
                 if data.journaled_state.depth() == prank.depth {
@@ -960,9 +951,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
-                let needs_processing: bool = match expected_revert.revert_type {
-                    ExpectedRevertType::Default => !cheatcode_call,
-                    ExpectedRevertType::Cheatcode { pending } => cheatcode_call && !pending,
+                let needs_processing: bool = match expected_revert.kind {
+                    ExpectedRevertKind::Default => !cheatcode_call,
+                    ExpectedRevertKind::Cheatcode { pending } => cheatcode_call && !pending,
                 };
 
                 if needs_processing {
@@ -983,8 +974,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                 // Flip `pending` flag for cheatcode revert expectations, marking that we've exited
                 // the `expectRevertCheatcode` call scope
-                if let ExpectedRevertType::Cheatcode { pending } =
-                    &mut self.expected_revert.as_mut().unwrap().revert_type
+                if let ExpectedRevertKind::Cheatcode { pending } =
+                    &mut self.expected_revert.as_mut().unwrap().kind
                 {
                     if *pending {
                         *pending = false;
@@ -1314,7 +1305,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth &&
-                matches!(expected_revert.revert_type, ExpectedRevertType::Default)
+                matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(

@@ -53,8 +53,9 @@ pub enum ExpectedCallType {
     Count,
 }
 
+/// The type of expected revert.
 #[derive(Clone, Debug)]
-pub enum ExpectedRevertType {
+pub enum ExpectedRevertKind {
     /// Expects revert from the next non-cheatcode call.
     Default,
     /// Expects revert from the next cheatcode call.
@@ -72,7 +73,7 @@ pub struct ExpectedRevert {
     /// The depth at which the revert is expected
     pub depth: u64,
     /// The type of expected revert.
-    pub revert_type: ExpectedRevertType,
+    pub kind: ExpectedRevertKind,
 }
 
 #[derive(Clone, Debug)]
@@ -477,10 +478,10 @@ fn expect_revert(
     state.expected_revert = Some(ExpectedRevert {
         reason: reason.map(<[_]>::to_vec),
         depth,
-        revert_type: if cheatcode {
-            ExpectedRevertType::Cheatcode { pending: true }
+        kind: if cheatcode {
+            ExpectedRevertKind::Cheatcode { pending: true }
         } else {
-            ExpectedRevertType::Default
+            ExpectedRevertKind::Default
         },
     });
     Ok(Default::default())
