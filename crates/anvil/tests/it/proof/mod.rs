@@ -33,7 +33,6 @@ async fn can_get_proof() {
     let rlp_account = alloy_rlp::encode(&account);
 
     let root: B256 = api.state_root().await.unwrap();
-    println!("proof: {:?}", proof);
     let acc_proof: Vec<Vec<u8>> = proof
         .account_proof
         .into_iter()
