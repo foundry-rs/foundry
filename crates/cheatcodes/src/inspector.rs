@@ -931,24 +931,24 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     super::Error::from(MAGIC_SKIP).abi_encode().into(),
                 );
             }
-    
+
             // Clean up pranks
             if let Some(prank) = &self.prank {
                 if data.journaled_state.depth() == prank.depth {
                     data.env.tx.caller = prank.prank_origin;
-    
+
                     // Clean single-call prank once we have returned to the original depth
                     if prank.single_call {
                         let _ = self.prank.take();
                     }
                 }
             }
-    
+
             // Clean up broadcast
             if let Some(broadcast) = &self.broadcast {
                 if data.journaled_state.depth() == broadcast.depth {
                     data.env.tx.caller = broadcast.original_origin;
-    
+
                     // Clean single-call broadcast once we have returned to the original depth
                     if broadcast.single_call {
                         let _ = self.broadcast.take();
