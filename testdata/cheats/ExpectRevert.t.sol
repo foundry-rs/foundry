@@ -4,6 +4,18 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "./Vm.sol";
 
+contract Target {
+    constructor(bool revertInConstructor) {
+        if (revertInConstructor) {
+            revert("constructor revert");
+        }
+    }
+
+    function revertWithMessage(string memory message) public pure {
+        revert(message);
+    }
+}
+
 contract Reverter {
     error CustomError();
 
@@ -190,5 +202,16 @@ contract ExpectRevertTest is DSTest {
     function testExpectRevertCheatcode() public {
         vm._expectRevertCheatcode("JSON value at \".a\" is not an object");
         vm.parseJsonKeys('{"a": "b"}', ".a");
+    }
+
+    function testFailExpectRevertCheatcodeForExtCall() public {
+        Target target = new Target(false);
+        vm._expectRevertCheatcode();
+        target.revertWithMessage("some message");
+    }
+
+    function testFailExpectRevertCheatcodeForCreate() public {
+        vm._expectRevertCheatcode();
+        Target target = new Target(true);
     }
 }
