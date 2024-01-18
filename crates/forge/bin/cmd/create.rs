@@ -188,6 +188,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier.clone(),
+            via_ir: self.opts.via_ir,
             show_standard_json_input: self.show_standard_json_input,
         };
 
@@ -335,6 +336,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier,
+            via_ir: self.opts.via_ir,
             show_standard_json_input: self.show_standard_json_input,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
