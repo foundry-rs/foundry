@@ -29,8 +29,9 @@ use crate::{
     revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{TxLegacy, TxEnvelope};
-use alloy_network::{Signed, TxKind};
+use alloy_consensus::TxEnvelope;
+use alloy_dyn_abi::TypedData;
+use alloy_network::TxKind;
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rlp::Decodable;
 use alloy_rpc_trace_types::{
@@ -60,7 +61,6 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use ethers::types::transaction::eip712::TypedData;
 use foundry_common::{provider::alloy::ProviderBuilder, types::ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
@@ -831,12 +831,17 @@ impl EthApi {
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
     ///
     /// Handler for ETH RPC call: `eth_signTypedData_v4`
-    pub async fn sign_typed_data_v4(&self, _address: Address, _data: &TypedData) -> Result<String> {
+    pub async fn sign_typed_data_v4(&self, address: Address, data: &TypedData) -> Result<String> {
         node_info!("eth_signTypedData_v4");
-        todo!()
-        // let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
-        // let signature = alloy_primitives::hex::encode(signer.sign_typed_data(address,
-        // data).await?.as_bytes()); Ok(format!("0x{signature}"))
+        let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
+        let signature = signer
+            .sign_hash(
+                address,
+                data.eip712_signing_hash().map_err(|_| BlockchainError::NoSignerAvailable)?,
+            )
+            .await?;
+        let signature = alloy_primitives::hex::encode(signature.as_bytes());
+        Ok(format!("0x{signature}"))
     }
 
     /// The sign method calculates an Ethereum specific signature

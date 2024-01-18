@@ -9,7 +9,6 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
-use ethers_core::types::transaction::eip712::TypedData;
 
 pub mod alloy_block;
 pub mod alloy_proof;
@@ -41,7 +40,7 @@ pub struct Params<T: Default> {
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
 pub enum EthRequest {
@@ -158,7 +157,7 @@ pub enum EthRequest {
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData_v4"))]
-    EthSignTypedDataV4(Address, TypedData),
+    EthSignTypedDataV4(Address, alloy_dyn_abi::TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
     EthSendTransaction(Box<EthTransactionRequest>),
@@ -736,7 +735,7 @@ pub enum EthPubSub {
 }
 
 /// Container type for either a request or a pub sub
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EthRpcCall {

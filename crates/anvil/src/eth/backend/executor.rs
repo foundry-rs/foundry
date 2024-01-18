@@ -51,42 +51,40 @@ impl ExecutedTransaction {
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
         match &self.transaction.pending_transaction.transaction.transaction {
-            TypedTransaction::Enveloped(t) => {
-                match t {
-                    TxEnvelope::TaggedLegacy(_) => TypedReceipt::Legacy(ReceiptWithBloom {
-                        receipt: Receipt {
-                            success: status_code == 1,
-                            cumulative_gas_used: used_gas.to::<u64>(),
-                            logs,
-                        },
-                        bloom,
-                    }),
-                    TxEnvelope::Legacy(_) => TypedReceipt::Legacy(ReceiptWithBloom {
-                        receipt: Receipt {
-                            success: status_code == 1,
-                            cumulative_gas_used: used_gas.to::<u64>(),
-                            logs,
-                        },
-                        bloom,
-                    }),
-                    TxEnvelope::Eip2930(_) => TypedReceipt::EIP2930(ReceiptWithBloom {
-                        receipt: Receipt {
-                            success: status_code == 1,
-                            cumulative_gas_used: used_gas.to::<u64>(),
-                            logs,
-                        },
-                        bloom,
-                    }),
-                    TxEnvelope::Eip1559(_) => TypedReceipt::EIP1559(ReceiptWithBloom {
-                        receipt: Receipt {
-                            success: status_code == 1,
-                            cumulative_gas_used: used_gas.to::<u64>(),
-                            logs,
-                        },
-                        bloom,
-                    }),
-                }
-            }
+            TypedTransaction::Enveloped(t) => match t {
+                TxEnvelope::TaggedLegacy(_) => TypedReceipt::Legacy(ReceiptWithBloom {
+                    receipt: Receipt {
+                        success: status_code == 1,
+                        cumulative_gas_used: used_gas.to::<u64>(),
+                        logs,
+                    },
+                    bloom,
+                }),
+                TxEnvelope::Legacy(_) => TypedReceipt::Legacy(ReceiptWithBloom {
+                    receipt: Receipt {
+                        success: status_code == 1,
+                        cumulative_gas_used: used_gas.to::<u64>(),
+                        logs,
+                    },
+                    bloom,
+                }),
+                TxEnvelope::Eip2930(_) => TypedReceipt::EIP2930(ReceiptWithBloom {
+                    receipt: Receipt {
+                        success: status_code == 1,
+                        cumulative_gas_used: used_gas.to::<u64>(),
+                        logs,
+                    },
+                    bloom,
+                }),
+                TxEnvelope::Eip1559(_) => TypedReceipt::EIP1559(ReceiptWithBloom {
+                    receipt: Receipt {
+                        success: status_code == 1,
+                        cumulative_gas_used: used_gas.to::<u64>(),
+                        logs,
+                    },
+                    bloom,
+                }),
+            },
             TypedTransaction::Deposit(_) => TypedReceipt::Deposit(ReceiptWithBloom {
                 receipt: Receipt {
                     success: status_code == 1,

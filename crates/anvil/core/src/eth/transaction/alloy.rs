@@ -2,7 +2,7 @@ use crate::eth::{
     transaction::optimism::{DepositTransaction, DepositTransactionRequest},
     utils::eip_to_revm_access_list,
 };
-use alloy_consensus::{ReceiptWithBloom, TxEip1559, TxEip2930, TxLegacy, TxEnvelope};
+use alloy_consensus::{ReceiptWithBloom, TxEip1559, TxEip2930, TxEnvelope, TxLegacy};
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U256, U64};
 use alloy_rlp::{Decodable, Encodable};
@@ -691,10 +691,10 @@ impl TypedTransaction {
     pub fn r#type(&self) -> Option<u8> {
         match self {
             TypedTransaction::Enveloped(tx) => match tx {
-                TxEnvelope::Legacy(tx) => None,
-                TxEnvelope::TaggedLegacy(tx) => Some(0),
-                TxEnvelope::Eip2930(tx) => Some(1),
-                TxEnvelope::Eip1559(tx) => Some(2),
+                TxEnvelope::Legacy(_) => None,
+                TxEnvelope::TaggedLegacy(_) => Some(0),
+                TxEnvelope::Eip2930(_) => Some(1),
+                TxEnvelope::Eip1559(_) => Some(2),
             },
             TypedTransaction::Deposit(_) => Some(0x7E),
         }
@@ -708,58 +708,56 @@ impl TypedTransaction {
     /// Returns a helper type that contains commonly used values as fields
     pub fn essentials(&self) -> TransactionEssentials {
         match self {
-            TypedTransaction::Enveloped(tx) => {
-                match tx {
-                    TxEnvelope::Legacy(t) => TransactionEssentials {
-                        kind: t.tx().to,
-                        input: t.input.clone(),
-                        nonce: U256::from(t.tx().nonce),
-                        gas_limit: U256::from(t.tx().gas_limit),
-                        gas_price: Some(U256::from(t.tx().gas_price)),
-                        max_fee_per_gas: None,
-                        max_priority_fee_per_gas: None,
-                        value: t.value,
-                        chain_id: t.tx().chain_id,
-                        access_list: Default::default(),
-                    },
-                    TxEnvelope::TaggedLegacy(t) => TransactionEssentials {
-                        kind: t.tx().to,
-                        input: t.input.clone(),
-                        nonce: U256::from(t.tx().nonce),
-                        gas_limit: U256::from(t.tx().gas_limit),
-                        gas_price: Some(U256::from(t.tx().gas_price)),
-                        max_fee_per_gas: None,
-                        max_priority_fee_per_gas: None,
-                        value: t.value,
-                        chain_id: t.tx().chain_id,
-                        access_list: Default::default(),
-                    },
-                    TxEnvelope::Eip2930(t) => TransactionEssentials {
-                        kind: t.tx().to,
-                        input: t.input.clone(),
-                        nonce: U256::from(t.tx().nonce),
-                        gas_limit: U256::from(t.tx().gas_limit),
-                        gas_price: Some(U256::from(t.tx().gas_price)),
-                        max_fee_per_gas: None,
-                        max_priority_fee_per_gas: None,
-                        value: t.value,
-                        chain_id: Some(t.chain_id),
-                        access_list: to_alloy_access_list(t.access_list.clone()),
-                    },
-                    TxEnvelope::Eip1559(t) => TransactionEssentials {
-                        kind: t.to,
-                        input: t.input.clone(),
-                        nonce: U256::from(t.nonce),
-                        gas_limit: U256::from(t.gas_limit),
-                        gas_price: None,
-                        max_fee_per_gas: Some(U256::from(t.max_fee_per_gas)),
-                        max_priority_fee_per_gas: Some(U256::from(t.max_priority_fee_per_gas)),
-                        value: t.value,
-                        chain_id: Some(t.chain_id),
-                        access_list: to_alloy_access_list(t.access_list.clone()),
-                    },
-                }
-            }
+            TypedTransaction::Enveloped(tx) => match tx {
+                TxEnvelope::Legacy(t) => TransactionEssentials {
+                    kind: t.tx().to,
+                    input: t.input.clone(),
+                    nonce: U256::from(t.tx().nonce),
+                    gas_limit: U256::from(t.tx().gas_limit),
+                    gas_price: Some(U256::from(t.tx().gas_price)),
+                    max_fee_per_gas: None,
+                    max_priority_fee_per_gas: None,
+                    value: t.value,
+                    chain_id: t.tx().chain_id,
+                    access_list: Default::default(),
+                },
+                TxEnvelope::TaggedLegacy(t) => TransactionEssentials {
+                    kind: t.tx().to,
+                    input: t.input.clone(),
+                    nonce: U256::from(t.tx().nonce),
+                    gas_limit: U256::from(t.tx().gas_limit),
+                    gas_price: Some(U256::from(t.tx().gas_price)),
+                    max_fee_per_gas: None,
+                    max_priority_fee_per_gas: None,
+                    value: t.value,
+                    chain_id: t.tx().chain_id,
+                    access_list: Default::default(),
+                },
+                TxEnvelope::Eip2930(t) => TransactionEssentials {
+                    kind: t.tx().to,
+                    input: t.input.clone(),
+                    nonce: U256::from(t.tx().nonce),
+                    gas_limit: U256::from(t.tx().gas_limit),
+                    gas_price: Some(U256::from(t.tx().gas_price)),
+                    max_fee_per_gas: None,
+                    max_priority_fee_per_gas: None,
+                    value: t.value,
+                    chain_id: Some(t.chain_id),
+                    access_list: to_alloy_access_list(t.access_list.clone()),
+                },
+                TxEnvelope::Eip1559(t) => TransactionEssentials {
+                    kind: t.to,
+                    input: t.input.clone(),
+                    nonce: U256::from(t.nonce),
+                    gas_limit: U256::from(t.gas_limit),
+                    gas_price: None,
+                    max_fee_per_gas: Some(U256::from(t.max_fee_per_gas)),
+                    max_priority_fee_per_gas: Some(U256::from(t.max_priority_fee_per_gas)),
+                    value: t.value,
+                    chain_id: Some(t.chain_id),
+                    access_list: to_alloy_access_list(t.access_list.clone()),
+                },
+            },
             TypedTransaction::Deposit(t) => TransactionEssentials {
                 kind: t.kind,
                 input: t.input.clone(),
@@ -1151,7 +1149,9 @@ mod tests {
         // random mainnet tx: https://etherscan.io/tx/0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f
         let bytes = hex::decode("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9").unwrap();
 
-        let Ok(TypedTransaction::Enveloped(TxEnvelope::Eip1559(tx))) = TypedTransaction::decode(&mut &bytes[..]) else {
+        let Ok(TypedTransaction::Enveloped(TxEnvelope::Eip1559(tx))) =
+            TypedTransaction::decode(&mut &bytes[..])
+        else {
             panic!("decoding TypedTransaction failed");
         };
 
@@ -1171,7 +1171,9 @@ mod tests {
     fn can_recover_sender_not_normalized() {
         let bytes = hex::decode("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
 
-        let Ok(TypedTransaction::Enveloped(TxEnvelope::Legacy(tx))) = TypedTransaction::decode(&mut &bytes[..]) else {
+        let Ok(TypedTransaction::Enveloped(TxEnvelope::Legacy(tx))) =
+            TypedTransaction::decode(&mut &bytes[..])
+        else {
             panic!("decoding TypedTransaction failed");
         };
 

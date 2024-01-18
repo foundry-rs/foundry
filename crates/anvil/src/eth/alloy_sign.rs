@@ -1,7 +1,7 @@
 use crate::eth::error::BlockchainError;
 
 use alloy_network::{Signed, Transaction};
-use alloy_primitives::{Address, Signature, U256};
+use alloy_primitives::{Address, Signature, B256, U256};
 use alloy_signer::{LocalWallet, Signer as AlloySigner, SignerSync as AlloySignerSync};
 use alloy_sol_types::Eip712Domain;
 use anvil_core::eth::transaction::{
@@ -30,6 +30,9 @@ pub trait Signer: Send + Sync {
         address: Address,
         payload: &Eip712Domain,
     ) -> Result<Signature, BlockchainError>;
+
+    /// Signs the given hash.
+    async fn sign_hash(&self, address: Address, hash: B256) -> Result<Signature, BlockchainError>;
 
     /// signs a transaction request using the given account in request
     fn sign_transaction(
@@ -79,6 +82,12 @@ impl Signer for DevSigner {
         // Ok(signer.sign_typed_data(payload).await?)
     }
 
+    async fn sign_hash(&self, address: Address, hash: B256) -> Result<Signature, BlockchainError> {
+        let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
+
+        Ok(signer.sign_hash(hash).await?)
+    }
+
     fn sign_transaction(
         &self,
         request: TypedTransactionRequest,
@@ -106,15 +115,21 @@ pub fn build_typed_transaction(
     let tx = match request {
         TypedTransactionRequest::Legacy(tx) => {
             let sighash = tx.signature_hash();
-            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Legacy(Signed::new_unchecked(tx, signature, sighash)))
+            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Legacy(Signed::new_unchecked(
+                tx, signature, sighash,
+            )))
         }
         TypedTransactionRequest::EIP2930(tx) => {
             let sighash = tx.signature_hash();
-            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip2930(Signed::new_unchecked(tx, signature, sighash)))
+            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip2930(
+                Signed::new_unchecked(tx, signature, sighash),
+            ))
         }
         TypedTransactionRequest::EIP1559(tx) => {
             let sighash = tx.signature_hash();
-            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip1559(Signed::new_unchecked(tx, signature, sighash)))
+            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip1559(
+                Signed::new_unchecked(tx, signature, sighash),
+            ))
         }
         TypedTransactionRequest::Deposit(tx) => {
             let DepositTransactionRequest {

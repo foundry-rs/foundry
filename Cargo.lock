@@ -501,6 +501,7 @@ version = "0.2.0"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
+ "alloy-dyn-abi",
  "alloy-network",
  "alloy-primitives",
  "alloy-providers",
@@ -561,6 +562,7 @@ name = "anvil-core"
 version = "0.2.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-dyn-abi",
  "alloy-eips",
  "alloy-network",
  "alloy-primitives",

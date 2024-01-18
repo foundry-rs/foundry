@@ -21,6 +21,7 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-network = { workspace = true, features = ["k256"] }
 alloy-consensus.workspace = true
+alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 ethers-core = { workspace = true, features = ["optimism"] }
 # theses are not used by anvil-core, but are required by ethers, because pulled in via foundry-common
 ethers-contract = { workspace = true, features = ["optimism"] }

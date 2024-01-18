@@ -2021,19 +2021,17 @@ impl Backend {
         let transaction_type = transaction.transaction.r#type();
 
         let effective_gas_price = match transaction.transaction {
-            TypedTransaction::Enveloped(t) => {
-                match t {
-                    TxEnvelope::Legacy(t) => t.gas_price,
-                    TxEnvelope::TaggedLegacy(t) => t.gas_price,
-                    TxEnvelope::Eip2930(t) => t.gas_price,
-                    TxEnvelope::Eip1559(t) => block
+            TypedTransaction::Enveloped(t) => match t {
+                TxEnvelope::Legacy(t) => t.gas_price,
+                TxEnvelope::TaggedLegacy(t) => t.gas_price,
+                TxEnvelope::Eip2930(t) => t.gas_price,
+                TxEnvelope::Eip1559(t) => block
                     .header
                     .base_fee_per_gas
                     .map(|b| b as u128)
                     .unwrap_or(self.base_fee().to::<u128>())
                     .checked_add(t.max_priority_fee_per_gas)
                     .unwrap_or(u128::MAX),
-                }
             },
             TypedTransaction::Deposit(_) => 0_u128,
         };
