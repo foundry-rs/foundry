@@ -8,9 +8,9 @@ use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
     backend::DatabaseError,
+    decode::maybe_decode_revert,
     revm::{
         self,
         interpreter::InstructionResult,
@@ -257,17 +257,6 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
     }
 }
 
-/// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
-///
-/// **Note:** it's assumed the `out` buffer starts with the call's signature
-pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
-    let out = out.as_ref();
-    if out.len() < SELECTOR_LEN {
-        return None
-    }
-    Some(foundry_evm::decode::decode_revert(&out[SELECTOR_LEN..], None, None))
-}
-
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
@@ -313,7 +302,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
-                        if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
+                        if let Some(reason) =
+                            data.as_ref().and_then(|data| maybe_decode_revert(data, None, None))
+                        {
                             msg = format!("{msg}: {reason}");
                         }
                         RpcError {

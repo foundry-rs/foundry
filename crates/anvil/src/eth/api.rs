@@ -11,8 +11,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError,
-            Result, ToRpcResponseResult,
+            BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
@@ -64,6 +63,7 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
+    decode::maybe_decode_revert,
     revm::{
         db::DatabaseRef,
         interpreter::{return_ok, return_revert, InstructionResult},
@@ -1908,7 +1908,7 @@ impl EthApi {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
                             if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
-                                if let Some(reason) = decode_revert_reason(&output) {
+                                if let Some(reason) = maybe_decode_revert(&output, None, None) {
                                     tx.other.insert(
                                         "revertReason".to_string(),
                                         serde_json::to_value(reason).expect("Infallible"),
