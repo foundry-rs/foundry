@@ -32,6 +32,7 @@ use crate::{
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom, TxEnvelope};
 use alloy_network::Sealable;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_rlp::Decodable;
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -2532,7 +2533,7 @@ pub fn prove_storage(
 
     let item: U256 = {
         let decode_value = |mut bytes: &[u8]| {
-            <U256 as alloy_rlp::Decodable>::decode(&mut bytes).expect("decoding db value failed")
+            U256::decode(&mut bytes).expect("decoding db value failed")
         };
         let query = (&mut recorder, decode_value);
         trie.get_with(storage_key.as_slice(), query)
