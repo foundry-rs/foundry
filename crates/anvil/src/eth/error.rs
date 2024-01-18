@@ -1,7 +1,6 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
@@ -266,10 +265,7 @@ pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     if out.len() < SELECTOR_LEN {
         return None
     }
-    DynSolType::String
-        .abi_decode(&out[SELECTOR_LEN..])
-        .ok()
-        .and_then(|v| v.as_str().map(|s| s.to_owned()))
+    Some(foundry_evm::decode::decode_revert(&out[SELECTOR_LEN..], None, None))
 }
 
 /// Helper trait to easily convert results to rpc results
