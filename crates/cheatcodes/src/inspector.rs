@@ -985,7 +985,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode invocations
+        // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
+        // invocations
         if cheatcode_call {
             return (status, remaining_gas, retdata);
         }
