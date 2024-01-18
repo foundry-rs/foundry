@@ -9,33 +9,33 @@ contract DisabledTest is DSTest {
 
     function testReadFile() public {
         string memory path = "fixtures/File/read.txt";
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.readFile(path);
     }
 
     function testReadLine() public {
         string memory path = "fixtures/File/read.txt";
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.readLine(path);
     }
 
     function testWriteFile() public {
         string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.writeFile(path, data);
     }
 
     function testWriteLine() public {
         string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.writeLine(path, data);
     }
 
     function testRemoveFile() public {
         string memory path = "fixtures/File/write_file.txt";
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.removeFile(path);
     }
 }

@@ -973,7 +973,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 }
 
                 // Flip `pending` flag for cheatcode revert expectations, marking that we've exited
-                // the `expectRevertCheatcode` call scope
+                // the `expectCheatcodeRevert` call scope
                 if let ExpectedRevertKind::Cheatcode { pending } =
                     &mut self.expected_revert.as_mut().unwrap().kind
                 {

@@ -23,10 +23,10 @@ contract DefaultAccessTest is DSTest {
         string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
 
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.writeFile(path, data);
 
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.writeFileBinary(path, bytes(data));
     }
 
@@ -34,14 +34,14 @@ contract DefaultAccessTest is DSTest {
         string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
 
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.writeLine(path, data);
     }
 
     function testRemoveFile() public {
         string memory path = "fixtures/File/write_file.txt";
 
-        vm._expectRevertCheatcode();
+        vm._expectCheatcodeRevert();
         vm.removeFile(path);
     }
 }

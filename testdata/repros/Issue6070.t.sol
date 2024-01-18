@@ -10,7 +10,7 @@ contract Issue6066Test is DSTest {
 
     function testNonPrefixed() public {
         vm.setEnv("__FOUNDRY_ISSUE_6066", "abcd");
-        vm._expectRevertCheatcode(
+        vm._expectCheatcodeRevert(
             "failed parsing $__FOUNDRY_ISSUE_6066 as type `uint256`: missing hex prefix (\"0x\") for hex string"
         );
         uint256 x = vm.envUint("__FOUNDRY_ISSUE_6066");

@@ -415,18 +415,18 @@
   "cheatcodes": [
     {
       "func": {
-        "id": "_expectRevertCheatcode_0",
+        "id": "_expectCheatcodeRevert_0",
         "description": "Expects an error on next cheatcode call with any revert data.",
-        "declaration": "function _expectRevertCheatcode() external;",
+        "declaration": "function _expectCheatcodeRevert() external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "_expectRevertCheatcode()",
-        "selector": "0x71341a5a",
+        "signature": "_expectCheatcodeRevert()",
+        "selector": "0x79a4f48a",
         "selectorBytes": [
-          113,
-          52,
-          26,
-          90
+          121,
+          164,
+          244,
+          138
         ]
       },
       "group": "testing",
@@ -435,18 +435,18 @@
     },
     {
       "func": {
-        "id": "_expectRevertCheatcode_1",
+        "id": "_expectCheatcodeRevert_1",
         "description": "Expects an error on next cheatcode call that starts with the revert data.",
-        "declaration": "function _expectRevertCheatcode(bytes4 revertData) external;",
+        "declaration": "function _expectCheatcodeRevert(bytes4 revertData) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "_expectRevertCheatcode(bytes4)",
-        "selector": "0xd4f9215c",
+        "signature": "_expectCheatcodeRevert(bytes4)",
+        "selector": "0x884cb0ae",
         "selectorBytes": [
-          212,
-          249,
-          33,
-          92
+          136,
+          76,
+          176,
+          174
         ]
       },
       "group": "testing",
@@ -455,18 +455,18 @@
     },
     {
       "func": {
-        "id": "_expectRevertCheatcode_2",
+        "id": "_expectCheatcodeRevert_2",
         "description": "Expects an error on next cheatcode call that exactly matches the revert data.",
-        "declaration": "function _expectRevertCheatcode(bytes calldata revertData) external;",
+        "declaration": "function _expectCheatcodeRevert(bytes calldata revertData) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "_expectRevertCheatcode(bytes)",
-        "selector": "0x532a764a",
+        "signature": "_expectCheatcodeRevert(bytes)",
+        "selector": "0x7843b44d",
         "selectorBytes": [
-          83,
-          42,
-          118,
-          74
+          120,
+          67,
+          180,
+          77
         ]
       },
       "group": "testing",

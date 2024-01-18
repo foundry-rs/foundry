@@ -98,7 +98,7 @@ contract ParseJsonTest is DSTest {
     }
 
     function test_coercionRevert() public {
-        vm._expectRevertCheatcode("values at \".nestedObject\" must not be JSON objects");
+        vm._expectCheatcodeRevert("values at \".nestedObject\" must not be JSON objects");
         uint256 number = vm.parseJsonUint(json, ".nestedObject");
     }
 
@@ -165,13 +165,13 @@ contract ParseJsonTest is DSTest {
         expected[1] = "key2";
         assertEq(abi.encode(keys), abi.encode(expected));
 
-        vm._expectRevertCheatcode("JSON value at \".some_key_to_array\" is not an object");
+        vm._expectCheatcodeRevert("JSON value at \".some_key_to_array\" is not an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_array");
 
-        vm._expectRevertCheatcode("JSON value at \".some_key_to_value\" is not an object");
+        vm._expectCheatcodeRevert("JSON value at \".some_key_to_value\" is not an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_value");
 
-        vm._expectRevertCheatcode("key \".*\" must return exactly one JSON object");
+        vm._expectCheatcodeRevert("key \".*\" must return exactly one JSON object");
         vm.parseJsonKeys(jsonString, ".*");
     }
 }

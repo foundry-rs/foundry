@@ -60,8 +60,8 @@ pub enum ExpectedRevertKind {
     Default,
     /// Expects revert from the next cheatcode call.
     ///
-    /// The `pending` flag is used to track whether we have exited `expectRevertCheatcode` context
-    /// or not. We have to track it to avoid expecting `expectRevertCheatcode` call to revert
+    /// The `pending` flag is used to track whether we have exited `expectCheatcodeRevert` context
+    /// or not. We have to track it to avoid expecting `expectCheatcodeRevert` call to revert
     /// itself.
     Cheatcode { pending: bool },
 }
@@ -255,20 +255,20 @@ impl Cheatcode for expectRevert_2Call {
     }
 }
 
-impl Cheatcode for _expectRevertCheatcode_0Call {
+impl Cheatcode for _expectCheatcodeRevert_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         expect_revert(ccx.state, None, ccx.data.journaled_state.depth(), true)
     }
 }
 
-impl Cheatcode for _expectRevertCheatcode_1Call {
+impl Cheatcode for _expectCheatcodeRevert_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData.as_ref()), ccx.data.journaled_state.depth(), true)
     }
 }
 
-impl Cheatcode for _expectRevertCheatcode_2Call {
+impl Cheatcode for _expectCheatcodeRevert_2Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData), ccx.data.journaled_state.depth(), true)
