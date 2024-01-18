@@ -61,7 +61,7 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::{provider::alloy::ProviderBuilder, types::ToEthers};
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
     revm::{
@@ -1978,33 +1978,30 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        _request: EthTransactionRequest,
+        request: EthTransactionRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
-        Err(BlockchainError::RpcUnimplemented)
         // either use the impersonated account of the request's `from` field
-        // let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?.to_alloy();
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
-        // let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        // let request = self.build_typed_tx_request(request, nonce)?;
+        let request = self.build_typed_tx_request(request, nonce)?;
 
-        // let bypass_signature = self.backend.cheats().bypass_signature();
-        // let transaction =
-        //     sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
+        let bypass_signature = self.backend.cheats().bypass_signature();
+        let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
 
-        // self.ensure_typed_transaction_supported(&transaction)?;
+        self.ensure_typed_transaction_supported(&transaction)?;
 
-        // let pending_transaction =
-        //     PendingTransaction::with_impersonated(transaction, from);
+        let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
         // // pre-validate
-        // self.backend.validate_pool_transaction(&pending_transaction).await?;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        // let requires = required_marker(nonce, on_chain_nonce, from);
-        // let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        let requires = required_marker(nonce, on_chain_nonce, from);
+        let provides = vec![to_marker(nonce.to::<u64>(), from)];
 
-        // self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
@@ -2261,7 +2258,7 @@ impl EthApi {
                 // succeeded
             }
             InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
-                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit.to_ethers()).into())
+                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
             // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
@@ -2651,7 +2648,7 @@ where
         return_ok!() => {
             // transaction succeeded by manually increasing the gas limit to
             // highest, which means the caller lacks funds to pay for the tx
-            InvalidTransactionError::BasicOutOfGas(gas_limit.to_ethers()).into()
+            InvalidTransactionError::BasicOutOfGas(gas_limit).into()
         }
         return_revert!() => {
             // reverted again after bumping the limit

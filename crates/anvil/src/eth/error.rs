@@ -1,19 +1,14 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::SignatureError as AlloySignatureError;
+use alloy_primitives::{SignatureError as AlloySignatureError, Bytes, U256};
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use ethers::{
-    abi::AbiDecode,
-    providers::ProviderError,
-    signers::WalletError,
-    types::{Bytes, SignatureError, U256},
-};
+use alloy_dyn_abi::DynSolType;
 use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
     backend::DatabaseError,
@@ -47,15 +42,10 @@ pub enum BlockchainError {
     FailedToDecodeStateDump,
     #[error("Prevrandao not in th EVM's environment after merge")]
     PrevrandaoNotSet,
-    // TODO: Remove
-    #[error(transparent)]
-    SignatureError(#[from] SignatureError),
     #[error(transparent)]
     AlloySignatureError(#[from] AlloySignatureError),
     #[error(transparent)]
     AlloySignerError(#[from] AlloySignerError),
-    #[error(transparent)]
-    WalletError(#[from] WalletError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
     #[error("Rpc error {0:?}")]
@@ -64,8 +54,6 @@ pub enum BlockchainError {
     InvalidTransaction(#[from] InvalidTransactionError),
     #[error(transparent)]
     FeeHistory(#[from] FeeHistoryError),
-    #[error(transparent)]
-    ForkProvider(#[from] ProviderError),
     #[error(transparent)]
     AlloyForkProvider(#[from] TransportError),
     #[error("EVM error {0:?}")]
@@ -278,7 +266,7 @@ pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     if out.len() < SELECTOR_LEN {
         return None
     }
-    String::decode(&out[SELECTOR_LEN..]).ok()
+    DynSolType::String.abi_decode(&out[SELECTOR_LEN..]).ok().and_then(|v| v.as_str().map(|s| s.to_owned()))
 }
 
 /// Helper trait to easily convert results to rpc results
@@ -367,12 +355,10 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
-                BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::AlloySignerError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::AlloySignatureError(err) => {
                     RpcError::invalid_params(err.to_string())
                 }
-                BlockchainError::WalletError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
@@ -381,10 +367,6 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::InvalidFeeInput => RpcError::invalid_params(
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
-                BlockchainError::ForkProvider(err) => {
-                    error!(%err, "fork provider error");
-                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
-                }
                 BlockchainError::AlloyForkProvider(err) => {
                     error!(%err, "alloy fork provider error");
                     RpcError::internal_error_with(format!("Fork Error: {err:?}"))

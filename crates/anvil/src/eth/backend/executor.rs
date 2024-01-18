@@ -13,7 +13,6 @@ use anvil_core::eth::{
     transaction::alloy::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
     trie,
 };
-use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
     inspectors::{TracingInspector, TracingInspectorConfig},
@@ -140,7 +139,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
-        let timestamp = self.block_env.timestamp.to_ethers().as_u64();
+        let timestamp = self.block_env.timestamp.to::<u64>();
         let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
             Some(self.block_env.basefee)
         } else {
@@ -202,8 +201,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         }
 
         let ommers: Vec<Header> = Vec::new();
-        let receipts_root =
-            trie::ordered_trie_root(receipts.iter().map(alloy_rlp::encode)).to_alloy();
+        let receipts_root = trie::ordered_trie_root(receipts.iter().map(alloy_rlp::encode));
 
         let partial_header = PartialHeader {
             parent_hash,

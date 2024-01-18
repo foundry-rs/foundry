@@ -12,9 +12,6 @@ use alloy_rpc_types::{
 
 pub mod alloy_block;
 pub mod alloy_proof;
-pub mod block;
-pub mod proof;
-pub mod receipt;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
