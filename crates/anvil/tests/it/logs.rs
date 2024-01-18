@@ -1,6 +1,9 @@
 //! log/event related tests
 
-use crate::{abi::*, utils::{ethers_ws_provider, ethers_http_provider}};
+use crate::{
+    abi::*,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
 use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
 use ethers::{

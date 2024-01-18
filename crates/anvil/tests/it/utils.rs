@@ -2,7 +2,7 @@ use ethers::{
     addressbook::contract,
     types::{Address, Chain},
 };
-use foundry_common::provider::ethers::{RetryProvider, ProviderBuilder};
+use foundry_common::provider::ethers::{ProviderBuilder, RetryProvider};
 
 /// Returns a set of various contract addresses
 pub fn contract_addresses(chain: Chain) -> Vec<Address> {
@@ -17,21 +17,15 @@ pub fn contract_addresses(chain: Chain) -> Vec<Address> {
 
 /// Builds an ethers HTTP [RetryProvider]
 pub fn ethers_http_provider(http_endpoint: &str) -> RetryProvider {
-    ProviderBuilder::new(http_endpoint)
-        .build()
-        .expect("failed to build ethers HTTP provider")
+    ProviderBuilder::new(http_endpoint).build().expect("failed to build ethers HTTP provider")
 }
 
 /// Builds an ethers ws [RetryProvider]
 pub fn ethers_ws_provider(ws_endpoint: &str) -> RetryProvider {
-    ProviderBuilder::new(ws_endpoint)
-        .build()
-        .expect("failed to build ethers HTTP provider")
+    ProviderBuilder::new(ws_endpoint).build().expect("failed to build ethers HTTP provider")
 }
 
 /// Builds an ethers ws [RetryProvider]
 pub fn ethers_ipc_provider(ipc_endpoint: Option<String>) -> Option<RetryProvider> {
-    ProviderBuilder::new(&ipc_endpoint?)
-        .build()
-        .ok()
+    ProviderBuilder::new(&ipc_endpoint?).build().ok()
 }

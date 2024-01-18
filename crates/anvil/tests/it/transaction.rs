@@ -1,4 +1,7 @@
-use crate::abi::*;
+use crate::{
+    abi::*,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
 use alloy_primitives::U256 as rU256;
 use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, Hardfork, NodeConfig};
@@ -22,7 +25,7 @@ use tokio::time::timeout;
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -67,7 +70,7 @@ async fn can_transfer_eth() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -116,7 +119,7 @@ async fn can_order_transactions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -165,7 +168,7 @@ async fn can_replace_transaction() {
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -213,7 +216,7 @@ async fn can_replace_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_too_high_gas_limits() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -260,7 +263,7 @@ async fn can_reject_underpriced_replacement() {
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -305,7 +308,7 @@ async fn can_reject_underpriced_replacement() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -343,7 +346,7 @@ async fn can_deploy_and_mine_manually() {
     // can mine in manual mode
     api.evm_mine(None).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -381,7 +384,7 @@ async fn can_deploy_and_mine_manually() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_automatically() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -407,7 +410,7 @@ async fn can_mine_automatically() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -447,7 +450,7 @@ async fn can_call_greeter_historic() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -477,7 +480,7 @@ async fn can_deploy_greeter_ws() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_get_code() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -501,7 +504,7 @@ async fn can_deploy_get_code() {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_blocktimestamp_works() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -545,7 +548,7 @@ async fn get_blocktimestamp_works() {
 #[tokio::test(flavor = "multi_thread")]
 async fn call_past_state() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -607,7 +610,7 @@ async fn call_past_state() {
 async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -647,7 +650,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -686,7 +689,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -750,7 +753,7 @@ async fn can_get_pending_transaction() {
     // disable auto mining so we can check if we can return pending tx from the mempool
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let from = handle.dev_wallets().next().unwrap().address();
     let tx = TransactionRequest::new().from(from.to_ethers()).value(1337u64).to(Address::random());
@@ -771,7 +774,7 @@ async fn test_first_noce_is_zero() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let from = handle.dev_wallets().next().unwrap().address();
 
     let nonce = provider
@@ -788,7 +791,7 @@ async fn can_handle_different_sender_nonce_calculation() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
         .into_iter()
@@ -833,7 +836,7 @@ async fn includes_pending_tx_for_transaction_count() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let from = handle.dev_wallets().next().unwrap().address();
 
     let tx_count = 10u64;
@@ -861,7 +864,7 @@ async fn includes_pending_tx_for_transaction_count() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_historic_info() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
     let accounts = alloy_wallets
@@ -913,7 +916,8 @@ async fn test_tx_receipt() {
         alloy_wallet.address().to_ethers(),
         alloy_wallet.chain_id().unwrap(),
     );
-    let client = Arc::new(SignerMiddleware::new(handle.ethers_http_provider(), wallet));
+    let client =
+        Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
 
@@ -934,8 +938,8 @@ async fn can_stream_pending_transactions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(2)))).await;
     let num_txs = 5;
-    let provider = handle.ethers_http_provider();
-    let ws_provider = handle.ethers_ws_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let ws_provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let accounts = provider.get_accounts().await.unwrap();
     let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
@@ -1023,7 +1027,8 @@ async fn test_tx_access_list() {
         alloy_wallet.address().to_ethers(),
         alloy_wallet.chain_id().unwrap(),
     );
-    let client = Arc::new(SignerMiddleware::new(handle.ethers_http_provider(), wallet));
+    let client =
+        Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
 
     let sender = Address::random();
     let other_acc = Address::random();
@@ -1092,7 +1097,7 @@ async fn estimates_gas_on_pending_by_default() {
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -1116,7 +1121,7 @@ async fn estimates_gas_on_pending_by_default() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_gas_too_low() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let account = handle.dev_accounts().next().unwrap();
 
@@ -1138,7 +1143,7 @@ async fn test_reject_gas_too_low() {
 async fn can_call_with_high_gas_limit() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000).to_alloy()))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -1161,7 +1166,7 @@ async fn can_call_with_high_gas_limit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_eip1559_pre_london() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(

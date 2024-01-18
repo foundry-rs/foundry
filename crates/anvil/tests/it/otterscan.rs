@@ -1,5 +1,8 @@
 //! tests for otterscan endpoints
-use crate::{abi::MulticallContract, utils::{ethers_ws_provider, ethers_http_provider}};
+use crate::{
+    abi::MulticallContract,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use alloy_signer::Signer as AlloySigner;

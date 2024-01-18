@@ -1,14 +1,14 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{SignatureError as AlloySignatureError, Bytes, U256};
+use alloy_dyn_abi::DynSolType;
+use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use alloy_dyn_abi::DynSolType;
 use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
     backend::DatabaseError,
@@ -266,7 +266,10 @@ pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     if out.len() < SELECTOR_LEN {
         return None
     }
-    DynSolType::String.abi_decode(&out[SELECTOR_LEN..]).ok().and_then(|v| v.as_str().map(|s| s.to_owned()))
+    DynSolType::String
+        .abi_decode(&out[SELECTOR_LEN..])
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_owned()))
 }
 
 /// Helper trait to easily convert results to rpc results

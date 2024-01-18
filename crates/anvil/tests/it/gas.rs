@@ -1,5 +1,6 @@
 //! Gas related tests
 
+use crate::utils::ethers_http_provider;
 use alloy_primitives::U256;
 use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
 use ethers::{
@@ -10,7 +11,6 @@ use ethers::{
     },
 };
 use foundry_common::types::ToAlloy;
-use crate::utils::ethers_http_provider;
 
 const GAS_TRANSFER: u64 = 21_000u64;
 

@@ -1,9 +1,9 @@
 //! tests for anvil specific logic
 
+use crate::utils::ethers_http_provider;
 use anvil::{spawn, NodeConfig};
 use ethers::{prelude::Middleware, types::Address};
 use foundry_common::types::ToAlloy;
-use crate::utils::ethers_http_provider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {

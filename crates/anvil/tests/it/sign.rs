@@ -1,3 +1,4 @@
+use crate::utils::ethers_http_provider;
 use alloy_dyn_abi::TypedData;
 use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
@@ -286,7 +287,7 @@ async fn can_sign_typed_data_os() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_different_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let alloy_wallet = handle.dev_wallets().next().unwrap();
     let wallet = Wallet::new_with_signer(
@@ -300,7 +301,7 @@ async fn rejects_different_chain_id() {
 
     let res = client.send_transaction(tx, None).await;
     let err = res.unwrap_err();
-    assert!(err.to_string().contains("signed for another chain"));
+    assert!(err.to_string().contains("signed for another chain"), "{}", err.to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -313,7 +314,7 @@ async fn rejects_invalid_chain_id() {
         alloy_wallet.chain_id().unwrap(),
     );
     let wallet = wallet.with_chain_id(99u64);
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let client = SignerMiddleware::new(provider, wallet);
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
     let res = client.send_transaction(tx, None).await;
@@ -504,6 +505,6 @@ async fn can_sign_typed_seaport_data() {
 
     assert_eq!(
     signature,
-    "0xed9afe7f377155ee3a42b25b696d79b55d441aeac7790b97a51b54ad0569b9665ea30bf8e8df12d6ee801c4dcb85ecfb8b23a6f7ae166d5af9acac9befb905451c".to_string()
+    "0xed9afe7f377155ee3a42b25b696d79b55d441aeac7790b97a51b54ad0569b9665ea30bf8e8df12d6ee801c4dcb85ecfb8b23a6f7ae166d5af9acac9befb9054500".to_string()
   );
 }

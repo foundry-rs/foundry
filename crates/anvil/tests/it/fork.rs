@@ -1,6 +1,9 @@
 //! various fork related test
 
-use crate::{abi::*, utils::{self, ethers_http_provider}};
+use crate::{
+    abi::*,
+    utils::{self, ethers_http_provider},
+};
 use alloy_primitives::U256 as rU256;
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockNumberOrTag, CallRequest};

@@ -1,5 +1,6 @@
 //! Tests for OP chain support.
 
+use crate::utils::ethers_http_provider;
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::Address,
@@ -12,7 +13,6 @@ use ethers::{
 use ethers_core::types::{Bytes, H256};
 use foundry_common::types::ToAlloy;
 use std::str::FromStr;
-use crate::utils::ethers_http_provider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {

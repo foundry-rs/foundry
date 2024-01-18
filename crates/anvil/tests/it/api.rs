@@ -1,6 +1,9 @@
 //! general eth api tests
 
-use crate::{abi::{MulticallContract, SimpleStorage}, utils::ethers_http_provider};
+use crate::{
+    abi::{MulticallContract, SimpleStorage},
+    utils::ethers_http_provider,
+};
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
