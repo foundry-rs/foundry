@@ -1,7 +1,7 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, B256, U256 as rU256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types::state::StateOverride;
 use anvil_core::eth::trie::RefSecTrieDBMut;
@@ -18,19 +18,19 @@ use memory_db::HashKey;
 use trie_db::TrieMut;
 
 /// Returns storage trie of an account as `HashDB`
-pub fn storage_trie_db(storage: &Map<rU256, rU256>) -> (AsHashDB, B256) {
+pub fn storage_trie_db(storage: &Map<U256, U256>) -> (AsHashDB, B256) {
     // Populate DB with full trie from entries.
     let (db, root) = {
         let mut db = <memory_db::MemoryDB<_, HashKey<_>, _>>::default();
         let mut root = Default::default();
         {
             let mut trie = RefSecTrieDBMut::new(&mut db, &mut root);
-            for (k, v) in storage.iter().filter(|(_k, v)| *v != &rU256::from(0)) {
+            for (k, v) in storage.iter().filter(|(_k, v)| *v != &U256::from(0)) {
                 let mut temp: [u8; 32] = [0; 32];
                 (*k).to_ethers().to_big_endian(&mut temp);
                 let key = B256::from(temp);
                 let mut value: Vec<u8> = Vec::new();
-                rU256::encode(v, &mut value);
+                U256::encode(v, &mut value);
                 trie.insert(key.as_slice(), value.as_ref()).unwrap();
             }
         }
@@ -76,11 +76,11 @@ pub fn state_merkle_trie_root(accounts: &Map<Address, DbAccount>) -> B256 {
 }
 
 /// Returns the RLP for this account.
-pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<rU256, rU256>) -> Bytes {
+pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<U256, U256>) -> Bytes {
     /// Container type for RLP encoding account info
     pub struct AccountInfoRlp {
-        nonce: rU256,
-        balance: rU256,
+        nonce: U256,
+        balance: U256,
         storage_root: B256,
         code_hash: B256,
     }
@@ -95,7 +95,7 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<rU256, rU256>) -> Byte
     }
 
     let info = AccountInfoRlp {
-        nonce: rU256::from(info.nonce),
+        nonce: U256::from(info.nonce),
         balance: info.balance,
         storage_root: storage_trie_db(storage).1,
         code_hash: info.code_hash,

@@ -78,7 +78,6 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
-// use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::{BTreeMap, HashMap},

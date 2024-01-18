@@ -888,7 +888,6 @@ impl EthApi {
         let request = self.build_typed_tx_request(request, nonce)?;
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            println!("hello?????");
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
@@ -899,7 +898,6 @@ impl EthApi {
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
-        println!("pendingtx: {:#?}", pending_transaction);
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
@@ -944,7 +942,6 @@ impl EthApi {
         //     self.ensure_typed_transaction_supported(&tx)?;
         //     tx
         // };
-        println!("tx: {:#?}", transaction);
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
