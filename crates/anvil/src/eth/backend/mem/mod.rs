@@ -2532,9 +2532,8 @@ pub fn prove_storage(
         .unwrap();
 
     let item: U256 = {
-        let decode_value = |mut bytes: &[u8]| {
-            U256::decode(&mut bytes).expect("decoding db value failed")
-        };
+        let decode_value =
+            |mut bytes: &[u8]| U256::decode(&mut bytes).expect("decoding db value failed");
         let query = (&mut recorder, decode_value);
         trie.get_with(storage_key.as_slice(), query)
             .map_err(|err| BlockchainError::TrieError(err.to_string()))?

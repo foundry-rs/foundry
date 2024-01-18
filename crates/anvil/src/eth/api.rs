@@ -472,8 +472,8 @@ impl EthApi {
     /// Handler for ETH RPC call: `web3_sha3`
     pub fn sha3(&self, bytes: Bytes) -> Result<String> {
         node_info!("web3_sha3");
-        let hash = ethers::utils::keccak256(bytes.as_ref());
-        Ok(ethers::utils::hex::encode(&hash[..]))
+        let hash = alloy_primitives::keccak256(bytes.as_ref());
+        Ok(alloy_primitives::hex::encode_prefixed(&hash[..]))
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
@@ -2443,7 +2443,7 @@ impl EthApi {
         let BlockInfo { block, transactions, receipts: _ } =
             self.backend.pending_block(transactions).await;
 
-        let ethers_block = self.backend.convert_block(block.clone());
+        let partial_block = self.backend.convert_block(block.clone());
 
         let mut block_transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = self.backend.base_fee();
@@ -2461,7 +2461,7 @@ impl EthApi {
             block_transactions.push(tx);
         }
 
-        Some(ethers_block.into_full_block(block_transactions))
+        Some(partial_block.into_full_block(block_transactions))
     }
 
     fn build_typed_tx_request(
