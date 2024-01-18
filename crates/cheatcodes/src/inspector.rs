@@ -922,6 +922,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
+        // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
             if let Some(prank) = &self.prank {
@@ -984,6 +985,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode invocations
         if cheatcode_call {
             return (status, remaining_gas, retdata);
         }
