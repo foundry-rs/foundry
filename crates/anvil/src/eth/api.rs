@@ -473,7 +473,8 @@ impl EthApi {
     pub fn sha3(&self, bytes: Bytes) -> Result<String> {
         node_info!("web3_sha3");
         let hash = ethers::utils::keccak256(bytes.as_ref());
-        Ok(ethers::utils::hex::encode(&hash[..]))
+        let hex_hash = alloy_primitives::utils::hex::encode(&hash[..]);
+        Ok(format!("0x{hex_hash}"))
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
