@@ -19,10 +19,7 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use alloy_signer::{LocalWallet, Signer as AlloySigner};
 use eth::backend::fork::ClientFork;
-use foundry_common::provider::{
-    alloy::{ProviderBuilder, RetryProvider},
-    ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider},
-};
+use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -273,32 +270,14 @@ impl NodeHandle {
         // .interval(Duration::from_millis(500))
     }
 
-    /// Constructs a [`EthersRetryProvider`] for this handle's HTTP endpoint.
-    /// TODO: Remove once ethers is phased out of cast/alloy and tests.
-    pub fn ethers_http_provider(&self) -> EthersRetryProvider {
-        EthersProviderBuilder::new(&self.http_endpoint())
-            .build()
-            .expect("failed to build ethers HTTP provider")
-    }
-
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
     pub fn ws_provider(&self) -> RetryProvider {
         ProviderBuilder::new(&self.ws_endpoint()).build().expect("failed to build WS provider")
     }
 
-    pub fn ethers_ws_provider(&self) -> EthersRetryProvider {
-        EthersProviderBuilder::new(&self.ws_endpoint())
-            .build()
-            .expect("failed to build ethers WS provider")
-    }
-
     /// Constructs a [`RetryProvider`] for this handle's IPC endpoint, if any.
     pub fn ipc_provider(&self) -> Option<RetryProvider> {
         ProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
-    }
-
-    pub fn ethers_ipc_provider(&self) -> Option<EthersRetryProvider> {
-        EthersProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node

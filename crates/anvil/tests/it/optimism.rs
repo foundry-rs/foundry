@@ -12,12 +12,13 @@ use ethers::{
 use ethers_core::types::{Bytes, H256};
 use foundry_common::types::ToAlloy;
 use std::str::FromStr;
+use crate::utils::ethers_http_provider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
     // optimism disabled by default
     let (_, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
     let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
@@ -53,7 +54,7 @@ async fn test_send_value_deposit_transaction() {
     // enable the Optimism flag
     let (api, handle) =
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let send_value = U256::from(1234);
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
@@ -100,7 +101,7 @@ async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag
     let (api, handle) =
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let send_value = U256::from(1234);
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
