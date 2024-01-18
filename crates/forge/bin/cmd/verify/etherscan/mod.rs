@@ -323,6 +323,14 @@ impl EtherscanVerificationProvider {
                 .constructor_arguments(constructor_args)
                 .code_format(code_format);
 
+        if args.via_ir {
+            // we explicitly set this __undocumented__ argument to true if provided by the user,
+            // though this info is also available in the compiler settings of the standard json
+            // object if standard json is used
+            // unclear how etherscan interprets this field in standard-json mode
+            verify_args = verify_args.via_ir(true);
+        }
+
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(optimizations as u32)
