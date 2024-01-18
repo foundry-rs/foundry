@@ -193,6 +193,7 @@ contract ExpectRevertTest is DSTest {
     }
 
     function testFailExpectRevertCheatcodeForExtCall() public {
+        Reverter reverter = new Reverter();
         vm._expectRevertCheatcode();
         reverter.revertWithMessage("revert");
     }
