@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
-use crate::{RegexWrapper, from_opt_glob};
+use crate::{RegexWrapper, from_opt_glob, FuzzConfig};
 use std::time::Duration;
 
 /// Contains the mutation test config
@@ -68,6 +68,9 @@ pub struct MutateConfig {
     #[serde(default = "default_test_timeout")]
     pub test_timeout: Duration,
 
+    /// Fuzz configuration
+    pub fuzz: FuzzConfig,
+
     /// Number of mutants to execute concurrently
     ///
     /// This should be configured conservatively because of "Too Many Files Open Error" as
@@ -108,6 +111,10 @@ impl Default for MutateConfig {
             test_path_pattern: None,
             test_path_pattern_inverse: None,
             test_timeout: default_test_timeout(),
+            fuzz: FuzzConfig {
+                runs: 1,
+                ..Default::default()
+            },
             parallel: default_parallel(),
             maximum_timeout_test: default_maximum_timeout_test(),
         }

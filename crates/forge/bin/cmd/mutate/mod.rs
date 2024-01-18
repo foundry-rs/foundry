@@ -373,7 +373,7 @@ impl MutateTestArgs {
         let env = evm_opts.evm_env().await?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz)
+            .fuzz(config.mutate.fuzz)
             .invariant(config.invariant)
             .profiles(profiles)
             .build(&output, project_root)?;
@@ -454,6 +454,7 @@ impl Provider for MutateTestArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
 
+        let mut mutate_dict = Dict::default();
         // Override the fuzz and invariants run
         // We do not want fuzz and invariant tests to run once so the test
         // setup is faster.
@@ -464,7 +465,9 @@ impl Provider for MutateTestArgs {
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
-        dict.insert("fuzz".to_string(), fuzz_dict.into());
+        mutate_dict.insert("fuzz".to_string(), fuzz_dict.into());
+        // insert into config
+        dict.insert("mutate".to_string(), mutate_dict.into());
 
         let mut invariant_dict = Dict::default();
         invariant_dict.insert("runs".to_string(), 0.into());
@@ -499,8 +502,8 @@ pub fn setup_and_compile_mutant(
     // it's important
     config = config.canonic_at(temp_project_root);
     // override fuzz and invariant runs
-    config.fuzz.runs = fuzz_runs;
-    config.fuzz.seed = fuzz_seed;
+    config.mutate.fuzz.runs = fuzz_runs;
+    config.mutate.fuzz.seed = fuzz_seed;
     config.invariant.runs = 0;
 
     let mutant_file_path = temp_project_root.join(mutant_file);
@@ -543,7 +546,7 @@ pub async fn test_mutant(
     let profiles = get_available_profiles(toml).expect("Failed to get profiles");
 
     let test_options: TestOptions = TestOptionsBuilder::default()
-        .fuzz(config.fuzz)
+        .fuzz(config.mutate.fuzz)
         .invariant(config.invariant)
         .profiles(profiles)
         .build(&output, project_root)
