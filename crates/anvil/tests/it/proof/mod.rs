@@ -2,6 +2,7 @@
 
 use crate::proof::eip1186::verify_proof;
 use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::EIP1186AccountProofResponse;
 use anvil::{spawn, NodeConfig};
 use anvil_core::eth::{proof::BasicAccount, trie::ExtensionLayout};
@@ -36,7 +37,7 @@ async fn can_get_proof() {
     let acc_proof: Vec<Vec<u8>> = proof
         .account_proof
         .into_iter()
-        .map(|node| <Vec<u8> as alloy_rlp::Decodable>::decode(&mut &node[..]).unwrap())
+        .map(|node| Vec::<u8>::decode(&mut &node[..]).unwrap())
         .collect();
 
     verify_proof::<ExtensionLayout>(
@@ -50,11 +51,8 @@ async fn can_get_proof() {
     assert_eq!(proof.storage_proof.len(), 1);
     let expected_value = alloy_rlp::encode(value);
     let proof = proof.storage_proof[0].clone();
-    let storage_proof: Vec<Vec<u8>> = proof
-        .proof
-        .into_iter()
-        .map(|node| <Vec<u8> as alloy_rlp::Decodable>::decode(&mut &node[..]).unwrap())
-        .collect();
+    let storage_proof: Vec<Vec<u8>> =
+        proof.proof.into_iter().map(|node| Vec::<u8>::decode(&mut &node[..]).unwrap()).collect();
     let key = B256::from(keccak256(proof.key.0 .0));
     verify_proof::<ExtensionLayout>(
         &account.storage_root.0,

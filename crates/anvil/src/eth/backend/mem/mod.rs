@@ -2225,14 +2225,9 @@ impl Backend {
 
             let maybe_account: Option<BasicAccount> = {
                 let acc_decoder = |mut bytes: &[u8]| {
-                    <BasicAccount as alloy_rlp::Decodable>::decode(&mut bytes).unwrap_or_else(
-                        |_| {
-                            panic!(
-                                "prove_account_at, could not query trie for account={:?}",
-                                &address
-                            )
-                        },
-                    )
+                    BasicAccount::decode(&mut bytes).unwrap_or_else(|_| {
+                        panic!("prove_account_at, could not query trie for account={:?}", &address)
+                    })
                 };
                 let query = (&mut recorder, acc_decoder);
                 trie.get_with(account_key.as_slice(), query)

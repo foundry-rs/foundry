@@ -156,13 +156,13 @@ mod tests {
         };
 
         let encoded = alloy_rlp::encode(&header);
-        let decoded: Header = <Header as Decodable>::decode(&mut encoded.as_ref()).unwrap();
+        let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
         assert_eq!(header, decoded);
 
         header.base_fee_per_gas = Some(12345u64);
 
         let encoded = alloy_rlp::encode(&header);
-        let decoded: Header = <Header as Decodable>::decode(&mut encoded.as_ref()).unwrap();
+        let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
         assert_eq!(header, decoded);
     }
 
@@ -226,7 +226,7 @@ mod tests {
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
         };
-        let header = <Header as alloy_rlp::Decodable>::decode(&mut data.as_slice()).unwrap();
+        let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
     }
 
@@ -267,7 +267,7 @@ mod tests {
 
         let data = hex::decode("f9034df90348a0fbdbd8d2d0ac5f14bd5fa90e547fe6f1d15019c724f8e7b60972d381cd5d9cf8a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794c9577e7945db22e38fc060909f2278c7746b0f9ba05017cfa3b0247e35197215ae8d610265ffebc8edca8ea66d6567eb0adecda867a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000018355bb7b871fffffffffffff808462bd0e1ab9014bf90148a00000000000000000000000000000000000000000000000000000000000000000f85494319fa8f1bc4e53410e92d10d918659b16540e60a945a573efb304d04c1224cd012313e827eca5dce5d94a9c831c5a268031176ebf5f3de5051e8cba0dbfe94c9577e7945db22e38fc060909f2278c7746b0f9b808400000000f8c9b841a6946f2d16f68338cbcbd8b117374ab421128ce422467088456bceba9d70c34106128e6d4564659cf6776c08a4186063c0a05f7cffd695c10cf26a6f301b67f800b8412b782100c18c35102dc0a37ece1a152544f04ad7dc1868d18a9570f744ace60870f822f53d35e89a2ea9709ccbf1f4a25ee5003944faa845d02dde0a41d5704601b841d53caebd6c8a82456e85c2806a9e08381f959a31fb94a77e58f00e38ad97b2e0355b8519ab2122662cbe022f2a4ef7ff16adc0b2d5dcd123181ec79705116db300a063746963616c2062797a616e74696e65206661756c7420746f6c6572616e6365880000000000000000c0c0").unwrap();
 
-        let block = <Block as alloy_rlp::Decodable>::decode(&mut data.as_slice()).unwrap();
+        let block = Block::decode(&mut data.as_slice()).unwrap();
 
         // encode and check that it matches the original data
         let mut encoded = Vec::new();
