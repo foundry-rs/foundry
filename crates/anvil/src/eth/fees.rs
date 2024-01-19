@@ -246,20 +246,17 @@ impl FeeHistoryService {
                     let gas_used = receipt.gas_used();
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
-                        Some(TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Legacy(
-                            t,
-                        ))) => U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>(),
-                        Some(TypedTransaction::Enveloped(
-                            alloy_consensus::TxEnvelope::TaggedLegacy(t),
-                        )) => U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>(),
-                        Some(TypedTransaction::Enveloped(
-                            alloy_consensus::TxEnvelope::Eip2930(t),
-                        )) => U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>(),
-                        Some(TypedTransaction::Enveloped(
-                            alloy_consensus::TxEnvelope::Eip1559(t),
-                        )) => U256::from(t.max_priority_fee_per_gas)
-                            .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
-                            .to::<u64>(),
+                        Some(TypedTransaction::Legacy(t)) => {
+                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
+                        }
+                        Some(TypedTransaction::EIP2930(t)) => {
+                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
+                        }
+                        Some(TypedTransaction::EIP1559(t)) => {
+                            U256::from(t.max_priority_fee_per_gas)
+                                .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
+                                .to::<u64>()
+                        }
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };

@@ -115,21 +115,15 @@ pub fn build_typed_transaction(
     let tx = match request {
         TypedTransactionRequest::Legacy(tx) => {
             let sighash = tx.signature_hash();
-            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Legacy(Signed::new_unchecked(
-                tx, signature, sighash,
-            )))
+            TypedTransaction::Legacy(Signed::new_unchecked(tx, signature, sighash))
         }
         TypedTransactionRequest::EIP2930(tx) => {
             let sighash = tx.signature_hash();
-            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip2930(
-                Signed::new_unchecked(tx, signature, sighash),
-            ))
+            TypedTransaction::EIP2930(Signed::new_unchecked(tx, signature, sighash))
         }
         TypedTransactionRequest::EIP1559(tx) => {
             let sighash = tx.signature_hash();
-            TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip1559(
-                Signed::new_unchecked(tx, signature, sighash),
-            ))
+            TypedTransaction::EIP1559(Signed::new_unchecked(tx, signature, sighash))
         }
         TypedTransactionRequest::Deposit(tx) => {
             let DepositTransactionRequest {

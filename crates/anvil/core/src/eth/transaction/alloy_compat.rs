@@ -18,7 +18,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
     from: Address,
 ) -> AlloyTransaction {
     match transaction {
-        TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Legacy(t)) => AlloyTransaction {
+        TypedTransaction::Legacy(t) => AlloyTransaction {
             hash,
             nonce: U64::from(t.nonce),
             block_hash: None,
@@ -45,36 +45,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             blob_versioned_hashes: vec![],
             other: Default::default(),
         },
-        TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::TaggedLegacy(t)) => {
-            AlloyTransaction {
-                hash,
-                nonce: U64::from(t.nonce),
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                from,
-                to: None,
-                value: t.value,
-                gas_price: Some(U128::from(t.gas_price)),
-                max_fee_per_gas: Some(U128::from(t.gas_price)),
-                max_priority_fee_per_gas: Some(U128::from(t.gas_price)),
-                gas: U256::from(t.gas_limit),
-                input: t.input.clone(),
-                chain_id: t.chain_id.map(U64::from),
-                signature: Some(Signature {
-                    r: t.signature().r(),
-                    s: t.signature().s(),
-                    v: U256::from(t.signature().v().y_parity_byte()),
-                    y_parity: None,
-                }),
-                access_list: None,
-                transaction_type: None,
-                max_fee_per_blob_gas: None,
-                blob_versioned_hashes: vec![],
-                other: Default::default(),
-            }
-        }
-        TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip2930(t)) => AlloyTransaction {
+        TypedTransaction::EIP2930(t) => AlloyTransaction {
             hash,
             nonce: U64::from(t.nonce),
             block_hash: None,
@@ -101,7 +72,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             blob_versioned_hashes: vec![],
             other: Default::default(),
         },
-        TypedTransaction::Enveloped(alloy_consensus::TxEnvelope::Eip1559(t)) => AlloyTransaction {
+        TypedTransaction::EIP1559(t) => AlloyTransaction {
             hash,
             nonce: U64::from(t.nonce),
             block_hash: None,
