@@ -4,7 +4,7 @@ use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
-    utils::{gas_used, CallKind},
+    utils::gas_used,
 };
 use revm::{
     interpreter::{
@@ -13,6 +13,7 @@ use revm::{
     },
     EVMData, Inspector,
 };
+use revm_inspectors::tracing::types::CallKind;
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Clone, Debug, Default)]
@@ -127,7 +128,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
             let gas = Gas::new(call.gas_limit);
-            return (InstructionResult::Revert, None, gas, err.abi_encode_revert())
+            return (InstructionResult::Revert, None, gas, err.abi_encode_revert());
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;

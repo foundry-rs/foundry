@@ -1155,6 +1155,26 @@
     },
     {
       "func": {
+        "id": "dumpState",
+        "description": "Dump a genesis JSON file's `allocs` to disk.",
+        "declaration": "function dumpState(string calldata pathToStateJson) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "dumpState(string)",
+        "selector": "0x709ecd3f",
+        "selectorBytes": [
+          112,
+          158,
+          205,
+          63
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "envAddress_0",
         "description": "Gets the environment variable `name` and parses it as `address`.\nReverts if the variable was not found or could not be parsed.",
         "declaration": "function envAddress(string calldata name) external view returns (address value);",
@@ -4195,8 +4215,28 @@
     },
     {
       "func": {
+        "id": "signP256",
+        "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
+        "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signP256(uint256,bytes32)",
+        "selector": "0x83211b40",
+        "selectorBytes": [
+          131,
+          33,
+          27,
+          64
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "sign_0",
-        "description": "Signs data.",
+        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.",
         "declaration": "function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
@@ -4535,28 +4575,8 @@
     },
     {
       "func": {
-        "id": "toBase64",
-        "description": "Encodes a `bytes` value to base64 string",
-        "declaration": "function toBase64(bytes calldata data) external pure returns (string memory);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "toBase64(bytes)",
-        "selector": "0xa5cbfe65",
-        "selectorBytes": [
-          165,
-          203,
-          254,
-          101
-        ]
-      },
-      "group": "base64",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "toBase64URL",
-        "description": "Encodes a `bytes` value to base64url string",
+        "id": "toBase64URL_0",
+        "description": "Encodes a `bytes` value to a base64url string.",
         "declaration": "function toBase64URL(bytes calldata data) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
@@ -4569,7 +4589,67 @@
           74
         ]
       },
-      "group": "base64",
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64URL_1",
+        "description": "Encodes a `string` value to a base64url string.",
+        "declaration": "function toBase64URL(string calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64URL(string)",
+        "selector": "0xae3165b3",
+        "selectorBytes": [
+          174,
+          49,
+          101,
+          179
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64_0",
+        "description": "Encodes a `bytes` value to a base64 string.",
+        "declaration": "function toBase64(bytes calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64(bytes)",
+        "selector": "0xa5cbfe65",
+        "selectorBytes": [
+          165,
+          203,
+          254,
+          101
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toBase64_1",
+        "description": "Encodes a `string` value to a base64 string.",
+        "declaration": "function toBase64(string calldata data) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toBase64(string)",
+        "selector": "0x3f8be2c8",
+        "selectorBytes": [
+          63,
+          139,
+          226,
+          200
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },

@@ -103,12 +103,6 @@ pub enum Group {
     ///
     /// Safety: safe.
     Json,
-    /// Utility cheatcodes that deal with encoding and decoding Base64.
-    ///
-    /// Examples: `toBase64`, `toBase64URL`.
-    ///
-    /// Safety: safe.
-    Base64,
     /// Generic, uncategorized utilities.
     ///
     /// Examples: `toString`, `parse*`, `serialize*`.
@@ -131,7 +125,6 @@ impl Group {
             Self::Environment |
             Self::String |
             Self::Json |
-            Self::Base64 |
             Self::Utilities => Some(Safety::Safe),
         }
     }
@@ -147,7 +140,6 @@ impl Group {
             Self::Environment => "environment",
             Self::String => "string",
             Self::Json => "json",
-            Self::Base64 => "base64",
             Self::Utilities => "utilities",
         }
     }

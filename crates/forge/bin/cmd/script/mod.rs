@@ -953,4 +953,17 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/5910>
+    #[test]
+    fn test_5910() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "--broadcast",
+            "--with-gas-price",
+            "0",
+            "SolveTutorial",
+        ]);
+        assert!(args.with_gas_price.unwrap().is_zero());
+    }
 }

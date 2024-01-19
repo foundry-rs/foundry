@@ -230,6 +230,7 @@ test_directories! {
     EmitStatement,
     Repros,
     BlockComments,
+    BlockCommentsFunction,
     EnumVariants,
 }
 

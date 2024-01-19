@@ -83,7 +83,7 @@ impl InspectArgs {
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
                 if pretty {
-                    let source = foundry_cli::utils::abi_to_solidity(abi, "")?;
+                    let source = foundry_cli::utils::abi_to_solidity(abi, &contract.name)?;
                     println!("{source}");
                 } else {
                     print_json(abi)?;

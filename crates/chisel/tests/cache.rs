@@ -1,7 +1,6 @@
 use chisel::session::ChiselSession;
 use foundry_compilers::EvmVersion;
 use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
 use serial_test::serial;
 use std::path::Path;
 
@@ -43,10 +42,7 @@ fn test_write_session() {
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
         foundry_config,
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-        calldata: None,
+        ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {}", e));
 
@@ -163,10 +159,7 @@ fn test_load_cache() {
     assert!(new_env.is_ok());
     let new_env = new_env.unwrap();
     assert_eq!(new_env.id.unwrap(), String::from("0"));
-    assert_eq!(
-        new_env.session_source.unwrap().to_repl_source(),
-        env.session_source.unwrap().to_repl_source()
-    );
+    assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
 }
 
 #[test]
@@ -225,8 +218,5 @@ fn test_load_latest_cache() {
 
     // Validate the session
     assert_eq!(new_env.id.unwrap(), "1");
-    assert_eq!(
-        new_env.session_source.unwrap().to_repl_source(),
-        env.session_source.unwrap().to_repl_source()
-    );
+    assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
 }

@@ -299,13 +299,6 @@
           ]
         },
         {
-          "description": "Utility cheatcodes that deal with encoding and decoding Base64.\n\nExamples: `toBase64`, `toBase64URL`.\n\nSafety: safe.",
-          "type": "string",
-          "enum": [
-            "base64"
-          ]
-        },
-        {
           "description": "Generic, uncategorized utilities.\n\nExamples: `toString`, `parse*`, `serialize*`.\n\nSafety: safe.",
           "type": "string",
           "enum": [

@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, B256, U256, U64};
+use alloy_primitives::{Address, Bytes, StorageValue, B256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_trace_types::{
     geth::{GethDebugTracingOptions, GethTrace},
@@ -238,10 +238,9 @@ impl ClientFork {
     pub async fn storage_at(
         &self,
         address: Address,
-        index: StorageKey,
+        index: U256,
         number: Option<BlockNumber>,
     ) -> Result<StorageValue, TransportError> {
-        let index = B256::from(index);
         self.provider().get_storage_at(address, index, number.map(Into::into)).await
     }
 
@@ -434,10 +433,12 @@ impl ClientFork {
         if self.predates_fork_inclusive(number) {
             let receipts = self.provider().get_block_receipts(BlockNumber::Number(number)).await?;
 
-            let mut storage = self.storage_write();
-            storage.block_receipts.insert(number, receipts.clone());
+            if let Some(receipts) = receipts.clone() {
+                let mut storage = self.storage_write();
+                storage.block_receipts.insert(number, receipts);
+            }
 
-            return Ok(Some(receipts));
+            return Ok(receipts);
         }
 
         Ok(None)

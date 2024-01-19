@@ -20,6 +20,7 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 [dependencies]
 # forge
 forge-fmt.workspace = true
+foundry-block-explorers.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
@@ -30,8 +31,6 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-json-abi.workspace = true
 alloy-rpc-types.workspace = true
-
-ethers-core.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs = "5"

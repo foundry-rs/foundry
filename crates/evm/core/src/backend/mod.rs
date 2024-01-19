@@ -20,7 +20,10 @@ use revm::{
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
@@ -888,6 +891,7 @@ impl Backend {
                 if is_known_system_sender(tx.from) ||
                     tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
                 {
+                    trace!(tx=?tx.hash, "skipping system transaction");
                     continue;
                 }
 
@@ -1199,14 +1203,7 @@ impl DatabaseExt for Backend {
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block.to(), env, journaled_state)?;
 
-        // update the block's env accordingly
-        env.block.timestamp = block.header.timestamp;
-        env.block.coinbase = block.header.miner;
-        env.block.difficulty = block.header.difficulty;
-        env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-        env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-        env.block.gas_limit = block.header.gas_limit;
-        env.block.number = block.header.number.map(|n| n.to()).unwrap_or(fork_block.to());
+        update_env_block(env, fork_block, &block);
 
         // replay all transactions that came before
         let env = env.clone();
@@ -1228,17 +1225,19 @@ impl DatabaseExt for Backend {
         let id = self.ensure_fork(maybe_id)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
 
-        let env = if maybe_id.is_none() {
-            self.forks
-                .get_env(fork_id.clone())?
-                .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?
-        } else {
-            env.clone()
+        let tx = {
+            let fork = self.inner.get_fork_by_id_mut(id)?;
+            fork.db.db.get_transaction(transaction)?
         };
 
-        let fork = self.inner.get_fork_by_id_mut(id)?;
-        let tx = fork.db.db.get_transaction(transaction)?;
+        // This is a bit ambiguous because the user wants to transact an arbitrary transaction in the current context, but we're assuming the user wants to transact the transaction as it was mined. Usually this is used in a combination of a fork at the transaction's parent transaction in the block and then the transaction is transacted: <https://github.com/foundry-rs/foundry/issues/6538>
+        // So we modify the env to match the transaction's block
+        let (fork_block, block) =
+            self.get_block_number_and_block_for_transaction(id, transaction)?;
+        let mut env = env.clone();
+        update_env_block(&mut env, fork_block, &block);
 
+        let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector)
     }
 
@@ -1856,6 +1855,17 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
         .unwrap_or_default()
 }
 
+/// Updates the env's block with the block's data
+fn update_env_block(env: &mut Env, fork_block: U64, block: &Block) {
+    env.block.timestamp = block.header.timestamp;
+    env.block.coinbase = block.header.miner;
+    env.block.difficulty = block.header.difficulty;
+    env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+    env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+    env.block.gas_limit = block.header.gas_limit;
+    env.block.number = block.header.number.map(|n| n.to()).unwrap_or(fork_block.to());
+}
+
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an optional inspector
 fn commit_transaction<I: Inspector<Backend>>(
@@ -1868,6 +1878,7 @@ fn commit_transaction<I: Inspector<Backend>>(
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env, &tx);
 
+    let now = Instant::now();
     let state = {
         let mut evm = EVM::new();
         evm.env = env;
@@ -1883,6 +1894,7 @@ fn commit_transaction<I: Inspector<Backend>>(
             Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
         }
     };
+    trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
     apply_state_changeset(state, journaled_state, fork);
     Ok(())

@@ -108,27 +108,30 @@ impl Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
 
                 match fut {
                     Ok(res) => {
-                        this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
-                        return Ok(res)
+                        if let Some(e) = res.as_error() {
+                            err = TransportError::ErrorResp(e.clone())
+                        } else {
+                            this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
+                            return Ok(res)
+                        }
                     }
                     Err(e) => err = e,
                 }
 
-                let err = TransportError::from(err);
                 let should_retry = this.policy.should_retry(&err);
                 if should_retry {
                     rate_limit_retry_number += 1;
                     if rate_limit_retry_number > this.max_rate_limit_retries {
                         return Err(TransportErrorKind::custom_str("Max retries exceeded"))
                     }
+                    trace!("retrying request due to {:?}", err);
 
                     let current_queued_reqs = this.requests_enqueued.load(Ordering::SeqCst) as u64;
 
                     // try to extract the requested backoff from the error or compute the next
                     // backoff based on retry count
-                    let mut next_backoff = this
-                        .policy
-                        .backoff_hint(&err)
+                    let backoff_hint = this.policy.backoff_hint(&err);
+                    let next_backoff = backoff_hint
                         .unwrap_or_else(|| std::time::Duration::from_millis(this.initial_backoff));
 
                     // requests are usually weighted and can vary from 10 CU to several 100 CU,
@@ -148,10 +151,12 @@ impl Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
                         current_queued_reqs,
                         ahead_in_queue,
                     );
-                    next_backoff +=
+                    let total_backoff = next_backoff +
                         std::time::Duration::from_secs(seconds_to_wait_for_compute_budget);
 
-                    tokio::time::sleep(next_backoff).await;
+                    trace!(?total_backoff, budget_backoff = ?seconds_to_wait_for_compute_budget, default_backoff = ?next_backoff, ?backoff_hint, "backing off due to rate limit");
+
+                    tokio::time::sleep(total_backoff).await;
                 } else {
                     if timeout_retries < this.max_timeout_retries {
                         timeout_retries += 1;
@@ -159,7 +164,7 @@ impl Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
                     }
 
                     this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
-                    return Err(TransportErrorKind::custom_str("Max retries exceeded"))
+                    return Err(err)
                 }
             }
         })
