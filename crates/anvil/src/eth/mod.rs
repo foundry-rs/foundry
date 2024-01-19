@@ -1,6 +1,6 @@
-pub mod sign;
 pub mod api;
 pub mod otterscan;
+pub mod sign;
 pub use api::EthApi;
 
 pub mod backend;

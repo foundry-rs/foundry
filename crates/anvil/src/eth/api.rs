@@ -1,8 +1,6 @@
-use super::{sign::build_typed_transaction, backend::mem::BlockRequest};
+use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
 use crate::{
     eth::{
-        sign,
-        sign::Signer,
         backend,
         backend::{
             db::SerializableState,
@@ -22,6 +20,8 @@ use crate::{
             },
             Pool,
         },
+        sign,
+        sign::Signer,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,

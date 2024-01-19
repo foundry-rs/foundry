@@ -3,11 +3,11 @@ extern crate tracing;
 
 use crate::{
     eth::{
-        sign::{DevSigner, Signer as EthSigner},
         backend::{info::StorageInfo, mem},
         fees::{FeeHistoryService, FeeManager},
         miner::{Miner, MiningMode},
         pool::Pool,
+        sign::{DevSigner, Signer as EthSigner},
         EthApi,
     },
     filter::Filters,
