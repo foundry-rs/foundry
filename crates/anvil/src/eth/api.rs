@@ -632,13 +632,9 @@ impl EthApi {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return Ok(B256::from(
-                        fork.storage_at(
-                            address,
-                            B256::from(index),
-                            Some(BlockNumber::Number(number)),
-                        )
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?,
+                        fork.storage_at(address, index, Some(BlockNumber::Number(number)))
+                            .await
+                            .map_err(|_| BlockchainError::DataUnavailable)?,
                     ));
                 }
             }
