@@ -67,9 +67,6 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "constant_time_eq" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-
-    { allow = ["GPL-3.0"], name = "fastrlp" },
-    { allow = ["GPL-3.0"], name = "fastrlp-derive" },
 ]
 #copyleft = "deny"
 
