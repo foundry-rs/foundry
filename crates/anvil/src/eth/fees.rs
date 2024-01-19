@@ -3,7 +3,7 @@ use crate::eth::{
     error::BlockchainError,
 };
 use alloy_primitives::{B256, U256};
-use anvil_core::eth::transaction::alloy::TypedTransaction;
+use anvil_core::eth::transaction::TypedTransaction;
 use foundry_evm::revm::primitives::SpecId;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};

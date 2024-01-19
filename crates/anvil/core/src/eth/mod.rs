@@ -1,5 +1,5 @@
 use crate::{
-    eth::{subscription::SubscriptionId, transaction::alloy::EthTransactionRequest},
+    eth::{subscription::SubscriptionId, transaction::EthTransactionRequest},
     types::{EvmMineOptions, Forking, Index},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
@@ -10,8 +10,8 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
 
-pub mod alloy_block;
-pub mod alloy_proof;
+pub mod block;
+pub mod proof;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;

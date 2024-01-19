@@ -5,8 +5,8 @@ use alloy_primitives::{Address, Signature, B256, U256};
 use alloy_signer::{LocalWallet, Signer as AlloySigner, SignerSync as AlloySignerSync};
 use alloy_sol_types::Eip712Domain;
 use anvil_core::eth::transaction::{
-    alloy::{TypedTransaction, TypedTransactionRequest},
     optimism::{DepositTransaction, DepositTransactionRequest},
+    TypedTransaction, TypedTransactionRequest,
 };
 use std::collections::HashMap;
 

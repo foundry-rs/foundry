@@ -9,8 +9,8 @@ use crate::{
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_primitives::{Bloom, BloomInput, Log, B256, U256};
 use anvil_core::eth::{
-    alloy_block::{Block, BlockInfo, PartialHeader},
-    transaction::alloy::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    block::{Block, BlockInfo, PartialHeader},
+    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
     trie,
 };
 use foundry_evm::{

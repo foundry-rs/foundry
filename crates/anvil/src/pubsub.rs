@@ -6,9 +6,7 @@ use alloy_consensus::ReceiptWithBloom;
 use alloy_network::Sealable;
 use alloy_primitives::{Log, TxHash, B256, U256};
 use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
-use anvil_core::eth::{
-    alloy_block::Block, subscription::SubscriptionId, transaction::alloy::TypedReceipt,
-};
+use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
 use anvil_rpc::{request::Version, response::ResponseResult};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;

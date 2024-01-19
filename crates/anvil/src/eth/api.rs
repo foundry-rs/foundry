@@ -46,8 +46,8 @@ use alloy_rpc_types::{
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
-        alloy_block::BlockInfo,
-        transaction::alloy::{
+        block::BlockInfo,
+        transaction::{
             call_request_to_typed, EthTransactionRequest, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
         },

@@ -1,7 +1,7 @@
 //! Support for validating transactions at certain stages
 
 use crate::eth::error::{BlockchainError, InvalidTransactionError};
-use anvil_core::eth::transaction::alloy::PendingTransaction;
+use anvil_core::eth::transaction::PendingTransaction;
 use foundry_evm::revm::primitives::{AccountInfo, Env};
 
 /// A trait for validating transactions

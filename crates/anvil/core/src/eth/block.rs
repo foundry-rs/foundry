@@ -1,5 +1,5 @@
 use super::{
-    transaction::alloy::{TransactionInfo, TypedReceipt},
+    transaction::{TransactionInfo, TypedReceipt},
     trie,
 };
 use alloy_consensus::Header;
@@ -8,9 +8,9 @@ use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
 #[cfg(not(feature = "impersonated-tx"))]
-type Transaction = crate::eth::transaction::alloy::TypedTransaction;
+type Transaction = crate::eth::transaction::TypedTransaction;
 #[cfg(feature = "impersonated-tx")]
-type Transaction = crate::eth::transaction::alloy::MaybeImpersonatedTransaction;
+type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Container type that gathers all block data
 #[derive(Clone, Debug)]

@@ -16,8 +16,8 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo, TransactionReceipt,
 };
 use anvil_core::eth::{
-    alloy_block::{Block, PartialHeader},
-    transaction::alloy::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
+    block::{Block, PartialHeader},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_evm::{
     revm::primitives::Env,

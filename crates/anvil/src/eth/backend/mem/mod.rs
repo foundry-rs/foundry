@@ -45,9 +45,9 @@ use alloy_rpc_types::{
 };
 use anvil_core::{
     eth::{
-        alloy_block::{Block, BlockInfo},
-        alloy_proof::BasicAccount,
-        transaction::alloy::{
+        block::{Block, BlockInfo},
+        proof::BasicAccount,
+        transaction::{
             MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedReceipt,
             TypedTransaction,
         },

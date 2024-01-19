@@ -4,7 +4,7 @@ use crate::proof::eip1186::verify_proof;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_rpc_types::EIP1186AccountProofResponse;
 use anvil::{spawn, NodeConfig};
-use anvil_core::eth::{alloy_proof::BasicAccount, trie::ExtensionLayout};
+use anvil_core::eth::{proof::BasicAccount, trie::ExtensionLayout};
 use foundry_evm::revm::primitives::KECCAK_EMPTY;
 
 mod eip1186;

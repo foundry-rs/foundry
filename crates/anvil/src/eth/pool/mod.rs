@@ -38,7 +38,7 @@ use crate::{
 };
 use alloy_primitives::{TxHash, U64};
 use alloy_rpc_types::txpool::TxpoolStatus;
-use anvil_core::eth::transaction::alloy::PendingTransaction;
+use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
