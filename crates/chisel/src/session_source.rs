@@ -19,7 +19,7 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
 /// The minimum Solidity version of the `Vm` interface.
-pub const MIN_VM_VERSION: Version = Version::new(0, 8, 4);
+pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
