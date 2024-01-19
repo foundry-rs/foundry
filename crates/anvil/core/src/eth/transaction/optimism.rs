@@ -1,11 +1,10 @@
-use std::mem;
-
 use alloy_consensus::TxType;
 use alloy_network::{Transaction, TxKind};
 use alloy_primitives::{Address, Bytes, ChainId, Signature, B256, U256};
 use alloy_rlp::{
     length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
+use std::mem;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DepositTransactionRequest {
@@ -339,164 +338,6 @@ impl DepositTransaction {
             is_system_tx: Decodable::decode(buf)?,
             input: Decodable::decode(buf)?,
         })
-    }
-
-    /// Inner encoding function that is used for both rlp [`Encodable`] trait and for calculating
-    /// hash that for eip2718 does not require rlp header
-    pub(crate) fn encode_with_signature(
-        &self,
-        signature: &Signature,
-        out: &mut dyn alloy_rlp::BufMut,
-    ) {
-        let payload_length = self.fields_len() + signature.rlp_vrs_len();
-        let header = alloy_rlp::Header { list: true, payload_length };
-        header.encode(out);
-        self.encode_fields(out);
-        signature.write_rlp_vrs(out);
-    }
-
-    /// Output the length of the RLP signed transaction encoding, _without_ a RLP string header.
-    pub fn payload_len_with_signature_without_header(&self, signature: &Signature) -> usize {
-        let payload_length = self.fields_len() + signature.rlp_vrs_len();
-        // 'transaction type byte length' + 'header length' + 'payload length'
-        1 + length_of_length(payload_length) + payload_length
-    }
-
-    /// Output the length of the RLP signed transaction encoding. This encodes with a RLP header.
-    pub fn payload_len_with_signature(&self, signature: &Signature) -> usize {
-        let len = self.payload_len_with_signature_without_header(signature);
-        length_of_length(len) + len
-    }
-
-    /// Get transaction type
-    pub(crate) const fn tx_type(&self) -> TxType {
-        TxType::Eip1559
-    }
-
-    /// Calculates a heuristic for the in-memory size of the [DepositTransaction] transaction.
-    #[inline]
-    pub fn size(&self) -> usize {
-        mem::size_of::<U256>() + // nonce
-        mem::size_of::<B256>() + // source_hash
-        mem::size_of::<Address>() + // from
-        self.kind.size() + // to
-        mem::size_of::<U256>() + // mint
-        mem::size_of::<U256>() + // value
-        mem::size_of::<U256>() + // gas_limit
-        mem::size_of::<bool>() + // is_system_transaction
-        self.input.len() // input
-    }
-
-    /// Encodes the legacy transaction in RLP for signing.
-    pub(crate) fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
-        out.put_u8(self.tx_type() as u8);
-        alloy_rlp::Header { list: true, payload_length: self.fields_len() }.encode(out);
-        self.encode_fields(out);
-    }
-
-    /// Outputs the length of the signature RLP encoding for the transaction.
-    pub(crate) fn payload_len_for_signature(&self) -> usize {
-        let payload_length = self.fields_len();
-        // 'transaction type byte length' + 'header length' + 'payload length'
-        1 + length_of_length(payload_length) + payload_length
-    }
-
-    /// Outputs the signature hash of the transaction by first encoding without a signature, then
-    /// hashing.
-    pub(crate) fn signature_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.payload_len_for_signature());
-        self.encode_for_signing(&mut buf);
-        alloy_primitives::utils::keccak256(&buf)
-    }
-}
-
-impl Transaction for DepositTransaction {
-    type Signature = Signature;
-
-    fn chain_id(&self) -> Option<ChainId> {
-        None
-    }
-
-    fn gas_limit(&self) -> u64 {
-        self.gas_limit.to::<u64>()
-    }
-
-    fn nonce(&self) -> u64 {
-        self.nonce.to::<u64>()
-    }
-
-    fn decode_signed(buf: &mut &[u8]) -> alloy_rlp::Result<alloy_network::Signed<Self>>
-    where
-        Self: Sized,
-    {
-        let header = alloy_rlp::Header::decode(buf)?;
-        if !header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-
-        let tx = Self::decode_inner(buf)?;
-        let signature = Signature::decode_rlp_vrs(buf)?;
-
-        Ok(tx.into_signed(signature))
-    }
-
-    fn encode_signed(&self, signature: &Signature, out: &mut dyn bytes::BufMut) {
-        self.encode_with_signature(signature, out)
-    }
-
-    fn gas_price(&self) -> Option<U256> {
-        None
-    }
-
-    fn input(&self) -> &[u8] {
-        &self.input
-    }
-
-    fn input_mut(&mut self) -> &mut Bytes {
-        &mut self.input
-    }
-
-    fn into_signed(self, signature: Signature) -> alloy_network::Signed<Self, Self::Signature>
-    where
-        Self: Sized,
-    {
-        alloy_network::Signed::new_unchecked(self.clone(), signature, self.signature_hash())
-    }
-
-    fn set_chain_id(&mut self, _chain_id: ChainId) {}
-
-    fn set_gas_limit(&mut self, limit: u64) {
-        self.gas_limit = U256::from(limit);
-    }
-
-    fn set_gas_price(&mut self, _price: U256) {}
-
-    fn set_input(&mut self, data: Bytes) {
-        self.input = data;
-    }
-
-    fn set_nonce(&mut self, nonce: u64) {
-        self.nonce = U256::from(nonce);
-    }
-
-    fn set_to(&mut self, to: TxKind) {
-        self.kind = to;
-    }
-
-    fn set_value(&mut self, value: U256) {
-        self.value = value;
-    }
-
-    fn signature_hash(&self) -> B256 {
-        self.signature_hash()
-    }
-
-    fn to(&self) -> TxKind {
-        self.kind
-    }
-
-    fn value(&self) -> U256 {
-        self.value
     }
 }
 
