@@ -461,7 +461,7 @@ impl SessionSource {
         let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
 
         let script_import =
-            if !config.no_vm { "import {{Vm}} from \"forge-std/Vm.sol\";\n" } else { "" };
+            if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
 
         format!(
             r#"
@@ -493,7 +493,7 @@ contract {contract_name} is Script {{
 
         let (vm_import, vm_constant) = if !config.no_vm {
             (
-                "import {{Vm}} from \"forge-std/Vm.sol\";\n",
+                "import {Vm} from \"forge-std/Vm.sol\";\n",
                 "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n"
             )
         } else {
@@ -670,14 +670,17 @@ pub fn parse_fragment(
 ) -> Option<ParseTreeFragment> {
     let mut base = SessionSource::new(solc, config);
 
-    if base.clone().with_run_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Function)
+    match base.clone().with_run_code(buffer).parse() {
+        Ok(_) => return Some(ParseTreeFragment::Function),
+        Err(e) => tracing::debug!(?e),
     }
-    if base.clone().with_top_level_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Contract)
+    match base.clone().with_top_level_code(buffer).parse() {
+        Ok(_) => return Some(ParseTreeFragment::Contract),
+        Err(e) => tracing::debug!(?e),
     }
-    if base.with_global_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Source)
+    match base.with_global_code(buffer).parse() {
+        Ok(_) => return Some(ParseTreeFragment::Source),
+        Err(e) => tracing::debug!(?e),
     }
 
     None
