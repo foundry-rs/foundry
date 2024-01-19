@@ -191,11 +191,9 @@ impl SessionSource {
     #[track_caller]
     pub fn new(solc: Solc, mut config: SessionSourceConfig) -> Self {
         if let Ok(v) = solc.version_short() {
-            if v < MIN_VM_VERSION {
-                if !config.no_vm {
-                    tracing::info!(version=%v, minimum=%MIN_VM_VERSION, "Disabling VM injection");
-                    config.no_vm = true;
-                }
+            if v < MIN_VM_VERSION && !config.no_vm {
+                tracing::info!(version=%v, minimum=%MIN_VM_VERSION, "Disabling VM injection");
+                config.no_vm = true;
             }
         }
 
