@@ -11,8 +11,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError,
-            Result, ToRpcResponseResult,
+            BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
@@ -61,9 +60,10 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::{provider::alloy::ProviderBuilder, types::ToEthers};
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
+    decode::maybe_decode_revert,
     revm::{
         db::DatabaseRef,
         interpreter::{return_ok, return_revert, InstructionResult},
@@ -472,8 +472,8 @@ impl EthApi {
     /// Handler for ETH RPC call: `web3_sha3`
     pub fn sha3(&self, bytes: Bytes) -> Result<String> {
         node_info!("web3_sha3");
-        let hash = ethers::utils::keccak256(bytes.as_ref());
-        Ok(ethers::utils::hex::encode(&hash[..]))
+        let hash = alloy_primitives::keccak256(bytes.as_ref());
+        Ok(alloy_primitives::hex::encode_prefixed(&hash[..]))
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
@@ -888,7 +888,6 @@ impl EthApi {
         let request = self.build_typed_tx_request(request, nonce)?;
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            println!("hello?????");
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
@@ -899,7 +898,6 @@ impl EthApi {
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
-        println!("pendingtx: {:#?}", pending_transaction);
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
@@ -944,7 +942,6 @@ impl EthApi {
         //     self.ensure_typed_transaction_supported(&tx)?;
         //     tx
         // };
-        println!("tx: {:#?}", transaction);
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
@@ -1908,7 +1905,7 @@ impl EthApi {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
                             if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
-                                if let Some(reason) = decode_revert_reason(&output) {
+                                if let Some(reason) = maybe_decode_revert(&output, None, None) {
                                     tx.other.insert(
                                         "revertReason".to_string(),
                                         serde_json::to_value(reason).expect("Infallible"),
@@ -1978,33 +1975,30 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        _request: EthTransactionRequest,
+        request: EthTransactionRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
-        Err(BlockchainError::RpcUnimplemented)
         // either use the impersonated account of the request's `from` field
-        // let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?.to_alloy();
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
-        // let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        // let request = self.build_typed_tx_request(request, nonce)?;
+        let request = self.build_typed_tx_request(request, nonce)?;
 
-        // let bypass_signature = self.backend.cheats().bypass_signature();
-        // let transaction =
-        //     sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
+        let bypass_signature = self.backend.cheats().bypass_signature();
+        let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
 
-        // self.ensure_typed_transaction_supported(&transaction)?;
+        self.ensure_typed_transaction_supported(&transaction)?;
 
-        // let pending_transaction =
-        //     PendingTransaction::with_impersonated(transaction, from);
+        let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
         // // pre-validate
-        // self.backend.validate_pool_transaction(&pending_transaction).await?;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        // let requires = required_marker(nonce, on_chain_nonce, from);
-        // let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        let requires = required_marker(nonce, on_chain_nonce, from);
+        let provides = vec![to_marker(nonce.to::<u64>(), from)];
 
-        // self.add_pending_transaction(pending_transaction, requires, provides)
+        self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
@@ -2261,7 +2255,7 @@ impl EthApi {
                 // succeeded
             }
             InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
-                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit.to_ethers()).into())
+                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
             // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
@@ -2446,7 +2440,7 @@ impl EthApi {
         let BlockInfo { block, transactions, receipts: _ } =
             self.backend.pending_block(transactions).await;
 
-        let ethers_block = self.backend.convert_block(block.clone());
+        let partial_block = self.backend.convert_block(block.clone());
 
         let mut block_transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = self.backend.base_fee();
@@ -2464,7 +2458,7 @@ impl EthApi {
             block_transactions.push(tx);
         }
 
-        Some(ethers_block.into_full_block(block_transactions))
+        Some(partial_block.into_full_block(block_transactions))
     }
 
     fn build_typed_tx_request(
@@ -2651,7 +2645,7 @@ where
         return_ok!() => {
             // transaction succeeded by manually increasing the gas limit to
             // highest, which means the caller lacks funds to pay for the tx
-            InvalidTransactionError::BasicOutOfGas(gas_limit.to_ethers()).into()
+            InvalidTransactionError::BasicOutOfGas(gas_limit).into()
         }
         return_revert!() => {
             // reverted again after bumping the limit

@@ -11,5 +11,4 @@ pub mod fees;
 pub(crate) mod macros;
 pub mod miner;
 pub mod pool;
-pub mod sign;
 pub mod util;

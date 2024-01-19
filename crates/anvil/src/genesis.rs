@@ -2,7 +2,6 @@
 use crate::revm::primitives::AccountInfo;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::LocalWallet;
-use ethers::types::serde_helpers::*;
 use foundry_common::errors::FsPathError;
 use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256};
 use serde::{Deserialize, Serialize};
@@ -20,21 +19,25 @@ pub struct Genesis {
     pub config: Option<Config>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub timestamp: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_data: Option<Bytes>,
-    #[serde(deserialize_with = "deserialize_stringified_u64")]
+    #[serde(
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64"
+    )]
     pub gas_limit: u64,
-    #[serde(deserialize_with = "deserialize_stringified_u64")]
+    #[serde(
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64"
+    )]
     pub difficulty: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mix_hash: Option<B256>,
@@ -44,13 +47,13 @@ pub struct Genesis {
     pub alloc: Alloc,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub number: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub gas_used: Option<u64>,
@@ -117,7 +120,7 @@ pub struct GenesisAccount {
     pub balance: U256,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,

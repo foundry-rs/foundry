@@ -4,15 +4,11 @@ use crate::{
     genesis::Genesis,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
-use alloy_primitives::U256;
+use alloy_primitives::{utils::Unit, U256};
+use alloy_signer::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
-use ethers::{
-    signers::coins_bip39::{English, Mnemonic},
-    utils::WEI_IN_ETHER,
-};
-use foundry_common::types::ToAlloy;
 use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -186,7 +182,7 @@ const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
 
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
-        let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
+        let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let compute_units_per_second = if self.evm_opts.no_rate_limit {
             Some(u64::MAX)
         } else {
@@ -201,7 +197,7 @@ impl NodeArgs {
             .with_blocktime(self.block_time.map(Duration::from_secs))
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
-            .with_genesis_balance(genesis_balance.to_alloy())
+            .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
             .with_fork_block_number(

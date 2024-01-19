@@ -31,7 +31,8 @@ use crate::{
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom, TxEnvelope};
 use alloy_network::Sealable;
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_rlp::Decodable;
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -56,12 +57,8 @@ use anvil_core::{
     types::{Forking, Index},
 };
 use anvil_rpc::error::RpcError;
-use ethers::{
-    abi::ethereum_types::BigEndianHash,
-    utils::{keccak256, rlp},
-};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::types::ToAlloy;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -77,11 +74,10 @@ use foundry_evm::{
         },
     },
     traces::{TracingInspector, TracingInspectorConfig},
-    utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
-use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -357,9 +353,6 @@ impl Backend {
 
     pub fn precompiles(&self) -> Vec<Address> {
         get_precompiles_for(self.env.read().cfg.spec_id)
-            .into_iter()
-            .map(ToAlloy::to_alloy)
-            .collect_vec()
     }
 
     /// Resets the fork to a fresh state
@@ -420,7 +413,7 @@ impl Backend {
                     ..env.block.clone()
                 };
 
-                self.time.reset(env.block.timestamp.to_ethers().as_u64());
+                self.time.reset(env.block.timestamp.to::<u64>());
 
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
@@ -554,7 +547,7 @@ impl Backend {
         slot: U256,
         val: B256,
     ) -> DatabaseResult<()> {
-        self.db.write().await.set_storage_at(address, slot, val.to_ethers().into_uint().to_alloy())
+        self.db.write().await.set_storage_at(address, slot, U256::from_be_bytes(val.0))
     }
 
     /// Returns the configured specid
@@ -1008,9 +1001,9 @@ impl Backend {
             (outcome, header, block_hash)
         };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used.to_alloy(),
-            header.gas_limit.to_alloy(),
-            header.base_fee_per_gas.unwrap_or_default().to_alloy(),
+            U256::from(header.gas_used),
+            U256::from(header.gas_limit),
+            U256::from(header.base_fee_per_gas.unwrap_or_default()),
         );
 
         // notify all listeners
@@ -1035,7 +1028,7 @@ impl Backend {
         overrides: Option<StateOverride>,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
-            let block_number = (block.number.to_ethers()).as_u64();
+            let block_number = block.number.to::<u64>();
             let (exit, out, gas, state) = match overrides {
                 None => self.call_with_state(state, request, fee_details, block),
                 Some(overrides) => {
@@ -1511,12 +1504,10 @@ impl Backend {
                         }
                     }
                     BlockNumber::Finalized => {
-                        if storage.best_number.to_ethers() > (slots_in_an_epoch.to_ethers() * 2) {
-                            *storage.hashes.get(
-                                &(storage.best_number.to_ethers() -
-                                    (slots_in_an_epoch.to_ethers() * 2))
-                                    .to_alloy(),
-                            )?
+                        if storage.best_number > (slots_in_an_epoch * U64::from(2)) {
+                            *storage
+                                .hashes
+                                .get(&(storage.best_number - (slots_in_an_epoch * U64::from(2))))?
                         } else {
                             storage.genesis_hash
                         }
@@ -1740,7 +1731,7 @@ impl Backend {
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
             return Err(BlockchainError::BlockOutOfRange(
-                self.env.read().block.number.to_ethers().as_u64(),
+                self.env.read().block.number.to::<u64>(),
                 block_number.to::<u64>(),
             ));
         }
@@ -1759,7 +1750,7 @@ impl Backend {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
             let val = db.storage_ref(address, index)?;
-            Ok(u256_to_h256_be(val.to_ethers()).to_alloy())
+            Ok(B256::from(val))
         })
         .await?
     }
@@ -2247,7 +2238,7 @@ impl Backend {
                     )
                 };
                 let query = (&mut recorder, acc_decoder);
-                trie.get_with(account_key.to_ethers().as_bytes(), query)
+                trie.get_with(account_key.as_slice(), query)
                     .map_err(|err| BlockchainError::TrieError(err.to_string()))?
             };
             let account = maybe_account.unwrap_or_default();
@@ -2540,12 +2531,12 @@ pub fn prove_storage(
         .unwrap();
 
     let item: U256 = {
-        let decode_value = |bytes: &[u8]| rlp::decode(bytes).expect("decoding db value failed");
+        let decode_value =
+            |mut bytes: &[u8]| U256::decode(&mut bytes).expect("decoding db value failed");
         let query = (&mut recorder, decode_value);
-        trie.get_with(storage_key.to_ethers().as_bytes(), query)
+        trie.get_with(storage_key.as_slice(), query)
             .map_err(|err| BlockchainError::TrieError(err.to_string()))?
-            .unwrap_or_else(|| U256::ZERO.to_ethers())
-            .to_alloy()
+            .unwrap_or(U256::ZERO)
     };
 
     Ok((recorder.drain().into_iter().map(|r| r.data).collect(), B256::from(item)))

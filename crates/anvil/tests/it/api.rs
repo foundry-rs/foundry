@@ -1,6 +1,9 @@
 //! general eth api tests
 
-use crate::abi::{MulticallContract, SimpleStorage};
+use crate::{
+    abi::{MulticallContract, SimpleStorage},
+    utils::ethers_http_provider,
+};
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
@@ -29,7 +32,7 @@ async fn can_get_block_number() {
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::zero().to_alloy());
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, block_num.to::<u64>().into());
@@ -50,7 +53,7 @@ async fn can_dev_get_balance() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let _ = provider.get_gas_price().await.unwrap();
 }
@@ -58,7 +61,7 @@ async fn can_get_price() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let _ = provider.get_accounts().await.unwrap();
 }
@@ -66,7 +69,7 @@ async fn can_get_accounts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_client_version() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let version = provider.client_version().await.unwrap();
     assert_eq!(CLIENT_VERSION, version);
@@ -75,7 +78,7 @@ async fn can_get_client_version() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, CHAIN_ID.into());
@@ -84,7 +87,7 @@ async fn can_get_chain_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_modify_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(Chain::Goerli))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, Chain::Goerli.into());
@@ -104,7 +107,7 @@ async fn can_get_network_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
@@ -129,7 +132,7 @@ async fn can_get_block_by_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let accounts: Vec<_> = handle.dev_wallets().collect();
 
     let block = provider.get_block(BlockNumber::Pending).await.unwrap().unwrap();
@@ -163,7 +166,7 @@ async fn can_get_pending_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 0u64);
@@ -262,7 +265,7 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     api.anvil_set_auto_mine(true).await.unwrap();
 

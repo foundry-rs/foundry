@@ -16,24 +16,18 @@ use crate::{
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
-use alloy_primitives::{hex, U256};
+use alloy_primitives::{hex, utils::Unit, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
-use alloy_signer::{LocalWallet, Signer as AlloySigner};
+use alloy_signer::{
+    coins_bip39::{English, Mnemonic},
+    LocalWallet, MnemonicBuilder, Signer as AlloySigner,
+};
 use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Wallet},
-    signers::{
-        coins_bip39::{English, Mnemonic},
-        MnemonicBuilder, Signer,
-    },
-    utils::WEI_IN_ETHER,
-};
 use foundry_common::{
-    provider::alloy::ProviderBuilder, types::ToAlloy, ALCHEMY_FREE_TIER_CUPS,
-    NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::alloy::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
+    REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -44,6 +38,7 @@ use foundry_evm::{
     utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
+use rand::thread_rng;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -364,7 +359,7 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).alloy_gen();
+        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
         Self {
             chain_id: None,
             gas_limit: U256::from(30_000_000),
@@ -375,7 +370,7 @@ impl Default for NodeConfig {
             genesis_timestamp: None,
             genesis_accounts,
             // 100ETH default balance
-            genesis_balance: WEI_IN_ETHER.to_alloy().saturating_mul(U256::from(100u64)),
+            genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
             no_mining: false,
             port: NODE_PORT,
@@ -575,7 +570,7 @@ impl NodeConfig {
     /// so that `genesis_accounts == accounts`
     #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
-        let accounts = generator.alloy_gen();
+        let accounts = generator.gen();
         self.account_generator = Some(generator);
         self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
     }
@@ -1160,26 +1155,8 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> Vec<Wallet<SigningKey>> {
+    pub fn gen(&self) -> Vec<LocalWallet> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
-
-        // use the derivation path
-        let derivation_path = self.get_derivation_path();
-
-        let mut wallets = Vec::with_capacity(self.amount);
-
-        for idx in 0..self.amount {
-            let builder =
-                builder.clone().derivation_path(&format!("{derivation_path}{idx}")).unwrap();
-            let wallet = builder.build().unwrap().with_chain_id(self.chain_id);
-            wallets.push(wallet)
-        }
-        wallets
-    }
-
-    pub fn alloy_gen(&self) -> Vec<LocalWallet> {
-        let builder =
-            alloy_signer::MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path
         let derivation_path = self.get_derivation_path();
