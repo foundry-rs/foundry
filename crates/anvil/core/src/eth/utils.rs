@@ -10,6 +10,8 @@ pub fn alloy_to_revm_access_list(list: Vec<AlloyAccessListItem>) -> Vec<(Address
         .collect()
 }
 
+/// Translates a vec of [AlloyEipAccessListItem] to a [AlloyAccessList], translating from internal
+/// type to rpc type.
 pub fn from_eip_to_alloy_access_list(list: AlloyEipAccessList) -> AlloyAccessList {
     AlloyAccessList(
         list.0
