@@ -18,6 +18,9 @@ use solang_parser::pt;
 use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
+/// The minimum Solidity version of the `Vm` interface.
+pub const MIN_VM_VERSION: Version = Version::new(0, 8, 4);
+
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
@@ -69,6 +72,8 @@ pub struct SessionSourceConfig {
     pub foundry_config: Config,
     /// EVM Options
     pub evm_opts: EvmOpts,
+    /// Disable the default `Vm` import.
+    pub no_vm: bool,
     #[serde(skip)]
     /// In-memory REVM db for the session's runner.
     pub backend: Option<Backend>,
@@ -184,9 +189,15 @@ impl SessionSource {
     ///
     /// A new instance of [SessionSource]
     #[track_caller]
-    pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
-        #[cfg(debug_assertions)]
-        let _ = solc.version().unwrap();
+    pub fn new(solc: Solc, mut config: SessionSourceConfig) -> Self {
+        if let Ok(v) = solc.version_short() {
+            if v < MIN_VM_VERSION {
+                if !config.no_vm {
+                    tracing::info!(version=%v, minimum=%MIN_VM_VERSION, "Disabling VM injection");
+                    config.no_vm = true;
+                }
+            }
+        }
 
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
@@ -315,14 +326,15 @@ impl SessionSource {
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
 
         // Include Vm.sol if forge-std remapping is not available
-        if !self
-            .config
-            .foundry_config
-            .get_all_remappings()
-            .into_iter()
-            .any(|r| r.name.starts_with("forge-std"))
+        if !self.config.no_vm &&
+            !self
+                .config
+                .foundry_config
+                .get_all_remappings()
+                .into_iter()
+                .any(|r| r.name.starts_with("forge-std"))
         {
-            sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
+            sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE));
         }
 
         // we only care about the solidity source, so we can safely unwrap
@@ -446,24 +458,27 @@ impl SessionSource {
     /// The [SessionSource] represented as a Forge Script contract.
     pub fn to_script_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
+
+        let script_import =
+            if !config.no_vm { "import {{Vm}} from \"forge-std/Vm.sol\";\n" } else { "" };
+
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Script}} from "forge-std/Script.sol";
-{}
+{script_import}
+{global_code}
 
-contract {} is Script {{
-    {}
-    
+contract {contract_name} is Script {{
+    {top_level_code}
+  
     /// @notice Script entry point
     function run() public {{
-        {}
+        {run_code}
     }}
-}}
-            "#,
-            self.global_code, self.contract_name, self.top_level_code, self.run_code,
+}}"#,
         )
     }
 
@@ -474,25 +489,34 @@ contract {} is Script {{
     /// The [SessionSource] represented as a REPL contract.
     pub fn to_repl_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
+
+        let (vm_import, vm_constant) = if !config.no_vm {
+            (
+                "import {{Vm}} from \"forge-std/Vm.sol\";\n",
+                "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n"
+            )
+        } else {
+            ("", "")
+        };
+
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Vm}} from "forge-std/Vm.sol";
-{}
+{vm_import}
+{global_code}
 
-contract {} {{
-    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    {}
+contract {contract_name} {{
+    {vm_constant}
+    {top_level_code}
   
     /// @notice REPL contract entry point
     function run() public {{
-        {}
+        {run_code}
     }}
-}}
-            "#,
-            self.global_code, self.contract_name, self.top_level_code, self.run_code,
+}}"#,
         )
     }
 
