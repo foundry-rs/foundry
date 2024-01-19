@@ -3,7 +3,7 @@ extern crate tracing;
 
 use crate::{
     eth::{
-        alloy_sign::{DevSigner, Signer as EthSigner},
+        sign::{DevSigner, Signer as EthSigner},
         backend::{info::StorageInfo, mem},
         fees::{FeeHistoryService, FeeManager},
         miner::{Miner, MiningMode},

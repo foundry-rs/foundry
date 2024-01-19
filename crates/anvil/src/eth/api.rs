@@ -1,8 +1,8 @@
-use super::{alloy_sign::build_typed_transaction, backend::mem::BlockRequest};
+use super::{sign::build_typed_transaction, backend::mem::BlockRequest};
 use crate::{
     eth::{
-        alloy_sign,
-        alloy_sign::Signer,
+        sign,
+        sign::Signer,
         backend,
         backend::{
             db::SerializableState,
@@ -884,7 +884,7 @@ impl EthApi {
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
-            let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
+            let transaction = sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
@@ -1976,7 +1976,7 @@ impl EthApi {
         let request = self.build_typed_tx_request(request, nonce)?;
 
         let bypass_signature = self.backend.cheats().bypass_signature();
-        let transaction = alloy_sign::build_typed_transaction(request, bypass_signature)?;
+        let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
