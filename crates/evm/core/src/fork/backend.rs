@@ -174,13 +174,14 @@ where
                 entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
-                trace!(target: "backendhandler", "preparing storage request, address={:?}, idx={}", address, idx);
+                trace!(target: "backendhandler", %address, %idx, "preparing storage request");
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let block_id = self.block_id;
                 let fut = Box::pin(async move {
-                    let storage = provider.get_storage_at(address, idx, block_id).await;
-                    (storage.wrap_err("could not fetch slot {idx} from {address}"), address, idx)
+                    let storage =
+                        provider.get_storage_at(address, idx, block_id).await.map_err(Into::into);
+                    (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
             }
