@@ -2343,7 +2343,6 @@ impl TransactionValidator for Backend {
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
         let account = self.get_account(address).await?;
-        println!("addr={}, account={:?}", address, account);
         let env = self.next_env();
         Ok(self.validate_pool_transaction_for(tx, &account, &env)?)
     }

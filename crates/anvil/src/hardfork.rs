@@ -191,7 +191,7 @@ impl<T: Into<BlockNumberOrTag>> From<T> for Hardfork {
 mod tests {
     use crate::Hardfork;
     use crc::{Crc, CRC_32_ISO_HDLC};
-    use ethers::utils::hex;
+    use alloy_primitives::hex;
 
     #[test]
     fn test_hardfork_blocks() {

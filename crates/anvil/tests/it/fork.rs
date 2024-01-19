@@ -591,15 +591,11 @@ async fn test_fork_can_send_tx() {
 
     api.anvil_set_balance(provider.address().to_alloy(), rU256::MAX).await.unwrap();
     let balance = provider.get_balance(provider.address(), None).await.unwrap();
-    println!("balance={}", balance);
-    println!("provider addr = {}", provider.address());
     assert_eq!(balance, rU256::MAX.to_ethers());
 
     let addr = Address::random();
-    println!("call to addr = {}", addr);
     let val = 1337u64;
     let tx = TransactionRequest::new().to(addr).value(val);
-    println!("tx request = {:?}", tx);
     // broadcast it via the eth_sendTransaction API
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
