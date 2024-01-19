@@ -52,7 +52,7 @@ use anvil_core::{
             TypedTransaction,
         },
         trie::RefTrieDB,
-        utils::alloy_to_revm_access_list,
+        utils::{alloy_to_revm_access_list, meets_eip155},
     },
     types::{Forking, Index},
 };
@@ -2362,9 +2362,7 @@ impl TransactionValidator for Backend {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !legacy.signature().v().chain_id().unwrap_or_default() ==
-                            chain_id.to::<u64>()
-                    // meets_eip155(chain_id.to::<u64>())
+                        !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2417,15 +2415,11 @@ impl TransactionValidator for Backend {
         let max_cost = tx.max_cost();
         let value = tx.value();
         // check sufficient funds: `gas * price + value`
-        println!("max_cost={}, value={}", max_cost, value);
-        println!("tx={:?}", tx);
         let req_funds = max_cost.checked_add(value).ok_or_else(|| {
             warn!(target: "backend", "[{:?}] cost too high",
             tx.hash());
             InvalidTransactionError::InsufficientFunds
         })?;
-        println!("maybe?");
-        println!("account.balance={}, req_funds={}", account.balance, req_funds);
         if account.balance < req_funds {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::InsufficientFunds);

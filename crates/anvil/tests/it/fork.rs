@@ -581,7 +581,6 @@ async fn test_fork_set_empty_code() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn test_fork_can_send_tx() {
     let (api, handle) =
         spawn(fork_config().with_blocktime(Some(std::time::Duration::from_millis(800)))).await;

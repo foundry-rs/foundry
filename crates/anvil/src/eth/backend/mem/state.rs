@@ -5,7 +5,6 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types::state::StateOverride;
 use anvil_core::eth::trie::RefSecTrieDBMut;
-use foundry_common::types::ToEthers;
 use foundry_evm::{
     backend::DatabaseError,
     hashbrown::HashMap as Map,
@@ -26,9 +25,7 @@ pub fn storage_trie_db(storage: &Map<U256, U256>) -> (AsHashDB, B256) {
         {
             let mut trie = RefSecTrieDBMut::new(&mut db, &mut root);
             for (k, v) in storage.iter().filter(|(_k, v)| *v != &U256::from(0)) {
-                let mut temp: [u8; 32] = [0; 32];
-                (*k).to_ethers().to_big_endian(&mut temp);
-                let key = B256::from(temp);
+                let key = B256::from(*k);
                 let mut value: Vec<u8> = Vec::new();
                 U256::encode(v, &mut value);
                 trie.insert(key.as_slice(), value.as_ref()).unwrap();
@@ -77,32 +74,12 @@ pub fn state_merkle_trie_root(accounts: &Map<Address, DbAccount>) -> B256 {
 
 /// Returns the RLP for this account.
 pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<U256, U256>) -> Bytes {
-    /// Container type for RLP encoding account info
-    pub struct AccountInfoRlp {
-        nonce: U256,
-        balance: U256,
-        storage_root: B256,
-        code_hash: B256,
-    }
-
-    impl Encodable for AccountInfoRlp {
-        fn encode(&self, out: &mut dyn bytes::BufMut) {
-            self.nonce.encode(out);
-            self.balance.encode(out);
-            self.storage_root.encode(out);
-            self.code_hash.encode(out);
-        }
-    }
-
-    let info = AccountInfoRlp {
-        nonce: U256::from(info.nonce),
-        balance: info.balance,
-        storage_root: storage_trie_db(storage).1,
-        code_hash: info.code_hash,
-    };
-
     let mut out: Vec<u8> = Vec::new();
-    info.encode(&mut out);
+    let list: [&dyn Encodable; 4] =
+        [&info.nonce, &info.balance, &storage_trie_db(storage).1, &info.code_hash];
+
+    alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
+
     out.into()
 }
 

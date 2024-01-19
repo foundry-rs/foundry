@@ -148,7 +148,6 @@ async fn can_install_filter() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn watch_events() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let alloy_wallet = handle.dev_wallets().next().unwrap();

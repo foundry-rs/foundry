@@ -557,7 +557,6 @@ async fn can_call_ots_get_block_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn can_call_ots_search_transactions_before() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
