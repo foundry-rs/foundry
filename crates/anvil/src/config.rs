@@ -359,7 +359,7 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).alloy_gen();
+        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
         Self {
             chain_id: None,
             gas_limit: U256::from(30_000_000),
@@ -570,7 +570,7 @@ impl NodeConfig {
     /// so that `genesis_accounts == accounts`
     #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
-        let accounts = generator.alloy_gen();
+        let accounts = generator.gen();
         self.account_generator = Some(generator);
         self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
     }
@@ -1155,7 +1155,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn alloy_gen(&self) -> Vec<LocalWallet> {
+    pub fn gen(&self) -> Vec<LocalWallet> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path
