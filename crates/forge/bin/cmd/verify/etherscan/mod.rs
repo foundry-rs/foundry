@@ -105,9 +105,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     warn!("Failed verify submission: {:?}", resp);
                     eprintln!(
-                    "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                    resp.message, resp.result
-                );
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
+                    );
                     std::process::exit(1);
                 }
 
@@ -117,8 +117,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL:
-        {}",
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(args.address)
