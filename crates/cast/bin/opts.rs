@@ -862,7 +862,14 @@ pub enum Subcommands {
 
     /// Extracts function selectors and arguments from bytecode
     #[clap(visible_alias = "sel")]
-    Selectors { bytecode: String },
+    Selectors {
+        /// The hex encoded bytecode.
+        bytecode: String,
+
+        /// Resolve the function signatures for the extracted selectors using https://openchain.xyz
+        #[clap(long, short)]
+        resolve: bool,
+    },
 }
 
 /// CLI arguments for `cast --to-base`.

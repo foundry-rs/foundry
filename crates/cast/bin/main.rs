@@ -14,8 +14,9 @@ use foundry_common::{
     fmt::format_tokens,
     fs,
     selectors::{
-        decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
-        parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
+        decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
+        import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
+        SelectorType,
     },
     types::{ToAlloy, ToEthers},
 };
@@ -269,10 +270,28 @@ async fn main() -> Result<()> {
         Subcommands::Disassemble { bytecode } => {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
         }
-        Subcommands::Selectors { bytecode } => {
-            let s = SimpleCast::extract_selectors(&bytecode)?;
-            let v: Vec<_> = s.into_iter().map(|r| format!("{}\t{}", r.0, r.1)).collect();
-            println!("{}", v.join("\n"));
+        Subcommands::Selectors { bytecode, resolve } => {
+            let selectors_and_args = SimpleCast::extract_selectors(&bytecode)?;
+            if resolve {
+                let selectors_it = selectors_and_args.iter().map(|r| &r.0);
+                let resolve_results =
+                    decode_selectors(SelectorType::Function, selectors_it).await?;
+
+                let max_args_len = selectors_and_args.iter().map(|r| r.1.len()).max().unwrap_or(0);
+                for ((selector, arguments), func_names) in
+                    selectors_and_args.into_iter().zip(resolve_results.into_iter())
+                {
+                    let resolved = match func_names {
+                        Some(v) => v.join("|"),
+                        None => "".to_string(),
+                    };
+                    println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
+                }
+            } else {
+                for (selector, arguments) in selectors_and_args {
+                    println!("{selector}\t{arguments}");
+                }
+            }
         }
         Subcommands::FindBlock(cmd) => cmd.run().await?,
         Subcommands::GasPrice { rpc } => {
