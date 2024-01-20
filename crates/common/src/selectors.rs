@@ -153,8 +153,8 @@ impl SignEthClient {
 
         #[derive(Deserialize)]
         struct ApiResult {
-            event: HashMap<String, Vec<Decoded>>,
-            function: HashMap<String, Vec<Decoded>>,
+            event: HashMap<String, Option<Vec<Decoded>>>,
+            function: HashMap<String, Option<Vec<Decoded>>>,
         }
 
         #[derive(Deserialize)]
@@ -189,6 +189,7 @@ impl SignEthClient {
 
         Ok(decoded
             .get(selector)
+            .and_then(Option::as_ref)
             .ok_or_else(|| eyre::eyre!("No signature found"))?
             .iter()
             .filter(|&d| !d.filtered)
