@@ -24,6 +24,7 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
+alloy-rpc-types.workspace = true
 hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -34,8 +35,8 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
 ] }
+revm-inspectors.workspace = true
 
-ethers-core.workspace = true
 ethers-signers.workspace = true
 itertools.workspace = true
 
@@ -46,3 +47,4 @@ proptest = "1"
 thiserror = "1"
 tracing = "0.1"
 rayon = "1"
+rand.workspace = true

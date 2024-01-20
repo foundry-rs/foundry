@@ -22,18 +22,23 @@ use revm::{
 };
 use std::ops::Deref;
 
+pub mod alloy;
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
-
+pub mod optimism;
 pub use ethers_compat::{
-    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
-    to_internal_tx_request,
+    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_alloy_signature,
+    to_ethers_access_list, to_ethers_signature,
 };
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
-pub const IMPERSONATED_SIGNATURE: Signature =
-    Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 };
+pub const IMPERSONATED_SIGNATURE: alloy_rpc_types::Signature = alloy_rpc_types::Signature {
+    r: alloy_primitives::U256::ZERO,
+    s: alloy_primitives::U256::ZERO,
+    v: alloy_primitives::U256::ZERO,
+    y_parity: None,
+};
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -508,7 +513,7 @@ impl Encodable for DepositTransactionRequest {
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
 /// [TypedTransaction::impersonated_hash] can be created.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MaybeImpersonatedTransaction {
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -613,7 +618,7 @@ impl Deref for MaybeImpersonatedTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TypedTransaction {
     /// Legacy transaction type
@@ -790,7 +795,7 @@ impl TypedTransaction {
     /// Returns true if the transaction was impersonated (using the impersonate Signature)
     #[cfg(feature = "impersonated-tx")]
     pub fn is_impersonated(&self) -> bool {
-        self.signature() == IMPERSONATED_SIGNATURE
+        to_alloy_signature(self.signature()) == IMPERSONATED_SIGNATURE
     }
 
     /// Returns the hash if the transaction is impersonated (using a fake signature)

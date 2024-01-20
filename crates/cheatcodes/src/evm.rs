@@ -3,10 +3,19 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
-use ethers_core::utils::{Genesis, GenesisAccount};
+use ethers_core::{
+    types::H256,
+    utils::{Genesis, GenesisAccount},
+};
 use ethers_signers::Signer;
-use foundry_common::{fs::read_json_file, types::ToAlloy};
-use foundry_evm_core::backend::{DatabaseExt, RevertSnapshotAction};
+use foundry_common::{
+    fs::{read_json_file, write_json_file},
+    types::{ToAlloy, ToEthers},
+};
+use foundry_evm_core::{
+    backend::{DatabaseExt, RevertSnapshotAction},
+    constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+};
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,
@@ -86,10 +95,67 @@ impl Cheatcode for loadAllocsCall {
     }
 }
 
+impl Cheatcode for dumpStateCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { pathToStateJson } = self;
+        let path = Path::new(pathToStateJson);
+
+        // Do not include system accounts in the dump.
+        let skip = |key: &Address| {
+            key == &CHEATCODE_ADDRESS ||
+                key == &CALLER ||
+                key == &HARDHAT_CONSOLE_ADDRESS ||
+                key == &TEST_CONTRACT_ADDRESS ||
+                key == &ccx.caller ||
+                key == &ccx.state.config.evm_opts.sender
+        };
+
+        let alloc = ccx
+            .data
+            .journaled_state
+            .state()
+            .into_iter()
+            .filter(|(key, _)| !skip(key))
+            .map(|(key, val)| {
+                (
+                    key,
+                    GenesisAccount {
+                        nonce: Some(val.info.nonce),
+                        balance: val.info.balance.to_ethers(),
+                        code: Some(
+                            val.info.code.clone().unwrap_or_default().original_bytes().to_ethers(),
+                        ),
+                        storage: Some(
+                            val.storage
+                                .iter()
+                                .map(|(k, v)| {
+                                    let key = k.to_be_bytes::<32>();
+                                    let val = v.present_value().to_be_bytes::<32>();
+                                    (H256::from_slice(&key), H256::from_slice(&val))
+                                })
+                                .collect(),
+                        ),
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        write_json_file(path, &alloc)?;
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for sign_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey, digest } = self;
         super::utils::sign(privateKey, digest, ccx.data.env.cfg.chain_id)
+    }
+}
+
+impl Cheatcode for signP256Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { privateKey, digest } = self;
+        super::utils::sign_p256(privateKey, digest, ccx.state)
     }
 }
 

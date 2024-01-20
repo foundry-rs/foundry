@@ -17,6 +17,10 @@ revm = { workspace = true, default-features = false, features = ["std", "serde",
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types = { workspace = true }
 alloy-rpc-trace-types.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-network = { workspace = true, features = ["k256"] }
+alloy-consensus.workspace = true
 ethers-core = { workspace = true, features = ["optimism"] }
 # theses are not used by anvil-core, but are required by ethers, because pulled in via foundry-common
 ethers-contract = { workspace = true, features = ["optimism"] }
@@ -34,6 +38,9 @@ hash256-std-hasher = { version = "0.15", default-features = false }
 triehash = { version = "0.8", default-features = false }
 reference-trie = "0.25"
 keccak-hasher = "0.15"
+
+# misc
+rand = "0.8"
 
 [dev-dependencies]
 anvil-core = { path = ".", features = ["serde"] }

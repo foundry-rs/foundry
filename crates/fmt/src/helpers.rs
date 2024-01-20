@@ -46,7 +46,10 @@ pub fn format_to<W: Write>(
 
 /// Parse and format a string with default settings
 pub fn format(src: &str) -> Result<String, FormatterError> {
-    let parsed = parse(src).map_err(|_| FormatterError::Fmt(std::fmt::Error))?;
+    let parsed = parse(src).map_err(|err| {
+        debug!(?err, "Parse error");
+        FormatterError::Fmt(std::fmt::Error)
+    })?;
 
     let mut output = String::new();
     format_to(&mut output, parsed, FormatterConfig::default())?;
@@ -103,5 +106,17 @@ pub fn import_path_string(path: &ImportPath) -> String {
     match path {
         ImportPath::Filename(s) => s.string.clone(),
         ImportPath::Path(p) => p.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // <https://github.com/foundry-rs/foundry/issues/6816>
+    #[test]
+    fn test_interface_format() {
+        let s = "interface I {\n    function increment() external;\n    function number() external view returns (uint256);\n    function setNumber(uint256 newNumber) external;\n}";
+        let _formatted = format(s).unwrap();
     }
 }

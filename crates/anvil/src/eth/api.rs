@@ -46,7 +46,7 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            call_to_internal_tx_request, to_alloy_proof, to_ethers_access_list,
+            call_to_internal_tx_request, to_alloy_proof, to_ethers_signature,
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
             TypedTransaction, TypedTransactionRequest,
         },
@@ -472,8 +472,8 @@ impl EthApi {
     /// Handler for ETH RPC call: `web3_sha3`
     pub fn sha3(&self, bytes: Bytes) -> Result<String> {
         node_info!("web3_sha3");
-        let hash = ethers::utils::keccak256(bytes.as_ref());
-        Ok(ethers::utils::hex::encode(&hash[..]))
+        let hash = alloy_primitives::keccak256(bytes.as_ref());
+        Ok(alloy_primitives::hex::encode_prefixed(&hash[..]))
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
@@ -565,9 +565,15 @@ impl EthApi {
     pub fn accounts(&self) -> Result<Vec<Address>> {
         node_info!("eth_accounts");
         let mut unique = HashSet::new();
-        let mut accounts = Vec::new();
+        let mut accounts: Vec<Address> = Vec::new();
         for signer in self.signers.iter() {
-            accounts.extend(signer.accounts().into_iter().filter(|acc| unique.insert(*acc)));
+            accounts.extend(
+                signer
+                    .accounts()
+                    .into_iter()
+                    .map(|a| a.to_alloy())
+                    .filter(|acc| unique.insert(*acc)),
+            );
         }
         accounts.extend(
             self.backend
@@ -576,7 +582,7 @@ impl EthApi {
                 .into_iter()
                 .filter(|acc| unique.insert(*acc)),
         );
-        Ok(accounts.into_iter().map(|acc| acc.to_alloy()).collect())
+        Ok(accounts.into_iter().collect())
     }
 
     /// Returns the number of most recent block.
@@ -626,13 +632,9 @@ impl EthApi {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return Ok(B256::from(
-                        fork.storage_at(
-                            address,
-                            B256::from(index),
-                            Some(BlockNumber::Number(number)),
-                        )
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?,
+                        fork.storage_at(address, index, Some(BlockNumber::Number(number)))
+                            .await
+                            .map_err(|_| BlockchainError::DataUnavailable)?,
                     ));
                 }
             }
@@ -898,7 +900,8 @@ impl EthApi {
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
-            let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            let transaction =
+                sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from.to_ethers())
@@ -1007,7 +1010,6 @@ impl EthApi {
             request.max_priority_fee_per_gas,
         )?
         .or_zero_fees();
-        let request = call_to_internal_tx_request(&request);
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
@@ -1035,7 +1037,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        request: CallRequest,
+        mut request: CallRequest,
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
@@ -1052,8 +1054,6 @@ impl EthApi {
             }
         }
 
-        let mut request = call_to_internal_tx_request(&request);
-
         self.backend
             .with_database_at(Some(block_request), |state, block_env| {
                 let (exit, out, _, access_list) = self.backend.build_access_list_with_state(
@@ -1065,7 +1065,7 @@ impl EthApi {
                 ensure_return_ok(exit, &out)?;
 
                 // execute again but with access list set
-                request.access_list = Some(to_ethers_access_list(access_list.clone()).0);
+                request.access_list = Some(access_list.clone());
 
                 let (exit, out, gas_used, _) = self.backend.call_with_state(
                     &state,
@@ -1474,8 +1474,6 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let request = call_to_internal_tx_request(&request);
-
         self.backend.call_with_tracing(request, fees, Some(block_request), opts).await
     }
 
@@ -1560,7 +1558,7 @@ impl EthApi {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.to::<u64>());
         let blocks = num_blocks.unwrap_or(U256::from(1));
-        if blocks == U256::ZERO {
+        if blocks.is_zero() {
             return Ok(());
         }
 
@@ -1999,7 +1997,8 @@ impl EthApi {
         let request = self.build_typed_tx_request(request, nonce)?;
 
         let bypass_signature = self.backend.cheats().bypass_signature();
-        let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+        let transaction =
+            sign::build_typed_transaction(request, to_ethers_signature(bypass_signature))?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -2187,20 +2186,19 @@ impl EthApi {
     /// This will execute the [CallRequest] and find the best gas limit via binary search
     fn do_estimate_gas_with_state<D>(
         &self,
-        request: CallRequest,
+        mut request: CallRequest,
         state: D,
         block_env: BlockEnv,
     ) -> Result<U256>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let mut request = call_to_internal_tx_request(&request);
-        // if the request is a simple transfer we can optimize
-        let likely_transfer =
-            request.data.as_ref().map(|data| data.as_ref().is_empty()).unwrap_or(true);
+        // If the request is a simple native token transfer we can optimize
+        // We assume it's a transfer if we have no input data.
+        let likely_transfer = request.input.clone().into_input().is_none();
         if likely_transfer {
             if let Some(to) = request.to {
-                if let Ok(target_code) = self.backend.get_code_with_state(&state, to.to_alloy()) {
+                if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_TRANSACTION_GAS);
                     }
@@ -2209,34 +2207,33 @@ impl EthApi {
         }
 
         let fees = FeeDetails::new(
-            request.gas_price.map(ToAlloy::to_alloy),
-            request.max_fee_per_gas.map(ToAlloy::to_alloy),
-            request.max_priority_fee_per_gas.map(ToAlloy::to_alloy),
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
         )?
         .or_zero_fees();
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to_ethers());
+        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit);
 
         // check with the funds of the sender
         if let Some(from) = request.from {
             let gas_price = fees.gas_price.unwrap_or_default();
             if gas_price > U256::ZERO {
-                let mut available_funds =
-                    self.backend.get_balance_with_state(&state, from.to_alloy())?;
+                let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
                 if let Some(value) = request.value {
-                    if value > available_funds.to_ethers() {
+                    if value > available_funds {
                         return Err(InvalidTransactionError::InsufficientFunds.into());
                     }
                     // safe: value < available_funds
-                    available_funds -= value.to_alloy();
+                    available_funds -= value;
                 }
                 // amount of gas the sender can afford with the `gas_price`
                 let allowance = available_funds.checked_div(gas_price).unwrap_or_default();
-                if highest_gas_limit > allowance.to_ethers() {
+                if highest_gas_limit > allowance {
                     trace!(target: "node", "eth_estimateGas capped by limited user funds");
-                    highest_gas_limit = allowance.to_ethers();
+                    highest_gas_limit = allowance;
                 }
             }
         }
@@ -2264,7 +2261,7 @@ impl EthApi {
                     self.backend.clone(),
                     block_env,
                     fees,
-                    gas_limit.to_alloy(),
+                    gas_limit,
                 ));
             }
         }
@@ -2275,7 +2272,7 @@ impl EthApi {
                 // succeeded
             }
             InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
-                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
+                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit.to_ethers()).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
             // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
@@ -2289,7 +2286,7 @@ impl EthApi {
                         self.backend.clone(),
                         block_env,
                         fees,
-                        gas_limit.to_alloy(),
+                        gas_limit,
                     ))
                 } else {
                     // the transaction did fail due to lack of gas from the user
@@ -2309,17 +2306,18 @@ impl EthApi {
         // transaction requires to succeed
         let gas: U256 = U256::from(gas);
         // Get the starting lowest gas needed depending on the transaction kind.
-        let mut lowest_gas_limit = determine_base_gas_by_kind(request.clone());
+        let mut lowest_gas_limit =
+            determine_base_gas_by_kind(call_to_internal_tx_request(&request));
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit = std::cmp::min(
             gas * U256::from(3),
-            ((highest_gas_limit + lowest_gas_limit.to_ethers()) / 2).to_alloy(),
+            (highest_gas_limit + lowest_gas_limit) / U256::from(2),
         );
 
         // Binary search for the ideal gas limit
-        while (highest_gas_limit - lowest_gas_limit.to_ethers()).to_alloy() > U256::from(1) {
-            request.gas = Some(mid_gas_limit.to_ethers());
+        while (highest_gas_limit - lowest_gas_limit) > U256::from(1) {
+            request.gas = Some(mid_gas_limit);
             let ethres = self.backend.call_with_state(
                 &state,
                 request.clone(),
@@ -2337,7 +2335,7 @@ impl EthApi {
                 lowest_gas_limit = mid_gas_limit;
 
                 // new midpoint
-                mid_gas_limit = ((highest_gas_limit + lowest_gas_limit.to_ethers()) / 2).to_alloy();
+                mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / U256::from(2);
                 continue;
             }
 
@@ -2347,7 +2345,7 @@ impl EthApi {
                     // at the current midpoint, as spending any more gas would
                     // make no sense (as the TX would still succeed).
                     return_ok!() => {
-                        highest_gas_limit = mid_gas_limit.to_ethers();
+                        highest_gas_limit = mid_gas_limit;
                     }
                     // If the transaction failed due to lack of gas, we can set a floor for the
                     // lowest gas limit at the current midpoint, as spending any
@@ -2374,12 +2372,12 @@ impl EthApi {
                 }
             }
             // new midpoint
-            mid_gas_limit = ((highest_gas_limit + lowest_gas_limit.to_ethers()) / 2).to_alloy();
+            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / U256::from(2);
         }
 
         trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
 
-        Ok(highest_gas_limit.to_alloy())
+        Ok(highest_gas_limit)
     }
 
     /// Updates the `TransactionOrder`
@@ -2535,7 +2533,7 @@ impl EthApi {
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        self.backend.cheats().is_impersonated(addr.to_ethers())
+        self.backend.cheats().is_impersonated(addr)
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`
@@ -2647,7 +2645,7 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 /// not
 #[inline]
 fn map_out_of_gas_err<D>(
-    mut request: EthTransactionRequest,
+    mut request: CallRequest,
     state: D,
     backend: Arc<backend::mem::Backend>,
     block_env: BlockEnv,
@@ -2657,7 +2655,7 @@ fn map_out_of_gas_err<D>(
 where
     D: DatabaseRef<Error = DatabaseError>,
 {
-    request.gas = Some(backend.gas_limit()).map(|g| g.to_ethers());
+    request.gas = Some(backend.gas_limit());
     let (exit, out, _, _) = match backend.call_with_state(&state, request, fees, block_env) {
         Ok(res) => res,
         Err(err) => return err,

@@ -1,106 +1,17 @@
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::FixedBytes;
+use alloy_primitives::{FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
-use ethers::types::{ActionType, CallType, Chain, H256, U256};
 use eyre::ContextCompat;
-use foundry_common::types::ToAlloy;
+use foundry_config::NamedChain;
 use revm::{
-    interpreter::{CallScheme, InstructionResult},
-    primitives::{CreateScheme, Eval, Halt, SpecId, TransactTo},
+    interpreter::InstructionResult,
+    primitives::{Eval, Halt, SpecId, TransactTo},
 };
-use serde::{Deserialize, Serialize};
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
 
 pub use crate::ic::*;
-
-// TODO(onbjerg): Remove this and use `CallKind` from the tracer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-#[derive(Default)]
-pub enum CallKind {
-    #[default]
-    Call,
-    StaticCall,
-    CallCode,
-    DelegateCall,
-    Create,
-    Create2,
-}
-
-impl From<CallScheme> for CallKind {
-    fn from(scheme: CallScheme) -> Self {
-        match scheme {
-            CallScheme::Call => CallKind::Call,
-            CallScheme::StaticCall => CallKind::StaticCall,
-            CallScheme::CallCode => CallKind::CallCode,
-            CallScheme::DelegateCall => CallKind::DelegateCall,
-        }
-    }
-}
-
-impl From<CreateScheme> for CallKind {
-    fn from(create: CreateScheme) -> Self {
-        match create {
-            CreateScheme::Create => CallKind::Create,
-            CreateScheme::Create2 { .. } => CallKind::Create2,
-        }
-    }
-}
-
-impl From<CallKind> for ActionType {
-    fn from(kind: CallKind) -> Self {
-        match kind {
-            CallKind::Call | CallKind::StaticCall | CallKind::DelegateCall | CallKind::CallCode => {
-                ActionType::Call
-            }
-            CallKind::Create => ActionType::Create,
-            CallKind::Create2 => ActionType::Create,
-        }
-    }
-}
-
-impl From<CallKind> for CallType {
-    fn from(ty: CallKind) -> Self {
-        match ty {
-            CallKind::Call => CallType::Call,
-            CallKind::StaticCall => CallType::StaticCall,
-            CallKind::CallCode => CallType::CallCode,
-            CallKind::DelegateCall => CallType::DelegateCall,
-            CallKind::Create => CallType::None,
-            CallKind::Create2 => CallType::None,
-        }
-    }
-}
-
-/// Small helper function to convert [U256] into [H256].
-#[inline]
-pub fn u256_to_h256_le(u: U256) -> H256 {
-    let mut h = H256::default();
-    u.to_little_endian(h.as_mut());
-    h
-}
-
-/// Small helper function to convert [U256] into [H256].
-#[inline]
-pub fn u256_to_h256_be(u: U256) -> H256 {
-    let mut h = H256::default();
-    u.to_big_endian(h.as_mut());
-    h
-}
-
-/// Small helper function to convert [H256] into [U256].
-#[inline]
-pub fn h256_to_u256_be(storage: H256) -> U256 {
-    U256::from_big_endian(storage.as_bytes())
-}
-
-/// Small helper function to convert [H256] into [U256].
-#[inline]
-pub fn h256_to_u256_le(storage: H256) -> U256 {
-    U256::from_little_endian(storage.as_bytes())
-}
 
 /// Small helper function to convert an Eval into an InstructionResult
 #[inline]
@@ -144,11 +55,11 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
 /// This checks for:
 ///    - prevrandao mixhash after merge
 pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::Env, block: &Block) {
-    if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
         let block_number = block.header.number.unwrap_or_default();
 
         match chain {
-            Chain::Mainnet => {
+            NamedChain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number.to::<u64>() >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
@@ -156,15 +67,15 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
 
                 return;
             }
-            Chain::Arbitrum |
-            Chain::ArbitrumGoerli |
-            Chain::ArbitrumNova |
-            Chain::ArbitrumTestnet => {
+            NamedChain::Arbitrum |
+            NamedChain::ArbitrumGoerli |
+            NamedChain::ArbitrumNova |
+            NamedChain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
                     if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number.to_alloy();
+                        env.block.number = l1_block_number;
                     }
                 }
             }

@@ -20,7 +20,11 @@ foundry-macros.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-providers.workspace = true
+alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
+alloy-transport.workspace = true
+
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
@@ -31,12 +35,10 @@ revm = { workspace = true, default-features = false, features = [
     "arbitrary",
     "optimism",
 ] }
-alloy-providers = { workspace = true }
-alloy-transport = { workspace = true }
-alloy-rpc-types = { workspace = true }
-ethers = { workspace = true, features = ["ethers-solc"] }
+revm-inspectors.workspace = true
 
 ethers-core.workspace = true
+ethers-providers.workspace = true
 
 derive_more.workspace = true
 eyre = "0.6"

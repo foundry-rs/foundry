@@ -1092,3 +1092,21 @@ async fn test_fork_reset_basefee() {
     // basefee of the forked block: <https://etherscan.io/block/18835000>
     assert_eq!(latest.header.base_fee_per_gas.unwrap(), rU256::from(59017001138u64));
 }
+
+// <https://github.com/foundry-rs/foundry/issues/6795>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_fork_dev_balance() {
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(None::<u64>)
+            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+    )
+    .await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    for acc in accounts {
+        let balance =
+            api.balance(acc.address().to_alloy(), Some(Default::default())).await.unwrap();
+        assert_eq!(balance, rU256::from(100000000000000000000u128));
+    }
+}

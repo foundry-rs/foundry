@@ -12,7 +12,7 @@ use foundry_config::{
 use serde::Serialize;
 use std::borrow::Cow;
 
-const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
+const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
 #[derive(Clone, Debug, Default, Parser)]
 pub struct RpcOpts {
@@ -20,7 +20,9 @@ pub struct RpcOpts {
     #[clap(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
-    /// Use the Flashbots RPC URL (https://rpc.flashbots.net).
+    /// Use the Flashbots RPC URL with fast mode (https://rpc.flashbots.net/fast).
+    /// This shares the transaction privately with all registered builders.
+    /// https://docs.flashbots.net/flashbots-protect/quick-start#faster-transactions
     #[clap(long)]
     pub flashbots: bool,
 

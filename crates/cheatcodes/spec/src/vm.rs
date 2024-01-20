@@ -227,6 +227,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
 
+    /// Dump a genesis JSON file's `allocs` to disk.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function dumpState(string calldata pathToStateJson) external;
+
     /// Gets the nonce of an account.
     #[cheatcode(group = Evm, safety = Safe)]
     function getNonce(address account) external view returns (uint64 nonce);
@@ -239,9 +243,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
 
-    /// Signs data.
+    /// Signs `digest` with `privateKey` using the secp256k1 curve.
     #[cheatcode(group = Evm, safety = Safe)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs `digest` with `privateKey` using the secp256r1 curve.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
 
     // -------- Record Storage --------
 
@@ -1301,5 +1309,21 @@ interface Vm {
     /// Compute the address of a contract created with CREATE2 using the default CREATE2 deployer.
     #[cheatcode(group = Utilities)]
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
+
+    /// Encodes a `bytes` value to a base64 string.
+    #[cheatcode(group = Utilities)]
+    function toBase64(bytes calldata data) external pure returns (string memory);
+
+    /// Encodes a `string` value to a base64 string.
+    #[cheatcode(group = Utilities)]
+    function toBase64(string calldata data) external pure returns (string memory);
+
+    /// Encodes a `bytes` value to a base64url string.
+    #[cheatcode(group = Utilities)]
+    function toBase64URL(bytes calldata data) external pure returns (string memory);
+
+    /// Encodes a `string` value to a base64url string.
+    #[cheatcode(group = Utilities)]
+    function toBase64URL(string calldata data) external pure returns (string memory);
 }
 }

@@ -2,10 +2,10 @@
 // This interface is just for internal testing purposes. Use `forge-std` instead.
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.4;
+pragma solidity >=0.6.2 <0.9.0;
+pragma experimental ABIEncoderV2;
 
 interface Vm {
-    error CheatcodeError(string message);
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
     enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodehash, Extcodecopy }
     struct Log { bytes32[] topics; bytes data; address emitter; }
@@ -55,6 +55,7 @@ interface Vm {
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
+    function dumpState(string calldata pathToStateJson) external;
     function envAddress(string calldata name) external view returns (address value);
     function envAddress(string calldata name, string calldata delim) external view returns (address[] memory value);
     function envBool(string calldata name) external view returns (bool value);
@@ -207,6 +208,7 @@ interface Vm {
     function setEnv(string calldata name, string calldata value) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
+    function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
@@ -224,6 +226,10 @@ interface Vm {
     function stopMappingRecording() external;
     function stopPrank() external;
     function store(address target, bytes32 slot, bytes32 value) external;
+    function toBase64URL(bytes calldata data) external pure returns (string memory);
+    function toBase64URL(string calldata data) external pure returns (string memory);
+    function toBase64(bytes calldata data) external pure returns (string memory);
+    function toBase64(string calldata data) external pure returns (string memory);
     function toString(address value) external pure returns (string memory stringifiedValue);
     function toString(bytes calldata value) external pure returns (string memory stringifiedValue);
     function toString(bytes32 value) external pure returns (string memory stringifiedValue);

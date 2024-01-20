@@ -41,6 +41,10 @@ pub struct EtherscanIdentifier {
 impl EtherscanIdentifier {
     /// Creates a new Etherscan identifier with the given client
     pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
+        if config.offline {
+            // offline mode, don't use etherscan
+            return Ok(Default::default())
+        }
         if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
             trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
             Ok(Self {

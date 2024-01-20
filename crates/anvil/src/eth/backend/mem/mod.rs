@@ -36,8 +36,8 @@ use alloy_rpc_trace_types::{
 };
 use alloy_rpc_types::{
     state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
-    BlockNumberOrTag as BlockNumber, Filter, FilteredParams, Header as AlloyHeader, Log,
-    Transaction, TransactionReceipt,
+    BlockNumberOrTag as BlockNumber, CallRequest, Filter, FilteredParams, Header as AlloyHeader,
+    Log, Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{
@@ -45,18 +45,16 @@ use anvil_core::{
         proof::{AccountProof, BasicAccount, StorageProof},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{
-            from_ethers_access_list, EthTransactionRequest, MaybeImpersonatedTransaction,
-            PendingTransaction, TransactionInfo, TypedTransaction,
+            MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedTransaction,
         },
         trie::RefTrieDB,
-        utils::to_revm_access_list,
+        utils::alloy_to_revm_access_list,
     },
     types::{Forking, Index},
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    types::transaction::eip2930::AccessList as EthersAccessList,
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -76,7 +74,7 @@ use foundry_evm::{
         },
     },
     traces::{TracingInspector, TracingInspectorConfig},
-    utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
@@ -312,20 +310,20 @@ impl Backend {
     ///
     /// Returns `true` if the account is already impersonated
     pub async fn impersonate(&self, addr: Address) -> DatabaseResult<bool> {
-        if self.cheats.impersonated_accounts().contains(&addr.to_ethers()) {
+        if self.cheats.impersonated_accounts().contains(&addr) {
             return Ok(true);
         }
         // Ensure EIP-3607 is disabled
         let mut env = self.env.write();
         env.cfg.disable_eip3607 = true;
-        Ok(self.cheats.impersonate(addr.to_ethers()))
+        Ok(self.cheats.impersonate(addr))
     }
 
     /// Removes the account that from the impersonated set
     ///
     /// If the impersonated `addr` is a contract then we also reset the code here
     pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
-        self.cheats.stop_impersonating(&addr.to_ethers());
+        self.cheats.stop_impersonating(&addr);
         Ok(())
     }
 
@@ -883,7 +881,7 @@ impl Backend {
 
             let mut env = self.env.read().clone();
 
-            if env.block.basefee == revm::primitives::U256::ZERO {
+            if env.block.basefee.is_zero() {
                 // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
                 // 0 is only possible if it's manually set
                 env.cfg.disable_base_fee = true;
@@ -1024,14 +1022,14 @@ impl Backend {
         outcome
     }
 
-    /// Executes the `EthTransactionRequest` without writing to the DB
+    /// Executes the [CallRequest] without writing to the DB
     ///
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
     pub async fn call(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         overrides: Option<StateOverride>,
@@ -1052,15 +1050,15 @@ impl Backend {
 
     fn build_call_env(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Env {
-        let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
+        let CallRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit.to_ethers());
+        let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
@@ -1075,19 +1073,19 @@ impl Backend {
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
-            caller: caller.to_alloy(),
-            gas_limit: gas_limit.as_u64(),
+            caller,
+            gas_limit: gas_limit.to::<u64>(),
             gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr.to_alloy()),
+                Some(addr) => TransactTo::Call(addr),
                 None => TransactTo::Create(CreateScheme::Create),
             },
-            value: value.unwrap_or_default().to_alloy(),
-            data: data.unwrap_or_default().to_vec().into(),
+            value: value.unwrap_or_default(),
+            data: input.into_input().unwrap_or_default(),
             chain_id: None,
-            nonce: nonce.map(|n| n.as_u64()),
-            access_list: to_revm_access_list(access_list.unwrap_or_default()),
+            nonce: nonce.map(|n| n.to::<u64>()),
+            access_list: alloy_to_revm_access_list(access_list.unwrap_or_default().0),
             ..Default::default()
         };
 
@@ -1103,7 +1101,7 @@ impl Backend {
     pub fn call_with_state<D>(
         &self,
         state: D,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError>
@@ -1149,7 +1147,7 @@ impl Backend {
 
     pub async fn call_with_tracing(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         opts: GethDefaultTracingOptions,
@@ -1189,23 +1187,23 @@ impl Backend {
     pub fn build_access_list_with_state<D>(
         &self,
         state: D,
-        request: EthTransactionRequest,
+        request: CallRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let from = request.from.unwrap_or_default().to_alloy();
+        let from = request.from.unwrap_or_default();
         let to = if let Some(to) = request.to {
-            to.to_alloy()
+            to
         } else {
             let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
             from.create(nonce)
         };
 
         let mut tracer = AccessListTracer::new(
-            EthersAccessList(request.access_list.clone().unwrap_or_default()),
+            request.access_list.clone().unwrap_or_default(),
             from,
             to,
             self.precompiles(),
@@ -1230,7 +1228,7 @@ impl Backend {
             }
         };
         let access_list = tracer.access_list();
-        Ok((exit_reason, out, gas_used, from_ethers_access_list(access_list)))
+        Ok((exit_reason, out, gas_used, access_list))
     }
 
     /// returns all receipts for the given transactions
@@ -1759,7 +1757,7 @@ impl Backend {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
             let val = db.storage_ref(address, index)?;
-            Ok(u256_to_h256_be(val.to_ethers()).to_alloy())
+            Ok(val.into())
         })
         .await?
     }

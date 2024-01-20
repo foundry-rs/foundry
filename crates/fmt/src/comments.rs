@@ -398,13 +398,13 @@ impl Iterator for CommentStateCharIndices<'_> {
     }
 
     #[inline]
-    fn count(self) -> usize {
-        self.iter.count()
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
     }
 
     #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+    fn count(self) -> usize {
+        self.iter.count()
     }
 }
 

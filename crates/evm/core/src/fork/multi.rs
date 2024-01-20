@@ -6,9 +6,7 @@
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
 use alloy_providers::provider::Provider;
 use alloy_transport::BoxTransport;
-use ethers::types::BlockNumber;
 use foundry_common::provider::alloy::ProviderBuilder;
-
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -19,7 +17,7 @@ use futures::{
 use revm::primitives::Env;
 use std::{
     collections::HashMap,
-    fmt,
+    fmt::{self, Write},
     pin::Pin,
     sync::{
         atomic::AtomicUsize,
@@ -35,7 +33,18 @@ use std::{
 pub struct ForkId(pub String);
 
 impl ForkId {
-    /// Returns the identifier of the fork
+    /// Returns the identifier for a Fork from a URL and block number.
+    pub fn new(url: &str, num: Option<u64>) -> Self {
+        let mut id = url.to_string();
+        id.push('@');
+        match num {
+            Some(n) => write!(id, "{n:#x}").unwrap(),
+            None => id.push_str("latest"),
+        }
+        ForkId(id)
+    }
+
+    /// Returns the identifier of the fork.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -246,7 +255,7 @@ impl MultiForkHandler {
     }
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
-        let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
+        let fork_id = ForkId::new(&fork.url, fork.evm_opts.fork_block_number);
         trace!(?fork_id, "created new forkId");
 
         if let Some(fork) = self.forks.get(&fork_id).cloned() {
@@ -469,12 +478,6 @@ impl Drop for ShutDownMultiFork {
             }
         }
     }
-}
-
-/// Returns  the identifier for a Fork which consists of the url and the block number
-fn create_fork_id(url: &str, num: Option<u64>) -> ForkId {
-    let num = num.map(|num| BlockNumber::Number(num.into())).unwrap_or(BlockNumber::Latest);
-    ForkId(format!("{url}@{num}"))
 }
 
 /// Creates a new fork
