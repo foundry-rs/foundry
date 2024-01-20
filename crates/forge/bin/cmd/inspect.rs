@@ -1,3 +1,4 @@
+use alloy_json_abi::JsonAbi;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::Result;
@@ -13,8 +14,9 @@ use foundry_compilers::{
     },
     info::ContractInfo,
     utils::canonicalize,
+    ConfigurableContractArtifact,
 };
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -70,10 +72,66 @@ impl InspectArgs {
         }
         let output = compiler.compile(&project)?;
 
+        let is_project_level = contract.name == "." &&
+            matches!(
+                field,
+                ContractArtifactField::Events |
+                    ContractArtifactField::Errors |
+                    ContractArtifactField::MethodIdentifiers
+            );
+
+        let project_level_artifact_dummy = if is_project_level {
+            let mut all_method_identifiers = BTreeMap::<String, String>::new();
+            let mut all_events = BTreeMap::new();
+            let mut all_errors = BTreeMap::new();
+
+            output.artifacts().for_each(|(_, artifact)| {
+                artifact.method_identifiers.iter().for_each(|method_identifiers| {
+                    all_method_identifiers.extend(method_identifiers.clone());
+                });
+                artifact.abi.iter().for_each(|abi| {
+                    all_events.extend(abi.events.clone());
+                    all_errors.extend(abi.errors.clone());
+                });
+            });
+            let mut json_abi = JsonAbi::new();
+            json_abi.errors = all_errors;
+            json_abi.events = all_events;
+
+            Some(ConfigurableContractArtifact {
+                abi: Some(json_abi),
+                bytecode: None,
+                deployed_bytecode: None,
+                assembly: None,
+                method_identifiers: Some(all_method_identifiers),
+                gas_estimates: None,
+                storage_layout: None,
+                devdoc: None,
+                ir: None,
+                ir_optimized: None,
+                metadata: None,
+                userdoc: None,
+                ewasm: None,
+                opcodes: None,
+                generated_sources: vec![],
+                function_debug_data: None,
+                raw_metadata: None,
+                ast: None,
+                id: None,
+            })
+        } else {
+            None
+        };
+
         // Find the artifact
-        let artifact = output.find_contract(&contract).ok_or_else(|| {
-            eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
-        })?;
+        let artifact = if is_project_level {
+            let inner = project_level_artifact_dummy.as_ref().unwrap();
+            inner
+        } else {
+            output.find_contract(&contract).ok_or_else(|| {
+                eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
+            })?
+        };
 
         // Match on ContractArtifactFields and pretty-print
         match field {
