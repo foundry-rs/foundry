@@ -158,6 +158,7 @@ impl SignEthClient {
         let selectors: Vec<String> = selectors
             .into_iter()
             .map(Into::into)
+            .map(|s| s.to_lowercase())
             .map(|s| if s.starts_with("0x") { s } else { format!("0x{s}") })
             .collect();
 
