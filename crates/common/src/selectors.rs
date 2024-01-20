@@ -142,7 +142,7 @@ impl SignEthClient {
         selector: &str,
         selector_type: SelectorType,
     ) -> eyre::Result<Vec<String>> {
-        self.decode_selectors(&[selector], selector_type)
+        self.decode_selectors(selector_type, std::iter::once(selector))
             .await?
             .pop() // Not returning on the previous line ensures a vector with exactly 1 element
             .unwrap()
@@ -152,21 +152,21 @@ impl SignEthClient {
     /// Decodes the given function or event selectors using https://api.openchain.xyz
     pub async fn decode_selectors(
         &self,
-        selectors: &[impl ToString],
         selector_type: SelectorType,
+        selectors: impl IntoIterator<Item = impl Into<String>>,
     ) -> eyre::Result<Vec<Option<Vec<String>>>> {
+        let selectors: Vec<String> = selectors
+            .into_iter()
+            .map(Into::into)
+            .map(|s| if s.starts_with("0x") { s } else { format!("0x{s}") })
+            .collect();
+
         if selectors.is_empty() {
             return Ok(vec![]);
         }
 
         // exit early if spurious connection
         self.ensure_not_spurious()?;
-
-        let selectors: Vec<String> = selectors
-            .iter()
-            .map(|s| s.to_string())
-            .map(|s| if s.starts_with("0x") { s } else { format!("0x{s}") })
-            .collect();
 
         let expected_len = match selector_type {
             SelectorType::Function => 10, // 0x + hex(4bytes)
@@ -399,18 +399,18 @@ pub enum SelectorType {
 
 /// Decodes the given function or event selector using https://api.openchain.xyz
 pub async fn decode_selector(
-    selector: &str,
     selector_type: SelectorType,
+    selector: &str,
 ) -> eyre::Result<Vec<String>> {
     SignEthClient::new()?.decode_selector(selector, selector_type).await
 }
 
 /// Decodes the given function or event selectors using https://api.openchain.xyz
 pub async fn decode_selectors(
-    selectors: &[impl ToString],
     selector_type: SelectorType,
+    selectors: impl IntoIterator<Item = impl Into<String>>,
 ) -> eyre::Result<Vec<Option<Vec<String>>>> {
-    SignEthClient::new()?.decode_selectors(selectors, selector_type).await
+    SignEthClient::new()?.decode_selectors(selector_type, selectors).await
 }
 
 /// Fetches a function signature given the selector https://api.openchain.xyz
@@ -723,7 +723,7 @@ mod tests {
             "7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",
             "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd",
         ];
-        let decoded = decode_selectors(&event_topics, SelectorType::Event).await;
+        let decoded = decode_selectors(SelectorType::Event, event_topics).await;
         let decoded = decoded.unwrap();
         assert_eq!(
             decoded,
@@ -734,7 +734,7 @@ mod tests {
         );
 
         let function_selectors = vec!["0xa9059cbb", "0x70a08231", "313ce567"];
-        let decoded = decode_selectors(&function_selectors, SelectorType::Function).await;
+        let decoded = decode_selectors(SelectorType::Function, function_selectors).await;
         let decoded = decoded.unwrap();
         assert_eq!(
             decoded,

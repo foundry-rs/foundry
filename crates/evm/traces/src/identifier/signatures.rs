@@ -113,7 +113,8 @@ impl SignaturesIdentifier {
                 .filter(|v| !self.unavailable.contains(v.as_str()))
                 .collect();
 
-            if let Ok(res) = self.sign_eth_api.decode_selectors(&query, selector_type).await {
+            if let Ok(res) = self.sign_eth_api.decode_selectors(selector_type, query.clone()).await
+            {
                 for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
                     let mut found = false;
                     if let Some(decoded_results) = selector_result {
@@ -129,13 +130,7 @@ impl SignaturesIdentifier {
             }
         }
 
-        hex_identifiers
-            .iter()
-            .map(|v| match cache.get(v) {
-                Some(v) => get_type(v).ok(),
-                None => None,
-            })
-            .collect()
+        hex_identifiers.iter().map(|v| cache.get(v).and_then(|v| get_type(v).ok())).collect()
     }
 
     /// Identifies `Function`s from its cache or `https://api.openchain.xyz`
