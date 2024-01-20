@@ -16,8 +16,8 @@ use std::{
     time::Duration,
 };
 
-static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/";
-static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
+const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
+const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
 /// The standard request timeout for API requests
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -98,13 +98,13 @@ impl SignEthClient {
     fn on_reqwest_err(&self, err: &reqwest::Error) {
         fn is_connectivity_err(err: &reqwest::Error) -> bool {
             if err.is_timeout() || err.is_connect() {
-                return true
+                return true;
             }
             // Error HTTP codes (5xx) are considered connectivity issues and will prompt retry
             if let Some(status) = err.status() {
                 let code = status.as_u16();
                 if (500..600).contains(&code) {
-                    return true
+                    return true;
                 }
             }
             false
@@ -142,19 +142,51 @@ impl SignEthClient {
         selector: &str,
         selector_type: SelectorType,
     ) -> eyre::Result<Vec<String>> {
+        self.decode_selectors(selector_type, std::iter::once(selector))
+            .await?
+            .pop() // Not returning on the previous line ensures a vector with exactly 1 element
+            .unwrap()
+            .ok_or(eyre::eyre!("No signature found"))
+    }
+
+    /// Decodes the given function or event selectors using https://api.openchain.xyz
+    pub async fn decode_selectors(
+        &self,
+        selector_type: SelectorType,
+        selectors: impl IntoIterator<Item = impl Into<String>>,
+    ) -> eyre::Result<Vec<Option<Vec<String>>>> {
+        let selectors: Vec<String> = selectors
+            .into_iter()
+            .map(Into::into)
+            .map(|s| if s.starts_with("0x") { s } else { format!("0x{s}") })
+            .collect();
+
+        if selectors.is_empty() {
+            return Ok(vec![]);
+        }
+
         // exit early if spurious connection
         self.ensure_not_spurious()?;
+
+        let expected_len = match selector_type {
+            SelectorType::Function => 10, // 0x + hex(4bytes)
+            SelectorType::Event => 66,    // 0x + hex(32bytes)
+        };
+        if let Some(s) = selectors.iter().find(|s| s.len() != expected_len) {
+            eyre::bail!(
+                "Invalid selector {s}: expected {expected_len} characters (including 0x prefix)."
+            )
+        }
 
         #[derive(Deserialize)]
         struct Decoded {
             name: String,
-            filtered: bool,
         }
 
         #[derive(Deserialize)]
         struct ApiResult {
-            event: HashMap<String, Vec<Decoded>>,
-            function: HashMap<String, Vec<Decoded>>,
+            event: HashMap<String, Option<Vec<Decoded>>>,
+            function: HashMap<String, Option<Vec<Decoded>>>,
         }
 
         #[derive(Deserialize)]
@@ -165,10 +197,14 @@ impl SignEthClient {
 
         // using openchain.xyz signature database over 4byte
         // see https://github.com/foundry-rs/foundry/issues/1672
-        let url = match selector_type {
-            SelectorType::Function => format!("{SELECTOR_DATABASE_URL}lookup?function={selector}"),
-            SelectorType::Event => format!("{SELECTOR_DATABASE_URL}lookup?event={selector}"),
-        };
+        let url = format!(
+            "{SELECTOR_LOOKUP_URL}?{ltype}={selectors_str}",
+            ltype = match selector_type {
+                SelectorType::Function => "function",
+                SelectorType::Event => "event",
+            },
+            selectors_str = selectors.join(",")
+        );
 
         let res = self.get_text(&url).await?;
         let api_response = match serde_json::from_str::<ApiResponse>(&res) {
@@ -187,27 +223,18 @@ impl SignEthClient {
             SelectorType::Event => api_response.result.event,
         };
 
-        Ok(decoded
-            .get(selector)
-            .ok_or_else(|| eyre::eyre!("No signature found"))?
-            .iter()
-            .filter(|&d| !d.filtered)
-            .map(|d| d.name.clone())
-            .collect::<Vec<String>>())
+        Ok(selectors
+            .into_iter()
+            .map(|selector| match decoded.get(&selector) {
+                Some(Some(r)) => Some(r.iter().map(|d| d.name.clone()).collect()),
+                _ => None,
+            })
+            .collect())
     }
 
     /// Fetches a function signature given the selector using https://api.openchain.xyz
     pub async fn decode_function_selector(&self, selector: &str) -> eyre::Result<Vec<String>> {
-        let stripped_selector = selector.strip_prefix("0x").unwrap_or(selector);
-        let prefixed_selector = format!("0x{}", stripped_selector);
-        if prefixed_selector.len() != 10 {
-            eyre::bail!(
-                "Invalid selector: expected 8 characters (excluding 0x prefix), got {}.",
-                stripped_selector.len()
-            )
-        }
-
-        self.decode_selector(&prefixed_selector[..10], SelectorType::Function).await
+        self.decode_selector(selector, SelectorType::Function).await
     }
 
     /// Fetches all possible signatures and attempts to abi decode the calldata
@@ -232,11 +259,7 @@ impl SignEthClient {
 
     /// Fetches an event signature given the 32 byte topic using https://api.openchain.xyz
     pub async fn decode_event_topic(&self, topic: &str) -> eyre::Result<Vec<String>> {
-        let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
-        if prefixed_topic.len() != 66 {
-            eyre::bail!("Invalid topic: expected 64 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_topic.len())
-        }
-        self.decode_selector(&prefixed_topic[..66], SelectorType::Event).await
+        self.decode_selector(topic, SelectorType::Event).await
     }
 
     /// Pretty print calldata and if available, fetch possible function signatures
@@ -376,10 +399,18 @@ pub enum SelectorType {
 
 /// Decodes the given function or event selector using https://api.openchain.xyz
 pub async fn decode_selector(
-    selector: &str,
     selector_type: SelectorType,
+    selector: &str,
 ) -> eyre::Result<Vec<String>> {
     SignEthClient::new()?.decode_selector(selector, selector_type).await
+}
+
+/// Decodes the given function or event selectors using https://api.openchain.xyz
+pub async fn decode_selectors(
+    selector_type: SelectorType,
+    selectors: impl IntoIterator<Item = impl Into<String>>,
+) -> eyre::Result<Vec<Option<Vec<String>>>> {
+    SignEthClient::new()?.decode_selectors(selector_type, selectors).await
 }
 
 /// Fetches a function signature given the selector https://api.openchain.xyz
@@ -569,7 +600,7 @@ mod tests {
             .map_err(|e| {
                 assert_eq!(
                     e.to_string(),
-                    "Invalid selector: expected 8 characters (excluding 0x prefix), got 6."
+                    "Invalid selector 0xa9059c: expected 10 characters (including 0x prefix)."
                 )
             })
             .map(|_| panic!("Expected fourbyte error"))
@@ -684,5 +715,34 @@ mod tests {
             decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
                 .await;
         assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_decode_selectors() {
+        let event_topics = vec![
+            "7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",
+            "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd",
+        ];
+        let decoded = decode_selectors(SelectorType::Event, event_topics).await;
+        let decoded = decoded.unwrap();
+        assert_eq!(
+            decoded,
+            vec![
+                Some(vec!["updateAuthority(address,uint8)".to_string()]),
+                Some(vec!["canCall(address,address,bytes4)".to_string()]),
+            ]
+        );
+
+        let function_selectors = vec!["0xa9059cbb", "0x70a08231", "313ce567"];
+        let decoded = decode_selectors(SelectorType::Function, function_selectors).await;
+        let decoded = decoded.unwrap();
+        assert_eq!(
+            decoded,
+            vec![
+                Some(vec!["transfer(address,uint256)".to_string()]),
+                Some(vec!["balanceOf(address)".to_string()]),
+                Some(vec!["decimals()".to_string()]),
+            ]
+        );
     }
 }
