@@ -139,6 +139,7 @@ pub enum WalletSubcommands {
     #[clap(visible_alias = "ls")]
     List,
 
+    /// Derives private key from mnemonic
     #[clap(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
     DerivePrivateKey { mnemonic: String, mnemonic_index: Option<u8> },
 }
