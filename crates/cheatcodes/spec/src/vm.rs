@@ -1325,5 +1325,13 @@ interface Vm {
     /// Encodes a `string` value to a base64url string.
     #[cheatcode(group = Utilities)]
     function toBase64URL(string calldata data) external pure returns (string memory);
+
+    /// Extracts function selectors from bytecode
+    #[cheatcode(group = Utilities)]
+    function functionSelectors(bytes calldata contractBytecode) external pure returns (bytes4[] memory selectors);
+
+    /// Extracts function arguments from bytecode
+    #[cheatcode(group = Utilities)]
+    function functionArguments(bytes calldata contractBytecode, bytes4 functionSelector) external pure returns (string memory arguments);
 }
 }

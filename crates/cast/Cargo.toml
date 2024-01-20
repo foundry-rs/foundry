@@ -42,6 +42,7 @@ rand.workspace = true
 rayon = "1"
 serde_json.workspace = true
 serde.workspace = true
+evmole.workspace = true
 
 # aws
 rusoto_core = { version = "0.48", default-features = false }
@@ -69,7 +70,6 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "signal"] }
 tracing.workspace = true
 yansi = "0.5"
-evmole = "0.3.1"
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

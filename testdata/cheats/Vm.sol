@@ -107,6 +107,8 @@ interface Vm {
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
+    function functionArguments(bytes calldata contractBytecode, bytes4 functionSelector) external pure returns (string memory arguments);
+    function functionSelectors(bytes calldata contractBytecode) external pure returns (bytes4[] memory selectors);
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);

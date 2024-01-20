@@ -2949,6 +2949,7 @@ dependencies = [
  "const-hex",
  "ethers-core",
  "ethers-signers",
+ "evmole",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",

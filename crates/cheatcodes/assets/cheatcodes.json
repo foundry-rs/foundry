@@ -2195,6 +2195,46 @@
     },
     {
       "func": {
+        "id": "functionArguments",
+        "description": "Extracts function arguments from bytecode",
+        "declaration": "function functionArguments(bytes calldata contractBytecode, bytes4 functionSelector) external pure returns (string memory arguments);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "functionArguments(bytes,bytes4)",
+        "selector": "0xbea2c956",
+        "selectorBytes": [
+          190,
+          162,
+          201,
+          86
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "functionSelectors",
+        "description": "Extracts function selectors from bytecode",
+        "declaration": "function functionSelectors(bytes calldata contractBytecode) external pure returns (bytes4[] memory selectors);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "functionSelectors(bytes)",
+        "selector": "0x1387e42d",
+        "selectorBytes": [
+          19,
+          135,
+          228,
+          45
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getBlockNumber",
         "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockNumber() external view returns (uint256 height);",

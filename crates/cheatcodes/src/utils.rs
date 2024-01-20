@@ -135,6 +135,22 @@ impl Cheatcode for computeCreate2Address_1Call {
     }
 }
 
+impl Cheatcode for functionSelectorsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { contractBytecode } = self;
+        let s = evmole::function_selectors(contractBytecode, 0);
+        Ok(s.abi_encode())
+    }
+}
+
+impl Cheatcode for functionArgumentsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { contractBytecode, functionSelector } = self;
+        let s = evmole::function_arguments(contractBytecode, functionSelector, 0);
+        Ok(s.abi_encode())
+    }
+}
+
 /// Using a given private key, return its public ETH address, its public key affine x and y
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
