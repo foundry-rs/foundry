@@ -681,15 +681,15 @@ interface Vm {
     function expectRevert(bytes calldata revertData) external;
 
     /// Expects an error on next cheatcode call with any revert data.
-    #[cheatcode(group = Testing, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert() external;
 
     /// Expects an error on next cheatcode call that starts with the revert data.
-    #[cheatcode(group = Testing, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes4 revertData) external;
 
     /// Expects an error on next cheatcode call that exactly matches the revert data.
-    #[cheatcode(group = Testing, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes calldata revertData) external;
 
     /// Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
