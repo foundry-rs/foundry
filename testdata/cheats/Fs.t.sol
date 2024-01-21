@@ -156,7 +156,7 @@ contract FsTest is DSTest {
             assertEq(entries[1].path, entries2[1].path);
 
             string memory contents = vm.readFile(entries[0].path);
-            assertEq(contents, unicode"Wow! 😀\n");
+            assertEq(contents, unicode"Wow! 😀");
         }
 
         {
