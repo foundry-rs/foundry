@@ -919,7 +919,6 @@ mod tests {
     fn test_decode_call() {
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let decoded = TypedTransaction::decode(&mut &bytes_first[..]).unwrap();
-        println!("{:?}", hex::encode(decoded.signature().as_bytes()));
         let tx = TxLegacy {
             nonce: 2u64,
             gas_price: 1000000000u64.into(),
@@ -929,7 +928,7 @@ mod tests {
             )),
             value: U256::from(1000000000000000u64),
             input: Bytes::default(),
-            chain_id: None,
+            chain_id: Some(4),
         };
 
         let signature = Signature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap();
@@ -940,7 +939,6 @@ mod tests {
             b256!("a517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
         ));
 
-        println!("{:#?}", decoded);
         assert_eq!(tx, decoded);
     }
 
