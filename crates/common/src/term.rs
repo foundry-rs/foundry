@@ -86,6 +86,7 @@ impl Spinner {
 ///
 /// This reporter will prefix messages with a spinning cursor
 #[derive(Debug)]
+#[must_use = "Terminates the spinner on drop"]
 pub struct SpinnerReporter {
     /// The sender to the spinner thread.
     sender: mpsc::Sender<SpinnerMsg>,
