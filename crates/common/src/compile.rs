@@ -193,6 +193,9 @@ impl ProjectCompiler {
             r
         })?;
 
+        // need to drop the reporter here, so that the spinner terminates
+        drop(reporter);
+
         if bail && output.has_compiler_errors() {
             eyre::bail!("{output}")
         }
