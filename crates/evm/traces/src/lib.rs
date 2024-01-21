@@ -71,6 +71,8 @@ pub async fn render_trace_arena(
     arena: &CallTraceArena,
     decoder: &CallTraceDecoder,
 ) -> Result<String, std::fmt::Error> {
+    decoder.prefetch_signatures(arena.nodes()).await;
+
     fn inner<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,

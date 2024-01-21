@@ -1,7 +1,6 @@
 use chisel::session::ChiselSession;
 use foundry_compilers::EvmVersion;
 use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
 use serial_test::serial;
 use std::path::Path;
 
@@ -43,10 +42,7 @@ fn test_write_session() {
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
         foundry_config,
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-        calldata: None,
+        ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {}", e));
 

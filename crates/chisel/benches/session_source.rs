@@ -1,8 +1,6 @@
 use chisel::session_source::{SessionSource, SessionSourceConfig};
 use criterion::{criterion_group, Criterion};
 use foundry_compilers::Solc;
-use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
 use once_cell::sync::Lazy;
 use std::hint::black_box;
 use tokio::runtime::Runtime;
@@ -66,16 +64,7 @@ fn inspect(c: &mut Criterion) {
 
 /// Helper function for getting an empty [SessionSource] with default configuration
 fn get_empty_session_source() -> SessionSource {
-    SessionSource::new(
-        SOLC.clone(),
-        SessionSourceConfig {
-            foundry_config: Config::default(),
-            evm_opts: EvmOpts::default(),
-            backend: None,
-            traces: false,
-            calldata: None,
-        },
-    )
+    SessionSource::new(SOLC.clone(), SessionSourceConfig::default())
 }
 
 fn rt() -> Runtime {

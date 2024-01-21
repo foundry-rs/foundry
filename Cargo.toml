@@ -125,7 +125,7 @@ foundry-test-utils = { path = "crates/test-utils" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.0", default-features = false }
-foundry-compilers = { version = "0.2.1", default-features = false }
+foundry-compilers = { version = "0.2.2", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg

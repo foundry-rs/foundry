@@ -53,6 +53,14 @@ pub struct ChiselParser {
     #[clap(long, help_heading = "REPL options")]
     pub prelude: Option<PathBuf>,
 
+    /// Disable the default `Vm` import.
+    #[clap(long, help_heading = "REPL options", long_help = format!(
+        "Disable the default `Vm` import.\n\n\
+         The import is disabled by default if the Solc version is less than {}.",
+        chisel::session_source::MIN_VM_VERSION
+    ))]
+    pub no_vm: bool,
+
     #[clap(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -107,6 +115,7 @@ async fn main() -> eyre::Result<()> {
         // Enable traces if any level of verbosity was passed
         traces: config.verbosity > 0,
         foundry_config: config,
+        no_vm: args.no_vm,
         evm_opts,
         backend: None,
         calldata: None,
