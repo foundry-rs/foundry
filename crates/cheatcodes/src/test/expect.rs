@@ -60,10 +60,10 @@ pub enum ExpectedRevertKind {
     Default,
     /// Expects revert from the next cheatcode call.
     ///
-    /// The `pending` flag is used to track whether we have exited `expectCheatcodeRevert` context
-    /// or not. We have to track it to avoid expecting `expectCheatcodeRevert` call to revert
-    /// itself.
-    Cheatcode { pending: bool },
+    /// The `pending_processing` flag is used to track whether we have exited
+    /// `expectCheatcodeRevert` context or not.
+    /// We have to track it to avoid expecting `expectCheatcodeRevert` call to revert itself.
+    Cheatcode { pending_processing: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -479,7 +479,7 @@ fn expect_revert(
         reason: reason.map(<[_]>::to_vec),
         depth,
         kind: if cheatcode {
-            ExpectedRevertKind::Cheatcode { pending: true }
+            ExpectedRevertKind::Cheatcode { pending_processing: true }
         } else {
             ExpectedRevertKind::Default
         },

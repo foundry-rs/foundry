@@ -954,7 +954,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let needs_processing: bool = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
-                    ExpectedRevertKind::Cheatcode { pending } => cheatcode_call && !pending,
+                    ExpectedRevertKind::Cheatcode { pending_processing } => {
+                        cheatcode_call && !pending_processing
+                    }
                 };
 
                 if needs_processing {
@@ -973,13 +975,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     };
                 }
 
-                // Flip `pending` flag for cheatcode revert expectations, marking that we've exited
-                // the `expectCheatcodeRevert` call scope
-                if let ExpectedRevertKind::Cheatcode { pending } =
+                // Flip `pending_processing` flag for cheatcode revert expectations, marking that
+                // we've exited the `expectCheatcodeRevert` call scope
+                if let ExpectedRevertKind::Cheatcode { pending_processing } =
                     &mut self.expected_revert.as_mut().unwrap().kind
                 {
-                    if *pending {
-                        *pending = false;
+                    if *pending_processing {
+                        *pending_processing = false;
                     }
                 }
             }
