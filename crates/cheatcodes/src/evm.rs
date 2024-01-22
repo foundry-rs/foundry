@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolValue;
 use ethers_signers::Signer;
 use foundry_common::{
@@ -78,7 +78,7 @@ impl Cheatcode for loadAllocsCall {
 
         // Let's first assume we're reading a genesis.json file.
         let allocs: HashMap<Address, GenesisAccount> = match read_json_file::<Genesis>(path) {
-            Ok(genesis) => genesis.alloc,
+            Ok(genesis) => genesis.alloc.into_iter().map(|(k, g)| (k, g)).collect(),
             // If that fails, let's try reading a file with just the genesis accounts.
             Err(_) => read_json_file(path)?,
         };
@@ -123,11 +123,7 @@ impl Cheatcode for dumpStateCall {
                         storage: Some(
                             val.storage
                                 .iter()
-                                .map(|(k, v)| {
-                                    let key = k.to_be_bytes::<32>();
-                                    let val = v.present_value().to_be_bytes::<32>();
-                                    (key.into(), val.into())
-                                })
+                                .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
                                 .collect(),
                         ),
                     },
