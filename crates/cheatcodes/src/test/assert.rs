@@ -1109,7 +1109,9 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     let delta = get_delta_uint(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)?.checked_div(right).ok_or(EqRelAssertionError::Overflow)?;
+        .ok_or(EqRelAssertionError::Overflow)?
+        .checked_div(right)
+        .ok_or(EqRelAssertionError::Overflow)?;
 
     if delta <= max_delta {
         Ok(Default::default())
