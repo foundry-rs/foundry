@@ -328,7 +328,7 @@ impl DepositTransaction {
     /// - `input`
     pub fn decode_inner(buf: &mut &[u8]) -> Result<Self, DecodeError> {
         Ok(Self {
-            nonce: U256::from(0),
+            nonce: U256::ZERO,
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,

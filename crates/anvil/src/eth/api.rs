@@ -830,12 +830,7 @@ impl EthApi {
     pub async fn sign_typed_data_v4(&self, address: Address, data: &TypedData) -> Result<String> {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
-        let signature = signer
-            .sign_hash(
-                address,
-                data.eip712_signing_hash().map_err(|_| BlockchainError::NoSignerAvailable)?,
-            )
-            .await?;
+        let signature = signer.sign_typed_data(address, data).await?;
         let signature = alloy_primitives::hex::encode(signature.as_bytes());
         Ok(format!("0x{signature}"))
     }

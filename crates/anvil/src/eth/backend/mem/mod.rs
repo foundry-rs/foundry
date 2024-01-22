@@ -2318,7 +2318,7 @@ fn get_pool_transactions_nonce(
         .filter(|tx| *tx.pending_transaction.sender() == address)
         .reduce(|accum, item| {
             let nonce = item.pending_transaction.nonce();
-            if nonce.gt(&accum.pending_transaction.nonce()) {
+            if nonce > accum.pending_transaction.nonce() {
                 item
             } else {
                 accum
@@ -2384,7 +2384,8 @@ impl TransactionValidator for Backend {
         // check nonce
         let is_deposit_tx =
             matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
-        let nonce: u64 = tx.nonce().to::<u64>();
+        let nonce: u64 =
+            tx.nonce().try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
