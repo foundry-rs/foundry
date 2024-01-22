@@ -382,6 +382,13 @@
           "enum": [
             "removed"
           ]
+        },
+        {
+          "description": "The cheatcode is only used internally for foundry testing and may be changed or removed at any time.\n\nUse of internal cheatcodes is discouraged and will result in a warning.",
+          "type": "string",
+          "enum": [
+            "internal"
+          ]
         }
       ]
     },
