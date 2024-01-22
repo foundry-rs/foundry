@@ -43,7 +43,7 @@ impl<'a, T: Display> ComparisonAssertionError<'a, T> {
 
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
-        let formatter = |v: &Vec<T>| v.iter().format(", ").to_string();
+        let formatter = |v: &Vec<T>| format!("[{}]", v.iter().format(", ").to_string());
         format_values!(self, formatter)
     }
 }
@@ -1109,8 +1109,7 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     let delta = get_delta_uint(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        right;
+        .ok_or(EqRelAssertionError::Overflow)?.checked_div(right).ok_or(EqRelAssertionError::Overflow)?;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -1132,8 +1131,9 @@ fn int_assert_approx_eq_rel(
     let (_, abs_right) = right.into_sign_and_abs();
     let delta = get_delta_int(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        abs_right;
+        .ok_or(EqRelAssertionError::Overflow)?
+        .checked_div(abs_right)
+        .ok_or(EqRelAssertionError::Overflow)?;
 
     if delta <= max_delta {
         Ok(Default::default())
