@@ -179,10 +179,8 @@ where
                 let provider = self.provider.clone();
                 let block_id = self.block_id;
                 let fut = Box::pin(async move {
-                    let storage = provider
-                        .get_storage_at(address, idx.into(), block_id)
-                        .await
-                        .map_err(Into::into);
+                    let storage =
+                        provider.get_storage_at(address, idx, block_id).await.map_err(Into::into);
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
