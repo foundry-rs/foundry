@@ -3201,7 +3201,6 @@ dependencies = [
  "const-hex",
  "derive_more",
  "ethers-core",
- "ethers-providers",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
