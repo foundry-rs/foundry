@@ -2017,8 +2017,7 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .map(|b| b as u128)
-                .unwrap_or(self.base_fee().to::<u128>())
+                .map_or(self.base_fee().to::<u128>(), |b| b as u128)
                 .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or(u128::MAX),
             TypedTransaction::Deposit(_) => 0_u128,

@@ -23,7 +23,8 @@ pub trait Signer: Send + Sync {
     /// Returns the signature
     async fn sign(&self, address: Address, message: &[u8]) -> Result<Signature, BlockchainError>;
 
-    /// Encodes and signs the typed data according EIP-712. Payload must be a SolStruct.
+    /// Encodes and signs the typed data according EIP-712. Payload must conform to the EIP-712
+    /// standard.
     async fn sign_typed_data(
         &self,
         address: Address,

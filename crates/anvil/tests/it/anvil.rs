@@ -45,7 +45,7 @@ async fn can_get_default_dev_keys() {
         .await
         .unwrap()
         .into_iter()
-        .map(|a| a.to_alloy())
+        .map(ToAlloy::to_alloy)
         .collect::<Vec<_>>();
     assert_eq!(dev_accounts, accounts);
 }

@@ -1978,7 +1978,7 @@ impl EthApi {
 
         let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
-        // // pre-validate
+        // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
