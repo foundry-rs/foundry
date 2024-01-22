@@ -954,6 +954,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let needs_processing: bool = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
+                    // `pending_processing` == true means that we're in the `call_end` hook for
+                    // `vm.expectCheatcodeRevert` and shouldn't expect revert here
                     ExpectedRevertKind::Cheatcode { pending_processing } => {
                         cheatcode_call && !pending_processing
                     }
