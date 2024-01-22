@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::transaction::eip2718::TypedTransaction;
+
 use eyre::Result;
 use forge::{
     backend::Backend,
@@ -14,11 +14,7 @@ use forge::{
     traces::CallTraceDecoder,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{
-    provider::ethers::RpcUrl,
-    shell,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{provider::ethers::RpcUrl, shell};
 use foundry_compilers::artifacts::CompactContractBytecode;
 use futures::future::join_all;
 use parking_lot::RwLock;
@@ -142,17 +138,14 @@ impl ScriptArgs {
                 let rpc = transaction.rpc.as_ref().expect("missing broadcastable tx rpc url");
                 let mut runner = runners.get(rpc).expect("invalid rpc url").write();
 
-                let TypedTransaction::Legacy(mut tx) = transaction.transaction else {
-                    unreachable!()
-                };
+                let mut tx = transaction.transaction;
                 let result = runner
                     .simulate(
                         tx.from
-                            .expect("transaction doesn't have a `from` address at execution time")
-                            .to_alloy(),
-                        tx.to.clone(),
-                        tx.data.clone().map(|b| b.to_alloy()),
-                        tx.value.map(|v| v.to_alloy()),
+                            .expect("transaction doesn't have a `from` address at execution time"),
+                        tx.to,
+                        tx.data.clone(),
+                        tx.value,
                     )
                     .wrap_err("Internal EVM error during simulation")?;
 
@@ -191,12 +184,12 @@ impl ScriptArgs {
                     // We inflate the gas used by the user specified percentage
                     None => {
                         let gas = U256::from(result.gas_used * self.gas_estimate_multiplier / 100);
-                        tx.gas = Some(gas.to_ethers());
+                        tx.gas = Some(gas);
                     }
                 }
 
                 let tx = TransactionWithMetadata::new(
-                    tx.into(),
+                    tx,
                     transaction.rpc,
                     &result,
                     &address_to_abi,

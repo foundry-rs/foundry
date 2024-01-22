@@ -241,7 +241,7 @@ impl ClientFork {
         index: U256,
         number: Option<BlockNumber>,
     ) -> Result<StorageValue, TransportError> {
-        self.provider().get_storage_at(address, index, number.map(Into::into)).await
+        self.provider().get_storage_at(address, index.into(), number.map(Into::into)).await
     }
 
     pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, TransportError> {

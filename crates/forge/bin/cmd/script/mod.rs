@@ -2,12 +2,10 @@ use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log, U256, U64};
+use alloy_rpc_types::request::TransactionRequest;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
-};
 use ethers_providers::{Http, Middleware};
 use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Result, WrapErr};
@@ -29,9 +27,7 @@ use foundry_common::{
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
     provider::ethers::RpcUrl,
-    shell,
-    types::{ToAlloy, ToEthers},
-    ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -387,21 +383,16 @@ impl ScriptArgs {
             // If the user passed a `--sender` don't check anything.
             if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
                 for tx in txs.iter() {
-                    match &tx.transaction {
-                        TypedTransaction::Legacy(tx) => {
-                            if tx.to.is_none() {
-                                let sender = tx.from.expect("no sender").to_alloy();
-                                if let Some(ns) = new_sender {
-                                    if sender != ns {
-                                        shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
-                                        return Ok(None);
-                                    }
-                                } else if sender != evm_opts.sender {
-                                    new_sender = Some(sender);
-                                }
+                    if tx.transaction.to.is_none() {
+                        let sender = tx.transaction.from.expect("no sender");
+                        if let Some(ns) = new_sender {
+                            if sender != ns {
+                                shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                return Ok(None);
                             }
+                        } else if sender != evm_opts.sender {
+                            new_sender = Some(sender);
                         }
-                        _ => unreachable!(),
                     }
                 }
             }
@@ -422,12 +413,12 @@ impl ScriptArgs {
             .enumerate()
             .map(|(i, bytes)| BroadcastableTransaction {
                 rpc: fork_url.clone(),
-                transaction: TypedTransaction::Legacy(TransactionRequest {
-                    from: Some(from.to_ethers()),
-                    data: Some(bytes.clone().to_ethers()),
-                    nonce: Some((nonce + i as u64).into()),
+                transaction: TransactionRequest {
+                    from: Some(from),
+                    data: Some(bytes.clone()),
+                    nonce: Some(U64::from(nonce + i as u64)),
                     ..Default::default()
-                }),
+                },
             })
             .collect()
     }
@@ -519,16 +510,17 @@ impl ScriptArgs {
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
-                    .data()
+                    .data
+                    .clone()
                     .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to()))
+                    .map(|data| (data, tx.transaction.to))
             })
         }) {
             let mut offset = 0;
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(NameOrAddress::Address(to)) = to {
-                if to.to_alloy() == DEFAULT_CREATE2_DEPLOYER {
+            if let Some(to) = to {
+                if to == DEFAULT_CREATE2_DEPLOYER {
                     // Size of the salt prefix.
                     offset = 32;
                 }
