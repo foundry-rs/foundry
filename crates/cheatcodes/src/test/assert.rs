@@ -43,7 +43,7 @@ impl<'a, T: Display> ComparisonAssertionError<'a, T> {
 
 impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
     fn format_for_arrays(&self) -> String {
-        let formatter = |v: &Vec<T>| format!("[{}]", v.iter().format(", ").to_string());
+        let formatter = |v: &Vec<T>| format!("[{}]", v.iter().format(", "));
         format_values!(self, formatter)
     }
 }
