@@ -1,16 +1,13 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
-use ethers_core::{
-    types::H256,
-    utils::{Genesis, GenesisAccount},
-};
 use ethers_signers::Signer;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
-    types::{ToAlloy, ToEthers},
+    types::ToAlloy,
 };
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
@@ -81,7 +78,7 @@ impl Cheatcode for loadAllocsCall {
 
         // Let's first assume we're reading a genesis.json file.
         let allocs: HashMap<Address, GenesisAccount> = match read_json_file::<Genesis>(path) {
-            Ok(genesis) => genesis.alloc.into_iter().map(|(k, g)| (k.to_alloy(), g)).collect(),
+            Ok(genesis) => genesis.alloc,
             // If that fails, let's try reading a file with just the genesis accounts.
             Err(_) => read_json_file(path)?,
         };
@@ -121,17 +118,15 @@ impl Cheatcode for dumpStateCall {
                     key,
                     GenesisAccount {
                         nonce: Some(val.info.nonce),
-                        balance: val.info.balance.to_ethers(),
-                        code: Some(
-                            val.info.code.clone().unwrap_or_default().original_bytes().to_ethers(),
-                        ),
+                        balance: val.info.balance,
+                        code: Some(val.info.code.clone().unwrap_or_default().original_bytes()),
                         storage: Some(
                             val.storage
                                 .iter()
                                 .map(|(k, v)| {
                                     let key = k.to_be_bytes::<32>();
                                     let val = v.present_value().to_be_bytes::<32>();
-                                    (H256::from_slice(&key), H256::from_slice(&val))
+                                    (key.into(), val.into())
                                 })
                                 .collect(),
                         ),
