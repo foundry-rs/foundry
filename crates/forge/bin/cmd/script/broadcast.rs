@@ -3,6 +3,7 @@ use super::{
     sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
 };
 use alloy_primitives::{utils::format_units, TxHash};
+use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
 use eyre::{bail, ContextCompat, Result, WrapErr};
@@ -407,7 +408,7 @@ impl ScriptArgs {
             shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
             txs.into_iter()
                 .map(|btx| {
-                    let mut tx = TransactionWithMetadata::from_typed_transaction(btx.transaction);
+                    let mut tx = TransactionWithMetadata::from_tx_request(btx.transaction);
                     tx.rpc = btx.rpc;
                     tx
                 })

@@ -14,13 +14,11 @@ use crate::{
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256, U64};
+use alloy_rpc_types::request::TransactionRequest;
 use alloy_sol_types::{SolInterface, SolValue};
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
-};
 use ethers_signers::LocalWallet;
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::ToEthers};
+use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
@@ -80,7 +78,7 @@ pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<RpcUrl>,
     /// The transaction to broadcast.
-    pub transaction: TypedTransaction,
+    pub transaction: TransactionRequest,
 }
 
 /// List of transactions that can be broadcasted.
@@ -834,19 +832,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: data.db.active_fork_url(),
-                        transaction: TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(broadcast.new_origin.to_ethers()),
-                            to: Some(NameOrAddress::Address(call.contract.to_ethers())),
-                            value: Some(call.transfer.value.to_ethers()),
-                            data: Some(call.input.clone().to_ethers()),
-                            nonce: Some(account.info.nonce.into()),
+                        transaction: TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to: Some(call.contract),
+                            value: Some(call.transfer.value),
+                            data: Some(call.input.clone()),
+                            nonce: Some(U64::from(account.info.nonce)),
                             gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit.into())
+                                Some(U256::from(call.gas_limit))
                             } else {
                                 None
                             },
                             ..Default::default()
-                        }),
+                        },
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -1220,19 +1218,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: data.db.active_fork_url(),
-                        transaction: TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(broadcast.new_origin.to_ethers()),
-                            to: to.map(|a| NameOrAddress::Address(a.to_ethers())),
-                            value: Some(call.value.to_ethers()),
-                            data: Some(bytecode.to_ethers()),
-                            nonce: Some(nonce.into()),
+                        transaction: TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to,
+                            value: Some(call.value),
+                            data: Some(bytecode),
+                            nonce: Some(U64::from(nonce)),
                             gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit.into())
+                                Some(U256::from(call.gas_limit))
                             } else {
                                 None
                             },
                             ..Default::default()
-                        }),
+                        },
                     });
                     let kind = match call.scheme {
                         CreateScheme::Create => "create",
