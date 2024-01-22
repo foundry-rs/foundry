@@ -5,7 +5,6 @@ use super::{
     *,
 };
 use alloy_primitives::{Address, Bytes, U256};
-
 use eyre::Result;
 use forge::{
     backend::Backend,
