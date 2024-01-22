@@ -2,7 +2,7 @@ use crate::{
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
-    CallTrace, CallTraceArena, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function, JsonAbi};
@@ -503,6 +503,29 @@ impl CallTraceDecoder {
         }
 
         DecodedCallLog::Raw(log)
+    }
+
+    /// Prefetches function and event signatures into the identifier cache
+    pub async fn prefetch_signatures(&self, nodes: &[CallTraceNode]) {
+        let Some(identifier) = &self.signature_identifier else { return };
+
+        let events_it = nodes
+            .iter()
+            .flat_map(|node| node.logs.iter().filter_map(|log| log.topics().first()))
+            .unique();
+        identifier.write().await.identify_events(events_it).await;
+
+        const DEFAULT_CREATE2_DEPLOYER_BYTES: [u8; 20] = DEFAULT_CREATE2_DEPLOYER.0 .0;
+        let funcs_it = nodes
+            .iter()
+            .filter_map(|n| match n.trace.address.0 .0 {
+                DEFAULT_CREATE2_DEPLOYER_BYTES => None,
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01..=0x0a] => None,
+                _ => n.trace.data.get(..SELECTOR_LEN),
+            })
+            .filter(|v| !self.functions.contains_key(*v))
+            .unique();
+        identifier.write().await.identify_functions(funcs_it).await;
     }
 
     fn apply_label(&self, value: &DynSolValue) -> String {

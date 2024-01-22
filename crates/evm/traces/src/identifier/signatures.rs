@@ -26,7 +26,7 @@ pub struct SignaturesIdentifier {
     /// Location where to save `CachedSignatures`
     cached_path: Option<PathBuf>,
     /// Selectors that were unavailable during the session.
-    unavailable: HashSet<Vec<u8>>,
+    unavailable: HashSet<String>,
     /// The API client to fetch signatures from
     sign_eth_api: SignEthClient,
     /// whether traces should be decoded via `sign_eth_api`
@@ -95,59 +95,68 @@ impl SignaturesIdentifier {
     async fn identify<T>(
         &mut self,
         selector_type: SelectorType,
-        identifier: &[u8],
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
         get_type: impl Fn(&str) -> eyre::Result<T>,
-    ) -> Option<T> {
-        // Exit early if we have unsuccessfully queried it before.
-        if self.unavailable.contains(identifier) {
-            return None
-        }
-
-        let map = match selector_type {
+    ) -> Vec<Option<T>> {
+        let cache = match selector_type {
             SelectorType::Function => &mut self.cached.functions,
             SelectorType::Event => &mut self.cached.events,
         };
 
-        let hex_identifier = hex::encode_prefixed(identifier);
+        let hex_identifiers: Vec<String> =
+            identifiers.into_iter().map(hex::encode_prefixed).collect();
 
-        if !self.offline && !map.contains_key(&hex_identifier) {
-            if let Ok(signatures) =
-                self.sign_eth_api.decode_selector(&hex_identifier, selector_type).await
+        if !self.offline {
+            let query: Vec<_> = hex_identifiers
+                .iter()
+                .filter(|v| !cache.contains_key(v.as_str()))
+                .filter(|v| !self.unavailable.contains(v.as_str()))
+                .collect();
+
+            if let Ok(res) = self.sign_eth_api.decode_selectors(selector_type, query.clone()).await
             {
-                if let Some(signature) = signatures.into_iter().next() {
-                    map.insert(hex_identifier.clone(), signature);
+                for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
+                    let mut found = false;
+                    if let Some(decoded_results) = selector_result {
+                        if let Some(decoded_result) = decoded_results.into_iter().next() {
+                            cache.insert(hex_id.clone(), decoded_result);
+                            found = true;
+                        }
+                    }
+                    if !found {
+                        self.unavailable.insert(hex_id.clone());
+                    }
                 }
             }
         }
 
-        if let Some(signature) = map.get(&hex_identifier) {
-            return get_type(signature).ok()
-        }
-
-        self.unavailable.insert(identifier.to_vec());
-
-        None
+        hex_identifiers.iter().map(|v| cache.get(v).and_then(|v| get_type(v).ok())).collect()
     }
 
-    /// Returns `None` if in offline mode
-    fn ensure_not_offline(&self) -> Option<()> {
-        if self.offline {
-            None
-        } else {
-            Some(())
-        }
+    /// Identifies `Function`s from its cache or `https://api.openchain.xyz`
+    pub async fn identify_functions(
+        &mut self,
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Vec<Option<Function>> {
+        self.identify(SelectorType::Function, identifiers, get_func).await
     }
 
     /// Identifies `Function` from its cache or `https://api.openchain.xyz`
     pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
-        self.ensure_not_offline()?;
-        self.identify(SelectorType::Function, identifier, get_func).await
+        self.identify_functions(&[identifier]).await.pop().unwrap()
+    }
+
+    /// Identifies `Event`s from its cache or `https://api.openchain.xyz`
+    pub async fn identify_events(
+        &mut self,
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Vec<Option<Event>> {
+        self.identify(SelectorType::Event, identifiers, get_event).await
     }
 
     /// Identifies `Event` from its cache or `https://api.openchain.xyz`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
-        self.ensure_not_offline()?;
-        self.identify(SelectorType::Event, identifier, get_event).await
+        self.identify_events(&[identifier]).await.pop().unwrap()
     }
 }
 
