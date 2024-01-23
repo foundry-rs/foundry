@@ -237,8 +237,9 @@ impl DebuggerContext<'_> {
 
         // adjust what text we show of the source code
         let (start_line, end_line) = if needed_highlight > height {
-            // highlighted section is more lines than we have avail
-            (before.len(), before.len() + needed_highlight)
+            // highlighted section is more lines than we have available
+            let start_line = before.len().saturating_sub(1);
+            (start_line, before.len() + needed_highlight)
         } else if height > num_lines {
             // we can fit entire source
             (0, num_lines)
