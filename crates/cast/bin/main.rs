@@ -6,7 +6,7 @@ use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers_core::types::{BlockId, BlockNumber::Latest, NameOrAddress};
-use ethers_providers::Middleware;
+use ethers_providers::{Middleware, Provider};
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
@@ -27,7 +27,6 @@ pub mod cmd;
 pub mod opts;
 
 use opts::{Opts, Subcommands, ToBaseArgs};
-type Provider = ethers_providers::Provider<RuntimeClient>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -202,14 +201,14 @@ async fn main() -> Result<()> {
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, ether, rpc, token } => {
+        Subcommands::Balance { block, who, ether, rpc, erc20 } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
-            match token {
+            match erc20 {
                 Some(token) => {
                     let chain = utils::get_chain(config.chain, &provider).await?;
-                    let mut builder: TxBuilder<'_, Provider> = TxBuilder::new(
+                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> = TxBuilder::new(
                         &provider,
                         NameOrAddress::Address(Address::ZERO.to_ethers()),
                         Some(NameOrAddress::Address(token.to_ethers())),
