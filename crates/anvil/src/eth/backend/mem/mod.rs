@@ -1914,7 +1914,12 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<GethTrace> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
+        self.blockchain
+            .storage
+            .read()
+            .transactions
+            .get(&hash)
+            .map(|tx| tx.geth_trace(opts, self.env.read().clone()))
     }
 
     /// Returns the traces for the given block

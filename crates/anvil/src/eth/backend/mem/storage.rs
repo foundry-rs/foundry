@@ -1,14 +1,20 @@
 //! In-memory blockchain storage
-use crate::eth::{
-    backend::{
-        db::{MaybeHashDatabase, StateDb},
-        mem::cache::DiskStateCache,
+use crate::{
+    eth::{
+        backend::{
+            db::{Db, MaybeHashDatabase, StateDb},
+            mem::cache::DiskStateCache,
+        },
+        pool::transactions::PoolTransaction,
     },
-    pool::transactions::PoolTransaction,
+    revm::DatabaseRef,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_trace_types::{
-    geth::{GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions, GethTrace},
+    geth::{
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+        GethTrace, NoopFrame,
+    },
     parity::LocalizedTransactionTrace,
 };
 use alloy_rpc_types::{
@@ -21,8 +27,11 @@ use anvil_core::eth::{
 };
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    revm::primitives::Env,
-    traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
+    revm::{self, primitives::Env},
+    traces::{
+        FourByteInspector, GethTraceBuilder, JsInspector, ParityTraceBuilder, TracingInspector,
+        TracingInspectorConfig,
+    },
 };
 use parking_lot::RwLock;
 use std::{
@@ -416,21 +425,46 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace<DB: DatabaseRef>(
+        &self,
+        opts: GethDebugTracingOptions,
+        env: Env,
+        db: DB,
+    ) -> GethTrace {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
-        if let Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer)) =
-            tracer
-        {
-            let call_config = tracer_config.into_call_config().unwrap();
+        if let Some(tracer) = tracer {
+            return match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::FourByteTracer => {
+                        let inspector = FourByteInspector::default();
+                        return FourByteFrame::from(inspector).into()
+                    }
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        let call_config = tracer_config.into_call_config().unwrap();
 
-            return GethTraceBuilder::new(
-                self.info.traces.clone(),
-                TracingInspectorConfig::from_geth_config(&config),
-            )
-            .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
-            .into()
-        };
+                        return GethTraceBuilder::new(
+                            self.info.traces.clone(),
+                            TracingInspectorConfig::from_geth_config(&config),
+                        )
+                        .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
+                        .into()
+                    }
+                    GethDebugBuiltInTracerType::PreStateTracer => {}
+                    GethDebugBuiltInTracerType::NoopTracer => NoopFrame::default().into(),
+                },
+                GethDebugTracerType::JsTracer(code) => {
+                    let config = tracer_config.into_json();
+
+                    let mut inspector = JsInspector::new(code, config)?;
+                    let (res, env, db) = inspect_and_return_db(db, env, &mut inspector)?;
+
+                    let state = res.state.clone();
+                    let result = inspector.json_result(res, &env, db)?;
+                    Ok((GethTrace::JS(result), state))
+                }
+            }
+        }
 
         // default structlog tracer
         GethTraceBuilder::new(
