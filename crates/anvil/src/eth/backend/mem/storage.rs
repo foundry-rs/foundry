@@ -419,19 +419,17 @@ impl MinedTransaction {
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
-        if let Some(tracer) = tracer {
-            if let GethDebugTracerType::BuiltInTracer(tracer) = tracer {
-                if let GethDebugBuiltInTracerType::CallTracer = tracer {
-                    let call_config = tracer_config.into_call_config().unwrap();
+        if let Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer)) =
+            tracer
+        {
+            let call_config = tracer_config.into_call_config().unwrap();
 
-                    return GethTraceBuilder::new(
-                        self.info.traces.clone(),
-                        TracingInspectorConfig::from_geth_config(&config),
-                    )
-                    .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
-                    .into()
-                }
-            }
+            return GethTraceBuilder::new(
+                self.info.traces.clone(),
+                TracingInspectorConfig::from_geth_config(&config),
+            )
+            .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
+            .into()
         };
 
         // default structlog tracer
