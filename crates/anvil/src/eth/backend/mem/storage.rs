@@ -8,7 +8,7 @@ use crate::eth::{
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_trace_types::{
-    geth::{DefaultFrame, GethDefaultTracingOptions},
+    geth::{GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
 use alloy_rpc_types::{
@@ -416,13 +416,35 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
-        GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
-            .geth_traces(
-                self.receipt.gas_used().as_u64(),
-                self.info.out.clone().unwrap_or_default().0.into(),
-                opts,
-            )
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
+
+        if let Some(tracer) = tracer {
+            if let GethDebugTracerType::BuiltInTracer(tracer) = tracer {
+                if let GethDebugBuiltInTracerType::CallTracer = tracer {
+                    let call_config = tracer_config.into_call_config().unwrap();
+
+                    return GethTraceBuilder::new(
+                        self.info.traces.clone(),
+                        TracingInspectorConfig::from_geth_config(&config),
+                    )
+                    .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
+                    .into()
+                }
+            }
+        };
+
+        // default structlog tracer
+        GethTraceBuilder::new(
+            self.info.traces.clone(),
+            TracingInspectorConfig::from_geth_config(&config),
+        )
+        .geth_traces(
+            self.receipt.gas_used().as_u64(),
+            self.info.out.clone().unwrap_or_default().0.into(),
+            opts.config,
+        )
+        .into()
     }
 }
 
