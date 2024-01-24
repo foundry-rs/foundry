@@ -239,6 +239,11 @@ interface Vm {
     function toString(bool value) external pure returns (string memory stringifiedValue);
     function toString(uint256 value) external pure returns (string memory stringifiedValue);
     function toString(int256 value) external pure returns (string memory stringifiedValue);
+    function toLowercase(string calldata value) external pure returns (string memory stringifiedValue);
+    function toUppercase(string calldata value) external pure returns (string memory stringifiedValue);
+    function trim(string calldata value) external pure returns (string memory stringifiedValue);
+    function replace(string calldata value, string calldata from, string calldata to) external pure returns (string memory stringifiedValue);
+    function split(string calldata value, string calldata delimiter) external pure returns (string[] memory stringifiedValues);
     function transact(bytes32 txHash) external;
     function transact(uint256 forkId, bytes32 txHash) external;
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
