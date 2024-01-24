@@ -76,17 +76,14 @@ impl Cheatcode for loadAllocsCall {
         let path = Path::new(pathToAllocsJson);
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
 
-        // Let's first assume we're reading a genesis.json file.
-        let genesis = read_json_file::<Genesis>(path);
-        let allocs: HashMap<Address, GenesisAccount> = match genesis {
-            Ok(genesis) => genesis.alloc,
-            Err(_) => read_json_file(path)?,
-        };
-
-        // If allocs is empty, let's assume we're reading a genesis_accounts.json file.
-        let allocs = match allocs.is_empty() {
-            true => read_json_file::<HashMap<Address, GenesisAccount>>(path)?,
-            false => allocs,
+        // Let's first assume we're reading a file with only the allocs.
+        let allocs: HashMap<Address, GenesisAccount> = match read_json_file(path) {
+            Ok(allocs) => allocs,
+            Err(_) => {
+                // Let's try and read from a genesis file, and extract allocs.
+                let genesis = read_json_file::<Genesis>(path)?;
+                genesis.alloc
+            }
         };
 
         // Then, load the allocs into the database.
