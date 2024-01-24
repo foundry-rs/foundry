@@ -38,8 +38,6 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-ethers-providers.workspace = true
-
 derive_more.workspace = true
 eyre = "0.6"
 futures = "0.3"
