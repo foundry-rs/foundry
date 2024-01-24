@@ -2971,6 +2971,7 @@ dependencies = [
  "p256",
  "revm",
  "serde_json",
+ "thiserror",
  "tracing",
  "walkdir",
 ]
