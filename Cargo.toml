@@ -87,7 +87,7 @@ incremental = false
 [profile.release]
 opt-level = 3
 lto = "fat"
-strip = true
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 1
 
