@@ -135,7 +135,6 @@ impl Cheatcode for splitCall {
     }
 }
 
-
 pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
     parse_value(s, ty).map(|v| v.abi_encode())
 }
