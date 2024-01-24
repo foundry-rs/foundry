@@ -87,7 +87,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " != ",
                     _formatWithDecimals(right, decimals)
@@ -99,7 +99,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " == ",
                     _formatWithDecimals(left, decimals)
@@ -272,7 +272,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " <= ",
                     _formatWithDecimals(right, decimals)
@@ -284,7 +284,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(right, decimals),
                     " <= ",
                     _formatWithDecimals(right, decimals)
@@ -296,7 +296,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " >= ",
                     _formatWithDecimals(left, decimals)
@@ -308,7 +308,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(right, decimals),
                     " >= ",
                     _formatWithDecimals(left, decimals)
@@ -348,7 +348,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " <= ",
                     _formatWithDecimals(right, decimals)
@@ -360,7 +360,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(right, decimals),
                     " <= ",
                     _formatWithDecimals(right, decimals)
@@ -372,7 +372,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " >= ",
                     _formatWithDecimals(left, decimals)
@@ -384,7 +384,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(right, decimals),
                     " >= ",
                     _formatWithDecimals(left, decimals)
@@ -418,7 +418,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " < ",
                     _formatWithDecimals(right, decimals)
@@ -430,7 +430,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(right, decimals),
                     " > ",
                     _formatWithDecimals(left, decimals)
@@ -464,7 +464,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(left, decimals),
                     " < ",
                     _formatWithDecimals(right, decimals)
@@ -476,7 +476,7 @@ contract AssertionsTest is DSTest {
         vm._expectCheatcodeRevert(
             bytes(
                 string.concat(
-                    "Assertion failed: ",
+                    "assertion failed: ",
                     _formatWithDecimals(right, decimals),
                     " > ",
                     _formatWithDecimals(left, decimals)
@@ -514,7 +514,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(
                 bytes(
                     string.concat(
-                        "Assertion failed: ",
+                        "assertion failed: ",
                         _formatWithDecimals(left, decimals),
                         " !~= ",
                         _formatWithDecimals(right, decimals),
@@ -558,7 +558,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(
                 bytes(
                     string.concat(
-                        "Assertion failed: ",
+                        "assertion failed: ",
                         _formatWithDecimals(left, decimals),
                         " !~= ",
                         _formatWithDecimals(right, decimals),
@@ -606,7 +606,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(
                 bytes(
                     string.concat(
-                        "Assertion failed: ",
+                        "assertion failed: ",
                         _formatWithDecimals(left, decimals),
                         " !~= ",
                         _formatWithDecimals(right, decimals),
@@ -655,7 +655,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(
                 bytes(
                     string.concat(
-                        "Assertion failed: ",
+                        "assertion failed: ",
                         _formatWithDecimals(left, decimals),
                         " !~= ",
                         _formatWithDecimals(right, decimals),
@@ -683,10 +683,10 @@ contract AssertionsTest is DSTest {
             vm.assertEq(arr2, arr2);
             vm.assertNotEq(arr1, arr2);
 
-            vm._expectCheatcodeRevert(bytes("Assertion failed: [1] != [1, 2]"));
+            vm._expectCheatcodeRevert(bytes("assertion failed: [1] != [1, 2]"));
             vm.assertEq(arr1, arr2);
 
-            vm._expectCheatcodeRevert(bytes(string.concat("Assertion failed: [1, 2] == [1, 2]")));
+            vm._expectCheatcodeRevert(bytes(string.concat("assertion failed: [1, 2] == [1, 2]")));
             vm.assertNotEq(arr2, arr2);
         }
         {
@@ -702,7 +702,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": [5, 0] != [", vm.toString(arr2[0]), "]")));
             vm.assertEq(arr1, arr2, errorMessage);
 
-            vm._expectCheatcodeRevert(bytes(string.concat("Assertion failed: [5, 0] == [5, 0]")));
+            vm._expectCheatcodeRevert(bytes(string.concat("assertion failed: [5, 0] == [5, 0]")));
             vm.assertNotEq(arr1, arr1);
         }
         {
@@ -718,7 +718,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": [true, false] != [false, true]")));
             vm.assertEq(arr1, arr2, errorMessage);
 
-            vm._expectCheatcodeRevert(bytes(string("Assertion failed: [true, false] == [true, false]")));
+            vm._expectCheatcodeRevert(bytes(string("assertion failed: [true, false] == [true, false]")));
             vm.assertNotEq(arr1, arr1);
         }
         {
@@ -732,7 +732,7 @@ contract AssertionsTest is DSTest {
             vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": [", vm.toString(arr1[0]), "] != []")));
             vm.assertEq(arr1, arr2, errorMessage);
 
-            vm._expectCheatcodeRevert(bytes(string("Assertion failed: [] == []")));
+            vm._expectCheatcodeRevert(bytes(string("assertion failed: [] == []")));
             vm.assertNotEq(arr2, arr2);
         }
         {
@@ -750,7 +750,7 @@ contract AssertionsTest is DSTest {
             vm.assertEq(arr1, arr2, errorMessage);
 
             vm._expectCheatcodeRevert(
-                bytes(string.concat("Assertion failed: [", vm.toString(arr2[0]), "] == [", vm.toString(arr2[0]), "]"))
+                bytes(string.concat("assertion failed: [", vm.toString(arr2[0]), "] == [", vm.toString(arr2[0]), "]"))
             );
             vm.assertNotEq(arr2, arr2);
         }
@@ -765,7 +765,7 @@ contract AssertionsTest is DSTest {
             vm.assertEq(arr2, arr2);
             vm.assertNotEq(arr1, arr2);
 
-            vm._expectCheatcodeRevert(bytes("Assertion failed: [foo] != [, , bar]"));
+            vm._expectCheatcodeRevert(bytes("assertion failed: [foo] != [, , bar]"));
             vm.assertEq(arr1, arr2);
 
             vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": [foo] == [foo]")));
@@ -782,7 +782,7 @@ contract AssertionsTest is DSTest {
             vm.assertEq(arr2, arr2);
             vm.assertNotEq(arr1, arr2);
 
-            vm._expectCheatcodeRevert(bytes("Assertion failed: [0x1111] != [0x, 0x1234]"));
+            vm._expectCheatcodeRevert(bytes("assertion failed: [0x1111] != [0x, 0x1234]"));
             vm.assertEq(arr1, arr2);
 
             vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": [0x1111] == [0x1111]")));
@@ -794,13 +794,13 @@ contract AssertionsTest is DSTest {
         vm.assertTrue(true);
         vm.assertFalse(false);
 
-        vm._expectCheatcodeRevert(bytes("Assertion failed"));
+        vm._expectCheatcodeRevert(bytes("assertion failed"));
         vm.assertTrue(false);
 
         vm._expectCheatcodeRevert(bytes(errorMessage));
         vm.assertTrue(false, errorMessage);
 
-        vm._expectCheatcodeRevert(bytes("Assertion failed"));
+        vm._expectCheatcodeRevert(bytes("assertion failed"));
         vm.assertFalse(true);
 
         vm._expectCheatcodeRevert(bytes(errorMessage));
@@ -808,16 +808,16 @@ contract AssertionsTest is DSTest {
     }
 
     function testAssertApproxEqRel() public {
-        vm._expectCheatcodeRevert(bytes("Assertion failed: Overflow in delta calculation"));
+        vm._expectCheatcodeRevert(bytes("assertion failed: overflow in delta calculation"));
         vm.assertApproxEqRel(type(int256).min, type(int256).max, 0);
 
-        vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": Overflow in delta calculation")));
+        vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": overflow in delta calculation")));
         vm.assertApproxEqRel(int256(1), int256(0), 0, errorMessage);
 
-        vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": Overflow in delta calculation")));
+        vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": overflow in delta calculation")));
         vm.assertApproxEqRel(uint256(0), type(uint256).max, 0, errorMessage);
 
-        vm._expectCheatcodeRevert(bytes("Assertion failed: Overflow in delta calculation"));
+        vm._expectCheatcodeRevert(bytes("assertion failed: overflow in delta calculation"));
         vm.assertApproxEqRel(uint256(1), uint256(0), uint256(0));
     }
 }
