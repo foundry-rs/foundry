@@ -3595,6 +3595,26 @@
     },
     {
       "func": {
+        "id": "replace",
+        "description": "Replaces occurrences of `from` in the given `string` with `to`.",
+        "declaration": "function replace(string calldata stringifiedValue, string calldata from, string calldata to) external pure returns (string memory stringifiedValue);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "replace(string,string,string)",
+        "selector": "0xe00ad03e",
+        "selectorBytes": [
+          224,
+          10,
+          208,
+          62
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "resetNonce",
         "description": "Resets the nonce of an account to 0 for EOAs and 1 for contract accounts.",
         "declaration": "function resetNonce(address account) external;",
@@ -4395,6 +4415,26 @@
     },
     {
       "func": {
+        "id": "split",
+        "description": "Splits the given `string` into an array of strings divided by the `delimiter`.",
+        "declaration": "function split(string calldata stringifiedValue, string calldata delimiter) external pure returns (string[] memory stringifiedValues);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "split(string,string)",
+        "selector": "0x8bb75533",
+        "selectorBytes": [
+          139,
+          183,
+          85,
+          51
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "startBroadcast_0",
         "description": "Using the address that calls the test contract, has all subsequent calls\n(at this call depth only) create transactions that can later be signed and sent onchain.",
         "declaration": "function startBroadcast() external;",
@@ -4715,6 +4755,26 @@
     },
     {
       "func": {
+        "id": "toLowercase",
+        "description": "Converts the given `string` value to Lowercase.",
+        "declaration": "function toLowercase(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toLowercase(string)",
+        "selector": "0x50bb0884",
+        "selectorBytes": [
+          80,
+          187,
+          8,
+          132
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "toString_0",
         "description": "Converts the given value to a `string`.",
         "declaration": "function toString(address value) external pure returns (string memory stringifiedValue);",
@@ -4835,6 +4895,26 @@
     },
     {
       "func": {
+        "id": "toUppercase",
+        "description": "Converts the given `string` value to Uppercase.",
+        "declaration": "function toUppercase(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toUppercase(string)",
+        "selector": "0x074ae3d7",
+        "selectorBytes": [
+          7,
+          74,
+          227,
+          215
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "transact_0",
         "description": "Fetches the given transaction from the active fork and executes it on the current state.",
         "declaration": "function transact(bytes32 txHash) external;",
@@ -4872,6 +4952,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "trim",
+        "description": "Trims leading and trailing whitespace from the given `string` value.",
+        "declaration": "function trim(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "trim(string)",
+        "selector": "0xb2dad155",
+        "selectorBytes": [
+          178,
+          218,
+          209,
+          85
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
