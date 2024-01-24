@@ -1919,7 +1919,7 @@ impl Backend {
             .read()
             .transactions
             .get(&hash)
-            .map(|tx| tx.geth_trace(opts, self.env.read().clone()))
+            .map(|tx| tx.geth_trace(opts))
     }
 
     /// Returns the traces for the given block

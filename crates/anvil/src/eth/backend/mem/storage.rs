@@ -2,7 +2,7 @@
 use crate::{
     eth::{
         backend::{
-            db::{Db, MaybeHashDatabase, StateDb},
+            db::{MaybeHashDatabase, StateDb},
             mem::cache::DiskStateCache,
         },
         pool::transactions::PoolTransaction,
@@ -27,9 +27,9 @@ use anvil_core::eth::{
 };
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    revm::{self, primitives::Env},
+    revm::primitives::Env,
     traces::{
-        FourByteInspector, GethTraceBuilder, JsInspector, ParityTraceBuilder, TracingInspector,
+        FourByteInspector, GethTraceBuilder, JsInspector, ParityTraceBuilder,
         TracingInspectorConfig,
     },
 };
@@ -425,12 +425,7 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace<DB: DatabaseRef>(
-        &self,
-        opts: GethDebugTracingOptions,
-        env: Env,
-        db: DB,
-    ) -> GethTrace {
+    pub fn geth_trace<DB: DatabaseRef>(&self, opts: GethDebugTracingOptions) -> GethTrace {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
         if let Some(tracer) = tracer {
@@ -450,19 +445,10 @@ impl MinedTransaction {
                         .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
                         .into()
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer => {}
+                    GethDebugBuiltInTracerType::PreStateTracer => NoopFrame::default().into(),
                     GethDebugBuiltInTracerType::NoopTracer => NoopFrame::default().into(),
                 },
-                GethDebugTracerType::JsTracer(code) => {
-                    let config = tracer_config.into_json();
-
-                    let mut inspector = JsInspector::new(code, config)?;
-                    let (res, env, db) = inspect_and_return_db(db, env, &mut inspector)?;
-
-                    let state = res.state.clone();
-                    let result = inspector.json_result(res, &env, db)?;
-                    Ok((GethTrace::JS(result), state))
-                }
+                GethDebugTracerType::JsTracer(code) => return NoopFrame::default().into(),
             }
         }
 

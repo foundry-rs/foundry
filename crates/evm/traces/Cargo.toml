@@ -37,6 +37,3 @@ yansi = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
-
-[features]
-js-tracer = ["revm-inspectors/js-tracer"]
