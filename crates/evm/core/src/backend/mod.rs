@@ -6,10 +6,10 @@ use crate::{
     snapshot::Snapshots,
     utils::configure_tx_env,
 };
+use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
-use ethers_core::utils::GenesisAccount;
-use foundry_common::{is_known_system_sender, types::ToAlloy, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -1354,7 +1354,7 @@ impl DatabaseExt for Backend {
             }
             // Set the account's nonce and balance.
             state_acc.info.nonce = acc.nonce.unwrap_or_default();
-            state_acc.info.balance = acc.balance.to_alloy();
+            state_acc.info.balance = acc.balance;
 
             // Touch the account to ensure the loaded information persists if called in `setUp`.
             journaled_state.touch(addr);
