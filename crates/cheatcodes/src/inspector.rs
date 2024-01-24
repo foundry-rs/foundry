@@ -9,20 +9,19 @@ use crate::{
     },
     script::Broadcast,
     test::expect::{
-        self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit, ExpectedRevert,
+        self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
+        ExpectedRevert, ExpectedRevertKind,
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256, U64};
+use alloy_rpc_types::request::TransactionRequest;
 use alloy_sol_types::{SolInterface, SolValue};
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
-};
 use ethers_signers::LocalWallet;
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::ToEthers};
+use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
+    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
 };
 use itertools::Itertools;
 use revm::{
@@ -79,7 +78,7 @@ pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<RpcUrl>,
     /// The transaction to broadcast.
-    pub transaction: TypedTransaction,
+    pub transaction: TransactionRequest,
 }
 
 /// List of transactions that can be broadcasted.
@@ -129,9 +128,6 @@ pub struct Cheatcodes {
 
     /// Remembered private keys
     pub script_wallets: Vec<LocalWallet>,
-
-    /// Whether the skip cheatcode was activated
-    pub skip: bool,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -836,19 +832,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: data.db.active_fork_url(),
-                        transaction: TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(broadcast.new_origin.to_ethers()),
-                            to: Some(NameOrAddress::Address(call.contract.to_ethers())),
-                            value: Some(call.transfer.value.to_ethers()),
-                            data: Some(call.input.clone().to_ethers()),
-                            nonce: Some(account.info.nonce.into()),
+                        transaction: TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to: Some(call.contract),
+                            value: Some(call.transfer.value),
+                            data: Some(call.input.clone()),
+                            nonce: Some(U64::from(account.info.nonce)),
                             gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit.into())
+                                Some(U256::from(call.gas_limit))
                             } else {
                                 None
                             },
                             ..Default::default()
-                        }),
+                        },
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -919,38 +915,34 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         status: InstructionResult,
         retdata: Bytes,
     ) -> (InstructionResult, Gas, Bytes) {
-        if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
-            return (status, remaining_gas, retdata);
-        }
+        let cheatcode_call =
+            call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
-        if data.journaled_state.depth() == 0 && self.skip {
-            return (
-                InstructionResult::Revert,
-                remaining_gas,
-                super::Error::from(MAGIC_SKIP).abi_encode().into(),
-            );
-        }
+        // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
+        // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
+        // This should be placed before the revert handling, because we might exit early there
+        if !cheatcode_call {
+            // Clean up pranks
+            if let Some(prank) = &self.prank {
+                if data.journaled_state.depth() == prank.depth {
+                    data.env.tx.caller = prank.prank_origin;
 
-        // Clean up pranks
-        if let Some(prank) = &self.prank {
-            if data.journaled_state.depth() == prank.depth {
-                data.env.tx.caller = prank.prank_origin;
-
-                // Clean single-call prank once we have returned to the original depth
-                if prank.single_call {
-                    let _ = self.prank.take();
+                    // Clean single-call prank once we have returned to the original depth
+                    if prank.single_call {
+                        let _ = self.prank.take();
+                    }
                 }
             }
-        }
 
-        // Clean up broadcast
-        if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() == broadcast.depth {
-                data.env.tx.caller = broadcast.original_origin;
+            // Clean up broadcast
+            if let Some(broadcast) = &self.broadcast {
+                if data.journaled_state.depth() == broadcast.depth {
+                    data.env.tx.caller = broadcast.original_origin;
 
-                // Clean single-call broadcast once we have returned to the original depth
-                if broadcast.single_call {
-                    let _ = self.broadcast.take();
+                    // Clean single-call broadcast once we have returned to the original depth
+                    if broadcast.single_call {
+                        let _ = self.broadcast.take();
+                    }
                 }
             }
         }
@@ -958,20 +950,47 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
-                    false,
-                    expected_revert.reason.as_deref(),
-                    status,
-                    retdata,
-                ) {
-                    Err(error) => {
-                        trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
-                        (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
+                let needs_processing: bool = match expected_revert.kind {
+                    ExpectedRevertKind::Default => !cheatcode_call,
+                    // `pending_processing` == true means that we're in the `call_end` hook for
+                    // `vm.expectCheatcodeRevert` and shouldn't expect revert here
+                    ExpectedRevertKind::Cheatcode { pending_processing } => {
+                        cheatcode_call && !pending_processing
                     }
-                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
                 };
+
+                if needs_processing {
+                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    return match expect::handle_expect_revert(
+                        false,
+                        expected_revert.reason.as_deref(),
+                        status,
+                        retdata,
+                    ) {
+                        Err(error) => {
+                            trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
+                            (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
+                        }
+                        Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
+                    };
+                }
+
+                // Flip `pending_processing` flag for cheatcode revert expectations, marking that
+                // we've exited the `expectCheatcodeRevert` call scope
+                if let ExpectedRevertKind::Cheatcode { pending_processing } =
+                    &mut self.expected_revert.as_mut().unwrap().kind
+                {
+                    if *pending_processing {
+                        *pending_processing = false;
+                    }
+                }
             }
+        }
+
+        // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
+        // invocations
+        if cheatcode_call {
+            return (status, remaining_gas, retdata);
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -1199,19 +1218,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: data.db.active_fork_url(),
-                        transaction: TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(broadcast.new_origin.to_ethers()),
-                            to: to.map(|a| NameOrAddress::Address(a.to_ethers())),
-                            value: Some(call.value.to_ethers()),
-                            data: Some(bytecode.to_ethers()),
-                            nonce: Some(nonce.into()),
+                        transaction: TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to,
+                            value: Some(call.value),
+                            data: Some(bytecode),
+                            nonce: Some(U64::from(nonce)),
                             gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit.into())
+                                Some(U256::from(call.gas_limit))
                             } else {
                                 None
                             },
                             ..Default::default()
-                        }),
+                        },
                     });
                     let kind = match call.scheme {
                         CreateScheme::Create => "create",
@@ -1290,7 +1309,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth &&
+                matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     true,

@@ -1,6 +1,5 @@
 use super::*;
 use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use forge::{
     constants::CALLER,
@@ -204,18 +203,12 @@ impl ScriptRunner {
     pub fn simulate(
         &mut self,
         from: Address,
-        to: Option<NameOrAddress>,
+        to: Option<Address>,
         calldata: Option<Bytes>,
         value: Option<U256>,
     ) -> Result<ScriptResult> {
-        if let Some(NameOrAddress::Address(to)) = to {
-            self.call(
-                from,
-                to.to_alloy(),
-                calldata.unwrap_or_default(),
-                value.unwrap_or(U256::ZERO),
-                true,
-            )
+        if let Some(to) = to {
+            self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::ZERO), true)
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,

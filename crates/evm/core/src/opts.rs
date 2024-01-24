@@ -1,8 +1,8 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::Block;
-use ethers_providers::{Middleware, Provider};
 use eyre::WrapErr;
 use foundry_common::{
     self,
@@ -189,11 +189,14 @@ impl EvmOpts {
                 return Some(Chain::mainnet());
             }
             trace!(?url, "retrieving chain via eth_chainId");
-            let provider = Provider::try_from(url.as_str())
-                .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
+            let provider = ProviderBuilder::new(url.as_str())
+                .compute_units_per_second(self.get_compute_units_per_second())
+                .build()
+                .ok()
+                .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
-                return Some(Chain::from(id.as_u64()));
+            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chain_id()) {
+                return Some(Chain::from(id.to::<u64>()));
             }
         }
 

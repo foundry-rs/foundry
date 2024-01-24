@@ -1,6 +1,6 @@
 use super::{multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyBundle, *};
 use alloy_primitives::Bytes;
-use ethers_core::types::transaction::eip2718::TypedTransaction;
+
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
@@ -171,7 +171,7 @@ impl ScriptArgs {
             for tx in txs.iter() {
                 lib_deploy.push_back(BroadcastableTransaction {
                     rpc: tx.rpc.clone(),
-                    transaction: TypedTransaction::Legacy(tx.transaction.clone().into()),
+                    transaction: tx.transaction.clone(),
                 });
             }
             *txs = lib_deploy;
@@ -336,7 +336,7 @@ impl ScriptArgs {
             for new_tx in new_txs.iter() {
                 txs.push_back(BroadcastableTransaction {
                     rpc: new_tx.rpc.clone(),
-                    transaction: TypedTransaction::Legacy(new_tx.transaction.clone().into()),
+                    transaction: new_tx.transaction.clone(),
                 });
             }
         }

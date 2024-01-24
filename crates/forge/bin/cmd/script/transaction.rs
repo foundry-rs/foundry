@@ -2,7 +2,11 @@ use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, B256};
-use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
+use alloy_rpc_types::request::TransactionRequest;
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction, NameOrAddress,
+    TransactionRequest as EthersTransactionRequest,
+};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{
     fmt::format_token_raw,
@@ -59,12 +63,23 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 }
 
 impl TransactionWithMetadata {
-    pub fn from_typed_transaction(transaction: TypedTransaction) -> Self {
-        Self { transaction, ..Default::default() }
+    pub fn from_tx_request(transaction: TransactionRequest) -> Self {
+        Self {
+            transaction: TypedTransaction::Legacy(EthersTransactionRequest {
+                from: transaction.from.map(ToEthers::to_ethers),
+                to: transaction.to.map(ToEthers::to_ethers).map(Into::into),
+                value: transaction.value.map(ToEthers::to_ethers),
+                data: transaction.data.map(ToEthers::to_ethers),
+                nonce: transaction.nonce.map(|n| n.to::<u64>().into()),
+                gas: transaction.gas.map(ToEthers::to_ethers),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
     }
 
     pub fn new(
-        transaction: TypedTransaction,
+        transaction: TransactionRequest,
         rpc: Option<RpcUrl>,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
@@ -72,7 +87,9 @@ impl TransactionWithMetadata {
         additional_contracts: Vec<AdditionalContract>,
         is_fixed_gas_limit: bool,
     ) -> Result<Self> {
-        let mut metadata = Self { transaction, rpc, is_fixed_gas_limit, ..Default::default() };
+        let mut metadata = Self::from_tx_request(transaction);
+        metadata.rpc = rpc;
+        metadata.is_fixed_gas_limit = is_fixed_gas_limit;
 
         // Specify if any contract was directly created with this transaction
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {

@@ -18,11 +18,7 @@ contract Issue4630Test is DSTest {
     function testMissingValue() public {
         string memory path = "fixtures/Json/Issue4630.json";
         string memory json = vm.readFile(path);
-        vm.expectRevert();
-        uint256 val = this.parseJsonUint(json, ".localempty.prop1");
-    }
-
-    function parseJsonUint(string memory json, string memory path) public returns (uint256) {
-        return vm.parseJsonUint(json, path);
+        vm._expectCheatcodeRevert();
+        vm.parseJsonUint(json, ".localempty.prop1");
     }
 }
