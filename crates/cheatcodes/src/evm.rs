@@ -122,8 +122,7 @@ impl Cheatcode for dumpStateCall {
                     GenesisAccount {
                         nonce: Some(val.info.nonce),
                         balance: val.info.balance,
-                        code: Some(val.info.code.as_ref().map(|o| o.original_bytes()))
-                            .unwrap_or_default(),
+                        code: val.info.code.as_ref().map(|o| o.original_bytes()),
                         storage: Some(
                             val.storage
                                 .iter()
