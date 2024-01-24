@@ -1077,6 +1077,22 @@ interface Vm {
     #[cheatcode(group = String)]
     function parseBool(string calldata stringifiedValue) external pure returns (bool parsedValue);
 
+    /// Converts the given `string` value to Lowercase.
+    #[cheatcode(group = String)]
+    function toLowercase(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);
+    /// Converts the given `string` value to Uppercase.
+    #[cheatcode(group = String)]
+    function toUppercase(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);
+    /// Trims leading and trailing whitespace from the given `string` value.
+    #[cheatcode(group = String)]
+    function trim(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);
+    /// Replaces occurrences of `from` in the given `string` with `to`.
+    #[cheatcode(group = String)]
+    function replace(string calldata stringifiedValue, string calldata from, string calldata to) external pure returns (string memory stringifiedValue);
+    /// Splits the given `string` into an array of strings divided by the `delimiter`.
+    #[cheatcode(group = String)]
+    function split(string calldata stringifiedValue, string calldata delimiter) external pure returns (string[] memory stringifiedValues);
+
     // ======== JSON Parsing and Manipulation ========
 
     // -------- Reading --------
