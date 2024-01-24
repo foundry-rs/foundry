@@ -1,13 +1,10 @@
 //! In-memory blockchain storage
-use crate::{
-    eth::{
-        backend::{
-            db::{MaybeHashDatabase, StateDb},
-            mem::cache::DiskStateCache,
-        },
-        pool::transactions::PoolTransaction,
+use crate::eth::{
+    backend::{
+        db::{MaybeHashDatabase, StateDb},
+        mem::cache::DiskStateCache,
     },
-    revm::DatabaseRef,
+    pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_trace_types::{
@@ -28,10 +25,7 @@ use anvil_core::eth::{
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     revm::primitives::Env,
-    traces::{
-        FourByteInspector, GethTraceBuilder, JsInspector, ParityTraceBuilder,
-        TracingInspectorConfig,
-    },
+    traces::{FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
 };
 use parking_lot::RwLock;
 use std::{
@@ -425,7 +419,7 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace<DB: DatabaseRef>(&self, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
         if let Some(tracer) = tracer {
@@ -448,7 +442,7 @@ impl MinedTransaction {
                     GethDebugBuiltInTracerType::PreStateTracer => NoopFrame::default().into(),
                     GethDebugBuiltInTracerType::NoopTracer => NoopFrame::default().into(),
                 },
-                GethDebugTracerType::JsTracer(code) => return NoopFrame::default().into(),
+                GethDebugTracerType::JsTracer(_code) => return NoopFrame::default().into(),
             }
         }
 

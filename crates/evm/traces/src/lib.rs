@@ -28,7 +28,7 @@ use revm_inspectors::tracing::types::LogCallOrder;
 pub use revm_inspectors::tracing::{
     types::{CallKind, CallTrace, CallTraceNode},
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
-    TracingInspectorConfig,
+    TracingInspector, TracingInspectorConfig,
 };
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
