@@ -1,7 +1,6 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config, utils::ethers_http_provider};
 use alloy_rpc_types::BlockNumberOrTag;
-use alloy_signer::Signer as AlloySigner;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
@@ -10,7 +9,6 @@ use anvil_core::{
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
-    signers::Wallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
         TransactionRequest, H256, U256, U64,
@@ -148,12 +146,7 @@ async fn can_impersonate_contract() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.clone().signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let provider = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract =

@@ -11,7 +11,6 @@ use ethers::{
         signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
     },
-    signers::Wallet,
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
@@ -27,17 +26,7 @@ async fn can_transfer_eth() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -75,17 +64,7 @@ async fn can_order_transactions() {
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -121,17 +100,7 @@ async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -170,17 +139,7 @@ async fn can_replace_transaction() {
 
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -218,17 +177,7 @@ async fn can_reject_too_high_gas_limits() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -265,17 +214,7 @@ async fn can_reject_underpriced_replacement() {
 
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -310,12 +249,7 @@ async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -348,12 +282,7 @@ async fn can_deploy_and_mine_manually() {
 
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
@@ -389,12 +318,7 @@ async fn can_mine_automatically() {
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
@@ -412,12 +336,7 @@ async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -452,12 +371,7 @@ async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -482,12 +396,7 @@ async fn can_deploy_get_code() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -506,12 +415,7 @@ async fn get_blocktimestamp_works() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract =
@@ -550,12 +454,7 @@ async fn call_past_state() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
@@ -612,17 +511,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
 
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -652,12 +541,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
     let nonce = client.get_transaction_count(from, None).await.unwrap();
@@ -691,12 +575,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -792,17 +671,7 @@ async fn can_handle_different_sender_nonce_calculation() {
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let provider = ethers_http_provider(&handle.http_endpoint());
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from_first = accounts[0].address();
     let from_second = accounts[1].address();
 
@@ -866,17 +735,7 @@ async fn can_get_historic_info() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -910,12 +769,7 @@ async fn can_get_historic_info() {
 async fn test_tx_receipt() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client =
         Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
 
@@ -1021,12 +875,7 @@ async fn test_tx_access_list() {
     //     - The sender shouldn't be in the AL
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client =
         Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
 
@@ -1099,12 +948,7 @@ async fn estimates_gas_on_pending_by_default() {
 
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let recipient = Address::random();
 
@@ -1145,12 +989,7 @@ async fn can_call_with_high_gas_limit() {
         spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000).to_alloy()))).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -1168,12 +1007,7 @@ async fn test_reject_eip1559_pre_london() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let gas_limit = api.gas_limit();

@@ -4,12 +4,10 @@ use crate::{
     abi::*,
     utils::{ethers_http_provider, ethers_ws_provider},
 };
-use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     middleware::SignerMiddleware,
     prelude::{BlockNumber, Filter, FilterKind, Middleware, Signer, H256},
-    signers::Wallet,
     types::Log,
 };
 use foundry_common::types::ToEthers;
@@ -21,12 +19,7 @@ async fn get_past_events() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let address = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -63,12 +56,7 @@ async fn get_all_events() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
@@ -105,12 +93,7 @@ async fn can_install_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
@@ -150,12 +133,7 @@ async fn can_install_filter() {
 #[tokio::test(flavor = "multi_thread")]
 async fn watch_events() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let provider = ethers_http_provider(&handle.http_endpoint());
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

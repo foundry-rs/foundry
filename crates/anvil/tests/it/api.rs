@@ -18,7 +18,7 @@ use anvil::{
 use ethers::{
     abi::{Address, Tokenizable},
     prelude::{builders::ContractCall, decode_function_data, Middleware, SignerMiddleware},
-    signers::{Signer, Wallet},
+    signers::Signer,
     types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, U256},
     utils::get_contract_address,
 };
@@ -173,12 +173,7 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -269,12 +264,7 @@ async fn can_call_with_state_override() {
 
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let account = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

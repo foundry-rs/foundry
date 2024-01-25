@@ -1,10 +1,9 @@
 use crate::utils::ethers_http_provider;
 use alloy_dyn_abi::TypedData;
-use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::{Middleware, SignerMiddleware},
-    signers::{Signer, Wallet},
+    signers::Signer,
     types::{Address, Chain, TransactionRequest},
 };
 use foundry_common::types::ToEthers;
@@ -289,12 +288,7 @@ async fn rejects_different_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = SignerMiddleware::new(provider, wallet.with_chain_id(Chain::Mainnet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
@@ -307,12 +301,7 @@ async fn rejects_different_chain_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_invalid_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let wallet = wallet.with_chain_id(99u64);
     let provider = ethers_http_provider(&handle.http_endpoint());
     let client = SignerMiddleware::new(provider, wallet);

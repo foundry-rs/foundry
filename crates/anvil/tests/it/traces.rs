@@ -3,13 +3,12 @@ use crate::{
     utils::{ethers_http_provider, ethers_ws_provider},
 };
 use alloy_primitives::U256;
-use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::ContractInstance,
     prelude::{
         Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
-        TransactionRequest, Wallet,
+        TransactionRequest,
     },
     types::{ActionType, Address, GethDebugTracingCallOptions, Trace},
     utils::hex,
@@ -23,17 +22,7 @@ async fn test_get_transfer_parity_traces() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let accounts = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
@@ -89,17 +78,7 @@ contract Contract {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let wallets = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -149,17 +128,7 @@ contract Contract {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
-    let alloy_wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let wallets = alloy_wallets
-        .into_iter()
-        .map(|w| {
-            Wallet::new_with_signer(
-                w.signer().clone(),
-                w.address().to_ethers(),
-                w.chain_id().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully

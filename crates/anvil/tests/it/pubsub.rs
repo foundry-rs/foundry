@@ -1,14 +1,13 @@
 //! tests for subscriptions
 
 use crate::utils::{ethers_http_provider, ethers_ws_provider};
-use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
     middleware::SignerMiddleware,
     prelude::{Middleware, Ws},
     providers::{JsonRpcClient, PubsubClient},
-    signers::{Signer, Wallet},
+    signers::Signer,
     types::{Address, Block, Filter, TransactionRequest, TxHash, ValueOrArray, U256},
 };
 use foundry_common::types::{ToAlloy, ToEthers};
@@ -39,12 +38,7 @@ async fn test_sub_logs_legacy() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.clone().signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
@@ -83,12 +77,7 @@ async fn test_sub_logs() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.clone().signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
@@ -132,12 +121,7 @@ async fn test_sub_logs_impersonated() {
     api.anvil_set_balance(impersonate.to_alloy(), funding.to_alloy()).await.unwrap();
     api.anvil_impersonate_account(impersonate.to_alloy()).await.unwrap();
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.clone().signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
@@ -172,12 +156,7 @@ async fn test_filters_legacy() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.clone().signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -218,12 +197,7 @@ async fn test_filters() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.clone().signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

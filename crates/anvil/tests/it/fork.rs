@@ -14,7 +14,7 @@ use ethers::{
     core::rand,
     prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
     providers::{Http, Provider},
-    signers::{Signer, Wallet},
+    signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
         U256,
@@ -442,12 +442,7 @@ async fn can_deploy_greeter_on_fork() {
     let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -1030,12 +1025,7 @@ async fn can_override_fork_chain_id() {
     .await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let alloy_wallet = handle.dev_wallets().next().unwrap();
-    let wallet = Wallet::new_with_signer(
-        alloy_wallet.signer().clone(),
-        alloy_wallet.address().to_ethers(),
-        alloy_wallet.chain_id().unwrap(),
-    );
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
