@@ -177,7 +177,7 @@ interface Vm {
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
-    function replace(string calldata inputString, string calldata from, string calldata to) external pure returns (string memory outputString);
+    function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     function resetNonce(address account) external;
     function resumeGasMetering() external;
     function revertTo(uint256 snapshotId) external returns (bool success);
@@ -218,8 +218,8 @@ interface Vm {
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
     function snapshot() external returns (uint256 snapshotId);
-    function split(string calldata inputString, string calldata delimiter) external pure returns (string[] memory outputStrings);
-    function toUppercase(string calldata inputString) external pure returns (string memory outputString);
+    function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
+    function toUppercase(string calldata input) external pure returns (string memory output);
     function startBroadcast() external;
     function startBroadcast(address signer) external;
     function startBroadcast(uint256 privateKey) external;
@@ -236,7 +236,7 @@ interface Vm {
     function toBase64URL(string calldata data) external pure returns (string memory);
     function toBase64(bytes calldata data) external pure returns (string memory);
     function toBase64(string calldata data) external pure returns (string memory);
-    function toLowercase(string calldata inputString) external pure returns (string memory outputString);
+    function toLowercase(string calldata input) external pure returns (string memory output);
     function toString(address value) external pure returns (string memory stringifiedValue);
     function toString(bytes calldata value) external pure returns (string memory stringifiedValue);
     function toString(bytes32 value) external pure returns (string memory stringifiedValue);
@@ -245,7 +245,7 @@ interface Vm {
     function toString(int256 value) external pure returns (string memory stringifiedValue);
     function transact(bytes32 txHash) external;
     function transact(uint256 forkId, bytes32 txHash) external;
-    function trim(string calldata inputString) external pure returns (string memory outputString);
+    function trim(string calldata input) external pure returns (string memory output);
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
     function txGasPrice(uint256 newGasPrice) external;
     function unixTime() external returns (uint256 milliseconds);

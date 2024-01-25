@@ -1079,19 +1079,19 @@ interface Vm {
 
     /// Converts the given `string` value to Lowercase.
     #[cheatcode(group = String)]
-    function toLowercase(string calldata inputString) external pure returns (string memory outputString);
+    function toLowercase(string calldata input) external pure returns (string memory output);
     /// Converts the given `string` value to Uppercase.
     #[cheatcode(group = String)]
-    function toUppercase(string calldata inputString) external pure returns (string memory outputString);
+    function toUppercase(string calldata input) external pure returns (string memory output);
     /// Trims leading and trailing whitespace from the given `string` value.
     #[cheatcode(group = String)]
-    function trim(string calldata inputString) external pure returns (string memory outputString);
+    function trim(string calldata input) external pure returns (string memory output);
     /// Replaces occurrences of `from` in the given `string` with `to`.
     #[cheatcode(group = String)]
-    function replace(string calldata inputString, string calldata from, string calldata to) external pure returns (string memory outputString);
+    function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     /// Splits the given `string` into an array of strings divided by the `delimiter`.
     #[cheatcode(group = String)]
-    function split(string calldata inputString, string calldata delimiter) external pure returns (string[] memory outputStrings);
+    function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
 
     // ======== JSON Parsing and Manipulation ========
 
