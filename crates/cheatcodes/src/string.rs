@@ -94,6 +94,47 @@ impl Cheatcode for parseBoolCall {
     }
 }
 
+// toLowercase
+impl Cheatcode for toLowercaseCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input } = self;
+        Ok(input.to_lowercase().abi_encode())
+    }
+}
+
+// toUppercase
+impl Cheatcode for toUppercaseCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input } = self;
+        Ok(input.to_uppercase().abi_encode())
+    }
+}
+
+// trim
+impl Cheatcode for trimCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input } = self;
+        Ok(input.trim().abi_encode())
+    }
+}
+
+// Replace
+impl Cheatcode for replaceCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, from, to } = self;
+        Ok(input.replace(from, to).abi_encode())
+    }
+}
+
+// Split
+impl Cheatcode for splitCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, delimiter } = self;
+        let parts: Vec<&str> = input.split(delimiter).collect();
+        Ok(parts.abi_encode())
+    }
+}
+
 pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
     parse_value(s, ty).map(|v| v.abi_encode())
 }
@@ -136,7 +177,9 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
                 "0" => false,
                 s if s.eq_ignore_ascii_case("true") => true,
                 s if s.eq_ignore_ascii_case("false") => false,
-                _ => return None,
+                _ => {
+                    return None;
+                }
             };
             return Some(Ok(DynSolValue::Bool(b)));
         }
@@ -145,7 +188,7 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
         DynSolType::FixedBytes(_) |
         DynSolType::Bytes => {
             if !s.starts_with("0x") && s.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Some(Err("missing hex prefix (\"0x\") for hex string"))
+                return Some(Err("missing hex prefix (\"0x\") for hex string"));
             }
         }
         _ => {}
