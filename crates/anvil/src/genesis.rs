@@ -1,7 +1,7 @@
 //! Bindings for geth's `genesis.json` format
 use crate::revm::primitives::AccountInfo;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use ethers::{signers::LocalWallet, types::serde_helpers::*};
+use alloy_signer::LocalWallet;
 use foundry_common::errors::FsPathError;
 use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256};
 use serde::{Deserialize, Serialize};
@@ -19,21 +19,25 @@ pub struct Genesis {
     pub config: Option<Config>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub timestamp: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_data: Option<Bytes>,
-    #[serde(deserialize_with = "deserialize_stringified_u64")]
+    #[serde(
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64"
+    )]
     pub gas_limit: u64,
-    #[serde(deserialize_with = "deserialize_stringified_u64")]
+    #[serde(
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64"
+    )]
     pub difficulty: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mix_hash: Option<B256>,
@@ -43,13 +47,13 @@ pub struct Genesis {
     pub alloc: Alloc,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub number: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub gas_used: Option<u64>,
@@ -116,7 +120,7 @@ pub struct GenesisAccount {
     pub balance: U256,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
+        deserialize_with = "anvil_core::eth::serde_helpers::numeric::deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,
@@ -213,7 +217,9 @@ pub struct CliqueConfig {
 /// serde support for `secretKey` in genesis
 
 pub mod secret_key {
-    use ethers::{core::k256::SecretKey, signers::LocalWallet, types::Bytes};
+    use alloy_primitives::Bytes;
+    use alloy_signer::LocalWallet;
+    use k256::{ecdsa::SigningKey, SecretKey};
     use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(value: &Option<LocalWallet>, serializer: S) -> Result<S::Ok, S::Error>
@@ -221,7 +227,10 @@ pub mod secret_key {
         S: Serializer,
     {
         if let Some(wallet) = value {
-            Bytes::from(wallet.signer().to_bytes().as_ref()).serialize(serializer)
+            let signer: SigningKey = wallet.signer().clone();
+            let signer_bytes = signer.to_bytes();
+            let signer_bytes2: [u8; 32] = *signer_bytes.as_ref();
+            Bytes::from(signer_bytes2).serialize(serializer)
         } else {
             serializer.serialize_none()
         }

@@ -16,20 +16,10 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
+use alloy_primitives::{Address, U256};
+use alloy_signer::{LocalWallet, Signer as AlloySigner};
 use eth::backend::fork::ClientFork;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::Wallet,
-    signers::Signer,
-    types::{Address, U256},
-};
-use foundry_common::{
-    provider::{
-        alloy::{ProviderBuilder, RetryProvider},
-        ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider},
-    },
-    types::ToEthers,
-};
+use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -280,32 +270,14 @@ impl NodeHandle {
         // .interval(Duration::from_millis(500))
     }
 
-    /// Constructs a [`EthersRetryProvider`] for this handle's HTTP endpoint.
-    /// TODO: Remove once ethers is phased out of cast/alloy and tests.
-    pub fn ethers_http_provider(&self) -> EthersRetryProvider {
-        EthersProviderBuilder::new(&self.http_endpoint())
-            .build()
-            .expect("failed to build ethers HTTP provider")
-    }
-
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
     pub fn ws_provider(&self) -> RetryProvider {
         ProviderBuilder::new(&self.ws_endpoint()).build().expect("failed to build WS provider")
     }
 
-    pub fn ethers_ws_provider(&self) -> EthersRetryProvider {
-        EthersProviderBuilder::new(&self.ws_endpoint())
-            .build()
-            .expect("failed to build ethers WS provider")
-    }
-
     /// Constructs a [`RetryProvider`] for this handle's IPC endpoint, if any.
     pub fn ipc_provider(&self) -> Option<RetryProvider> {
         ProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
-    }
-
-    pub fn ethers_ipc_provider(&self) -> Option<EthersRetryProvider> {
-        EthersProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
@@ -314,7 +286,7 @@ impl NodeHandle {
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub fn dev_wallets(&self) -> impl Iterator<Item = Wallet<SigningKey>> + '_ {
+    pub fn dev_wallets(&self) -> impl Iterator<Item = LocalWallet> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 
@@ -325,12 +297,12 @@ impl NodeHandle {
 
     /// Native token balance of every genesis account in the genesis block
     pub fn genesis_balance(&self) -> U256 {
-        self.config.genesis_balance.to_ethers()
+        self.config.genesis_balance
     }
 
     /// Default gas price for all txs
     pub fn gas_price(&self) -> U256 {
-        self.config.get_gas_price().to_ethers()
+        self.config.get_gas_price()
     }
 
     /// Returns the shutdown signal

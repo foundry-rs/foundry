@@ -1,11 +1,16 @@
 //! general eth api tests
 
-use crate::abi::{MulticallContract, SimpleStorage};
-use alloy_primitives::{B256, U256 as rU256};
+use crate::{
+    abi::{MulticallContract, SimpleStorage},
+    utils::ethers_http_provider,
+};
+use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
     CallInput, CallRequest,
 };
+use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
@@ -27,7 +32,7 @@ async fn can_get_block_number() {
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::zero().to_alloy());
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, block_num.to::<u64>().into());
@@ -36,7 +41,7 @@ async fn can_get_block_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = handle.http_provider();
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
@@ -48,7 +53,7 @@ async fn can_dev_get_balance() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let _ = provider.get_gas_price().await.unwrap();
 }
@@ -56,7 +61,7 @@ async fn can_get_price() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let _ = provider.get_accounts().await.unwrap();
 }
@@ -64,7 +69,7 @@ async fn can_get_accounts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_client_version() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let version = provider.client_version().await.unwrap();
     assert_eq!(CLIENT_VERSION, version);
@@ -73,7 +78,7 @@ async fn can_get_client_version() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, CHAIN_ID.into());
@@ -82,7 +87,7 @@ async fn can_get_chain_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_modify_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(Chain::Goerli))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, Chain::Goerli.into());
@@ -102,13 +107,16 @@ async fn can_get_network_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
     // send a dummy transactions
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block: Block<Transaction> = provider.get_block_with_txs(1u64).await.unwrap().unwrap();
@@ -124,7 +132,7 @@ async fn can_get_block_by_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let accounts: Vec<_> = handle.dev_wallets().collect();
 
     let block = provider.get_block(BlockNumber::Pending).await.unwrap().unwrap();
@@ -138,7 +146,7 @@ async fn can_get_pending_block() {
 
     let from = accounts[0].address();
     let to = accounts[1].address();
-    let tx = TransactionRequest::new().to(to).value(100u64).from(from);
+    let tx = TransactionRequest::new().to(to.to_ethers()).value(100u64).from(from.to_ethers());
 
     let tx = provider.send_transaction(tx, None).await.unwrap();
 
@@ -158,14 +166,14 @@ async fn can_get_pending_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 0u64);
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -185,9 +193,9 @@ async fn can_call_on_pending_block() {
         pending_contract.aggregate(vec![]).block(BlockNumber::Pending).call().await.unwrap();
     assert_eq!(ret_block_number.as_u64(), 1u64);
 
-    let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
+    let accounts: Vec<rAddress> = handle.dev_wallets().map(|w| w.address()).collect();
     for i in 1..10 {
-        api.anvil_set_coinbase(accounts[i % accounts.len()].to_alloy()).await.unwrap();
+        api.anvil_set_coinbase(accounts[i % accounts.len()]).await.unwrap();
         api.evm_set_block_gas_limit(rU256::from(30_000_000 + i)).unwrap();
 
         api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
@@ -252,11 +260,11 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let account = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

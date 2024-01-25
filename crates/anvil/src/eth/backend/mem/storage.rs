@@ -6,6 +6,7 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
+use alloy_network::Sealable;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDefaultTracingOptions},
@@ -16,10 +17,8 @@ use alloy_rpc_types::{
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
-    receipt::TypedReceipt,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
-use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     revm::primitives::Env,
     traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
@@ -233,10 +232,10 @@ impl BlockchainStorage {
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
-            base_fee: base_fee.map(|b| b.to_ethers()),
-            gas_limit: env.block.gas_limit.to_ethers(),
-            beneficiary: env.block.coinbase.to_ethers(),
-            difficulty: env.block.difficulty.to_ethers(),
+            base_fee: base_fee.map(|b| b.to::<u64>()),
+            gas_limit: env.block.gas_limit.to::<u64>(),
+            beneficiary: env.block.coinbase,
+            difficulty: env.block.difficulty,
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
@@ -245,11 +244,11 @@ impl BlockchainStorage {
         let best_number: U64 = U64::from(0u64);
 
         Self {
-            blocks: HashMap::from([(genesis_hash.to_alloy(), block)]),
-            hashes: HashMap::from([(best_number, genesis_hash.to_alloy())]),
-            best_hash: best_hash.to_alloy(),
+            blocks: HashMap::from([(genesis_hash, block)]),
+            hashes: HashMap::from([(best_number, genesis_hash)]),
+            best_hash,
             best_number,
-            genesis_hash: genesis_hash.to_alloy(),
+            genesis_hash,
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }
@@ -291,7 +290,7 @@ impl BlockchainStorage {
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in block.transactions.iter() {
-                self.transactions.remove(&tx.hash().to_alloy());
+                self.transactions.remove(&tx.hash());
             }
             block.transactions.clear();
         }
@@ -408,7 +407,7 @@ impl MinedTransaction {
             TracingInspectorConfig::default_parity(),
         )
         .into_localized_transaction_traces(RethTransactionInfo {
-            hash: Some(self.info.transaction_hash.to_alloy()),
+            hash: Some(self.info.transaction_hash),
             index: Some(self.info.transaction_index as u64),
             block_hash: Some(self.block_hash),
             block_number: Some(self.block_number),
@@ -419,7 +418,7 @@ impl MinedTransaction {
     pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
         GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
             .geth_traces(
-                self.receipt.gas_used().as_u64(),
+                self.receipt.gas_used().to::<u64>(),
                 self.info.out.clone().unwrap_or_default().0.into(),
                 opts,
             )

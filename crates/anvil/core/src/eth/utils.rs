@@ -1,33 +1,8 @@
-use alloy_eips::eip2930::AccessListItem as AlloyEipAccessListItem;
-use alloy_primitives::{Address, U256};
-use alloy_rpc_types::AccessListItem as AlloyAccessListItem;
-use ethers_core::{
-    types::transaction::eip2930::AccessListItem,
-    utils::{
-        rlp,
-        rlp::{Encodable, RlpStream},
-    },
+use alloy_eips::eip2930::{
+    AccessList as AlloyEipAccessList, AccessListItem as AlloyEipAccessListItem,
 };
-use foundry_common::types::ToAlloy;
-
-pub fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
-    let encoded = rlp::encode(v);
-    let mut out = vec![0; 1 + encoded.len()];
-    out[0] = id;
-    out[1..].copy_from_slice(&encoded);
-    out.rlp_append(s)
-}
-
-pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>)> {
-    list.into_iter()
-        .map(|item| {
-            (
-                item.address.to_alloy(),
-                item.storage_keys.into_iter().map(|k| k.to_alloy().into()).collect(),
-            )
-        })
-        .collect()
-}
+use alloy_primitives::{Address, Parity, U256};
+use alloy_rpc_types::{AccessList as AlloyAccessList, AccessListItem as AlloyAccessListItem};
 
 pub fn alloy_to_revm_access_list(list: Vec<AlloyAccessListItem>) -> Vec<(Address, Vec<U256>)> {
     list.into_iter()
@@ -35,9 +10,35 @@ pub fn alloy_to_revm_access_list(list: Vec<AlloyAccessListItem>) -> Vec<(Address
         .collect()
 }
 
+/// Translates a vec of [AlloyEipAccessListItem] to a [AlloyAccessList], translating from internal
+/// type to rpc type.
+pub fn from_eip_to_alloy_access_list(list: AlloyEipAccessList) -> AlloyAccessList {
+    AlloyAccessList(
+        list.0
+            .into_iter()
+            .map(|item| AlloyAccessListItem {
+                address: item.address,
+                storage_keys: item.storage_keys.into_iter().collect(),
+            })
+            .collect(),
+    )
+}
+
 /// Translates a vec of [AlloyEipAccessListItem] to a revm style Access List.
 pub fn eip_to_revm_access_list(list: Vec<AlloyEipAccessListItem>) -> Vec<(Address, Vec<U256>)> {
     list.into_iter()
         .map(|item| (item.address, item.storage_keys.into_iter().map(|k| k.into()).collect()))
         .collect()
+}
+
+/// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+/// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
+/// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
+/// > secp256k1 signing process.
+pub fn meets_eip155(chain_id: u64, v: Parity) -> bool {
+    let double_chain_id = chain_id.saturating_mul(2);
+    match v {
+        Parity::Eip155(v) => v == double_chain_id + 35 || v == double_chain_id + 36,
+        _ => false,
+    }
 }

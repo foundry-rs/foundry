@@ -4,7 +4,6 @@ use crate::eth::{
 };
 use alloy_primitives::{B256, U256};
 use anvil_core::eth::transaction::TypedTransaction;
-use foundry_common::types::ToAlloy;
 use foundry_evm::revm::primitives::SpecId;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -231,10 +230,10 @@ impl FeeHistoryService {
         let current_receipts = self.storage_info.receipts(hash);
 
         if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number.as_u64());
+            block_number = Some(block.header.number);
 
-            let gas_used = block.header.gas_used.as_u64() as f64;
-            let gas_limit = block.header.gas_limit.as_u64() as f64;
+            let gas_used = block.header.gas_used as f64;
+            let gas_limit = block.header.gas_limit as f64;
 
             let gas_target = gas_limit / elasticity;
             item.gas_used_ratio = gas_used / (gas_target * elasticity);
@@ -244,25 +243,25 @@ impl FeeHistoryService {
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
-                    let gas_used = receipt.gas_used().as_u64();
+                    let gas_used = receipt.gas_used();
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
                         Some(TypedTransaction::Legacy(t)) => {
-                            t.gas_price.to_alloy().saturating_sub(base_fee).to::<u64>()
+                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
                         }
                         Some(TypedTransaction::EIP2930(t)) => {
-                            t.gas_price.to_alloy().saturating_sub(base_fee).to::<u64>()
+                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
                         }
-                        Some(TypedTransaction::EIP1559(t)) => t
-                            .max_priority_fee_per_gas
-                            .to_alloy()
-                            .min(t.max_fee_per_gas.to_alloy().saturating_sub(base_fee))
-                            .to::<u64>(),
+                        Some(TypedTransaction::EIP1559(t)) => {
+                            U256::from(t.max_priority_fee_per_gas)
+                                .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
+                                .to::<u64>()
+                        }
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
 
-                    (gas_used, effective_reward)
+                    (gas_used.to::<u64>(), effective_reward)
                 })
                 .collect();
 

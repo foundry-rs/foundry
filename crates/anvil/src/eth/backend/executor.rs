@@ -6,18 +6,13 @@ use crate::{
     },
     mem::inspector::Inspector,
 };
+use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
+use alloy_primitives::{Bloom, BloomInput, Log, B256, U256};
 use anvil_core::eth::{
-    block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{DepositReceipt, EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
-    transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
+    block::{Block, BlockInfo, PartialHeader},
+    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
     trie,
 };
-use ethers::{
-    abi::ethereum_types::BloomInput,
-    types::{Bloom, H256, U256},
-    utils::rlp,
-};
-use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
     inspectors::{TracingInspector, TracingInspectorConfig},
@@ -47,7 +42,7 @@ pub struct ExecutedTransaction {
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
     fn create_receipt(&self) -> TypedReceipt {
-        let used_gas: U256 = self.gas_used.into();
+        let used_gas = U256::from(self.gas_used);
         let mut bloom = Bloom::default();
         logs_bloom(self.logs.clone(), &mut bloom);
         let logs = self.logs.clone();
@@ -55,29 +50,37 @@ impl ExecutedTransaction {
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
         match &self.transaction.pending_transaction.transaction.transaction {
-            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
-                status_code,
-                gas_used: used_gas,
-                logs_bloom: bloom,
-                logs,
+            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    success: status_code == 1,
+                    cumulative_gas_used: used_gas.to::<u64>(),
+                    logs,
+                },
+                bloom,
             }),
-            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(EIP2930Receipt {
-                status_code,
-                gas_used: used_gas,
-                logs_bloom: bloom,
-                logs,
+            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(ReceiptWithBloom {
+                receipt: Receipt {
+                    success: status_code == 1,
+                    cumulative_gas_used: used_gas.to::<u64>(),
+                    logs,
+                },
+                bloom,
             }),
-            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(EIP1559Receipt {
-                status_code,
-                gas_used: used_gas,
-                logs_bloom: bloom,
-                logs,
+            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(ReceiptWithBloom {
+                receipt: Receipt {
+                    success: status_code == 1,
+                    cumulative_gas_used: used_gas.to::<u64>(),
+                    logs,
+                },
+                bloom,
             }),
-            TypedTransaction::Deposit(_) => TypedReceipt::Deposit(DepositReceipt {
-                status_code,
-                gas_used: used_gas,
-                logs_bloom: bloom,
-                logs,
+            TypedTransaction::Deposit(_) => TypedReceipt::Deposit(ReceiptWithBloom {
+                receipt: Receipt {
+                    success: status_code == 1,
+                    cumulative_gas_used: used_gas.to::<u64>(),
+                    logs,
+                },
+                bloom,
             }),
         }
     }
@@ -105,7 +108,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
     pub cfg_env: CfgEnv,
-    pub parent_hash: H256,
+    pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
     pub enable_steps_tracing: bool,
@@ -118,7 +121,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
         let mut bloom = Bloom::default();
-        let mut cumulative_gas_used = U256::zero();
+        let mut cumulative_gas_used = U256::ZERO;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
         let gas_limit = self.block_env.gas_limit;
@@ -126,7 +129,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
-        let timestamp = self.block_env.timestamp.to_ethers().as_u64();
+        let timestamp = self.block_env.timestamp.to::<u64>();
         let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
             Some(self.block_env.basefee)
         } else {
@@ -165,18 +168,18 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
             let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {
-                transaction_hash: transaction.hash().to_ethers(),
+                transaction_hash: transaction.hash(),
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
-                to: transaction.pending_transaction.transaction.to().copied(),
-                contract_address: contract_address.map(|c| c.to_ethers()),
+                to: transaction.pending_transaction.transaction.to(),
+                contract_address,
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
                 traces,
                 exit,
                 out: match out {
-                    Some(Output::Call(b)) => Some(ethers::types::Bytes(b.0)),
-                    Some(Output::Create(b, _)) => Some(ethers::types::Bytes(b.0)),
+                    Some(Output::Call(b)) => Some(alloy_primitives::Bytes(b.0)),
+                    Some(Output::Create(b, _)) => Some(alloy_primitives::Bytes(b.0)),
                     _ => None,
                 },
                 nonce: tx.nonce,
@@ -188,23 +191,23 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         }
 
         let ommers: Vec<Header> = Vec::new();
-        let receipts_root = trie::ordered_trie_root(receipts.iter().map(rlp::encode));
+        let receipts_root = trie::ordered_trie_root(receipts.iter().map(alloy_rlp::encode));
 
         let partial_header = PartialHeader {
             parent_hash,
-            beneficiary: beneficiary.to_ethers(),
-            state_root: self.db.maybe_state_root().unwrap_or_default().to_ethers(),
+            beneficiary,
+            state_root: self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
-            difficulty: difficulty.to_ethers(),
-            number: block_number.to_ethers(),
-            gas_limit: gas_limit.to_ethers(),
-            gas_used: cumulative_gas_used,
+            difficulty,
+            number: block_number.to::<u64>(),
+            gas_limit: gas_limit.to::<u64>(),
+            gas_used: cumulative_gas_used.to::<u64>(),
             timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
-            base_fee: base_fee.map(|b| b.to_ethers()),
+            base_fee: base_fee.map(|b| b.to::<u64>()),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -237,14 +240,14 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
         let sender = *transaction.pending_transaction.sender();
-        let account = match self.db.basic(sender.to_alloy()).map(|acc| acc.unwrap_or_default()) {
+        let account = match self.db.basic(sender).map(|acc| acc.unwrap_or_default()) {
             Ok(account) => account,
             Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
-        if max_gas > env.block.gas_limit.to_ethers() {
+        if max_gas > env.block.gas_limit {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
@@ -312,7 +315,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
-        self.gas_used.saturating_add(U256::from(gas_used));
+        self.gas_used = self.gas_used.saturating_add(U256::from(gas_used));
 
         trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 
@@ -321,7 +324,11 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             exit_reason,
             out,
             gas_used,
-            logs: logs.unwrap_or_default().into_iter().map(Into::into).collect(),
+            logs: logs
+                .unwrap_or_default()
+                .into_iter()
+                .map(|log| Log::new_unchecked(log.address, log.topics, log.data))
+                .collect(),
             traces: inspector
                 .tracer
                 .unwrap_or(TracingInspector::new(TracingInspectorConfig::all()))
@@ -339,7 +346,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 fn logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     for log in logs {
         bloom.accrue(BloomInput::Raw(&log.address[..]));
-        for topic in log.topics {
+        for topic in log.topics() {
             bloom.accrue(BloomInput::Raw(&topic[..]));
         }
     }

@@ -1,4 +1,8 @@
-use crate::fork::fork_config;
+use crate::{
+    fork::fork_config,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
+use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::ContractInstance,
@@ -10,20 +14,20 @@ use ethers::{
     utils::hex,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
-use foundry_common::types::ToAlloy;
+use foundry_common::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
     // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
 
     // broadcast it via the eth_sendTransaction API
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
@@ -35,7 +39,7 @@ async fn test_get_transfer_parity_traces() {
         Action::Call(ref call) => {
             assert_eq!(call.from, from);
             assert_eq!(call.to, to);
-            assert_eq!(call.value, amount);
+            assert_eq!(call.value, amount.to_ethers());
         }
         _ => unreachable!("unexpected action"),
     }
@@ -73,8 +77,8 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -84,13 +88,15 @@ contract Contract {
     let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
-        SignerMiddleware::new(handle.ethers_http_provider(), wallets[1].clone()),
+        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
     );
     let call = contract.method::<_, ()>("goodbye", ()).unwrap();
     let tx = call.send().await.unwrap().await.unwrap().unwrap();
 
-    let traces =
-        handle.ethers_http_provider().trace_transaction(tx.transaction_hash).await.unwrap();
+    let traces = ethers_http_provider(&handle.http_endpoint())
+        .trace_transaction(tx.transaction_hash)
+        .await
+        .unwrap();
     assert!(!traces.is_empty());
     assert_eq!(traces[1].action_type, ActionType::Suicide);
 }
@@ -121,8 +127,8 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -132,12 +138,11 @@ contract Contract {
     let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
-        SignerMiddleware::new(handle.ethers_http_provider(), wallets[1].clone()),
+        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
     );
     let call = contract.method::<_, ()>("goodbye", ()).unwrap();
 
-    let traces = handle
-        .ethers_http_provider()
+    let traces = ethers_http_provider(&handle.http_endpoint())
         .debug_trace_call(call.tx, None, GethDebugTracingCallOptions::default())
         .await
         .unwrap();
@@ -160,7 +165,7 @@ contract Contract {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_address_fork() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15291050u64))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let input = hex::decode("43bcfab60000000000000000000000006b175474e89094c44da98b954eedeac495271d0f0000000000000000000000000000000000000000000000e0bd811c8769a824b00000000000000000000000000000000000000000000000e0ae9925047d8440b60000000000000000000000002e4777139254ff76db957e284b186a4507ff8c67").unwrap();
 
@@ -353,7 +358,7 @@ async fn test_trace_address_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_address_fork2() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15314401u64))).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let input = hex::decode("30000003000000000000000000000000adda1059a6c6c102b0fa562b9bb2cb9a0de5b1f4000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a300000004fffffffffffffffffffffffffffffffffffffffffffff679dc91ecfe150fb980c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2f4d2888d29d722226fafa5d9b24f9164c092421e000bb8000000000000004319b52bf08b65295d49117e790000000000000000000000000000000000000000000000008b6d9e8818d6141f000000000000000000000000000000000000000000000000000000086a23af210000000000000000000000000000000000000000000000000000000000").unwrap();
 
