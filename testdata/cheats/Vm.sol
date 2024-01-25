@@ -219,7 +219,6 @@ interface Vm {
     function sleep(uint256 duration) external;
     function snapshot() external returns (uint256 snapshotId);
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
-    function toUppercase(string calldata input) external pure returns (string memory output);
     function startBroadcast() external;
     function startBroadcast(address signer) external;
     function startBroadcast(uint256 privateKey) external;
@@ -243,6 +242,7 @@ interface Vm {
     function toString(bool value) external pure returns (string memory stringifiedValue);
     function toString(uint256 value) external pure returns (string memory stringifiedValue);
     function toString(int256 value) external pure returns (string memory stringifiedValue);
+    function toUppercase(string calldata input) external pure returns (string memory output);
     function transact(bytes32 txHash) external;
     function transact(uint256 forkId, bytes32 txHash) external;
     function trim(string calldata input) external pure returns (string memory output);

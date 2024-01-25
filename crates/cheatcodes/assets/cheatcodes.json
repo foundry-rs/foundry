@@ -3597,7 +3597,7 @@
       "func": {
         "id": "replace",
         "description": "Replaces occurrences of `from` in the given `string` with `to`.",
-        "declaration": "function replace(string calldata stringifiedValue, string calldata from, string calldata to) external pure returns (string memory stringifiedValue);",
+        "declaration": "function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "replace(string,string,string)",
@@ -4417,7 +4417,7 @@
       "func": {
         "id": "split",
         "description": "Splits the given `string` into an array of strings divided by the `delimiter`.",
-        "declaration": "function split(string calldata stringifiedValue, string calldata delimiter) external pure returns (string[] memory stringifiedValues);",
+        "declaration": "function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "split(string,string)",
@@ -4757,7 +4757,7 @@
       "func": {
         "id": "toLowercase",
         "description": "Converts the given `string` value to Lowercase.",
-        "declaration": "function toLowercase(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);",
+        "declaration": "function toLowercase(string calldata input) external pure returns (string memory output);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "toLowercase(string)",
@@ -4897,7 +4897,7 @@
       "func": {
         "id": "toUppercase",
         "description": "Converts the given `string` value to Uppercase.",
-        "declaration": "function toUppercase(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);",
+        "declaration": "function toUppercase(string calldata input) external pure returns (string memory output);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "toUppercase(string)",
@@ -4957,7 +4957,7 @@
       "func": {
         "id": "trim",
         "description": "Trims leading and trailing whitespace from the given `string` value.",
-        "declaration": "function trim(string calldata stringifiedValue) external pure returns (string memory stringifiedValue);",
+        "declaration": "function trim(string calldata input) external pure returns (string memory output);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "trim(string)",

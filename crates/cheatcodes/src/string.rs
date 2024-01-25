@@ -1,7 +1,7 @@
 //! Implementations of [`String`](crate::Group::String) cheatcodes.
 
-use crate::{ Cheatcode, Cheatcodes, Result, Vm::* };
-use alloy_dyn_abi::{ DynSolType, DynSolValue };
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_sol_types::SolValue;
 
 // address
@@ -140,17 +140,17 @@ pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
 }
 
 pub(super) fn parse_array<I, S>(values: I, ty: &DynSolType) -> Result
-    where I: IntoIterator<Item = S>, S: AsRef<str>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
 {
     let mut values = values.into_iter();
     match values.next() {
-        Some(first) if !first.as_ref().is_empty() =>
-            std::iter
-                ::once(first)
-                .chain(values)
-                .map(|s| parse_value(s.as_ref(), ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|vec| DynSolValue::Array(vec).abi_encode()),
+        Some(first) if !first.as_ref().is_empty() => std::iter::once(first)
+            .chain(values)
+            .map(|s| parse_value(s.as_ref(), ty))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|vec| DynSolValue::Array(vec).abi_encode()),
         // return the empty encoded Bytes when values is empty or the first element is empty
         _ => Ok("".abi_encode()),
     }
@@ -160,12 +160,11 @@ pub(super) fn parse_array<I, S>(values: I, ty: &DynSolType) -> Result
 fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
     match ty.coerce_str(s) {
         Ok(value) => Ok(value),
-        Err(e) =>
-            match parse_value_fallback(s, ty) {
-                Some(Ok(value)) => Ok(value),
-                Some(Err(e2)) => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e2}")),
-                None => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e}")),
-            }
+        Err(e) => match parse_value_fallback(s, ty) {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(e2)) => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e2}")),
+            None => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e}")),
+        },
     }
 }
 
@@ -184,10 +183,10 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
             };
             return Some(Ok(DynSolValue::Bool(b)));
         }
-        | DynSolType::Int(_)
-        | DynSolType::Uint(_)
-        | DynSolType::FixedBytes(_)
-        | DynSolType::Bytes => {
+        DynSolType::Int(_) |
+        DynSolType::Uint(_) |
+        DynSolType::FixedBytes(_) |
+        DynSolType::Bytes => {
             if !s.starts_with("0x") && s.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Some(Err("missing hex prefix (\"0x\") for hex string"));
             }
