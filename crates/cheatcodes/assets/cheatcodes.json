@@ -555,6 +555,2326 @@
     },
     {
       "func": {
+        "id": "assertApproxEqAbsDecimal_0",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256)",
+        "selector": "0x045c55ce",
+        "selectorBytes": [
+          4,
+          92,
+          85,
+          206
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbsDecimal_1",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256,string)",
+        "selector": "0x60429eb2",
+        "selectorBytes": [
+          96,
+          66,
+          158,
+          178
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbsDecimal_2",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256)",
+        "selector": "0x3d5bc8bc",
+        "selectorBytes": [
+          61,
+          91,
+          200,
+          188
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbsDecimal_3",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256,string)",
+        "selector": "0x6a5066d4",
+        "selectorBytes": [
+          106,
+          80,
+          102,
+          212
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_0",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.",
+        "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(uint256,uint256,uint256)",
+        "selector": "0x16d207c6",
+        "selectorBytes": [
+          22,
+          210,
+          7,
+          198
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_1",
+        "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(uint256,uint256,uint256,string)",
+        "selector": "0xf710b062",
+        "selectorBytes": [
+          247,
+          16,
+          176,
+          98
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_2",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.",
+        "declaration": "function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(int256,int256,uint256)",
+        "selector": "0x240f839d",
+        "selectorBytes": [
+          36,
+          15,
+          131,
+          157
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqAbs_3",
+        "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqAbs(int256,int256,uint256,string)",
+        "selector": "0x8289e621",
+        "selectorBytes": [
+          130,
+          137,
+          230,
+          33
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_0",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256)",
+        "selector": "0x21ed2977",
+        "selectorBytes": [
+          33,
+          237,
+          41,
+          119
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_1",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256,string)",
+        "selector": "0x82d6c8fd",
+        "selectorBytes": [
+          130,
+          214,
+          200,
+          253
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_2",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message.",
+        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256)",
+        "selector": "0xabbf21cc",
+        "selectorBytes": [
+          171,
+          191,
+          33,
+          204
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRelDecimal_3",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256,string)",
+        "selector": "0xfccc11c4",
+        "selectorBytes": [
+          252,
+          204,
+          17,
+          196
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_0",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%",
+        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(uint256,uint256,uint256)",
+        "selector": "0x8cf25ef4",
+        "selectorBytes": [
+          140,
+          242,
+          94,
+          244
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_1",
+        "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(uint256,uint256,uint256,string)",
+        "selector": "0x1ecb7d33",
+        "selectorBytes": [
+          30,
+          203,
+          125,
+          51
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_2",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%",
+        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(int256,int256,uint256)",
+        "selector": "0xfea2d14f",
+        "selectorBytes": [
+          254,
+          162,
+          209,
+          79
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertApproxEqRel_3",
+        "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
+        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertApproxEqRel(int256,int256,uint256,string)",
+        "selector": "0xef277d72",
+        "selectorBytes": [
+          239,
+          39,
+          125,
+          114
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_0",
+        "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.",
+        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(uint256,uint256,uint256)",
+        "selector": "0x27af7d9c",
+        "selectorBytes": [
+          39,
+          175,
+          125,
+          156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_1",
+        "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(uint256,uint256,uint256,string)",
+        "selector": "0xd0cbbdef",
+        "selectorBytes": [
+          208,
+          203,
+          189,
+          239
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_2",
+        "description": "Asserts that two `int256` values are equal, formatting them with decimals in failure message.",
+        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(int256,int256,uint256)",
+        "selector": "0x48016c04",
+        "selectorBytes": [
+          72,
+          1,
+          108,
+          4
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEqDecimal_3",
+        "description": "Asserts that two `int256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEqDecimal(int256,int256,uint256,string)",
+        "selector": "0x7e77b0c5",
+        "selectorBytes": [
+          126,
+          119,
+          176,
+          197
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_0",
+        "description": "Asserts that two `bool` values are equal.",
+        "declaration": "function assertEq(bool left, bool right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bool,bool)",
+        "selector": "0xf7fe3477",
+        "selectorBytes": [
+          247,
+          254,
+          52,
+          119
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_1",
+        "description": "Asserts that two `bool` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(bool left, bool right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bool,bool,string)",
+        "selector": "0x4db19e7e",
+        "selectorBytes": [
+          77,
+          177,
+          158,
+          126
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_10",
+        "description": "Asserts that two `string` values are equal.",
+        "declaration": "function assertEq(string calldata left, string calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(string,string)",
+        "selector": "0xf320d963",
+        "selectorBytes": [
+          243,
+          32,
+          217,
+          99
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_11",
+        "description": "Asserts that two `string` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(string calldata left, string calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(string,string,string)",
+        "selector": "0x36f656d8",
+        "selectorBytes": [
+          54,
+          246,
+          86,
+          216
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_12",
+        "description": "Asserts that two `bytes` values are equal.",
+        "declaration": "function assertEq(bytes calldata left, bytes calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes,bytes)",
+        "selector": "0x97624631",
+        "selectorBytes": [
+          151,
+          98,
+          70,
+          49
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_13",
+        "description": "Asserts that two `bytes` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes,bytes,string)",
+        "selector": "0xe24fed00",
+        "selectorBytes": [
+          226,
+          79,
+          237,
+          0
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_14",
+        "description": "Asserts that two arrays of `bool` values are equal.",
+        "declaration": "function assertEq(bool[] calldata left, bool[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bool[],bool[])",
+        "selector": "0x707df785",
+        "selectorBytes": [
+          112,
+          125,
+          247,
+          133
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_15",
+        "description": "Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bool[],bool[],string)",
+        "selector": "0xe48a8f8d",
+        "selectorBytes": [
+          228,
+          138,
+          143,
+          141
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_16",
+        "description": "Asserts that two arrays of `uint256 values are equal.",
+        "declaration": "function assertEq(uint256[] calldata left, uint256[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(uint256[],uint256[])",
+        "selector": "0x975d5a12",
+        "selectorBytes": [
+          151,
+          93,
+          90,
+          18
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_17",
+        "description": "Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(uint256[],uint256[],string)",
+        "selector": "0x5d18c73a",
+        "selectorBytes": [
+          93,
+          24,
+          199,
+          58
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_18",
+        "description": "Asserts that two arrays of `int256` values are equal.",
+        "declaration": "function assertEq(int256[] calldata left, int256[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(int256[],int256[])",
+        "selector": "0x711043ac",
+        "selectorBytes": [
+          113,
+          16,
+          67,
+          172
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_19",
+        "description": "Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(int256[],int256[],string)",
+        "selector": "0x191f1b30",
+        "selectorBytes": [
+          25,
+          31,
+          27,
+          48
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_2",
+        "description": "Asserts that two `uint256` values are equal.",
+        "declaration": "function assertEq(uint256 left, uint256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(uint256,uint256)",
+        "selector": "0x98296c54",
+        "selectorBytes": [
+          152,
+          41,
+          108,
+          84
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_20",
+        "description": "Asserts that two arrays of `address` values are equal.",
+        "declaration": "function assertEq(address[] calldata left, address[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(address[],address[])",
+        "selector": "0x3868ac34",
+        "selectorBytes": [
+          56,
+          104,
+          172,
+          52
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_21",
+        "description": "Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(address[],address[],string)",
+        "selector": "0x3e9173c5",
+        "selectorBytes": [
+          62,
+          145,
+          115,
+          197
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_22",
+        "description": "Asserts that two arrays of `bytes32` values are equal.",
+        "declaration": "function assertEq(bytes32[] calldata left, bytes32[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes32[],bytes32[])",
+        "selector": "0x0cc9ee84",
+        "selectorBytes": [
+          12,
+          201,
+          238,
+          132
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_23",
+        "description": "Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes32[],bytes32[],string)",
+        "selector": "0xe03e9177",
+        "selectorBytes": [
+          224,
+          62,
+          145,
+          119
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_24",
+        "description": "Asserts that two arrays of `string` values are equal.",
+        "declaration": "function assertEq(string[] calldata left, string[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(string[],string[])",
+        "selector": "0xcf1c049c",
+        "selectorBytes": [
+          207,
+          28,
+          4,
+          156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_25",
+        "description": "Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(string[],string[],string)",
+        "selector": "0xeff6b27d",
+        "selectorBytes": [
+          239,
+          246,
+          178,
+          125
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_26",
+        "description": "Asserts that two arrays of `bytes` values are equal.",
+        "declaration": "function assertEq(bytes[] calldata left, bytes[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes[],bytes[])",
+        "selector": "0xe5fb9b4a",
+        "selectorBytes": [
+          229,
+          251,
+          155,
+          74
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_27",
+        "description": "Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes[],bytes[],string)",
+        "selector": "0xf413f0b6",
+        "selectorBytes": [
+          244,
+          19,
+          240,
+          182
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_3",
+        "description": "Asserts that two `uint256` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(uint256 left, uint256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(uint256,uint256,string)",
+        "selector": "0x88b44c85",
+        "selectorBytes": [
+          136,
+          180,
+          76,
+          133
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_4",
+        "description": "Asserts that two `int256` values are equal.",
+        "declaration": "function assertEq(int256 left, int256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(int256,int256)",
+        "selector": "0xfe74f05b",
+        "selectorBytes": [
+          254,
+          116,
+          240,
+          91
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_5",
+        "description": "Asserts that two `int256` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(int256 left, int256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(int256,int256,string)",
+        "selector": "0x714a2f13",
+        "selectorBytes": [
+          113,
+          74,
+          47,
+          19
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_6",
+        "description": "Asserts that two `address` values are equal.",
+        "declaration": "function assertEq(address left, address right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(address,address)",
+        "selector": "0x515361f6",
+        "selectorBytes": [
+          81,
+          83,
+          97,
+          246
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_7",
+        "description": "Asserts that two `address` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(address left, address right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(address,address,string)",
+        "selector": "0x2f2769d1",
+        "selectorBytes": [
+          47,
+          39,
+          105,
+          209
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_8",
+        "description": "Asserts that two `bytes32` values are equal.",
+        "declaration": "function assertEq(bytes32 left, bytes32 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes32,bytes32)",
+        "selector": "0x7c84c69b",
+        "selectorBytes": [
+          124,
+          132,
+          198,
+          155
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertEq_9",
+        "description": "Asserts that two `bytes32` values are equal and includes error message into revert string on failure.",
+        "declaration": "function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertEq(bytes32,bytes32,string)",
+        "selector": "0xc1fa1ed0",
+        "selectorBytes": [
+          193,
+          250,
+          30,
+          208
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertFalse_0",
+        "description": "Asserts that the given condition is false.",
+        "declaration": "function assertFalse(bool condition) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertFalse(bool)",
+        "selector": "0xa5982885",
+        "selectorBytes": [
+          165,
+          152,
+          40,
+          133
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertFalse_1",
+        "description": "Asserts that the given condition is false and includes error message into revert string on failure.",
+        "declaration": "function assertFalse(bool condition, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertFalse(bool,string)",
+        "selector": "0x7ba04809",
+        "selectorBytes": [
+          123,
+          160,
+          72,
+          9
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(uint256,uint256,uint256)",
+        "selector": "0x3d1fe08a",
+        "selectorBytes": [
+          61,
+          31,
+          224,
+          138
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(uint256,uint256,uint256,string)",
+        "selector": "0x8bff9133",
+        "selectorBytes": [
+          139,
+          255,
+          145,
+          51
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(int256,int256,uint256)",
+        "selector": "0xdc28c0f1",
+        "selectorBytes": [
+          220,
+          40,
+          192,
+          241
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGeDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGeDecimal(int256,int256,uint256,string)",
+        "selector": "0x5df93c9b",
+        "selectorBytes": [
+          93,
+          249,
+          60,
+          155
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGe_0",
+        "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.",
+        "declaration": "function assertGe(uint256 left, uint256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGe(uint256,uint256)",
+        "selector": "0xa8d4d1d9",
+        "selectorBytes": [
+          168,
+          212,
+          209,
+          217
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGe_1",
+        "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertGe(uint256 left, uint256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGe(uint256,uint256,string)",
+        "selector": "0xe25242c0",
+        "selectorBytes": [
+          226,
+          82,
+          66,
+          192
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGe_2",
+        "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.",
+        "declaration": "function assertGe(int256 left, int256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGe(int256,int256)",
+        "selector": "0x0a30b771",
+        "selectorBytes": [
+          10,
+          48,
+          183,
+          113
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGe_3",
+        "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertGe(int256 left, int256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGe(int256,int256,string)",
+        "selector": "0xa84328dd",
+        "selectorBytes": [
+          168,
+          67,
+          40,
+          221
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(uint256,uint256,uint256)",
+        "selector": "0xeccd2437",
+        "selectorBytes": [
+          236,
+          205,
+          36,
+          55
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(uint256,uint256,uint256,string)",
+        "selector": "0x64949a8d",
+        "selectorBytes": [
+          100,
+          148,
+          154,
+          141
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(int256,int256,uint256)",
+        "selector": "0x78611f0e",
+        "selectorBytes": [
+          120,
+          97,
+          31,
+          14
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGtDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGtDecimal(int256,int256,uint256,string)",
+        "selector": "0x04a5c7ab",
+        "selectorBytes": [
+          4,
+          165,
+          199,
+          171
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGt_0",
+        "description": "Compares two `uint256` values. Expects first value to be greater than second.",
+        "declaration": "function assertGt(uint256 left, uint256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGt(uint256,uint256)",
+        "selector": "0xdb07fcd2",
+        "selectorBytes": [
+          219,
+          7,
+          252,
+          210
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGt_1",
+        "description": "Compares two `uint256` values. Expects first value to be greater than second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertGt(uint256 left, uint256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGt(uint256,uint256,string)",
+        "selector": "0xd9a3c4d2",
+        "selectorBytes": [
+          217,
+          163,
+          196,
+          210
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGt_2",
+        "description": "Compares two `int256` values. Expects first value to be greater than second.",
+        "declaration": "function assertGt(int256 left, int256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGt(int256,int256)",
+        "selector": "0x5a362d45",
+        "selectorBytes": [
+          90,
+          54,
+          45,
+          69
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertGt_3",
+        "description": "Compares two `int256` values. Expects first value to be greater than second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertGt(int256 left, int256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertGt(int256,int256,string)",
+        "selector": "0xf8d33b9b",
+        "selectorBytes": [
+          248,
+          211,
+          59,
+          155
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(uint256,uint256,uint256)",
+        "selector": "0xc304aab7",
+        "selectorBytes": [
+          195,
+          4,
+          170,
+          183
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(uint256,uint256,uint256,string)",
+        "selector": "0x7fefbbe0",
+        "selectorBytes": [
+          127,
+          239,
+          187,
+          224
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(int256,int256,uint256)",
+        "selector": "0x11d1364a",
+        "selectorBytes": [
+          17,
+          209,
+          54,
+          74
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLeDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLeDecimal(int256,int256,uint256,string)",
+        "selector": "0xaa5cf788",
+        "selectorBytes": [
+          170,
+          92,
+          247,
+          136
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLe_0",
+        "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.",
+        "declaration": "function assertLe(uint256 left, uint256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLe(uint256,uint256)",
+        "selector": "0x8466f415",
+        "selectorBytes": [
+          132,
+          102,
+          244,
+          21
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLe_1",
+        "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertLe(uint256 left, uint256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLe(uint256,uint256,string)",
+        "selector": "0xd17d4b0d",
+        "selectorBytes": [
+          209,
+          125,
+          75,
+          13
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLe_2",
+        "description": "Compares two `int256` values. Expects first value to be less than or equal to second.",
+        "declaration": "function assertLe(int256 left, int256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLe(int256,int256)",
+        "selector": "0x95fd154e",
+        "selectorBytes": [
+          149,
+          253,
+          21,
+          78
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLe_3",
+        "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertLe(int256 left, int256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLe(int256,int256,string)",
+        "selector": "0x4dfe692c",
+        "selectorBytes": [
+          77,
+          254,
+          105,
+          44
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_0",
+        "description": "Compares two `uint256` values. Expects first value to be less than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(uint256,uint256,uint256)",
+        "selector": "0x2077337e",
+        "selectorBytes": [
+          32,
+          119,
+          51,
+          126
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_1",
+        "description": "Compares two `uint256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(uint256,uint256,uint256,string)",
+        "selector": "0xa972d037",
+        "selectorBytes": [
+          169,
+          114,
+          208,
+          55
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_2",
+        "description": "Compares two `int256` values. Expects first value to be less than second.\nFormats values with decimals in failure message.",
+        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(int256,int256,uint256)",
+        "selector": "0xdbe8d88b",
+        "selectorBytes": [
+          219,
+          232,
+          216,
+          139
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLtDecimal_3",
+        "description": "Compares two `int256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
+        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLtDecimal(int256,int256,uint256,string)",
+        "selector": "0x40f0b4e0",
+        "selectorBytes": [
+          64,
+          240,
+          180,
+          224
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLt_0",
+        "description": "Compares two `uint256` values. Expects first value to be less than second.",
+        "declaration": "function assertLt(uint256 left, uint256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLt(uint256,uint256)",
+        "selector": "0xb12fc005",
+        "selectorBytes": [
+          177,
+          47,
+          192,
+          5
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLt_1",
+        "description": "Compares two `uint256` values. Expects first value to be less than second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertLt(uint256 left, uint256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLt(uint256,uint256,string)",
+        "selector": "0x65d5c135",
+        "selectorBytes": [
+          101,
+          213,
+          193,
+          53
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLt_2",
+        "description": "Compares two `int256` values. Expects first value to be less than second.",
+        "declaration": "function assertLt(int256 left, int256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLt(int256,int256)",
+        "selector": "0x3e914080",
+        "selectorBytes": [
+          62,
+          145,
+          64,
+          128
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertLt_3",
+        "description": "Compares two `int256` values. Expects first value to be less than second.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertLt(int256 left, int256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertLt(int256,int256,string)",
+        "selector": "0x9ff531e3",
+        "selectorBytes": [
+          159,
+          245,
+          49,
+          227
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_0",
+        "description": "Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.",
+        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(uint256,uint256,uint256)",
+        "selector": "0x669efca7",
+        "selectorBytes": [
+          102,
+          158,
+          252,
+          167
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_1",
+        "description": "Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(uint256,uint256,uint256,string)",
+        "selector": "0xf5a55558",
+        "selectorBytes": [
+          245,
+          165,
+          85,
+          88
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_2",
+        "description": "Asserts that two `int256` values are not equal, formatting them with decimals in failure message.",
+        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(int256,int256,uint256)",
+        "selector": "0x14e75680",
+        "selectorBytes": [
+          20,
+          231,
+          86,
+          128
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEqDecimal_3",
+        "description": "Asserts that two `int256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
+        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEqDecimal(int256,int256,uint256,string)",
+        "selector": "0x33949f0b",
+        "selectorBytes": [
+          51,
+          148,
+          159,
+          11
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_0",
+        "description": "Asserts that two `bool` values are not equal.",
+        "declaration": "function assertNotEq(bool left, bool right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bool,bool)",
+        "selector": "0x236e4d66",
+        "selectorBytes": [
+          35,
+          110,
+          77,
+          102
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_1",
+        "description": "Asserts that two `bool` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(bool left, bool right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bool,bool,string)",
+        "selector": "0x1091a261",
+        "selectorBytes": [
+          16,
+          145,
+          162,
+          97
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_10",
+        "description": "Asserts that two `string` values are not equal.",
+        "declaration": "function assertNotEq(string calldata left, string calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(string,string)",
+        "selector": "0x6a8237b3",
+        "selectorBytes": [
+          106,
+          130,
+          55,
+          179
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_11",
+        "description": "Asserts that two `string` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(string,string,string)",
+        "selector": "0x78bdcea7",
+        "selectorBytes": [
+          120,
+          189,
+          206,
+          167
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_12",
+        "description": "Asserts that two `bytes` values are not equal.",
+        "declaration": "function assertNotEq(bytes calldata left, bytes calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes,bytes)",
+        "selector": "0x3cf78e28",
+        "selectorBytes": [
+          60,
+          247,
+          142,
+          40
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_13",
+        "description": "Asserts that two `bytes` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes,bytes,string)",
+        "selector": "0x9507540e",
+        "selectorBytes": [
+          149,
+          7,
+          84,
+          14
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_14",
+        "description": "Asserts that two arrays of `bool` values are not equal.",
+        "declaration": "function assertNotEq(bool[] calldata left, bool[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bool[],bool[])",
+        "selector": "0x286fafea",
+        "selectorBytes": [
+          40,
+          111,
+          175,
+          234
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_15",
+        "description": "Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bool[],bool[],string)",
+        "selector": "0x62c6f9fb",
+        "selectorBytes": [
+          98,
+          198,
+          249,
+          251
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_16",
+        "description": "Asserts that two arrays of `uint256` values are not equal.",
+        "declaration": "function assertNotEq(uint256[] calldata left, uint256[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(uint256[],uint256[])",
+        "selector": "0x56f29cba",
+        "selectorBytes": [
+          86,
+          242,
+          156,
+          186
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_17",
+        "description": "Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(uint256[],uint256[],string)",
+        "selector": "0x9a7fbd8f",
+        "selectorBytes": [
+          154,
+          127,
+          189,
+          143
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_18",
+        "description": "Asserts that two arrays of `int256` values are not equal.",
+        "declaration": "function assertNotEq(int256[] calldata left, int256[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(int256[],int256[])",
+        "selector": "0x0b72f4ef",
+        "selectorBytes": [
+          11,
+          114,
+          244,
+          239
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_19",
+        "description": "Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(int256[],int256[],string)",
+        "selector": "0xd3977322",
+        "selectorBytes": [
+          211,
+          151,
+          115,
+          34
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_2",
+        "description": "Asserts that two `uint256` values are not equal.",
+        "declaration": "function assertNotEq(uint256 left, uint256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(uint256,uint256)",
+        "selector": "0xb7909320",
+        "selectorBytes": [
+          183,
+          144,
+          147,
+          32
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_20",
+        "description": "Asserts that two arrays of `address` values are not equal.",
+        "declaration": "function assertNotEq(address[] calldata left, address[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(address[],address[])",
+        "selector": "0x46d0b252",
+        "selectorBytes": [
+          70,
+          208,
+          178,
+          82
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_21",
+        "description": "Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(address[],address[],string)",
+        "selector": "0x72c7e0b5",
+        "selectorBytes": [
+          114,
+          199,
+          224,
+          181
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_22",
+        "description": "Asserts that two arrays of `bytes32` values are not equal.",
+        "declaration": "function assertNotEq(bytes32[] calldata left, bytes32[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes32[],bytes32[])",
+        "selector": "0x0603ea68",
+        "selectorBytes": [
+          6,
+          3,
+          234,
+          104
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_23",
+        "description": "Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes32[],bytes32[],string)",
+        "selector": "0xb873634c",
+        "selectorBytes": [
+          184,
+          115,
+          99,
+          76
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_24",
+        "description": "Asserts that two arrays of `string` values are not equal.",
+        "declaration": "function assertNotEq(string[] calldata left, string[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(string[],string[])",
+        "selector": "0xbdfacbe8",
+        "selectorBytes": [
+          189,
+          250,
+          203,
+          232
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_25",
+        "description": "Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(string[],string[],string)",
+        "selector": "0xb67187f3",
+        "selectorBytes": [
+          182,
+          113,
+          135,
+          243
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_26",
+        "description": "Asserts that two arrays of `bytes` values are not equal.",
+        "declaration": "function assertNotEq(bytes[] calldata left, bytes[] calldata right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes[],bytes[])",
+        "selector": "0xedecd035",
+        "selectorBytes": [
+          237,
+          236,
+          208,
+          53
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_27",
+        "description": "Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes[],bytes[],string)",
+        "selector": "0x1dcd1f68",
+        "selectorBytes": [
+          29,
+          205,
+          31,
+          104
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_3",
+        "description": "Asserts that two `uint256` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(uint256,uint256,string)",
+        "selector": "0x98f9bdbd",
+        "selectorBytes": [
+          152,
+          249,
+          189,
+          189
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_4",
+        "description": "Asserts that two `int256` values are not equal.",
+        "declaration": "function assertNotEq(int256 left, int256 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(int256,int256)",
+        "selector": "0xf4c004e3",
+        "selectorBytes": [
+          244,
+          192,
+          4,
+          227
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_5",
+        "description": "Asserts that two `int256` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(int256 left, int256 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(int256,int256,string)",
+        "selector": "0x4724c5b9",
+        "selectorBytes": [
+          71,
+          36,
+          197,
+          185
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_6",
+        "description": "Asserts that two `address` values are not equal.",
+        "declaration": "function assertNotEq(address left, address right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(address,address)",
+        "selector": "0xb12e1694",
+        "selectorBytes": [
+          177,
+          46,
+          22,
+          148
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_7",
+        "description": "Asserts that two `address` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(address left, address right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(address,address,string)",
+        "selector": "0x8775a591",
+        "selectorBytes": [
+          135,
+          117,
+          165,
+          145
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_8",
+        "description": "Asserts that two `bytes32` values are not equal.",
+        "declaration": "function assertNotEq(bytes32 left, bytes32 right) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes32,bytes32)",
+        "selector": "0x898e83fc",
+        "selectorBytes": [
+          137,
+          142,
+          131,
+          252
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertNotEq_9",
+        "description": "Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.",
+        "declaration": "function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertNotEq(bytes32,bytes32,string)",
+        "selector": "0xb2332f51",
+        "selectorBytes": [
+          178,
+          51,
+          47,
+          81
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertTrue_0",
+        "description": "Asserts that the given condition is true.",
+        "declaration": "function assertTrue(bool condition) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertTrue(bool)",
+        "selector": "0x0c9fd581",
+        "selectorBytes": [
+          12,
+          159,
+          213,
+          129
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assertTrue_1",
+        "description": "Asserts that the given condition is true and includes error message into revert string on failure.",
+        "declaration": "function assertTrue(bool condition, string calldata error) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertTrue(bool,string)",
+        "selector": "0xa34edc03",
+        "selectorBytes": [
+          163,
+          78,
+          220,
+          3
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assume",
         "description": "If the condition is false, discard this run's fuzz inputs and generate new ones.",
         "declaration": "function assume(bool condition) external pure;",

@@ -87,7 +87,7 @@ incremental = false
 [profile.release]
 opt-level = 3
 lto = "fat"
-strip = true
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 1
 
@@ -146,6 +146,7 @@ ethers-solc = { version = "2.0", default-features = false }
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
 alloy-eips = { git = "https://github.com/alloy-rs/alloy" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy" }
 alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-network = { git = "https://github.com/alloy-rs/alloy" }
 alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy" }

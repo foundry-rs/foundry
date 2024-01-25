@@ -7,8 +7,8 @@ use crate::{
     },
     fork::{CreateFork, ForkId},
 };
+use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::utils::GenesisAccount;
 use revm::{
     db::DatabaseRef,
     primitives::{AccountInfo, Bytecode, Env, ResultAndState},

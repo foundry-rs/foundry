@@ -48,6 +48,11 @@ impl EyreHandler for Handler {
 ///
 /// Panics are always caught by the more debug-centric handler.
 pub fn install() {
+    // If the user has not explicitly overridden "RUST_BACKTRACE", then produce full backtraces.
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        std::env::set_var("RUST_BACKTRACE", "full");
+    }
+
     let debug_enabled = std::env::var("FOUNDRY_DEBUG").is_ok();
     if debug_enabled {
         if let Err(e) = color_eyre::install() {
