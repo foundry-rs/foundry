@@ -78,9 +78,9 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "alloy-chains"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59a5f61137c31916542bb63cd70d0e0dd7a76f76b7f962f4337bc438612d45b2"
+checksum = "206e825321d0ed5b6e3907e6ddf70c2139cfdc6274e83a1ca2f4784bd0abc0c9"
 dependencies = [
  "num_enum",
  "serde",
