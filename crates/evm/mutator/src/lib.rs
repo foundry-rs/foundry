@@ -222,11 +222,15 @@ impl Mutator {
                     Some(self.get_artifact_functions(&filter, abi).collect_vec());
                 current_mutate_params.filename =
                     Some(String::from(id.source.to_str().expect("failed run mutate filename")));
-                current_mutate_params.contract = Some(String::from(id.name.clone()));
+                current_mutate_params.contract = get_contract_name(&id.name);
                 current_mutate_params
             })
             .collect_vec();
 
         run_mutate(mutant_params).map_err(|err| eyre!("{:?}", err))
     }
+}
+
+fn get_contract_name(name: &str) -> Option<String> {
+    name.split(".").nth(0).map(|x| x.to_owned())
 }
