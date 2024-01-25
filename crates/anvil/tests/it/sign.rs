@@ -91,7 +91,7 @@ async fn can_sign_typed_data() {
         .unwrap();
     assert_eq!(
       signature,
-      "0x6ea8bb309a3401225701f3565e32519f94a0ea91a5910ce9229fe488e773584c0390416a2190d9560219dab757ecca2029e63fa9d1c2aebf676cc25b9f03126a01".to_string()
+      "0x6ea8bb309a3401225701f3565e32519f94a0ea91a5910ce9229fe488e773584c0390416a2190d9560219dab757ecca2029e63fa9d1c2aebf676cc25b9f03126a1b".to_string()
     );
 }
 
@@ -279,7 +279,7 @@ async fn can_sign_typed_data_os() {
 
     assert_eq!(
       signature,
-      "0xedb0fa55ac67e3ca52b6bd6ee3576b193731adc2aff42151f67826932fa9f6191261ebdecc2c650204ff7625752b033293fb67ef5cfca78e16de359200040b7601".to_string()
+      "0xedb0fa55ac67e3ca52b6bd6ee3576b193731adc2aff42151f67826932fa9f6191261ebdecc2c650204ff7625752b033293fb67ef5cfca78e16de359200040b761b".to_string()
     );
 }
 
@@ -494,6 +494,6 @@ async fn can_sign_typed_seaport_data() {
 
     assert_eq!(
     signature,
-    "0xed9afe7f377155ee3a42b25b696d79b55d441aeac7790b97a51b54ad0569b9665ea30bf8e8df12d6ee801c4dcb85ecfb8b23a6f7ae166d5af9acac9befb9054500".to_string()
+    "0xed9afe7f377155ee3a42b25b696d79b55d441aeac7790b97a51b54ad0569b9665ea30bf8e8df12d6ee801c4dcb85ecfb8b23a6f7ae166d5af9acac9befb905451c".to_string()
   );
 }

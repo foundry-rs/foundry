@@ -77,7 +77,13 @@ impl Signer for DevSigner {
         address: Address,
         payload: &TypedData,
     ) -> Result<Signature, BlockchainError> {
-        let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
+        let mut signer =
+            self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?.to_owned();
+
+        // Explicitly set chainID as none, to avoid any EIP-155 application to `v` when signing
+        // typed data.
+        signer.set_chain_id(None);
+
         Ok(signer
             .sign_hash(
                 payload.eip712_signing_hash().map_err(|_| BlockchainError::NoSignerAvailable)?,
