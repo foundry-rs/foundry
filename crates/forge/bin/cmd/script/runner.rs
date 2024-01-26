@@ -7,6 +7,7 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
+use foundry_common::types::ToEthers;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -170,7 +171,7 @@ impl ScriptRunner {
                 traces,
                 debug,
                 address: None,
-                script_wallets,
+                script_wallets: script_wallets.to_ethers(),
                 ..Default::default()
             },
         ))
@@ -305,7 +306,7 @@ impl ScriptRunner {
             labeled_addresses: labels,
             transactions,
             address: None,
-            script_wallets,
+            script_wallets: script_wallets.to_ethers(),
             breakpoints,
         })
     }

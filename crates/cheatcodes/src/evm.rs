@@ -3,12 +3,9 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
-use ethers_signers::Signer;
-use foundry_common::{
-    fs::{read_json_file, write_json_file},
-    types::ToAlloy,
-};
+use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
@@ -48,7 +45,7 @@ impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let wallet = super::utils::parse_wallet(privateKey)?;
-        Ok(wallet.address().to_alloy().abi_encode())
+        Ok(wallet.address().abi_encode())
     }
 }
 
@@ -140,9 +137,9 @@ impl Cheatcode for dumpStateCall {
 }
 
 impl Cheatcode for sign_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey, digest } = self;
-        super::utils::sign(privateKey, digest, ccx.data.env.cfg.chain_id)
+        super::utils::sign(privateKey, digest)
     }
 }
 

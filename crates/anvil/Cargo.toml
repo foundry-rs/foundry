@@ -29,7 +29,7 @@ foundry-evm.workspace = true
 
 # evm support
 bytes = "1.4.0"
-k256 = "0.13"
+k256.workspace = true
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 trie-db = "0.23"
 hash-db = "0.15"

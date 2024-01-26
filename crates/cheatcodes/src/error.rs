@@ -1,11 +1,11 @@
 use crate::Vm;
 use alloy_primitives::{Address, Bytes};
+use alloy_signer::{Error as SignerError, WalletError};
 use alloy_sol_types::SolError;
-use ethers_core::k256::ecdsa::signature::Error as SignatureError;
-use ethers_signers::WalletError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::DatabaseError;
+use k256::ecdsa::signature::Error as SignatureError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
@@ -283,7 +283,7 @@ macro_rules! impl_from {
 
 impl_from!(
     alloy_sol_types::Error,
-    ethers_core::types::SignatureError,
+    alloy_primitives::SignatureError,
     FsPathError,
     hex::FromHexError,
     eyre::Error,
@@ -297,6 +297,7 @@ impl_from!(
     std::string::FromUtf8Error,
     UnresolvedEnvVarError,
     WalletError,
+    SignerError,
 );
 
 #[cfg(test)]

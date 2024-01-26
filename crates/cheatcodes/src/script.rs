@@ -2,8 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use ethers_signers::Signer;
-use foundry_common::types::ToAlloy;
+use alloy_signer::Signer;
 use foundry_config::Config;
 
 impl Cheatcode for broadcast_0Call {
@@ -107,8 +106,9 @@ fn broadcast_key<DB: DatabaseExt>(
     private_key: &U256,
     single_call: bool,
 ) -> Result {
-    let wallet = super::utils::parse_wallet(private_key)?.with_chain_id(ccx.data.env.cfg.chain_id);
-    let new_origin = &wallet.address().to_alloy();
+    let mut wallet = super::utils::parse_wallet(private_key)?;
+    wallet.set_chain_id(Some(ccx.data.env.cfg.chain_id));
+    let new_origin = &wallet.address();
 
     let result = broadcast(ccx, Some(new_origin), single_call);
     if result.is_ok() {
