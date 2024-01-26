@@ -1,0 +1,1 @@
+forge create src/Contract.sol:Contract --chain-id 1014 --rpc-url https://rpc.parallel.fi/ --private-key $PRIVATE_KEY. 
