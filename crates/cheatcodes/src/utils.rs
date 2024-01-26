@@ -10,7 +10,6 @@ use alloy_signer::{
     LocalWallet, MnemonicBuilder, Signer, SignerSync,
 };
 use alloy_sol_types::SolValue;
-use foundry_common::types::ToAlloy;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use k256::{
     ecdsa::SigningKey,
@@ -141,7 +140,7 @@ impl Cheatcode for computeCreate2Address_1Call {
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {
     let key = parse_private_key(private_key)?;
-    let addr = ethers_core::utils::secret_key_to_address(&key).to_alloy();
+    let addr = alloy_signer::utils::secret_key_to_address(&key);
 
     let pub_key = key.verifying_key().as_affine().to_encoded_point(false);
     let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());

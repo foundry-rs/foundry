@@ -2983,8 +2983,6 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.21.7",
  "const-hex",
- "ethers-core",
- "ethers-signers",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",

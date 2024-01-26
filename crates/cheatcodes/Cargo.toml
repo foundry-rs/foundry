@@ -27,8 +27,6 @@ alloy-providers.workspace = true
 alloy-rpc-types.workspace = true
 alloy-signer = { workspace = true, features = ["mnemonic", "keystore"] }
 
-ethers-core.workspace = true
-ethers-signers.workspace = true
 
 eyre.workspace = true
 hex.workspace = true
