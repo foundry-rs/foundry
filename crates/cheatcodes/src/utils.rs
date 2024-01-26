@@ -2,21 +2,21 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, B256, U256};
-use alloy_sol_types::SolValue;
-use ethers_core::k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, Curve},
-    Secp256k1,
-};
-use ethers_signers::{
+use alloy_signer::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalWallet, MnemonicBuilder, Signer,
+    LocalWallet, MnemonicBuilder, Signer, SignerSync,
 };
+use alloy_sol_types::SolValue;
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use k256::{
+    ecdsa::SigningKey,
+    elliptic_curve::{sec1::ToEncodedPoint, Curve},
+    Secp256k1,
+};
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
 
 /// The BIP32 default derivation path prefix.
@@ -51,9 +51,9 @@ impl Cheatcode for getNonce_1Call {
 }
 
 impl Cheatcode for sign_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        sign(&wallet.privateKey, digest, ccx.data.env.cfg.chain_id)
+        sign(&wallet.privateKey, digest)
     }
 }
 
@@ -88,10 +88,10 @@ impl Cheatcode for deriveKey_3Call {
 impl Cheatcode for rememberKeyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
-        let wallet = parse_wallet(privateKey)?.with_chain_id(ccx.data.env.cfg.chain_id);
+        let wallet = parse_wallet(privateKey)?.with_chain_id(Some(ccx.data.env.cfg.chain_id));
         let address = wallet.address();
-        ccx.state.script_wallets.push(wallet);
-        Ok(address.to_alloy().abi_encode())
+        ccx.state.script_wallets.push(wallet.to_ethers());
+        Ok(address.abi_encode())
     }
 }
 
@@ -155,21 +155,20 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-pub(super) fn sign(private_key: &U256, digest: &B256, chain_id: u64) -> Result {
-    let wallet = parse_wallet(private_key)?.with_chain_id(chain_id);
+pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
+    // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
+    let wallet = parse_wallet(private_key)?;
 
-    // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest.to_ethers())?;
-    let recovered = sig.recover(digest.to_ethers())?.to_alloy();
+    let sig = wallet.sign_hash_sync(*digest)?;
+    let recovered = sig.recover_address_from_prehash(digest)?;
 
-    assert_eq!(recovered, wallet.address().to_alloy());
+    assert_eq!(recovered, wallet.address());
 
-    let mut r_bytes = [0u8; 32];
-    let mut s_bytes = [0u8; 32];
-    sig.r.to_big_endian(&mut r_bytes);
-    sig.s.to_big_endian(&mut s_bytes);
+    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
+    let r = B256::from(sig.r());
+    let s = B256::from(sig.s());
 
-    Ok((sig.v, r_bytes, s_bytes).abi_encode())
+    Ok((v, r, s).abi_encode())
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
@@ -231,7 +230,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 
     let wallet = MnemonicBuilder::<W>::default()
         .phrase(mnemonic)
-        .derivation_path(&derive_key_path(path, index))?
+        .derivation_path(derive_key_path(path, index))?
         .build()?;
     let private_key = U256::from_be_bytes(wallet.signer().to_bytes().into());
     Ok(private_key.abi_encode())

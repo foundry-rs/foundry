@@ -1,5 +1,6 @@
 use crate::Vm;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, SignatureError as AlloySignatureError};
+use alloy_signer::{Error as SignerError, WalletError as AlloyWalletError};
 use alloy_sol_types::SolError;
 use ethers_core::k256::ecdsa::signature::Error as SignatureError;
 use ethers_signers::WalletError;
@@ -297,6 +298,9 @@ impl_from!(
     std::string::FromUtf8Error,
     UnresolvedEnvVarError,
     WalletError,
+    AlloySignatureError,
+    AlloyWalletError,
+    SignerError,
 );
 
 #[cfg(test)]

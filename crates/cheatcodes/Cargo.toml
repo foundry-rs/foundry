@@ -25,6 +25,7 @@ alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
 alloy-providers.workspace = true
 alloy-rpc-types.workspace = true
+alloy-signer = { workspace = true, features = ["mnemonic", "keystore"] }
 
 ethers-core.workspace = true
 ethers-signers.workspace = true
@@ -37,6 +38,7 @@ revm.workspace = true
 serde_json.workspace = true
 base64.workspace = true
 tracing.workspace = true
+k256.workspace = true
 walkdir = "2"
 p256 = "0.13.2"
 thiserror = "1"
