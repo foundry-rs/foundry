@@ -36,8 +36,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    string::ToString,
 };
-use std::string::ToString;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -403,7 +403,8 @@ pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str
 /// Deprecated keys and their replacements.
 ///
 /// See [Warning::DeprecatedKey]
-pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| HashMap::from([("cancun".to_string(), "evm_version = Cancun".to_string()) ]));
+pub static DEPRECATIONS: Lazy<HashMap<String, String>> =
+    Lazy::new(|| HashMap::from([("cancun".to_string(), "evm_version = Cancun".to_string())]));
 
 impl Config {
     /// The default profile: "default"
