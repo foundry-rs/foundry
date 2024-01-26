@@ -4,6 +4,7 @@ use crate::{
     resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
     Chain, Config, NamedChain,
 };
+use inflector::Inflector;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::BTreeMap,
@@ -172,7 +173,19 @@ impl EtherscanConfig {
         let (chain, alias) = match (chain, alias) {
             // fill one with the other
             (Some(chain), None) => (Some(chain), Some(chain.to_string())),
-            (None, Some(alias)) => (alias.parse().ok(), Some(alias.into())),
+            (None, Some(alias)) => {
+                // alloy chain is parsed as kebab case
+                (
+                    alias.to_kebab_case().parse().ok().or_else(|| {
+                        // if this didn't work try to parse as json because the deserialize impl
+                        // supports more aliases
+                        serde_json::from_str::<NamedChain>(&format!("\"{alias}\""))
+                            .map(Into::into)
+                            .ok()
+                    }),
+                    Some(alias.into()),
+                )
+            }
             // leave as is
             (Some(chain), Some(alias)) => (Some(chain), Some(alias.into())),
             (None, None) => (None, None),
@@ -440,5 +453,36 @@ mod tests {
         let _ = config.into_client().unwrap();
 
         std::env::remove_var(env);
+    }
+
+    #[test]
+    fn resolve_etherscan_alias_config() {
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "blast_sepolia".to_string(),
+            EtherscanConfig {
+                chain: None,
+                url: Some("https://api.etherscan.io/api".to_string()),
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            },
+        );
+
+        let mut resolved = configs.clone().resolved();
+        let config = resolved.remove("blast_sepolia").unwrap().unwrap();
+        assert_eq!(config.chain, Some(Chain::blast_sepolia()));
+    }
+
+    #[test]
+    fn resolve_etherscan_alias() {
+        let config = EtherscanConfig {
+            chain: None,
+            url: Some("https://api.etherscan.io/api".to_string()),
+            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+        };
+        let resolved = config.clone().resolve(Some("base_sepolia")).unwrap();
+        assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
+
+        let resolved = config.resolve(Some("base-sepolia")).unwrap();
+        assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
     }
 }
