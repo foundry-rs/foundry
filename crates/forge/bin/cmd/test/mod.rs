@@ -418,9 +418,6 @@ impl TestArgs {
                 // Decode the traces
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
-                    decoder.identify(arena, &mut local_identifier);
-                    decoder.identify(arena, &mut etherscan_identifier);
-
                     // verbosity:
                     // - 0..3: nothing
                     // - 3: only display traces for failed tests
@@ -437,6 +434,10 @@ impl TestArgs {
                     };
 
                     if should_include {
+                        // Only identify unknown addresses in traces if they should be included
+                        decoder.identify(arena, &mut local_identifier);
+                        decoder.identify(arena, &mut etherscan_identifier);
+
                         decoded_traces.push(render_trace_arena(arena, &decoder).await?);
                     }
                 }
