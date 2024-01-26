@@ -1536,7 +1536,7 @@ impl Config {
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
             if let Some((_, fallback)) =
-                STANDALONE_FALLBACK_SECTIONS.iter().find(|(key, fallback)| key == fallback)
+                STANDALONE_FALLBACK_SECTIONS.iter().find(|(key, _)| standalone_key == key)
             {
                 figment = figment.merge(
                     provider
