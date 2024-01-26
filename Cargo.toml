@@ -188,7 +188,6 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 evm-disassembler = "0.4"
-# needed as documented in https://github.com/foundry-rs/foundry/pull/6358
 k256 = "0.13"
 
 axum = "0.6"
