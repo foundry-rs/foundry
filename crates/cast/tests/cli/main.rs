@@ -556,3 +556,30 @@ casttest!(storage, |_prj, cmd| {
     cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
     assert_eq!(cmd.stdout_lossy().trim(), six);
 });
+
+casttest!(balance, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    cmd.cast_fuse().args([
+        "balance",
+        "0x0000000000000000000000000000000000000000",
+        "--erc20",
+        usdt,
+        "--rpc-url",
+        &rpc,
+    ]);
+    cmd.cast_fuse().args([
+        "balance",
+        "0x0000000000000000000000000000000000000000",
+        "--erc721",
+        usdt,
+        "--rpc-url",
+        &rpc,
+    ]);
+
+    let usdt_result = cmd.stdout_lossy();
+    let alias_result = cmd.stdout_lossy();
+
+    assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    assert_eq!(alias_result, usdt_result);
+});
