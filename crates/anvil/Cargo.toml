@@ -29,8 +29,7 @@ foundry-evm.workspace = true
 
 # evm support
 bytes = "1.4.0"
-# needed as documented in https://github.com/foundry-rs/foundry/pull/6358
-k256 = "=0.13.1"
+k256 = "0.13"
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 trie-db = "0.23"
 hash-db = "0.15"
