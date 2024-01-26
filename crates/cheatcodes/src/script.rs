@@ -3,7 +3,6 @@
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_signer::Signer;
-use foundry_common::types::ToEthers;
 use foundry_config::Config;
 
 impl Cheatcode for broadcast_0Call {
@@ -113,7 +112,7 @@ fn broadcast_key<DB: DatabaseExt>(
 
     let result = broadcast(ccx, Some(new_origin), single_call);
     if result.is_ok() {
-        ccx.state.script_wallets.push(wallet.to_ethers());
+        ccx.state.script_wallets.push(wallet);
     }
     result
 }

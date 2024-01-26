@@ -10,7 +10,7 @@ use alloy_signer::{
     LocalWallet, MnemonicBuilder, Signer, SignerSync,
 };
 use alloy_sol_types::SolValue;
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::types::ToAlloy;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use k256::{
     ecdsa::SigningKey,
@@ -90,7 +90,7 @@ impl Cheatcode for rememberKeyCall {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?.with_chain_id(Some(ccx.data.env.cfg.chain_id));
         let address = wallet.address();
-        ccx.state.script_wallets.push(wallet.to_ethers());
+        ccx.state.script_wallets.push(wallet);
         Ok(address.abi_encode())
     }
 }
