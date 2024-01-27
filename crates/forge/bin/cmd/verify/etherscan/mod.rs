@@ -2,6 +2,7 @@ use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
 use eyre::{eyre, Context, Result};
+use forge::hashbrown::HashSet;
 use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
@@ -394,23 +395,27 @@ impl EtherscanVerificationProvider {
             "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
         )?;
         let artifacts = entry.artifacts_versions().collect::<Vec<_>>();
-        if artifacts.len() == 1 {
-            let mut version = artifacts[0].0.to_owned();
-            version.build = match RE_BUILD_COMMIT.captures(version.build.as_str()) {
-                Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
-                _ => BuildMetadata::EMPTY,
-            };
-            return Ok(version)
-        }
 
         if artifacts.is_empty() {
-            warn!("No artifacts detected")
-        } else {
-            let versions = artifacts.iter().map(|a| a.0.to_string()).collect::<Vec<_>>();
-            warn!("Ambiguous compiler versions found in cache: {}", versions.join(", "));
+            eyre::bail!("No matching artifact found for {}", args.contract.name);
         }
 
-        eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
+        // ensure we have a single version
+        let unique_versions = artifacts.iter().map(|a| a.0.to_string()).collect::<HashSet<_>>();
+        if unique_versions.len() > 1 {
+            let versions = unique_versions.into_iter().collect::<Vec<_>>();
+            warn!("Ambiguous compiler versions found in cache: {}", versions.join(", "));
+            eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
+        }
+
+        // we have a unique version
+        let mut version = artifacts[0].0.clone();
+        version.build = match RE_BUILD_COMMIT.captures(version.build.as_str()) {
+            Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
+            _ => BuildMetadata::EMPTY,
+        };
+
+        Ok(version)
     }
 
     /// Return the optional encoded constructor arguments. If the path to
