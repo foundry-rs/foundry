@@ -115,7 +115,7 @@ impl StorageArgs {
         // Get code from Etherscan
         eprintln!("No matching artifacts found, fetching source code from Etherscan...");
 
-        if self.etherscan.key.is_none() {
+        if !self.etherscan.has_key() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
         }
 

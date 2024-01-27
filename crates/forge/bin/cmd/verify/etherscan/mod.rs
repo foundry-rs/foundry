@@ -147,7 +147,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
             args.verifier.verifier_url.as_deref(),
-            args.etherscan.key.as_deref(),
+            args.etherscan.key().as_deref(),
             &config,
         )?;
         let retry: Retry = args.retry.into();
@@ -230,7 +230,7 @@ impl EtherscanVerificationProvider {
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
             args.verifier.verifier_url.as_deref(),
-            args.etherscan.key.as_deref(),
+            args.etherscan.key().as_deref(),
             &config,
         )?;
         let verify_args = self.create_verify_request(args, Some(config)).await?;
@@ -508,7 +508,7 @@ mod tests {
             .client(
                 args.etherscan.chain.unwrap_or_default(),
                 args.verifier.verifier_url.as_deref(),
-                args.etherscan.key.as_deref(),
+                args.etherscan.key().as_deref(),
                 &config,
             )
             .unwrap();
@@ -535,7 +535,7 @@ mod tests {
             .client(
                 args.etherscan.chain.unwrap_or_default(),
                 args.verifier.verifier_url.as_deref(),
-                args.etherscan.key.as_deref(),
+                args.etherscan.key().as_deref(),
                 &config,
             )
             .unwrap();
