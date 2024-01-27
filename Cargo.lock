@@ -2614,7 +2614,7 @@ dependencies = [
  "sha2 0.10.8",
  "solang-parser",
  "svm-rs",
- "svm-rs-builds",
+ "svm-rs-builds 0.2.3",
  "tempfile",
  "thiserror",
  "tiny-keccak",
@@ -3106,9 +3106,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "343530a6efe3786d26e1357f15605bb5cd28bd1133e6aab812126508a064bca7"
+checksum = "5106d26aa9a9955c852bed6f9d8994d7229a177969ae5a813008022b022f31ae"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3134,7 +3134,7 @@ dependencies = [
  "sha2 0.10.8",
  "solang-parser",
  "svm-rs",
- "svm-rs-builds",
+ "svm-rs-builds 0.3.5",
  "tempfile",
  "thiserror",
  "tiny-keccak",
@@ -7197,9 +7197,9 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ce290b5536ab2a42a61c9c6f22d6bfa8f26339c602aa62db4c978c95d1afc47"
+checksum = "11297baafe5fa0c99d5722458eac6a5e25c01eb1b8e5cd137f54079093daa7a4"
 dependencies = [
  "dirs 5.0.1",
  "fs2",
@@ -7220,6 +7220,19 @@ name = "svm-rs-builds"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa64b5e8eecd3a8af7cfc311e29db31a268a62d5953233d3e8243ec77a71c4e3"
+dependencies = [
+ "build_const",
+ "hex",
+ "semver 1.0.21",
+ "serde_json",
+ "svm-rs",
+]
+
+[[package]]
+name = "svm-rs-builds"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b8d3c94c4d3337336f58493471b98d712c267c66977b0fbe48efd6cbf69ffd0"
 dependencies = [
  "build_const",
  "hex",
