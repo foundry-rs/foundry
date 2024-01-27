@@ -8,7 +8,7 @@ use svm::Platform;
 /// Solc to Foundry release process:
 /// 1. new solc release
 /// 2. svm updated with all build info
-/// 3. svm bumped in ethers-rs
+/// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
 const LATEST_SOLC: Version = Version::new(0, 8, 24);
