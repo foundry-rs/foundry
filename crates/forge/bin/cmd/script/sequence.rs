@@ -270,7 +270,7 @@ impl ScriptSequence {
 
         verify.set_chain(config, self.chain.into());
 
-        if verify.etherscan.key.is_some() ||
+        if verify.etherscan.has_key() ||
             verify.verifier.verifier != VerificationProviderType::Etherscan
         {
             trace!(target: "script", "prepare future verifications");

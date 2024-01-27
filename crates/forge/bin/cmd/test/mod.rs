@@ -542,7 +542,9 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
-        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+        if let Some(etherscan_api_key) =
+            self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
+        {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
         }
 

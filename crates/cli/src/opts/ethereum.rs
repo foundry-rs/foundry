@@ -4,7 +4,7 @@ use eyre::Result;
 use foundry_config::{
     figment::{
         self,
-        value::{Dict, Map, Value},
+        value::{Dict, Map},
         Metadata, Profile,
     },
     impl_figment_convert_cast, Chain, Config,
@@ -117,16 +117,25 @@ impl figment::Provider for EtherscanOpts {
 }
 
 impl EtherscanOpts {
-    pub fn key<'a>(&'a self, config: Option<&'a Config>) -> Option<Cow<'a, str>> {
-        match (self.key.as_deref(), config) {
-            (Some(key), _) => Some(Cow::Borrowed(key)),
-            (None, Some(config)) => config.get_etherscan_api_key(self.chain).map(Cow::Owned),
-            (None, None) => None,
-        }
+    /// Returns true if the Etherscan API key is set.
+    pub fn has_key(&self) -> bool {
+        self.key.as_ref().filter(|key| !key.trim().is_empty()).is_some()
+    }
+
+    /// Returns the Etherscan API key.
+    pub fn key(&self) -> Option<String> {
+        self.key.as_ref().filter(|key| !key.trim().is_empty()).cloned()
     }
 
     pub fn dict(&self) -> Dict {
-        Value::serialize(self).unwrap().into_dict().unwrap()
+        let mut dict = Dict::new();
+        if let Some(key) = self.key() {
+            dict.insert("etherscan_api_key".into(), key.into());
+        }
+        if let Some(chain) = self.chain {
+            dict.insert("chain_id".into(), chain.to_string().into());
+        }
+        dict
     }
 }
 
@@ -166,5 +175,21 @@ impl figment::Provider for EthereumOpts {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_etherscan_opts() {
+        let args: EtherscanOpts =
+            EtherscanOpts::parse_from(["foundry-cli", "--etherscan-api-key", "dummykey"]);
+        assert_eq!(args.key(), Some("dummykey".to_string()));
+
+        let args: EtherscanOpts =
+            EtherscanOpts::parse_from(["foundry-cli", "--etherscan-api-key", ""]);
+        assert!(!args.has_key());
     }
 }
