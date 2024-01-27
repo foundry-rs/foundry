@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-echo Installing foundryup...
+echo "Installing foundryup..."
+
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR-"$BASE_DIR/.foundry"}
@@ -11,14 +12,31 @@ FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
 BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
+# Create the .foundry bin directory if it doesn't exist.
+mkdir -p "$FOUNDRY_BIN_DIR"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to create directory $FOUNDRY_BIN_DIR"
+    exit 1
+fi
 
-# Create the .foundry bin directory and foundryup binary if it doesn't exist.
-mkdir -p $FOUNDRY_BIN_DIR
-curl -# -L $BIN_URL -o $BIN_PATH
-chmod +x $BIN_PATH
+# Download the foundryup binary and handle possible errors.
+curl --progress-bar -L "$BIN_URL" -o "$BIN_PATH"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to download foundryup from $BIN_URL"
+    exit 1
+fi
+
+# Make the binary executable.
+chmod +x "$BIN_PATH"
+
 
 # Create the man directory for future man files if it doesn't exist.
-mkdir -p $FOUNDRY_MAN_DIR
+mkdir -p "$FOUNDRY_MAN_DIR"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to create directory $FOUNDRY_MAN_DIR"
+    exit 1
+fi
+
 
 # Store the correct profile file (i.e. .profile for bash or .zshenv for ZSH).
 case $SHELL in
@@ -39,7 +57,7 @@ case $SHELL in
     PREF_SHELL=ash
     ;;
 *)
-    echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
+    echo "Error: foundryup could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
     exit 1
 esac
 
