@@ -25,7 +25,6 @@ use foundry_compilers::{
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
 use inflector::Inflector;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use revm_primitives::SpecId;
 use semver::Version;
@@ -36,6 +35,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    string::ToString,
 };
 
 // Macros useful for creating a figment.
@@ -396,11 +396,12 @@ pub struct Config {
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
-pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
-    Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
+pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz")];
 
-/// Deprecated keys.
-pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| HashMap::from([]));
+/// Deprecated keys and their replacements.
+///
+/// See [Warning::DeprecatedKey]
+pub const DEPRECATIONS: &[(&str, &str)] = &[("cancun", "evm_version = Cancun")];
 
 impl Config {
     /// The default profile: "default"
@@ -1534,7 +1535,9 @@ impl Config {
         }
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
-            if let Some(fallback) = STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
+            if let Some((_, fallback)) =
+                STANDALONE_FALLBACK_SECTIONS.iter().find(|(key, _)| standalone_key == key)
+            {
                 figment = figment.merge(
                     provider
                         .fallback(standalone_key, fallback)

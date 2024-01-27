@@ -309,6 +309,7 @@ pub fn evm_spec_id(evm_version: &EvmVersion) -> SpecId {
         EvmVersion::London => SpecId::LONDON,
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
+        EvmVersion::Cancun => SpecId::CANCUN,
     }
 }
 
