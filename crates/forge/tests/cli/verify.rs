@@ -123,7 +123,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
             .arg(guid)
             .arg("--chain-id")
             .arg(info.chain.to_string())
-            .arg("--etherscan-key")
+            .arg("--etherscan-api-key")
             .arg(info.etherscan)
             .arg("--verifier")
             .arg(info.verifier);
