@@ -900,9 +900,7 @@ impl EthApi {
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
         } else {
-            dbg!(&request);
             let transaction = self.sign_request(&from, request)?;
-            dbg!(&transaction);
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
