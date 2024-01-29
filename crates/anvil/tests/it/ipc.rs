@@ -5,6 +5,8 @@ use anvil::{spawn, NodeConfig};
 use ethers::{core::rand, prelude::Middleware};
 use futures::StreamExt;
 
+use crate::utils::ethers_ipc_provider;
+
 pub fn rand_ipc_endpoint() -> String {
     let num: u64 = rand::Rng::gen(&mut rand::thread_rng());
     if cfg!(windows) {
@@ -25,7 +27,7 @@ async fn can_get_block_number_ipc() {
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::ZERO);
 
-    let provider = handle.ethers_ipc_provider().unwrap();
+    let provider = ethers_ipc_provider(handle.ipc_path()).unwrap();
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), block_num.to::<u64>());
@@ -35,7 +37,7 @@ async fn can_get_block_number_ipc() {
 async fn test_sub_new_heads_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
-    let provider = handle.ethers_ipc_provider().unwrap();
+    let provider = ethers_ipc_provider(handle.ipc_path()).unwrap();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 

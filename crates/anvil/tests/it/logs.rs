@@ -1,21 +1,25 @@
 //! log/event related tests
 
-use crate::abi::*;
+use crate::{
+    abi::*,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
 use anvil::{spawn, NodeConfig};
 use ethers::{
     middleware::SignerMiddleware,
     prelude::{BlockNumber, Filter, FilterKind, Middleware, Signer, H256},
     types::Log,
 };
+use foundry_common::types::ToEthers;
 use futures::StreamExt;
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_past_events() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let address = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -50,9 +54,9 @@ async fn get_past_events() {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_all_events() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
@@ -87,9 +91,9 @@ async fn get_all_events() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_install_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
@@ -129,8 +133,9 @@ async fn can_install_filter() {
 #[tokio::test(flavor = "multi_thread")]
 async fn watch_events() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(handle.ethers_http_provider(), wallet));
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
         .unwrap()
@@ -143,7 +148,7 @@ async fn watch_events() {
     let mut stream = event.stream().await.unwrap();
 
     // Also set up a subscription for the same thing
-    let ws = Arc::new(handle.ethers_ws_provider());
+    let ws = Arc::new(ethers_ws_provider(&handle.ws_endpoint()));
     let contract2 = SimpleStorage::new(contract.address(), ws);
     let event2 = contract2.event::<ValueChanged>();
     let mut subscription = event2.subscribe().await.unwrap();

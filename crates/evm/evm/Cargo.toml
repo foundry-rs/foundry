@@ -25,6 +25,7 @@ alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
 alloy-rpc-types.workspace = true
+alloy-signer.workspace = true
 hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -37,7 +38,6 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-ethers-signers.workspace = true
 itertools.workspace = true
 
 eyre = "0.6"

@@ -87,7 +87,7 @@ incremental = false
 [profile.release]
 opt-level = 3
 lto = "fat"
-strip = true
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 1
 
@@ -125,7 +125,7 @@ foundry-test-utils = { path = "crates/test-utils" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.0", default-features = false }
-foundry-compilers = { version = "0.2.2", default-features = false }
+foundry-compilers = { version = "0.2.4", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -146,6 +146,7 @@ ethers-solc = { version = "2.0", default-features = false }
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
 alloy-eips = { git = "https://github.com/alloy-rs/alloy" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy" }
 alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-network = { git = "https://github.com/alloy-rs/alloy" }
 alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy" }
@@ -159,13 +160,13 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy" }
-alloy-primitives = "0.6.0"
-alloy-dyn-abi = "0.6.0"
-alloy-json-abi = "0.6.0"
-alloy-sol-types = "0.6.0"
+alloy-primitives = "0.6.2"
+alloy-dyn-abi = "0.6.2"
+alloy-json-abi = "0.6.2"
+alloy-sol-types = "0.6.2"
 syn-solidity = "0.6.0"
 
-alloy-chains = "0.1.5"
+alloy-chains = "0.1.10"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
@@ -187,6 +188,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 evm-disassembler = "0.4"
+k256 = "0.13"
 
 axum = "0.6"
 hyper = "0.14"

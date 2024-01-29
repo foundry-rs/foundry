@@ -39,7 +39,6 @@ use crate::{
 use alloy_primitives::{TxHash, U64};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_common::types::ToAlloy;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -157,7 +156,7 @@ impl Pool {
 
         let mut dropped = None;
         if !removed.is_empty() {
-            dropped = removed.into_iter().find(|t| t.pending_transaction.hash().to_alloy() == tx);
+            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
         }
         dropped
     }

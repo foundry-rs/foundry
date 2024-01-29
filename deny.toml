@@ -1,6 +1,6 @@
 # Temporarily exclude rusoto and ethers-providers from bans since we've yet to transition to the 
 # Rust AWS SDK.
-exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite"]
+exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite", "shlex"]
 
 # This section is considered when running `cargo deny check advisories`
 # More documentation for the advisories section can be found here:
@@ -67,9 +67,6 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "constant_time_eq" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-
-    { allow = ["GPL-3.0"], name = "fastrlp" },
-    { allow = ["GPL-3.0"], name = "fastrlp-derive" },
 ]
 #copyleft = "deny"
 

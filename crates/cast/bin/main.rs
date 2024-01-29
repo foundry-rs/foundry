@@ -2,17 +2,18 @@
 extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
-use cast::{Cast, SimpleCast};
+use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers_core::types::{BlockId, BlockNumber::Latest};
-use ethers_providers::Middleware;
+use ethers_core::types::{BlockId, BlockNumber::Latest, NameOrAddress};
+use ethers_providers::{Middleware, Provider};
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     fmt::format_tokens,
     fs,
+    runtime_client::RuntimeClient,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
@@ -201,14 +202,44 @@ async fn main() -> Result<()> {
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, ether, rpc } => {
+        Subcommands::Balance { block, who, ether, rpc, erc20 } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let value = Cast::new(provider).balance(who, block).await?;
-            if ether {
-                println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
-            } else {
-                println!("{value}");
+
+            match erc20 {
+                Some(token) => {
+                    let chain = utils::get_chain(config.chain, &provider).await?;
+                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> = TxBuilder::new(
+                        &provider,
+                        NameOrAddress::Address(Address::ZERO.to_ethers()),
+                        Some(NameOrAddress::Address(token.to_ethers())),
+                        chain,
+                        true,
+                    )
+                    .await?;
+
+                    let account_addr = match who {
+                        NameOrAddress::Name(ens_name) => provider.resolve_name(&ens_name).await?,
+                        NameOrAddress::Address(addr) => addr,
+                    };
+
+                    builder
+                        .set_args(
+                            "balanceOf(address) returns (uint256)",
+                            vec![format!("{account_addr:#x}")],
+                        )
+                        .await?;
+                    let builder_output = builder.build();
+                    println!("{}", Cast::new(provider).call(builder_output, block).await?);
+                }
+                None => {
+                    let value = Cast::new(provider).balance(who, block).await?;
+                    if ether {
+                        println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
+                    } else {
+                        println!("{value}");
+                    }
+                }
             }
         }
         Subcommands::BaseFee { block, rpc } => {

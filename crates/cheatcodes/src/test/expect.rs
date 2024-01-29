@@ -53,12 +53,27 @@ pub enum ExpectedCallType {
     Count,
 }
 
-#[derive(Clone, Debug, Default)]
+/// The type of expected revert.
+#[derive(Clone, Debug)]
+pub enum ExpectedRevertKind {
+    /// Expects revert from the next non-cheatcode call.
+    Default,
+    /// Expects revert from the next cheatcode call.
+    ///
+    /// The `pending_processing` flag is used to track whether we have exited
+    /// `expectCheatcodeRevert` context or not.
+    /// We have to track it to avoid expecting `expectCheatcodeRevert` call to revert itself.
+    Cheatcode { pending_processing: bool },
+}
+
+#[derive(Clone, Debug)]
 pub struct ExpectedRevert {
     /// The expected data returned by the revert, None being any
     pub reason: Option<Vec<u8>>,
     /// The depth at which the revert is expected
     pub depth: u64,
+    /// The type of expected revert.
+    pub kind: ExpectedRevertKind,
 }
 
 #[derive(Clone, Debug)]
@@ -222,21 +237,41 @@ impl Cheatcode for expectEmit_3Call {
 impl Cheatcode for expectRevert_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.data.journaled_state.depth())
+        expect_revert(ccx.state, None, ccx.data.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.data.journaled_state.depth())
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.data.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for expectRevert_2Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.data.journaled_state.depth())
+        expect_revert(ccx.state, Some(revertData), ccx.data.journaled_state.depth(), false)
+    }
+}
+
+impl Cheatcode for _expectCheatcodeRevert_0Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        expect_revert(ccx.state, None, ccx.data.journaled_state.depth(), true)
+    }
+}
+
+impl Cheatcode for _expectCheatcodeRevert_1Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { revertData } = self;
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.data.journaled_state.depth(), true)
+    }
+}
+
+impl Cheatcode for _expectCheatcodeRevert_2Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { revertData } = self;
+        expect_revert(ccx.state, Some(revertData), ccx.data.journaled_state.depth(), true)
     }
 }
 
@@ -430,12 +465,25 @@ pub(crate) fn handle_expect_emit(
     }
 }
 
-fn expect_revert(state: &mut Cheatcodes, reason: Option<&[u8]>, depth: u64) -> Result {
+fn expect_revert(
+    state: &mut Cheatcodes,
+    reason: Option<&[u8]>,
+    depth: u64,
+    cheatcode: bool,
+) -> Result {
     ensure!(
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    state.expected_revert = Some(ExpectedRevert { reason: reason.map(<[_]>::to_vec), depth });
+    state.expected_revert = Some(ExpectedRevert {
+        reason: reason.map(<[_]>::to_vec),
+        depth,
+        kind: if cheatcode {
+            ExpectedRevertKind::Cheatcode { pending_processing: true }
+        } else {
+            ExpectedRevertKind::Default
+        },
+    });
     Ok(Default::default())
 }
 

@@ -1,6 +1,5 @@
 use super::*;
 use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use forge::{
     constants::CALLER,
@@ -8,6 +7,7 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
+use foundry_common::types::ToEthers;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -171,7 +171,7 @@ impl ScriptRunner {
                 traces,
                 debug,
                 address: None,
-                script_wallets,
+                script_wallets: script_wallets.to_ethers(),
                 ..Default::default()
             },
         ))
@@ -204,18 +204,12 @@ impl ScriptRunner {
     pub fn simulate(
         &mut self,
         from: Address,
-        to: Option<NameOrAddress>,
+        to: Option<Address>,
         calldata: Option<Bytes>,
         value: Option<U256>,
     ) -> Result<ScriptResult> {
-        if let Some(NameOrAddress::Address(to)) = to {
-            self.call(
-                from,
-                to.to_alloy(),
-                calldata.unwrap_or_default(),
-                value.unwrap_or(U256::ZERO),
-                true,
-            )
+        if let Some(to) = to {
+            self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::ZERO), true)
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,
@@ -312,7 +306,7 @@ impl ScriptRunner {
             labeled_addresses: labels,
             transactions,
             address: None,
-            script_wallets,
+            script_wallets: script_wallets.to_ethers(),
             breakpoints,
         })
     }

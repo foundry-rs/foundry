@@ -1,20 +1,16 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use ethers::{
-    abi::AbiDecode,
-    providers::ProviderError,
-    signers::WalletError,
-    types::{Bytes, SignatureError, U256},
-};
-use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
     backend::DatabaseError,
+    decode::maybe_decode_revert,
     revm::{
         self,
         interpreter::InstructionResult,
@@ -46,9 +42,9 @@ pub enum BlockchainError {
     #[error("Prevrandao not in th EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
-    SignatureError(#[from] SignatureError),
+    AlloySignatureError(#[from] AlloySignatureError),
     #[error(transparent)]
-    WalletError(#[from] WalletError),
+    AlloySignerError(#[from] AlloySignerError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
     #[error("Rpc error {0:?}")]
@@ -57,8 +53,6 @@ pub enum BlockchainError {
     InvalidTransaction(#[from] InvalidTransactionError),
     #[error(transparent)]
     FeeHistory(#[from] FeeHistoryError),
-    #[error(transparent)]
-    ForkProvider(#[from] ProviderError),
     #[error(transparent)]
     AlloyForkProvider(#[from] TransportError),
     #[error("EVM error {0:?}")]
@@ -263,17 +257,6 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
     }
 }
 
-/// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
-///
-/// **Note:** it's assumed the `out` buffer starts with the call's signature
-pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
-    let out = out.as_ref();
-    if out.len() < SELECTOR_LEN {
-        return None
-    }
-    String::decode(&out[SELECTOR_LEN..]).ok()
-}
-
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
@@ -319,7 +302,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
-                        if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
+                        if let Some(reason) =
+                            data.as_ref().and_then(|data| maybe_decode_revert(data, None, None))
+                        {
                             msg = format!("{msg}: {reason}");
                         }
                         RpcError {
@@ -360,8 +345,10 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
-                BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
-                BlockchainError::WalletError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::AlloySignerError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::AlloySignatureError(err) => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
@@ -370,10 +357,6 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::InvalidFeeInput => RpcError::invalid_params(
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
-                BlockchainError::ForkProvider(err) => {
-                    error!(%err, "fork provider error");
-                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
-                }
                 BlockchainError::AlloyForkProvider(err) => {
                     error!(%err, "alloy fork provider error");
                     RpcError::internal_error_with(format!("Fork Error: {err:?}"))

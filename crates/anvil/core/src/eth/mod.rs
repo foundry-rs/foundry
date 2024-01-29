@@ -1,5 +1,5 @@
 use crate::{
-    eth::subscription::SubscriptionId,
+    eth::{subscription::SubscriptionId, transaction::EthTransactionRequest},
     types::{EvmMineOptions, Forking, Index},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
@@ -9,13 +9,9 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
-use ethers_core::types::transaction::eip712::TypedData;
 
-pub mod alloy_block;
-pub mod alloy_proof;
 pub mod block;
 pub mod proof;
-pub mod receipt;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
@@ -26,7 +22,6 @@ pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
 use self::serde_helpers::*;
-use self::transaction::EthTransactionRequest;
 
 #[cfg(feature = "serde")]
 use foundry_common::serde_helpers::{
@@ -42,7 +37,7 @@ pub struct Params<T: Default> {
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
 pub enum EthRequest {
@@ -159,7 +154,7 @@ pub enum EthRequest {
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData_v4"))]
-    EthSignTypedDataV4(Address, TypedData),
+    EthSignTypedDataV4(Address, alloy_dyn_abi::TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
     EthSendTransaction(Box<EthTransactionRequest>),
@@ -737,7 +732,7 @@ pub enum EthPubSub {
 }
 
 /// Container type for either a request or a pub sub
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EthRpcCall {

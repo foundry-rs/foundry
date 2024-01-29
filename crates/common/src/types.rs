@@ -3,6 +3,7 @@
 use alloy_json_abi::{Event, EventParam, Function, InternalType, Param, StateMutability};
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U128, U256, U64};
 use alloy_rpc_types::{AccessList, AccessListItem, CallInput, CallRequest, Signature, Transaction};
+use alloy_signer::{LocalWallet, Signer};
 use ethers_core::{
     abi as ethabi,
     types::{
@@ -137,6 +138,26 @@ impl ToAlloy for ethers_core::types::Transaction {
             transaction_type: self.transaction_type.map(|t| t.to_alloy()),
             other: Default::default(),
         }
+    }
+}
+
+impl ToEthers for alloy_signer::LocalWallet {
+    type To = ethers_signers::LocalWallet;
+
+    fn to_ethers(self) -> Self::To {
+        ethers_signers::LocalWallet::new_with_signer(
+            self.signer().clone(),
+            self.address().to_ethers(),
+            self.chain_id().unwrap(),
+        )
+    }
+}
+
+impl ToEthers for Vec<LocalWallet> {
+    type To = Vec<ethers_signers::LocalWallet>;
+
+    fn to_ethers(self) -> Self::To {
+        self.into_iter().map(ToEthers::to_ethers).collect()
     }
 }
 

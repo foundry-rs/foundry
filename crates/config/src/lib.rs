@@ -25,7 +25,6 @@ use foundry_compilers::{
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
 use inflector::Inflector;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use revm_primitives::SpecId;
 use semver::Version;
@@ -36,6 +35,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    string::ToString,
 };
 
 // Macros useful for creating a figment.
@@ -396,11 +396,12 @@ pub struct Config {
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
-pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
-    Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
+pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz")];
 
-/// Deprecated keys.
-pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| HashMap::from([]));
+/// Deprecated keys and their replacements.
+///
+/// See [Warning::DeprecatedKey]
+pub const DEPRECATIONS: &[(&str, &str)] = &[("cancun", "evm_version = Cancun")];
 
 impl Config {
     /// The default profile: "default"
@@ -1534,7 +1535,9 @@ impl Config {
         }
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
-            if let Some(fallback) = STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
+            if let Some((_, fallback)) =
+                STANDALONE_FALLBACK_SECTIONS.iter().find(|(key, _)| standalone_key == key)
+            {
                 figment = figment.merge(
                     provider
                         .fallback(standalone_key, fallback)
@@ -1584,7 +1587,6 @@ impl From<Config> for Figment {
                     .global(),
             )
             .merge(DappEnvCompatProvider)
-            .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
@@ -1601,6 +1603,15 @@ impl From<Config> for Figment {
                     .global(),
             )
             .select(profile.clone());
+
+        // Ensure only non empty etherscan var is merged
+        // This prevents `ETHERSCAN_API_KEY=""` if it's set but empty
+        let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
+        if let Some((key, value)) = env_provider.iter().next() {
+            if !value.trim().is_empty() {
+                figment = figment.merge((key.as_str(), value));
+            }
+        }
 
         // we try to merge remappings after we've merged all other providers, this prevents
         // redundant fs lookups to determine the default remappings that are eventually updated by
@@ -4325,6 +4336,27 @@ mod tests {
                     source: Some("foundry.toml".into())
                 }]
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_etherscan_api_key() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+            ",
+            )?;
+            jail.set_env("ETHERSCAN_API_KEY", "");
+            let loaded = Config::load().sanitized();
+            assert!(loaded.etherscan_api_key.is_none());
+
+            jail.set_env("ETHERSCAN_API_KEY", "DUMMY");
+            let loaded = Config::load().sanitized();
+            assert_eq!(loaded.etherscan_api_key, Some("DUMMY".into()));
 
             Ok(())
         });

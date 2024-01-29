@@ -625,6 +625,11 @@ pub enum Subcommands {
 
         #[clap(flatten)]
         rpc: RpcOpts,
+
+        /// erc20 address to query, with the method `balanceOf(address) return (uint256)`, alias
+        /// with '--erc721'
+        #[clap(long, alias = "erc721")]
+        erc20: Option<Address>,
     },
 
     /// Get the basefee of a block.
