@@ -41,7 +41,7 @@ impl FlattenArgs {
 
         let target_path = dunce::canonicalize(target_path)?;
 
-        // We need to provide Flattener with compiled output of target and all of it's imports.
+        // We need to provide Flattener with compiled output of target and all of its imports.
         let project = config.ephemeral_no_artifacts_project()?;
         let sources = Source::read_all(vec![target_path.clone()])?;
         let (sources, _) = Graph::resolve_sources(&project.paths, sources)?.into_sources();
