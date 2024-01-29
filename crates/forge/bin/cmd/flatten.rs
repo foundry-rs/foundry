@@ -49,10 +49,9 @@ impl FlattenArgs {
         let compiler_output = ProjectCompiler::new().files(sources.into_keys()).compile(&project);
 
         let flattened = match compiler_output {
-            Ok(compiler_output) => match Flattener::new(&project, &compiler_output, &target_path) {
-                Ok(flattener) => Ok(flattener.flatten()),
-                Err(err) => Err(err),
-            },
+            Ok(compiler_output) => {
+                Flattener::new(&project, &compiler_output, &target_path).map(|f| f.flatten())
+            }
             Err(_) => {
                 // Fallback to the old flattening compilation if we couldn't compile the target
                 // successfully. This would be the case if the target has invalid
