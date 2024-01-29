@@ -42,28 +42,18 @@ pub struct CallArgs {
     #[clap(long, default_value_t = false)]
     trace: bool,
 
-    /// Can only be used with "--trace"
-    ///
-    /// opens an interactive debugger
+    /// Opens an interactive debugger.
+    /// Can only be used with `--trace`.
     #[clap(long, requires = "trace")]
     debug: bool,
 
-    /// Can only be used with "--trace"
-    ///
-    /// prints a more verbose trace
-    #[clap(long, requires = "trace")]
-    verbose: bool,
-
-    /// Can only be used with "--trace"
-    /// Labels to apply to the traces.
-    ///
-    /// Format: `address:label`
+    /// Labels to apply to the traces; format: `address:label`.
+    /// Can only be used with `--trace`.
     #[clap(long, requires = "trace")]
     labels: Vec<String>,
 
-    /// Can only be used with "--trace"
-    ///
     /// The EVM Version to use.
+    /// Can only be used with `--trace`.
     #[clap(long, requires = "trace")]
     evm_version: Option<EvmVersion>,
 
@@ -121,7 +111,6 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
-            verbose,
             labels,
         } = self;
 
@@ -165,7 +154,7 @@ impl CallArgs {
                         Err(evm_err) => TraceResult::try_from(evm_err)?,
                     };
 
-                    handle_traces(trace, &config, chain, labels, verbose).await?;
+                    handle_traces(trace, &config, chain, labels, debug).await?;
 
                     return Ok(());
                 }
@@ -199,7 +188,7 @@ impl CallArgs {
                         tx.value().copied().unwrap_or_default().to_alloy(),
                     )?);
 
-                    handle_traces(trace, &config, chain, labels, verbose).await?;
+                    handle_traces(trace, &config, chain, labels, debug).await?;
 
                     return Ok(());
                 }

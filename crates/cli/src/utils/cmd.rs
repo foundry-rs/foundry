@@ -316,6 +316,7 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
 }
 
 /// A slimmed down return from the executor used for returning minimal trace + gas metering info
+#[derive(Debug)]
 pub struct TraceResult {
     pub success: bool,
     pub traces: Traces,
