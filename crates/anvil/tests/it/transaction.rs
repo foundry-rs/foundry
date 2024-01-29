@@ -3,8 +3,10 @@ use crate::{
     utils::{ethers_http_provider, ethers_ws_provider},
 };
 use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, Hardfork, NodeConfig};
+use anvil_core::eth::transaction::EthTransactionRequest;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{
@@ -1031,4 +1033,29 @@ async fn test_reject_eip1559_pre_london() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+// https://github.com/foundry-rs/foundry/issues/6931
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_multiple_in_block() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let tx = EthTransactionRequest {
+        from: Some("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap()),
+        ..Default::default()
+    };
+
+    // broadcast it via the eth_sendTransaction API
+    let first = api.send_transaction(tx.clone()).await.unwrap();
+    let second = api.send_transaction(tx.clone()).await.unwrap();
+
+    api.anvil_mine(Some(rU256::from(1)), Some(rU256::ZERO)).await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let txs = block.transactions.hashes().copied().collect::<Vec<_>>();
+    assert_eq!(txs, vec![first, second]);
 }

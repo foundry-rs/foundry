@@ -849,7 +849,7 @@ impl EthApi {
     /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
-    pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
+    pub async fn sign_transaction(&self, mut request: EthTransactionRequest) -> Result<String> {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -857,6 +857,13 @@ impl EthApi {
         })?;
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
+
+        if request.gas.is_none() {
+            // estimate if not provided
+            if let Ok(gas) = self.estimate_gas(request.clone().into_call_request(), None).await {
+                request.gas = Some(gas);
+            }
+        }
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
@@ -869,13 +876,21 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(&self, mut request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+
+        if request.gas.is_none() {
+            // estimate if not provided
+            if let Ok(gas) = self.estimate_gas(request.clone().into_call_request(), None).await {
+                request.gas = Some(gas);
+            }
+        }
+
         let request = self.build_typed_tx_request(request, nonce)?;
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
