@@ -162,7 +162,7 @@ impl ProjectCompiler {
     /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// let prj = config.project().unwrap();
-    /// ProjectCompiler::new().compile_with(&prj, || Ok(prj.compile()?)).unwrap();
+    /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
     fn compile_with<F>(self, f: F) -> Result<ProjectCompileOutput>
