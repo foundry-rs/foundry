@@ -132,10 +132,17 @@ impl ProjectCompiler {
 
     /// Compiles the project.
     pub fn compile(mut self, project: &Project) -> Result<ProjectCompileOutput> {
+        // TODO: Avoid process::exit
+        if !project.paths.has_input_files() && self.files.is_empty() {
+            println!("Nothing to compile");
+            // nothing to do here
+            std::process::exit(0);
+        }
+
         // Taking is fine since we don't need these in `compile_with`.
         let filter = std::mem::take(&mut self.filter);
         let files = std::mem::take(&mut self.files);
-        self.compile_with(project, || {
+        self.compile_with(|| {
             if !files.is_empty() {
                 project.compile_files(files)
             } else if let Some(filter) = filter {
@@ -158,17 +165,10 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(&prj, || Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
+    fn compile_with<F>(self, f: F) -> Result<ProjectCompileOutput>
     where
         F: FnOnce() -> Result<ProjectCompileOutput>,
     {
-        // TODO: Avoid process::exit
-        if !project.paths.has_input_files() {
-            println!("Nothing to compile");
-            // nothing to do here
-            std::process::exit(0);
-        }
-
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
         #[allow(clippy::collapsible_else_if)]
