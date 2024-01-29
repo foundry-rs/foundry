@@ -4,7 +4,8 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ProjectPathsArgs},
     utils::LoadConfig,
 };
-use foundry_common::fs;
+use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_compilers::{artifacts::Source, error::SolcError, flatten::Flattener, Graph};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -38,10 +39,27 @@ impl FlattenArgs {
 
         let config = build_args.try_load_config_emit_warnings()?;
 
-        let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;
-        let flattened =
-            paths.flatten(&target_path).map_err(|err| eyre::eyre!("Failed to flatten: {err}"))?;
+
+        // We need to provide Flattener with compiled output of target and all of it's imports.
+        let project = config.ephemeral_no_artifacts_project()?;
+        let sources = Source::read_all(vec![target_path.clone()])?;
+        let (sources, _) = Graph::resolve_sources(&project.paths, sources)?.into_sources();
+
+        let compiler_output = ProjectCompiler::new().files(sources.into_keys()).compile(&project);
+
+        let flattened = match compiler_output {
+            Ok(compiler_output) => {
+                Ok(Flattener::new(&project, &compiler_output, &target_path)?.flatten())
+            }
+            Err(_) => {
+                // Fallback to the old flattening compilation if we couldn't compile the target
+                // successfully. This would be the case if the target has invalid
+                // syntax. (e.g. Solang)
+                Ok(project.paths.flatten(&target_path)?)
+            }
+        }
+        .map_err(|err: SolcError| eyre::eyre!("Failed to flatten: {err}"))?;
 
         match output {
             Some(output) => {
