@@ -27,6 +27,7 @@ use foundry_evm::{
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
+#[derive(Debug)]
 pub struct ExecutedTransaction {
     transaction: Arc<PoolTransaction>,
     exit_reason: InstructionResult,
@@ -142,8 +143,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     included.push(tx.transaction.clone());
                     tx
                 }
-                TransactionExecutionOutcome::Exhausted(_) => continue,
+                TransactionExecutionOutcome::Exhausted(tx) => {
+                    trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
+                    continue
+                }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
+                    trace!(target: "backend", ?tx,  "skipping invalid transaction");
                     invalid.push(tx);
                     continue
                 }
@@ -221,6 +226,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 }
 
 /// Represents the result of a single transaction execution attempt
+#[derive(Debug)]
 pub enum TransactionExecutionOutcome {
     /// Transaction successfully executed
     Executed(ExecutedTransaction),
