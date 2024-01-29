@@ -130,11 +130,16 @@ jobs:
               env:
                   SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
               shell: bash
-              # Windows runs out of RAM when building binaries with LLVM
               run: |
-                  flags=()
-                  [[ "${{ matrix.target }}" == *windows* ]] && flags+=(-j1)
-                  cargo build --release --bins --target ${{ matrix.target }} "${flags[@]}"
+                target="${{ matrix.target }}"
+                flags=()
+
+                # `keccak-asm` does not support MSVC or aarch64 Linux.
+                [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]] && flags+=(--features=asm-keccak)
+
+                # Windows runs out of RAM when building binaries with LLVM
+                [[ "$target" == *windows* ]] && flags+=(-j1)
+                cargo build --release --bins --target "${{ matrix.target }}" "${flags[@]}"
 
             - name: Archive binaries
               id: artifacts

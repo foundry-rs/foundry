@@ -96,3 +96,4 @@ crc = "3.0.1"
 default = ["cli"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
