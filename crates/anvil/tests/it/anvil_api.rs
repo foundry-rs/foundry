@@ -1,11 +1,13 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config, utils::ethers_http_provider};
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_providers::provider::TempProvider;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
     types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
+use alloy_primitives::{U256 as rU256, B256, U64 as rU64, Address as rAddress};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
@@ -26,10 +28,10 @@ use std::{
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
-    let gas_price: U256 = 1337u64.into();
-    api.anvil_set_min_gas_price(gas_price.to_alloy()).await.unwrap();
+    let gas_price = rU256::from(1337u64);
+    api.anvil_set_min_gas_price(gas_price).await.unwrap();
     assert_eq!(gas_price, provider.get_gas_price().await.unwrap());
 }
 
@@ -37,13 +39,13 @@ async fn can_set_gas_price() {
 async fn can_set_block_gas_limit() {
     let (api, _) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
 
-    let block_gas_limit: U256 = 1337u64.into();
-    assert!(api.evm_set_block_gas_limit(block_gas_limit.to_alloy()).unwrap());
+    let block_gas_limit = rU256::from(1337u64);
+    assert!(api.evm_set_block_gas_limit(block_gas_limit).unwrap());
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
     let latest_block =
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block_gas_limit.to_alloy(), latest_block.header.gas_limit);
+    assert_eq!(block_gas_limit, latest_block.header.gas_limit);
 }
 
 // Ref <https://github.com/foundry-rs/foundry/issues/2341>
@@ -61,7 +63,7 @@ async fn can_set_storage() {
 
     let storage_value = api.storage_at(addr, slot, None).await.unwrap();
     assert_eq!(val, storage_value);
-    assert_eq!(val.to_ethers(), H256::from_uint(&U256::from(12345)));
+    assert_eq!(val, B256::from(rU256::from(12345)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -190,29 +192,29 @@ async fn can_impersonate_contract() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_gnosis_safe() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
-    let safe: Address = "0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6".parse().unwrap();
+    let safe: rAddress = "0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6".parse().unwrap();
 
-    let code = provider.get_code(safe, None).await.unwrap();
+    let code = provider.get_code_at(safe, BlockNumberOrTag::Latest.into()).await.unwrap();
     assert!(!code.is_empty());
 
-    api.anvil_impersonate_account(safe.to_alloy()).await.unwrap();
+    api.anvil_impersonate_account(safe).await.unwrap();
 
-    let code = provider.get_code(safe, None).await.unwrap();
+    let code = provider.get_code_at(safe, BlockNumberOrTag::Latest.into()).await.unwrap();
     assert!(!code.is_empty());
 
-    let balance = U256::from(1e18 as u64);
+    let balance = rU256::from(1e18 as u64);
     // fund the impersonated account
-    api.anvil_set_balance(safe.to_alloy(), balance.to_alloy()).await.unwrap();
+    api.anvil_set_balance(safe, balance).await.unwrap();
 
     let on_chain_balance = provider.get_balance(safe, None).await.unwrap();
     assert_eq!(on_chain_balance, balance);
 
-    api.anvil_stop_impersonating_account(safe.to_alloy()).await.unwrap();
+    api.anvil_stop_impersonating_account(safe).await.unwrap();
 
-    let code = provider.get_code(safe, None).await.unwrap();
+    let code = provider.get_code_at(safe, BlockNumberOrTag::Latest.into()).await.unwrap();
     // code is added back after stop impersonating
     assert!(!code.is_empty());
 }
