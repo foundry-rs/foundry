@@ -378,7 +378,10 @@ pub fn compile_target_with_filter(
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
-    let mut compiler = ProjectCompiler::new().filter(Box::new(SkipBuildFilters(skip))).quiet(quiet);
+    let mut compiler = ProjectCompiler::new().quiet(quiet);
+    if !skip.is_empty() {
+        compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
+    }
     if !graph.files().contains_key(target_path) {
         if verify {
             eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
@@ -469,13 +472,20 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 }
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SkipBuildFilters(pub Vec<SkipBuildFilter>);
+#[derive(Clone, Debug)]
+pub struct SkipBuildFilters(Vec<GlobMatcher>);
 
 impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
-        self.0.iter().all(|filter| filter.is_match(file))
+        self.0.iter().all(|matcher| is_match_exclude(matcher, file))
+    }
+}
+
+impl SkipBuildFilters {
+    /// Creates a new `SkipBuildFilters` from multiple `SkipBuildFilter`.
+    pub fn new(matchers: impl IntoIterator<Item = SkipBuildFilter>) -> Result<Self> {
+        matchers.into_iter().map(|m| m.compile()).collect::<Result<_>>().map(Self)
     }
 }
 
@@ -491,6 +501,14 @@ pub enum SkipBuildFilter {
 }
 
 impl SkipBuildFilter {
+    fn new(s: &str) -> Self {
+        match s {
+            "test" | "tests" => SkipBuildFilter::Tests,
+            "script" | "scripts" => SkipBuildFilter::Scripts,
+            s => SkipBuildFilter::Custom(s.to_string()),
+        }
+    }
+
     /// Returns the pattern to match against a file
     fn file_pattern(&self) -> &str {
         match self {
@@ -499,15 +517,9 @@ impl SkipBuildFilter {
             SkipBuildFilter::Custom(s) => s.as_str(),
         }
     }
-}
 
-impl<T: AsRef<str>> From<T> for SkipBuildFilter {
-    fn from(s: T) -> Self {
-        match s.as_ref() {
-            "test" | "tests" => SkipBuildFilter::Tests,
-            "script" | "scripts" => SkipBuildFilter::Scripts,
-            s => SkipBuildFilter::Custom(s.to_string()),
-        }
+    fn compile(&self) -> Result<GlobMatcher> {
+        self.file_pattern().parse().map_err(Into::into)
     }
 }
 
@@ -515,23 +527,20 @@ impl FromStr for SkipBuildFilter {
     type Err = Infallible;
 
     fn from_str(s: &str) -> result::Result<Self, Self::Err> {
-        Ok(s.into())
+        Ok(Self::new(s))
     }
 }
 
-impl FileFilter for SkipBuildFilter {
-    /// Matches file only if the filter does not apply
-    ///
-    /// This is returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`
-    fn is_match(&self, file: &Path) -> bool {
-        fn exclude(file: &Path, pattern: &str) -> Option<bool> {
-            let matcher: GlobMatcher = pattern.parse().unwrap();
-            let file_name = file.file_name()?.to_str()?;
-            Some(file_name.contains(pattern) || matcher.is_match(file.as_os_str().to_str()?))
-        }
-
-        !exclude(file, self.file_pattern()).unwrap_or_default()
+/// Matches file only if the filter does not apply.
+///
+/// This returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`.
+fn is_match_exclude(matcher: &GlobMatcher, path: &Path) -> bool {
+    fn is_match(matcher: &GlobMatcher, path: &Path) -> Option<bool> {
+        let file_name = path.file_name()?.to_str()?;
+        Some(file_name.contains(matcher.as_str()) || matcher.is_match(path))
     }
+
+    !is_match(matcher, path).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -540,19 +549,24 @@ mod tests {
 
     #[test]
     fn test_build_filter() {
+        let tests = SkipBuildFilter::Tests.compile().unwrap();
+        let scripts = SkipBuildFilter::Scripts.compile().unwrap();
+        let custom = |s: &str| SkipBuildFilter::Custom(s.to_string()).compile().unwrap();
+
         let file = Path::new("A.t.sol");
-        assert!(!SkipBuildFilter::Tests.is_match(file));
-        assert!(SkipBuildFilter::Scripts.is_match(file));
-        assert!(!SkipBuildFilter::Custom("A.t".to_string()).is_match(file));
+        assert!(!is_match_exclude(&tests, file));
+        assert!(is_match_exclude(&scripts, file));
+        assert!(!is_match_exclude(&custom("A.t"), file));
 
         let file = Path::new("A.s.sol");
-        assert!(SkipBuildFilter::Tests.is_match(file));
-        assert!(!SkipBuildFilter::Scripts.is_match(file));
-        assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
+        assert!(is_match_exclude(&tests, file));
+        assert!(!is_match_exclude(&scripts, file));
+        assert!(!is_match_exclude(&custom("A.s"), file));
 
         let file = Path::new("/home/test/Foo.sol");
-        assert!(!SkipBuildFilter::Custom("*/test/**".to_string()).is_match(file));
+        assert!(!is_match_exclude(&custom("*/test/**"), file));
+
         let file = Path::new("/home/script/Contract.sol");
-        assert!(!SkipBuildFilter::Custom("*/script/**".to_string()).is_match(file));
+        assert!(!is_match_exclude(&custom("*/script/**"), file));
     }
 }

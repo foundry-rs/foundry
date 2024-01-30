@@ -38,12 +38,16 @@ impl GlobMatcher {
     ///
     /// The glob `./test/*` won't match absolute paths like `test/Contract.sol`, which is common
     /// format here, so we also handle this case here
-    pub fn is_match(&self, path: &str) -> bool {
-        let mut matches = self.matcher.is_match(path);
-        if !matches && !path.starts_with("./") && self.as_str().starts_with("./") {
-            matches = self.matcher.is_match(format!("./{path}"));
+    pub fn is_match(&self, path: &Path) -> bool {
+        if self.matcher.is_match(path) {
+            return true;
         }
-        matches
+
+        if !path.starts_with("./") && self.as_str().starts_with("./") {
+            return self.matcher.is_match(format!("./{}", path.display()));
+        }
+
+        false
     }
 
     /// Returns the `globset::Glob`.
@@ -84,7 +88,7 @@ mod tests {
     #[test]
     fn can_match_glob_paths() {
         let matcher: GlobMatcher = "./test/*".parse().unwrap();
-        assert!(matcher.is_match("test/Contract.sol"));
-        assert!(matcher.is_match("./test/Contract.sol"));
+        assert!(matcher.is_match(Path::new("test/Contract.sol")));
+        assert!(matcher.is_match(Path::new("./test/Contract.sol")));
     }
 }
