@@ -131,6 +131,7 @@ jobs:
                   SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
               shell: bash
               run: |
+                set -e
                 target="${{ matrix.target }}"
                 flags=()
 
@@ -139,7 +140,20 @@ jobs:
 
                 # Windows runs out of RAM when building binaries with LLVM
                 [[ "$target" == *windows* ]] && flags+=(-j1)
+
+                [[ "$target" == *windows* ]] && exe=".exe"
+
                 cargo build --release --bins --target "${{ matrix.target }}" "${flags[@]}"
+                code=$?
+
+                for name in (anvil cast chisel forge); do
+                  bin=./target/${{ matrix.target }}/release/$name$exe
+                  file $bin || true
+                  ldd $bin || true
+                  $bin --version
+                done
+
+                exit $code
 
             - name: Archive binaries
               id: artifacts
