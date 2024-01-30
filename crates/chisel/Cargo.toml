@@ -59,6 +59,7 @@ serial_test = "2"
 default = ["rustls"]
 rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
 
 [[bench]]
 name = "session_source"
