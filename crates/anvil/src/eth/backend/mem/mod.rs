@@ -1041,6 +1041,7 @@ impl Backend {
         }).await?
     }
 
+    /// Constructs the [Env] for executing a call
     fn build_call_env(
         &self,
         request: CallRequest,
@@ -1051,8 +1052,25 @@ impl Backend {
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit);
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
+
         let mut env = self.env.read().clone();
+
+        if gas.is_none() {
+            // if no gas is set we cap it available funds
+            let mut available_funds = self.get_balance_with_state(&state, from)?;
+        }
+
+        let gas_limit = gas.unwrap_or_else( || {
+            // check if the block gas limit was disabled on launch, then we cap
+            if env.cfg.disable_block_gas_limit {
+                // allow
+                U256::MAX
+            } else {
+                block_env.gas_limit
+            }
+        });
+
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
         // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
@@ -1062,7 +1080,6 @@ impl Backend {
             env.block.basefee = base;
         }
 
-        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
