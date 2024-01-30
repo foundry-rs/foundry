@@ -43,7 +43,7 @@ jobs:
             # the changelog.
             - name: Create build-specific nightly tag
               if: ${{ env.IS_NIGHTLY }}
-              uses: actions/github-script@v6
+              uses: actions/github-script@v7
               env:
                   TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
               with:
@@ -221,14 +221,14 @@ jobs:
             # Moves the `nightly` tag to `HEAD`
             - name: Move nightly tag
               if: ${{ env.IS_NIGHTLY }}
-              uses: actions/github-script@v6
+              uses: actions/github-script@v7
               with:
                   script: |
                       const moveTag = require('./.github/scripts/move-tag.js')
                       await moveTag({ github, context }, 'nightly')
 
             - name: Delete old nightlies
-              uses: actions/github-script@v6
+              uses: actions/github-script@v7
               with:
                   script: |
                       const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
