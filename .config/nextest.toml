@@ -9,7 +9,3 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
-
-[profile.heavy]
-retries = 1
-slow-timeout = { period = "120m", terminate-after = 1 }
