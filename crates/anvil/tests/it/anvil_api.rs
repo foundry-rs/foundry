@@ -269,21 +269,21 @@ async fn can_impersonate_multiple_account() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_manually() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let start_num = provider.get_block_number().await.unwrap();
 
     for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
         api.evm_mine(None).await.unwrap();
         let num = provider.get_block_number().await.unwrap();
-        assert_eq!(num, start_num + idx + 1);
+        assert_eq!(num, start_num + (idx as u64) + 1);
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -294,23 +294,23 @@ async fn test_set_next_timestamp() {
 
     api.evm_mine(None).await.unwrap();
 
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
-    assert_eq!(block.number.unwrap().as_u64(), 1);
-    assert_eq!(block.timestamp.as_u64(), next_timestamp.as_secs());
+    assert_eq!(block.header.number.unwrap().to::<u64>(), 1);
+    assert_eq!(block.header.timestamp.to::<u64>(), next_timestamp.as_secs());
 
     api.evm_mine(None).await.unwrap();
 
-    let next = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
-    assert_eq!(next.number.unwrap().as_u64(), 2);
+    let next = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
+    assert_eq!(next.header.number.unwrap().to::<u64>(), 2);
 
-    assert!(next.timestamp > block.timestamp);
+    assert!(next.header.timestamp > block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -321,20 +321,20 @@ async fn test_evm_set_time() {
 
     // mine a block
     api.evm_mine(None).await.unwrap();
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
-    assert!(block.timestamp.as_u64() >= timestamp.as_secs());
+    assert!(block.header.timestamp.to::<u64>() >= timestamp.as_secs());
 
     api.evm_mine(None).await.unwrap();
-    let next = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let next = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
-    assert!(next.timestamp > block.timestamp);
+    assert!(next.header.timestamp > block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time_in_past() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -345,59 +345,59 @@ async fn test_evm_set_time_in_past() {
 
     // mine a block
     api.evm_mine(None).await.unwrap();
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
-    assert!(block.timestamp.as_u64() >= timestamp.as_secs());
-    assert!(block.timestamp.as_u64() < now.as_secs());
+    assert!(block.header.timestamp.to::<u64>() >= timestamp.as_secs());
+    assert!(block.header.timestamp.to::<u64>() < now.as_secs());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_timestamp_interval() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     api.evm_mine(None).await.unwrap();
     let interval = 10;
 
     for _ in 0..5 {
-        let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+        let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
         // mock timestamp
         api.evm_set_block_timestamp_interval(interval).unwrap();
         api.evm_mine(None).await.unwrap();
 
-        let new_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+        let new_block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
-        assert_eq!(new_block.timestamp, block.timestamp + interval);
+        assert_eq!(new_block.header.timestamp, block.header.timestamp + rU256::from(interval));
     }
 
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
-    let next_timestamp = block.timestamp + 50;
-    api.evm_set_next_block_timestamp(next_timestamp.as_u64()).unwrap();
-
-    api.evm_mine(None).await.unwrap();
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
-    assert_eq!(block.timestamp, next_timestamp);
+    let next_timestamp = block.header.timestamp.to::<u64>() + 50;
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
     api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp.to::<u64>(), next_timestamp);
 
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
     // interval also works after setting the next timestamp manually
-    assert_eq!(block.timestamp, next_timestamp + interval);
+    assert_eq!(block.header.timestamp.to::<u64>(), next_timestamp + interval);
 
     assert!(api.evm_remove_block_timestamp_interval().unwrap());
 
     api.evm_mine(None).await.unwrap();
-    let new_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let new_block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
     // offset is applied correctly after resetting the interval
-    assert!(new_block.timestamp > block.timestamp);
+    assert!(new_block.header.timestamp > block.header.timestamp);
 
     api.evm_mine(None).await.unwrap();
-    let another_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let another_block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
     // check interval is disabled
-    assert!(another_block.timestamp - new_block.timestamp < U256::from(interval));
+    assert!(another_block.header.timestamp - new_block.header.timestamp < rU256::from(interval));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2341>
