@@ -434,15 +434,15 @@ async fn can_get_node_info() {
 
     let node_info = api.anvil_node_info().await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let block_number = provider.get_block_number().await.unwrap();
-    let block = provider.get_block(block_number).await.unwrap().unwrap();
+    let block = provider.get_block(block_number.into(), false).await.unwrap().unwrap();
 
     let expected_node_info = NodeInfo {
         current_block_number: U64([0]).to_alloy(),
         current_block_timestamp: 1,
-        current_block_hash: block.hash.unwrap().to_alloy(),
+        current_block_hash: block.header.hash.unwrap(),
         hard_fork: SpecId::SHANGHAI,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
@@ -467,14 +467,14 @@ async fn can_get_metadata() {
 
     let metadata = api.anvil_metadata().await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
-    let block_number = provider.get_block_number().await.unwrap().as_u64();
-    let chain_id = provider.get_chainid().await.unwrap().as_u64();
-    let block = provider.get_block(block_number).await.unwrap().unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap().to::<u64>();
+    let block = provider.get_block(block_number.into(), false).await.unwrap().unwrap();
 
     let expected_metadata = AnvilMetadata {
-        latest_block_hash: block.hash.unwrap().to_alloy(),
+        latest_block_hash: block.header.hash.unwrap(),
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION,
@@ -490,16 +490,16 @@ async fn can_get_metadata() {
 async fn can_get_metadata_on_fork() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
-    let provider = Arc::new(ethers_http_provider(&handle.http_endpoint()));
+    let provider = handle.http_provider();
 
     let metadata = api.anvil_metadata().await.unwrap();
 
-    let block_number = provider.get_block_number().await.unwrap().as_u64();
-    let chain_id = provider.get_chainid().await.unwrap().as_u64();
-    let block = provider.get_block(block_number).await.unwrap().unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap().to::<u64>();
+    let block = provider.get_block(block_number.into(), false).await.unwrap().unwrap();
 
     let expected_metadata = AnvilMetadata {
-        latest_block_hash: block.hash.unwrap().to_alloy(),
+        latest_block_hash: block.header.hash.unwrap(),
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION,
@@ -507,7 +507,7 @@ async fn can_get_metadata_on_fork() {
         forked_network: Some(ForkedNetwork {
             chain_id,
             fork_block_number: block_number,
-            fork_block_hash: block.hash.unwrap().to_alloy(),
+            fork_block_hash: block.header.hash.unwrap(),
         }),
         snapshots: Default::default(),
     };
@@ -565,15 +565,15 @@ async fn test_get_transaction_receipt() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_chain_id() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-    let chain_id = provider.get_chainid().await.unwrap();
-    assert_eq!(chain_id, U256::from(31337));
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id.to::<u64>(), 31337);
 
     let chain_id = 1234;
     api.anvil_set_chain_id(chain_id).await.unwrap();
 
-    let chain_id = provider.get_chainid().await.unwrap();
-    assert_eq!(chain_id, U256::from(1234));
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id.to::<u64>(), 1234);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6096>

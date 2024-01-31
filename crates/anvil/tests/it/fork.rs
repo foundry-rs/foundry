@@ -4,7 +4,7 @@ use crate::{
     abi::*,
     utils::{self, ethers_http_provider},
 };
-use alloy_primitives::U256 as rU256;
+use alloy_primitives::{U256 as rU256, Address as rAddress};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockNumberOrTag, CallRequest};
 use alloy_signer::Signer as AlloySigner;
@@ -81,12 +81,12 @@ async fn test_spawn_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
     for _ in 0..10 {
-        let addr = Address::random();
-        let balance = api.balance(addr.to_alloy(), None).await.unwrap();
+        let addr = rAddress::random();
+        let balance = api.balance(addr, None).await.unwrap();
         let provider_balance = provider.get_balance(addr, None).await.unwrap();
-        assert_eq!(balance, provider_balance.to_alloy())
+        assert_eq!(balance, provider_balance)
     }
 }
 
@@ -94,22 +94,22 @@ async fn test_fork_eth_get_balance() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance_after_mine() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
     let info = api.anvil_node_info().await.unwrap();
     let number = info.fork_config.fork_block_number.unwrap();
     assert_eq!(number, BLOCK_NUMBER);
 
-    let address = Address::random();
+    let address = rAddress::random();
 
     let _balance = provider
-        .get_balance(address, Some(BlockNumber::Number(number.into()).into()))
+        .get_balance(address, Some(BlockNumberOrTag::Number(number.into()).into()))
         .await
         .unwrap();
 
     api.evm_mine(None).await.unwrap();
 
     let _balance = provider
-        .get_balance(address, Some(BlockNumber::Number(number.into()).into()))
+        .get_balance(address, Some(BlockNumberOrTag::Number(number.into()).into()))
         .await
         .unwrap();
 }

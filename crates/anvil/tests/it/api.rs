@@ -53,7 +53,7 @@ async fn can_dev_get_balance() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let _ = provider.get_gas_price().await.unwrap();
 }
@@ -61,7 +61,7 @@ async fn can_get_price() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let _ = provider.get_accounts().await.unwrap();
 }
@@ -71,6 +71,7 @@ async fn can_get_client_version() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
+    // TODO: Client version endpoint
     let version = provider.client_version().await.unwrap();
     assert_eq!(CLIENT_VERSION, version);
 }
@@ -78,10 +79,10 @@ async fn can_get_client_version() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
-    let chain_id = provider.get_chainid().await.unwrap();
-    assert_eq!(chain_id, CHAIN_ID.into());
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id.to::<u64>(), CHAIN_ID);
 }
 
 #[tokio::test(flavor = "multi_thread")]
