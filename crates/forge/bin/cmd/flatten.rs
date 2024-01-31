@@ -43,8 +43,7 @@ impl FlattenArgs {
 
         let project = config.ephemeral_no_artifacts_project()?;
 
-        let compiler_output =
-            ProjectCompiler::new().files([target_path.clone()]).compile(&project);
+        let compiler_output = ProjectCompiler::new().files([target_path.clone()]).compile(&project);
 
         let flattened = match compiler_output {
             Ok(compiler_output) => {
