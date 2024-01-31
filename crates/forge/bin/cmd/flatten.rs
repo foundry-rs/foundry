@@ -5,7 +5,7 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{compile::ProjectCompiler, fs};
-use foundry_compilers::{artifacts::Source, error::SolcError, flatten::Flattener, Graph};
+use foundry_compilers::{error::SolcError, flatten::Flattener};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -41,12 +41,10 @@ impl FlattenArgs {
 
         let target_path = dunce::canonicalize(target_path)?;
 
-        // We need to provide Flattener with compiled output of target and all of its imports.
         let project = config.ephemeral_no_artifacts_project()?;
-        let sources = Source::read_all(vec![target_path.clone()])?;
-        let (sources, _) = Graph::resolve_sources(&project.paths, sources)?.into_sources();
 
-        let compiler_output = ProjectCompiler::new().files(sources.into_keys()).compile(&project);
+        let compiler_output =
+            ProjectCompiler::new().files([target_path.clone()]).compile(&project);
 
         let flattened = match compiler_output {
             Ok(compiler_output) => {
