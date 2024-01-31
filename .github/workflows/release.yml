@@ -136,13 +136,14 @@ jobs:
                 flags=()
 
                 # TODO: default GHA runners run out of RAM when building with any debug info
-                export CARGO_PROFILE_release_DEBUG=0
+                # export CARGO_PROFILE_release_DEBUG=0
+                flags+=(-j1)
 
                 # `keccak-asm` does not support MSVC or aarch64 Linux.
                 [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]] && flags+=(--features=asm-keccak)
 
                 # Windows runs out of RAM when building binaries with LLVM
-                [[ "$target" == *windows* ]] && flags+=(-j1)
+                # [[ "$target" == *windows* ]] && flags+=(-j1)
 
                 [[ "$target" == *windows* ]] && exe=".exe"
 
