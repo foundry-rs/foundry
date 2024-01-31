@@ -6,15 +6,15 @@ import os
 
 # A runner target
 class Target:
-    # GitHub runner OS
-    os_id: str
+    # GHA runner
+    runner_label: str
     # Rust target triple
     target: str
     # SVM Solc target
     svm_target_platform: str
 
-    def __init__(self, os_id: str, target: str, svm_target_platform: str):
-        self.os_id = os_id
+    def __init__(self, runner_label: str, target: str, svm_target_platform: str):
+        self.runner_label = runner_label
         self.target = target
         self.svm_target_platform = svm_target_platform
 
@@ -42,7 +42,7 @@ class Case:
 # GHA matrix entry
 class Expanded:
     name: str
-    os: str
+    runner_label: str
     target: str
     svm_target_platform: str
     flags: str
@@ -51,14 +51,14 @@ class Expanded:
     def __init__(
         self,
         name: str,
-        os: str,
+        runner_label: str,
         target: str,
         svm_target_platform: str,
         flags: str,
         partition: int,
     ):
         self.name = name
-        self.os = os
+        self.runner_label = runner_label
         self.target = target
         self.svm_target_platform = svm_target_platform
         self.flags = flags
@@ -66,11 +66,11 @@ class Expanded:
 
 
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
-t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
+t_linux_x86 = Target("ubuntu-latest-m", "x86_64-unknown-linux-gnu", "linux-amd64")
 # TODO: Figure out how to make this work
 # t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu", "linux-aarch64")
-t_macos = Target("macos-latest", "x86_64-apple-darwin", "macosx-amd64")
-t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
+t_macos = Target("macos-latest-large", "x86_64-apple-darwin", "macosx-amd64")
+t_windows = Target("windows-latest-l", "x86_64-pc-windows-msvc", "windows-amd64")
 targets = [t_linux_x86, t_windows] if is_pr else [t_linux_x86, t_macos, t_windows]
 
 config = [
@@ -129,7 +129,7 @@ def main():
 
                 obj = Expanded(
                     name=name,
-                    os=target.os_id,
+                    runner_label=target.runner_label,
                     target=target.target,
                     svm_target_platform=target.svm_target_platform,
                     flags=flags,
