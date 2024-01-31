@@ -2,6 +2,9 @@
 
 FROM alpine:3.18 as build-environment
 
+# TODO: remove this once we get better runners
+ARG __CI=0
+
 ARG TARGETARCH
 WORKDIR /opt
 
@@ -16,7 +19,14 @@ WORKDIR /opt/foundry
 COPY . .
 
 RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/opt/foundry/target \
-    source $HOME/.profile && cargo build --release \
+    source $HOME/.profile \
+    && ( \
+    if [ "${__CI}" -eq 1 ]; then \
+    CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release \
+    else \
+    cargo build --release \
+    fi \
+    ) \
     && mkdir out \
     && mv target/release/forge out/forge \
     && mv target/release/cast out/cast \
@@ -42,11 +52,11 @@ ENTRYPOINT ["/bin/sh", "-c"]
 
 
 LABEL org.label-schema.build-date=$BUILD_DATE \
-      org.label-schema.name="Foundry" \
-      org.label-schema.description="Foundry" \
-      org.label-schema.url="https://getfoundry.sh" \
-      org.label-schema.vcs-ref=$VCS_REF \
-      org.label-schema.vcs-url="https://github.com/foundry-rs/foundry.git" \
-      org.label-schema.vendor="Foundry-rs" \
-      org.label-schema.version=$VERSION \
-      org.label-schema.schema-version="1.0"
+    org.label-schema.name="Foundry" \
+    org.label-schema.description="Foundry" \
+    org.label-schema.url="https://getfoundry.sh" \
+    org.label-schema.vcs-ref=$VCS_REF \
+    org.label-schema.vcs-url="https://github.com/foundry-rs/foundry.git" \
+    org.label-schema.vendor="Foundry-rs" \
+    org.label-schema.version=$VERSION \
+    org.label-schema.schema-version="1.0"
