@@ -102,9 +102,6 @@ rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native
 openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 
-# feature for heavy (long-running) integration tests
-heavy-integration-tests = []
-
 [[bench]]
 name = "test"
 harness = false
