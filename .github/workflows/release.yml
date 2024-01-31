@@ -78,27 +78,27 @@ jobs:
                     # `target`: Rust build target triple
                     # `platform` and `arch`: Used in tarball names
                     # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-                    - os: ubuntu-latest
+                    - os: ubuntu-latest-m
                       target: x86_64-unknown-linux-gnu
                       svm_target_platform: linux-amd64
                       platform: linux
                       arch: amd64
-                    - os: ubuntu-latest
+                    - os: ubuntu-latest-m
                       target: aarch64-unknown-linux-gnu
                       svm_target_platform: linux-aarch64
                       platform: linux
                       arch: arm64
-                    - os: macos-latest
+                    - os: macos-latest-large
                       target: x86_64-apple-darwin
                       svm_target_platform: macosx-amd64
                       platform: darwin
                       arch: amd64
-                    - os: macos-latest
+                    - os: macos-latest-large
                       target: aarch64-apple-darwin
                       svm_target_platform: macosx-aarch64
                       platform: darwin
                       arch: arm64
-                    - os: windows-latest
+                    - os: windows-latest-l
                       target: x86_64-pc-windows-msvc
                       svm_target_platform: windows-amd64
                       platform: win32
@@ -136,7 +136,7 @@ jobs:
                 flags=()
 
                 # TODO: default GHA runners run out of RAM when building with any debug info
-                flags+=(-j1)
+                # flags+=(-j1)
 
                 # `keccak-asm` does not support MSVC or aarch64 Linux.
                 [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]] && flags+=(--features=asm-keccak)
