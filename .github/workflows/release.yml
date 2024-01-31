@@ -78,12 +78,12 @@ jobs:
                     # `target`: Rust build target triple
                     # `platform` and `arch`: Used in tarball names
                     # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-                    - os: ubuntu-latest
+                    - os: ubuntu-20.04
                       target: x86_64-unknown-linux-gnu
                       svm_target_platform: linux-amd64
                       platform: linux
                       arch: amd64
-                    - os: ubuntu-latest
+                    - os: ubuntu-20.04
                       target: aarch64-unknown-linux-gnu
                       svm_target_platform: linux-aarch64
                       platform: linux
