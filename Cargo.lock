@@ -2953,9 +2953,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebeafdc703baf5bb879b276653735cddb2e0244e5e59c24f3aeab5686d801006"
+checksum = "5a056d4aa33a639c0aa1e9e473c25b9b191be30cbea94b31445fac5c272418ae"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3106,23 +3106,20 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.2.5"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c279e42a2206bbc273038a68508cd37d1605be4a81b3f76c083426d546e1e8d4"
+checksum = "c2d74d76d3129b4f821b24787193d8619ba07b9ebec60ce3f33e40f8ec190667"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "cfg-if",
- "const-hex",
  "dirs 5.0.1",
  "dunce",
  "fs_extra",
  "futures-util",
- "glob",
  "home",
  "md-5 0.10.6",
  "memmap2 0.9.4",
- "num_cpus",
  "once_cell",
  "path-slash",
  "rand 0.8.5",
@@ -3137,7 +3134,6 @@ dependencies = [
  "svm-rs-builds 0.3.5",
  "tempfile",
  "thiserror",
- "tiny-keccak",
  "tokio",
  "tracing",
  "walkdir",
