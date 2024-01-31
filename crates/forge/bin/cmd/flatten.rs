@@ -50,7 +50,7 @@ impl FlattenArgs {
                 Flattener::new(&project, &compiler_output, &target_path).map(|f| f.flatten())
             }
             Err(_) => {
-                // Fallback to the old flattening compilation if we couldn't compile the target
+                // Fallback to the old flattening implementation if we couldn't compile the target
                 // successfully. This would be the case if the target has invalid
                 // syntax. (e.g. Solang)
                 project.paths.flatten(&target_path)
