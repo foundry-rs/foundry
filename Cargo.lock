@@ -513,6 +513,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
  "alloy-providers",

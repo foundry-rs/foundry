@@ -1,9 +1,7 @@
 //! Genesis settings
 
-use crate::{
-    eth::backend::db::{Db, MaybeHashDatabase},
-    genesis::Genesis,
-};
+use crate::eth::backend::db::{Db, MaybeHashDatabase};
+use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, U256};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, StateSnapshot},
@@ -57,7 +55,7 @@ impl GenesisConfig {
         mut db: RwLockWriteGuard<'_, Box<dyn Db>>,
     ) -> DatabaseResult<()> {
         if let Some(ref genesis) = self.genesis_init {
-            for (addr, mut acc) in genesis.alloc.accounts.clone() {
+            for (addr, mut acc) in genesis.alloc.clone() {
                 let storage = std::mem::take(&mut acc.storage);
                 // insert all accounts
                 db.insert_account(addr, acc.into());
@@ -114,7 +112,7 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
         if let Some(acc) =
-            self.genesis.as_ref().and_then(|genesis| genesis.alloc.accounts.get(&(address)))
+            self.genesis.as_ref().and_then(|genesis| genesis.alloc.get(&(address)))
         {
             let value = acc.storage.get(&B256::from(index)).copied().unwrap_or_default();
             return Ok(U256::from_be_bytes(value.0))

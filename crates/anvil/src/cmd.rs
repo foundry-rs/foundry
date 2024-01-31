@@ -1,9 +1,9 @@
 use crate::{
     config::DEFAULT_MNEMONIC,
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    genesis::Genesis,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
+use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, U256};
 use alloy_signer::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
