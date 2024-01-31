@@ -35,20 +35,19 @@ homepage = "https://github.com/foundry-rs/foundry"
 repository = "https://github.com/foundry-rs/foundry"
 exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
-# Speed up compilation time for dev builds by reducing emitted debug info.
-# NOTE: Debuggers may provide less useful information with this setting.
-# Uncomment this section if you're using a debugger.
 [profile.dev]
-debug = 1
+# Disabling debug info speeds up builds a bunch,
+# and we don't rely on it for debugging that much
+debug = 0
 
-# Speed up tests and dev build.
+# Speed up tests and dev build
 [profile.dev.package]
-# Solc and artifacts
+# solc
 foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
 serde_json.opt-level = 3
 
-# EVM
+# evm
 alloy-primitives.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
@@ -68,11 +67,11 @@ scrypt.opt-level = 3
 # forking
 axum.opt-level = 3
 
-# Local "release" mode, more optimized than dev but much faster to compile than release.
+# Local "release" mode, more optimized than dev but much faster to compile than release
 [profile.local]
 inherits = "dev"
 opt-level = 1
-strip = "debuginfo"
+strip = true
 panic = "abort"
 codegen-units = 16
 
@@ -84,16 +83,15 @@ strip = "none"
 panic = "unwind"
 incremental = false
 
-# Optimized release profile.
+# Optimized release profile
 [profile.release]
 opt-level = 3
-debug = "line-tables-only"
 lto = "fat"
 strip = "debuginfo"
 panic = "abort"
 codegen-units = 1
 
-# Override packages which aren't perf-sensitive for faster compilation speed.
+# Override packages which aren't perf-sensitive for faster compilation speed
 [profile.release.package]
 mdbook.opt-level = 1
 protobuf.opt-level = 1
