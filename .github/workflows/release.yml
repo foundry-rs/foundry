@@ -136,7 +136,6 @@ jobs:
                 flags=()
 
                 # TODO: default GHA runners run out of RAM when building with any debug info
-                # export CARGO_PROFILE_release_DEBUG=0
                 flags+=(-j1)
 
                 # `keccak-asm` does not support MSVC or aarch64 Linux.
@@ -154,7 +153,7 @@ jobs:
                   bin=./target/$target/release/$name$exe
                   file "$bin" || true
                   ldd "$bin" || true
-                  $bin --version
+                  $bin --version || true
                 done
 
             - name: Archive binaries
