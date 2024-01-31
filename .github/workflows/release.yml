@@ -131,9 +131,12 @@ jobs:
                   SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
               shell: bash
               run: |
-                set -e
+                set -eo pipefail
                 target="${{ matrix.target }}"
                 flags=()
+
+                # TODO: default GHA runners run out of RAM when building with any debug info
+                export CARGO_PROFILE_release_DEBUG=0
 
                 # `keccak-asm` does not support MSVC or aarch64 Linux.
                 [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]] && flags+=(--features=asm-keccak)
@@ -143,17 +146,15 @@ jobs:
 
                 [[ "$target" == *windows* ]] && exe=".exe"
 
-                cargo build --release --bins --target "${{ matrix.target }}" "${flags[@]}"
-                code=$?
+                cargo build --release --bins --target "$target" "${flags[@]}"
 
-                for name in (anvil cast chisel forge); do
-                  bin=./target/${{ matrix.target }}/release/$name$exe
-                  file $bin || true
-                  ldd $bin || true
+                bins=(anvil cast chisel forge)
+                for name in "${bins[@]}"; do
+                  bin=./target/$target/release/$name$exe
+                  file "$bin" || true
+                  ldd "$bin" || true
                   $bin --version
                 done
-
-                exit $code
 
             - name: Archive binaries
               id: artifacts
