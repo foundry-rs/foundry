@@ -71,7 +71,7 @@ impl GenesisConfig {
     /// Converts a [`GenesisAccount`] to an [`AccountInfo`]
     fn genesis_to_account_info(&self, acc: &GenesisAccount) -> AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc.clone();
-        let code = code.map(|code| Bytecode::new_raw(code));
+        let code = code.map(Bytecode::new_raw);
         AccountInfo {
             balance,
             nonce: nonce.unwrap_or_default(),
