@@ -63,6 +63,7 @@ contract DumpStateTest is DSTest {
 
         vm.setNonce(address(0x100), 1);
         vm.deal(address(0x200), 1 ether);
+        vm.setNonce(address(0x300), 1);
         vm.store(address(0x300), bytes32(uint256(1)), bytes32(uint256(2)));
         vm.etch(address(0x400), hex"af");
 
@@ -85,7 +86,7 @@ contract DumpStateTest is DSTest {
         assertEq(0, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x200)), ".storage")).length);
 
         assertEq(4, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x300)))).length);
-        assertEq(0, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x300)), ".nonce")));
+        assertEq(1, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x300)), ".nonce")));
         assertEq(0, vm.parseJsonUint(json, string.concat(".", vm.toString(address(0x300)), ".balance")));
         assertEq(hex"", vm.parseJsonBytes(json, string.concat(".", vm.toString(address(0x300)), ".code")));
         assertEq(1, vm.parseJsonKeys(json, string.concat(".", vm.toString(address(0x300)), ".storage")).length);
@@ -119,5 +120,18 @@ contract DumpStateTest is DSTest {
         assertEq(2, vm.parseJsonUint(json, string.concat(".", keys[0], ".storage.", vm.toString(bytes32(uint256(1))))));
 
         vm.removeFile(path);
+    }
+
+    function testDumpStateEmptyAccount() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_empty_account.json");
+
+        SimpleContract s = new SimpleContract();
+        vm.etch(address(s), hex"");
+        vm.resetNonce(address(s));
+
+        vm.dumpState(path);
+        string memory json = vm.readFile(path);
+        string[] memory keys = vm.parseJsonKeys(json, "");
+        assertEq(keys.length, 0);
     }
 }
