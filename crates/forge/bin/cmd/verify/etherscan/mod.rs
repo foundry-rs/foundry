@@ -512,7 +512,7 @@ mod tests {
                 &config,
             )
             .unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/?/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -539,7 +539,7 @@ mod tests {
                 &config,
             )
             .unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/?/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
         assert!(format!("{client:?}").contains("dummykey"));
     }
 
