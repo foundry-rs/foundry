@@ -254,11 +254,11 @@ mod tests {
     #[test]
     fn can_parse_call_data() {
         let data = hex::encode("hello");
-        let args: CallArgs =
-            CallArgs::parse_from(["foundry-cli", "--data", format!("0x{data}").as_str()]);
-        assert_eq!(args.data, Some(data.clone()));
+        let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        assert_eq!(args.data, Some(data));
 
-        let args: CallArgs = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        let data = hex::encode_prefixed("hello");
+        let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
         assert_eq!(args.data, Some(data));
     }
 

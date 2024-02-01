@@ -703,21 +703,14 @@ mod tests {
 
     #[test]
     fn can_parse_sig() {
-        let args: ScriptArgs = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Contract.sol",
-            "--sig",
-            "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266",
-        ]);
-        assert_eq!(
-            args.sig,
-            "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
-        );
+        let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
+        assert_eq!(args.sig, sig);
     }
 
     #[test]
     fn can_parse_unlocked() {
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Contract.sol",
             "--sender",
@@ -741,7 +734,7 @@ mod tests {
 
     #[test]
     fn can_merge_script_config() {
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Contract.sol",
             "--etherscan-api-key",
@@ -753,7 +746,7 @@ mod tests {
 
     #[test]
     fn can_parse_verifier_url() {
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "script",
             "script/Test.s.sol:TestScript",
@@ -775,7 +768,7 @@ mod tests {
 
     #[test]
     fn can_extract_code_size_limit() {
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "script",
             "script/Test.s.sol:TestScript",
@@ -803,7 +796,7 @@ mod tests {
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Contract.sol",
             "--etherscan-api-key",
@@ -831,7 +824,7 @@ mod tests {
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "DeployV1",
             "--rpc-url",
@@ -870,7 +863,7 @@ mod tests {
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "DeployV1",
             "--rpc-url",
@@ -915,7 +908,7 @@ mod tests {
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "DeployV1",
             "--rpc-url",
@@ -943,7 +936,7 @@ mod tests {
     // <https://github.com/foundry-rs/foundry/issues/5923>
     #[test]
     fn test_5923() {
-        let args: ScriptArgs =
+        let args =
             ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
     }
@@ -951,7 +944,7 @@ mod tests {
     // <https://github.com/foundry-rs/foundry/issues/5910>
     #[test]
     fn test_5910() {
-        let args: ScriptArgs = ScriptArgs::parse_from([
+        let args = ScriptArgs::parse_from([
             "foundry-cli",
             "--broadcast",
             "--with-gas-price",

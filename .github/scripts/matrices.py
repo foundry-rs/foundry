@@ -76,7 +76,7 @@ targets = [t_linux_x86, t_windows] if is_pr else [t_linux_x86, t_macos, t_window
 config = [
     Case(
         name="unit",
-        filter="kind(lib) | kind(bench) | kind(proc-macro)",
+        filter="!kind(test)",
         n_partitions=1,
         pr_cross_platform=True,
     ),
