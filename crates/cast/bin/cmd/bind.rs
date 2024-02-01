@@ -1,259 +1,107 @@
 use clap::{Parser, ValueHint};
-use ethers_contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
-use eyre::{Result, WrapErr};
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{compile::ProjectCompiler, fs::json_files};
-use foundry_config::impl_figment_convert;
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
-impl_figment_convert!(BindArgs, build_args);
+use ethers_contract::{Abigen, MultiAbigen};
+use eyre::Result;
+use foundry_block_explorers::{errors::EtherscanError, Client};
+use foundry_cli::opts::EtherscanOpts;
+use foundry_config::Config;
+use std::path::{Path, PathBuf};
 
-const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
-const DEFAULT_CRATE_VERSION: &str = "0.1.0";
+static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
+static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 
-/// CLI arguments for `forge bind`.
+/// CLI arguments for `cast bind`.
 #[derive(Clone, Debug, Parser)]
 pub struct BindArgs {
-    /// Path to where the contract artifacts are stored.
+    /// The contract address, or the path to an ABI Directory
+    ///
+    /// If an address is specified, then the ABI is fetched from Etherscan.
+    path_or_address: String,
+
+    /// Path to where bindings will be stored
     #[clap(
-        long = "bindings-path",
         short,
+        long,
         value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
-    pub bindings: Option<PathBuf>,
-
-    /// Create bindings only for contracts whose names match the specified filter(s)
-    #[clap(long)]
-    pub select: Vec<regex::Regex>,
-
-    /// Create bindings only for contracts whose names do not match the specified filter(s)
-    #[clap(long, conflicts_with = "select")]
-    pub skip: Vec<regex::Regex>,
-
-    /// Explicitly generate bindings for all contracts
-    ///
-    /// By default all contracts ending with `Test` or `Script` are excluded.
-    #[clap(long, conflicts_with_all = &["select", "skip"])]
-    pub select_all: bool,
+    pub output_dir: Option<PathBuf>,
 
     /// The name of the Rust crate to generate.
     ///
-    /// This should be a valid crates.io crate name,
-    /// however, this is not currently validated by this command.
-    #[clap(long, default_value = DEFAULT_CRATE_NAME, value_name = "NAME")]
+    /// This should be a valid crates.io crate name. However, this is currently not validated by
+    /// this command.
+    #[clap(
+        long,
+        default_value = DEFAULT_CRATE_NAME,
+        value_name = "NAME"
+    )]
     crate_name: String,
 
     /// The version of the Rust crate to generate.
     ///
-    /// This should be a standard semver version string,
-    /// however, this is not currently validated by this command.
-    #[clap(long, default_value = DEFAULT_CRATE_VERSION, value_name = "VERSION")]
+    /// This should be a standard semver version string. However, it is not currently validated by
+    /// this command.
+    #[clap(
+        long,
+        default_value = DEFAULT_CRATE_VERSION,
+        value_name = "VERSION"
+    )]
     crate_version: String,
 
-    /// Generate the bindings as a module instead of a crate.
+    /// Generate bindings as separate files.
     #[clap(long)]
-    module: bool,
-
-    /// Overwrite existing generated bindings.
-    ///
-    /// By default, the command will check that the bindings are correct, and then exit. If
-    /// --overwrite is passed, it will instead delete and overwrite the bindings.
-    #[clap(long)]
-    overwrite: bool,
-
-    /// Generate bindings as a single file.
-    #[clap(long)]
-    single_file: bool,
-
-    /// Skip Cargo.toml consistency checks.
-    #[clap(long)]
-    skip_cargo_toml: bool,
-
-    /// Skips running forge build before generating binding
-    #[clap(long)]
-    skip_build: bool,
+    separate_files: bool,
 
     #[clap(flatten)]
-    build_args: CoreBuildArgs,
-
-    /// The description of the Rust crate to generate.
-    #[clap(long, value_name = "DESCRIPTION")]
-    crate_description: Option<String>,
-
-    /// The license of the Rust crate to generate.
-    #[clap(long, value_name = "LICENSE")]
-    crate_license: Option<String>,
+    etherscan: EtherscanOpts,
 }
 
 impl BindArgs {
-    fn update_cargo_toml(&self, bindings_root_path: &PathBuf) -> Result<()> {
-        let cargo_toml_path = bindings_root_path.join("Cargo.toml");
-        let mut cargo_toml = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&cargo_toml_path)
-            .wrap_err("Failed to open Cargo.toml for appending")?;
+    pub async fn run(self) -> Result<()> {
+        let path = Path::new(&self.path_or_address);
+        let multi = if path.exists() {
+            MultiAbigen::from_json_files(path)
+        } else {
+            self.abigen_etherscan().await
+        }?;
 
-        if let Some(description) = &self.crate_description {
-            writeln!(cargo_toml, "description = {:?}", description)
-                .wrap_err("Failed to write description to Cargo.toml")?;
-        }
+        println!("Generating bindings for {} contracts", multi.len());
+        let bindings = multi.build()?;
 
-        if let Some(license) = &self.crate_license {
-            writeln!(cargo_toml, "license = {:?}", license)
-                .wrap_err("Failed to write license to Cargo.toml")?;
-        }
-
-        Ok(())
-    }
-    pub fn run(self) -> Result<()> {
-        if !self.skip_build {
-            // run `forge build`
-            let project = self.build_args.project()?;
-            let _ = ProjectCompiler::new().compile(&project)?;
-        }
-
-        let artifacts = self.try_load_config_emit_warnings()?.out;
-
-        if !self.overwrite && self.bindings_exist(&artifacts) {
-            println!("Bindings found. Checking for consistency.");
-            return self.check_existing_bindings(&artifacts)
-        }
-
-        if self.overwrite && self.bindings_exist(&artifacts) {
-            trace!(?artifacts, "Removing existing bindings");
-            fs::remove_dir_all(self.bindings_root(&artifacts))?;
-        }
-
-        self.generate_bindings(&artifacts)?;
-
-        println!(
-            "Bindings have been output to {}",
-            self.bindings_root(&artifacts).to_str().unwrap()
-        );
+        let out = self
+            .output_dir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap().join("bindings"));
+        bindings.write_to_crate(self.crate_name, self.crate_version, out, !self.separate_files)?;
         Ok(())
     }
 
-    /// Get the path to the root of the autogenerated crate
-    fn bindings_root(&self, artifacts: impl AsRef<Path>) -> PathBuf {
-        self.bindings.clone().unwrap_or_else(|| artifacts.as_ref().join("bindings"))
-    }
+    async fn abigen_etherscan(&self) -> Result<MultiAbigen> {
+        let config = Config::from(&self.etherscan);
 
-    /// `true` if the bindings root already exists
-    fn bindings_exist(&self, artifacts: impl AsRef<Path>) -> bool {
-        self.bindings_root(artifacts).is_dir()
-    }
+        let chain = config.chain.unwrap_or_default();
+        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
 
-    /// Returns the filter to use for `MultiAbigen`
-    fn get_filter(&self) -> ContractFilter {
-        if self.select_all {
-            return ContractFilter::All
-        }
-        if !self.select.is_empty() {
-            return SelectContracts::default().extend_regex(self.select.clone()).into()
-        }
-        if !self.skip.is_empty() {
-            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
-        }
-        // This excludes all Test/Script and forge-std contracts
-        ExcludeContracts::default()
-            .extend_pattern([
-                ".*Test.*",
-                ".*Script",
-                "console[2]?",
-                "CommonBase",
-                "Components",
-                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Storage(Safe)?)",
-                "[Vv]m.*",
-            ])
-            .extend_names(["IMulticall3"])
-            .into()
-    }
-
-    /// Instantiate the multi-abigen
-    fn get_multi(&self, artifacts: impl AsRef<Path>) -> Result<MultiAbigen> {
-        let abigens = json_files(artifacts.as_ref())
+        let client = Client::new(chain, api_key)?;
+        let address = self.path_or_address.parse()?;
+        let source = match client.contract_source_code(address).await {
+            Ok(source) => source,
+            Err(EtherscanError::InvalidApiKey) => {
+                eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")
+            }
+            Err(EtherscanError::ContractCodeNotVerified(address)) => {
+                eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
+            }
+            Err(err) => {
+                eyre::bail!(err)
+            }
+        };
+        let abigens = source
+            .items
             .into_iter()
-            .filter_map(|path| {
-                // we don't want `.metadata.json files
-                let stem = path.file_stem()?;
-                if stem.to_str()?.ends_with(".metadata") {
-                    None
-                } else {
-                    Some(path)
-                }
-            })
-            .map(|path| {
-                trace!(?path, "parsing Abigen from file");
-                Abigen::from_file(&path)
-                    .wrap_err_with(|| format!("failed to parse Abigen from file: {:?}", path))?
-                    .add_derive("serde::Serialize")?
-                    .add_derive("serde::Deserialize")
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let multi = MultiAbigen::from_abigens(abigens).with_filter(self.get_filter());
+            .map(|item| Abigen::new(item.contract_name, item.abi).unwrap())
+            .collect::<Vec<Abigen>>();
 
-        eyre::ensure!(
-            !multi.is_empty(),
-            r#"
-No contract artifacts found. Hint: Have you built your contracts yet? `forge bind` does not currently invoke `forge build`, although this is planned for future versions.
-            "#
-        );
-        Ok(multi)
-    }
-
-    /// Check that the existing bindings match the expected abigen output
-    fn check_existing_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
-        let bindings = self.get_multi(&artifacts)?.build()?;
-        println!("Checking bindings for {} contracts.", bindings.len());
-        if !self.module {
-            bindings
-                .ensure_consistent_crate(
-                    &self.crate_name,
-                    &self.crate_version,
-                    self.bindings_root(&artifacts),
-                    self.single_file,
-                    !self.skip_cargo_toml,
-                )
-                .map_err(|err| {
-                    if !self.skip_cargo_toml && err.to_string().contains("Cargo.toml") {
-                        err.wrap_err("To skip Cargo.toml consistency check, pass --skip-cargo-toml")
-                    } else {
-                        err
-                    }
-                })?;
-        } else {
-            bindings.ensure_consistent_module(self.bindings_root(&artifacts), self.single_file)?;
-        }
-        println!("OK.");
-        Ok(())
-    }
-
-    /// Generate the bindings
-    fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
-        let bindings = self.get_multi(&artifacts)?.build()?;
-        println!("Generating bindings for {} contracts", bindings.len());
-
-        let bindings_root_path = self.bindings_root(&artifacts);
-
-        if !self.module {
-            trace!(single_file = self.single_file, "generating crate");
-            bindings.dependencies([r#"serde = "1""#]).write_to_crate(
-                &self.crate_name,
-                &self.crate_version,
-                &bindings_root_path,
-                self.single_file,
-            )?;
-
-            self.update_cargo_toml(&bindings_root_path)?;
-        } else {
-            trace!(single_file = self.single_file, "generating module");
-            bindings.write_to_module(&bindings_root_path, self.single_file)?;
-        }
-
-        Ok(())
+        Ok(MultiAbigen::from_abigens(abigens))
     }
 }
