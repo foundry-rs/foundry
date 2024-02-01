@@ -127,6 +127,7 @@ impl Cheatcode for dumpStateCall {
                                 .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
                                 .collect(),
                         ),
+                        private_key: None,
                     },
                 )
             })
