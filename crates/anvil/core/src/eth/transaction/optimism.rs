@@ -230,12 +230,12 @@ impl Transaction for DepositTransactionRequest {
         self.value
     }
 
-    fn encode_for_signing(&self, _out: &mut dyn alloy_rlp::BufMut) {
-        todo!()
+    fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
+        self.encode_for_signing(out)
     }
 
     fn payload_len_for_signature(&self) -> usize {
-        todo!()
+        self.payload_len_for_signature()
     }
 }
 
