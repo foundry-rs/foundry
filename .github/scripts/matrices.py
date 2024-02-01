@@ -102,8 +102,7 @@ config = [
         name="integration / external",
         filter="package(=forge) & test(~ext_integration)",
         n_partitions=2,
-        # pr_cross_platform=False,
-        pr_cross_platform=True,
+        pr_cross_platform=False,
     ),
 ]
 
