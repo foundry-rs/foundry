@@ -52,7 +52,7 @@ pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 /// External test builder
 #[derive(Clone, Debug)]
 #[must_use = "call run()"]
-pub struct ExtTestBuilder {
+pub struct ExtTester {
     pub org: &'static str,
     pub name: &'static str,
     pub rev: &'static str,
@@ -62,7 +62,7 @@ pub struct ExtTestBuilder {
     pub envs: Vec<(String, String)>,
 }
 
-impl ExtTestBuilder {
+impl ExtTester {
     /// Creates a new external test builder.
     pub fn new(org: &'static str, name: &'static str, rev: &'static str) -> Self {
         Self {
@@ -261,9 +261,6 @@ pub fn run_install_commands(root: &Path) {
         let mut cmd = Command::new(args[0]);
         cmd.args(&args[1..]).current_dir(root);
         eprintln!("cd {}; {cmd:?}", root.display());
-        #[cfg(windows)]
-        let st = cmd.status();
-        #[cfg(not(windows))]
         let st = cmd.status().unwrap();
         eprintln!("\n\n{cmd:?}: {st}");
     };
