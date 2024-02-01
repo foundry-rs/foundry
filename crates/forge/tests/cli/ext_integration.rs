@@ -6,19 +6,19 @@ fn solmate() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "no Bun")]
+#[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
     ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60").run();
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "no Bun")]
+#[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_proxy() {
     ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06").run();
 }
 
 #[test]
-#[cfg_attr(windows, ignore = "no Bun")]
+#[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2() {
     ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
         // skip fork tests
@@ -58,6 +58,7 @@ fn lil_web3() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
     ExtTester::new("pcaversaccio", "snekmate", "ed49a0454393673cdf9a4250dd7051c28e6ac35f").run();
 }
