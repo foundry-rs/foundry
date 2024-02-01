@@ -51,6 +51,11 @@ jobs:
             - uses: taiki-e/install-action@nextest
 
             # External tests dependencies
+            - name: Setup Node.js
+              if: contains(matrix.name, 'external')
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
             - name: Install Bun
               if: contains(matrix.name, 'external') && !contains(matrix.runner_label, 'windows')
               uses: oven-sh/setup-bun@v1

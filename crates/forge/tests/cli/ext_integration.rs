@@ -58,9 +58,6 @@ fn lil_web3() {
 }
 
 #[test]
-// https://github.com/foundry-rs/foundry/pull/6280
-// `run: pnpm --version` is ok, `Command::new("pnpm")` isn't. Good job Windows.
-// #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
     ExtTester::new("pcaversaccio", "snekmate", "ed49a0454393673cdf9a4250dd7051c28e6ac35f").run();
 }
