@@ -1237,7 +1237,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply the Create2 deployer
         if self.broadcast.is_some() || self.config.always_use_create_2_factory {
-            match apply_create2_deployer(data, call, &self.prank, &self.broadcast) {
+            match apply_create2_deployer(
+                data,
+                call,
+                &self.prank,
+                &self.broadcast,
+                &mut self.recorded_account_diffs_stack,
+            ) {
                 Ok(_val) => {}
                 Err(err) => return (InstructionResult::Revert, None, gas, Error::encode(err)),
             };
@@ -1249,6 +1255,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let address = self.allow_cheatcodes_on_create(data, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            // If the create scheme is create2, and the caller is the DEFAULT_CREATE2_DEPLOYER then
+            // we must add 1 to the depth to account for the call to the create2 factory.
+            let mut depth = data.journaled_state.depth();
+            if let CreateScheme::Create2 { salt: _ } = call.scheme {
+                if call.caller == DEFAULT_CREATE2_DEPLOYER {
+                    depth += 1;
+                }
+            }
+
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs_stack.push(vec![AccountAccess {
@@ -1269,7 +1284,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     deployedCode: vec![],    // updated on create_end
                     storageAccesses: vec![], // updated on create_end
                 },
-                depth: data.journaled_state.depth(),
+                depth,
             }]);
         }
 
@@ -1432,17 +1447,45 @@ fn apply_create2_deployer<DB: DatabaseExt>(
     call: &mut CreateInputs,
     prank: &Option<Prank>,
     broadcast: &Option<Broadcast>,
+    diffs_stack: &mut Option<Vec<Vec<AccountAccess>>>,
 ) -> Result<(), DB::Error> {
-    if let CreateScheme::Create2 { salt: _ } = call.scheme {
+    if let CreateScheme::Create2 { salt } = call.scheme {
         let mut base_depth = 1;
         if let Some(prank) = &prank {
             base_depth = prank.depth;
         } else if let Some(broadcast) = &broadcast {
             base_depth = broadcast.depth;
         }
+
         // If the create scheme is Create2 and the depth equals the broadcast/prank/default
         // depth, then use the default create2 factory as the deployer
         if data.journaled_state.depth() == base_depth {
+            if let Some(recorded_account_diffs_stack) = diffs_stack {
+                // If broadcasting, or the create2 factory option is enabled, then record
+                // the call to the create2 factory.
+                let calldata = [&salt.to_be_bytes::<32>()[..], &call.init_code[..]].concat();
+                recorded_account_diffs_stack.push(vec![AccountAccess {
+                    access: crate::Vm::AccountAccess {
+                        chainInfo: crate::Vm::ChainInfo {
+                            forkId: data.db.active_fork_id().unwrap_or_default(),
+                            chainId: U256::from(data.env.cfg.chain_id),
+                        },
+                        accessor: call.caller,
+                        account: DEFAULT_CREATE2_DEPLOYER,
+                        kind: crate::Vm::AccountAccessKind::Call,
+                        initialized: true,
+                        oldBalance: U256::ZERO, // updated on create_end
+                        newBalance: U256::ZERO, // updated on create_end
+                        value: call.value,
+                        data: calldata,
+                        reverted: false,
+                        deployedCode: vec![],    // updated on create_end
+                        storageAccesses: vec![], // updated on create_end
+                    },
+                    depth: data.journaled_state.depth(),
+                }])
+            }
+
             // Sanity checks for our CREATE2 deployer
             let info =
                 &data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?.0.info;
@@ -1475,9 +1518,9 @@ fn process_broadcast_create<DB: DatabaseExt>(
     data: &mut EVMData<'_, DB>,
     call: &mut CreateInputs,
 ) -> (Bytes, Option<Address>, u64) {
+    call.caller = broadcast_sender;
     match call.scheme {
         CreateScheme::Create => {
-            call.caller = broadcast_sender;
             (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
         }
         CreateScheme::Create2 { salt } => {
