@@ -839,7 +839,9 @@ impl NodeConfig {
             if let Some(base_fee) = genesis.base_fee_per_gas {
                 env.block.basefee = U256::from(base_fee);
             }
-            env.block.number = U256::from(genesis.nonce);
+            if let Some(number) = genesis.number {
+                env.block.number = U256::from(number);
+            }
             env.block.coinbase = genesis.coinbase;
         }
 
