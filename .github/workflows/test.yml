@@ -51,21 +51,16 @@ jobs:
             - uses: taiki-e/install-action@nextest
 
             # External tests dependencies
-            - name: Setup Python
-              if: contains(matrix.name, 'external')
-              uses: actions/setup-python@v4
-              with:
-                  python-version: 3.11
-            # - name: Setup Node.js
-            #   if: contains(matrix.name, 'external')
-            #   uses: actions/setup-node@v4
-            #   with:
-            #       node-version: 20
             - name: Install bun
               if: contains(matrix.name, 'external')
               uses: oven-sh/setup-bun@v1
               with:
                   bun-version: latest
+            - name: Setup Python
+              if: contains(matrix.name, 'external')
+              uses: actions/setup-python@v4
+              with:
+                  python-version: 3.11
             - name: Install Vyper
               if: contains(matrix.name, 'external')
               run: pip install vyper
