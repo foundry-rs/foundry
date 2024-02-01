@@ -310,3 +310,10 @@ test_repro!(5529; |config| {
   cheats_config.always_use_create_2_factory = true;
   config.runner.cheats_config = std::sync::Arc::new(cheats_config);
 });
+
+// https://github.com/foundry-rs/foundry/issues/6634
+test_repro!(6634; |config| {
+  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+  cheats_config.always_use_create_2_factory = true;
+  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+});
