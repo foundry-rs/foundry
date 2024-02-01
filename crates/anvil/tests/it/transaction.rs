@@ -961,7 +961,7 @@ async fn estimates_gas_on_pending_by_default() {
 
     let tx =
         TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
-    api.estimate_gas(to_call_request_from_tx_request(tx), None).await.unwrap();
+    api.estimate_gas(to_call_request_from_tx_request(tx), None, None).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

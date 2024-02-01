@@ -1,4 +1,7 @@
-use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
+use super::{
+    backend::mem::{state, BlockRequest},
+    sign::build_typed_transaction,
+};
 use crate::{
     eth::{
         backend,
@@ -228,8 +231,8 @@ impl EthApi {
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
             }
-            EthRequest::EthEstimateGas(call, block) => {
-                self.estimate_gas(call, block).await.to_rpc_result()
+            EthRequest::EthEstimateGas(call, block, overrides) => {
+                self.estimate_gas(call, block, overrides).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
                 self.transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
@@ -860,7 +863,9 @@ impl EthApi {
 
         if request.gas.is_none() {
             // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone().into_call_request(), None).await {
+            if let Ok(gas) =
+                self.estimate_gas(request.clone().into_call_request(), None, None).await
+            {
                 request.gas = Some(gas);
             }
         }
@@ -886,7 +891,9 @@ impl EthApi {
 
         if request.gas.is_none() {
             // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone().into_call_request(), None).await {
+            if let Ok(gas) =
+                self.estimate_gas(request.clone().into_call_request(), None, None).await
+            {
                 request.gas = Some(gas);
             }
         }
@@ -1081,10 +1088,15 @@ impl EthApi {
         &self,
         request: CallRequest,
         block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        self.do_estimate_gas(request, block_number.or_else(|| Some(BlockNumber::Pending.into())))
-            .await
+        self.do_estimate_gas(
+            request,
+            block_number.or_else(|| Some(BlockNumber::Pending.into())),
+            overrides,
+        )
+        .await
     }
 
     /// Get transaction by its hash.
@@ -2144,12 +2156,18 @@ impl EthApi {
         &self,
         request: CallRequest,
         block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
+                    if overrides.is_some() {
+                        return Err(BlockchainError::StateOverrideError(
+                            "not available on past forked blocks".to_string(),
+                        ));
+                    }
                     return fork
                         .estimate_gas(&request, Some(number.into()))
                         .await
@@ -2159,8 +2177,13 @@ impl EthApi {
         }
 
         self.backend
-            .with_database_at(Some(block_request), |state, block| {
-                self.do_estimate_gas_with_state(request, state, block)
+            .with_database_at(Some(block_request), |state, block| match overrides {
+                None => self.do_estimate_gas_with_state(request, state, block),
+                Some(overrides) => {
+                    let state =
+                        state::apply_state_override(overrides.into_iter().collect(), state)?;
+                    self.do_estimate_gas_with_state(request, state, block)
+                }
             })
             .await?
     }

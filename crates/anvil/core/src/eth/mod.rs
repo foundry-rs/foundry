@@ -176,7 +176,11 @@ pub enum EthRequest {
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_estimateGas"))]
-    EthEstimateGas(CallRequest, #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>),
+    EthEstimateGas(
+        CallRequest,
+        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
+        #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
+    ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByHash", with = "sequence"))]
     EthGetTransactionByHash(TxHash),
