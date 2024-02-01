@@ -1,7 +1,7 @@
 //! Genesis settings
 
 use crate::eth::backend::db::{Db, MaybeHashDatabase};
-use alloy_genesis::Genesis;
+use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, StateSnapshot},
@@ -58,14 +58,26 @@ impl GenesisConfig {
             for (addr, mut acc) in genesis.alloc.clone() {
                 let storage = std::mem::take(&mut acc.storage);
                 // insert all accounts
-                db.insert_account(addr, acc.into());
+                db.insert_account(addr, self.genesis_to_account_info(&acc));
                 // insert all storage values
-                for (k, v) in storage.iter() {
+                for (k, v) in storage.unwrap_or_default().iter() {
                     db.set_storage_at(addr, U256::from_be_bytes(k.0), U256::from_be_bytes(v.0))?;
                 }
             }
         }
         Ok(())
+    }
+
+    /// Converts a [`GenesisAccount`] to an [`AccountInfo`]
+    fn genesis_to_account_info(&self, acc: &GenesisAccount) -> AccountInfo {
+        let GenesisAccount { code, balance, nonce, .. } = acc.clone();
+        let code = code.map(|code| Bytecode::new_raw(code.to_vec().into()));
+        AccountInfo {
+            balance,
+            nonce: nonce.unwrap_or_default(),
+            code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
+            code,
+        }
     }
 
     /// Returns a database wrapper that points to the genesis and is aware of all provided
@@ -111,11 +123,12 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        if let Some(acc) =
-            self.genesis.as_ref().and_then(|genesis| genesis.alloc.get(&(address)))
-        {
-            let value = acc.storage.get(&B256::from(index)).copied().unwrap_or_default();
-            return Ok(U256::from_be_bytes(value.0))
+        if let Some(acc) = self.genesis.as_ref().and_then(|genesis| genesis.alloc.get(&(address))) {
+            if let Some(storage) = acc.storage.as_ref() {
+                return Ok(U256::from_be_bytes(
+                    storage.get(&B256::from(index)).copied().unwrap_or_default().0,
+                ))
+            }
         }
         self.db.storage_ref(address, index)
     }

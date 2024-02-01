@@ -457,7 +457,7 @@ impl NodeConfig {
     /// Returns the chain ID to use
     pub fn get_chain_id(&self) -> u64 {
         self.chain_id
-            .or_else(|| self.genesis.as_ref().and_then(|g| Some(g.config.chain_id)))
+            .or_else(|| self.genesis.as_ref().map(|g| g.config.chain_id))
             .unwrap_or(CHAIN_ID)
     }
 
@@ -532,7 +532,7 @@ impl NodeConfig {
     /// Returns the genesis timestamp to use
     pub fn get_genesis_timestamp(&self) -> u64 {
         self.genesis_timestamp
-            .or_else(|| self.genesis.as_ref().and_then(|g| Some(g.timestamp)))
+            .or_else(|| self.genesis.as_ref().map(|g| g.timestamp))
             .unwrap_or_else(|| duration_since_unix_epoch().as_secs())
     }
 

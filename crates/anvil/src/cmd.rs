@@ -110,7 +110,7 @@ pub struct NodeArgs {
     pub order: TransactionOrder,
 
     /// Initialize the genesis block with the given `genesis.json` file.
-    #[clap(long, value_name = "PATH", value_parser = Genesis::parse)]
+    #[clap(long, value_name = "PATH", value_parser= read_genesis_file)]
     pub init: Option<Genesis>,
 
     /// This is an alias for both --load-state and --dump-state.
@@ -670,6 +670,11 @@ impl FromStr for ForkUrl {
         }
         Ok(ForkUrl { url: s.to_string(), block: None })
     }
+}
+
+/// Clap's value parser for genesis. Loads a genesis.json file.
+fn read_genesis_file(path: &str) -> Result<Genesis, String> {
+    foundry_common::fs::read_json_file(path.as_ref()).map_err(|err| err.to_string())
 }
 
 #[cfg(test)]
