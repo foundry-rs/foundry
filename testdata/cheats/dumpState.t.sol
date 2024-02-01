@@ -133,5 +133,7 @@ contract DumpStateTest is DSTest {
         string memory json = vm.readFile(path);
         string[] memory keys = vm.parseJsonKeys(json, "");
         assertEq(keys.length, 0);
+
+        vm.removeFile(path);
     }
 }
