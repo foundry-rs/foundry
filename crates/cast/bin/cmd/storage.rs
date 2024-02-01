@@ -288,3 +288,23 @@ fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_storage_etherscan_api_key() {
+        let args =
+            StorageArgs::parse_from(["foundry-cli", "addr", "--etherscan-api-key", "dummykey"]);
+        assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
+
+        std::env::set_var("ETHERSCAN_API_KEY", "FXY");
+        let config = Config::from(&args);
+        std::env::remove_var("ETHERSCAN_API_KEY");
+        assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
+
+        let key = config.get_etherscan_api_key(None).unwrap();
+        assert_eq!(key, "dummykey".to_string());
+    }
+}

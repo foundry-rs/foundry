@@ -95,6 +95,7 @@ pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
 mod inline;
+use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 /// Foundry configuration
@@ -1587,6 +1588,7 @@ impl From<Config> for Figment {
                     .global(),
             )
             .merge(DappEnvCompatProvider)
+            .merge(EtherscanEnvProvider::default())
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
@@ -1603,15 +1605,6 @@ impl From<Config> for Figment {
                     .global(),
             )
             .select(profile.clone());
-
-        // Ensure only non empty etherscan var is merged
-        // This prevents `ETHERSCAN_API_KEY=""` if it's set but empty
-        let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
-        if let Some((key, value)) = env_provider.iter().next() {
-            if !value.trim().is_empty() {
-                figment = figment.merge((key.as_str(), value));
-            }
-        }
 
         // we try to merge remappings after we've merged all other providers, this prevents
         // redundant fs lookups to determine the default remappings that are eventually updated by
@@ -4357,6 +4350,28 @@ mod tests {
             jail.set_env("ETHERSCAN_API_KEY", "DUMMY");
             let loaded = Config::load().sanitized();
             assert_eq!(loaded.etherscan_api_key, Some("DUMMY".into()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_etherscan_api_key_figment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+                etherscan_api_key = 'DUMMY'
+            ",
+            )?;
+            jail.set_env("ETHERSCAN_API_KEY", "ETHER");
+
+            let figment = Config::figment_with_root(jail.directory())
+                .merge(("etherscan_api_key", "USER_KEY"));
+
+            let loaded = Config::from_provider(figment);
+            assert_eq!(loaded.etherscan_api_key, Some("USER_KEY".into()));
 
             Ok(())
         });
