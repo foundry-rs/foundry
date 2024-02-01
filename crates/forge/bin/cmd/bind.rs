@@ -6,9 +6,9 @@ use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
-
 impl_figment_convert!(BindArgs, build_args);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
@@ -79,6 +79,14 @@ pub struct BindArgs {
 
     #[clap(flatten)]
     build_args: CoreBuildArgs,
+
+    /// The description of the Rust crate to generate.
+    #[clap(long, value_name = "DESCRIPTION")]
+    crate_description: Option<String>,
+
+    /// The license of the Rust crate to generate.
+    #[clap(long, value_name = "LICENSE")]
+    crate_license: Option<String>,
 }
 
 impl BindArgs {
@@ -209,17 +217,45 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
+
+        let bindings_root_path = self.bindings_root(&artifacts);
+
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");
             bindings.dependencies([r#"serde = "1""#]).write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
-                self.bindings_root(&artifacts),
+                &bindings_root_path,
                 self.single_file,
-            )
+            )?;
+
+            // Manually update the Cargo.toml file
+            self.update_cargo_toml(&bindings_root_path)?;
         } else {
             trace!(single_file = self.single_file, "generating module");
-            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)
+            bindings.write_to_module(&bindings_root_path, self.single_file)?;
         }
+
+        Ok(())
+    }
+
+    fn update_cargo_toml(&self, bindings_root_path: &PathBuf) -> Result<()> {
+        let cargo_toml_path = bindings_root_path.join("Cargo.toml");
+        let mut cargo_toml = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&cargo_toml_path)
+            .wrap_err("Failed to open Cargo.toml for appending")?;
+
+        if let Some(description) = &self.crate_description {
+            writeln!(cargo_toml, "description = {:?}", description)
+                .wrap_err("Failed to write description to Cargo.toml")?;
+        }
+
+        if let Some(license) = &self.crate_license {
+            writeln!(cargo_toml, "license = {:?}", license)
+                .wrap_err("Failed to write license to Cargo.toml")?;
+        }
+
+        Ok(())
     }
 }
