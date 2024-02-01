@@ -229,8 +229,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
                 self.single_file,
             )?;
 
-            // Manually update the Cargo.toml file
-            self.update_cargo_toml(&bindings_root_path)?;
+            self.update_cargo_toml(bindings_root_path.as_path())?;
         } else {
             trace!(single_file = self.single_file, "generating module");
             bindings.write_to_module(&bindings_root_path, self.single_file)?;
@@ -238,12 +237,11 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
 
         Ok(())
     }
-
-    fn update_cargo_toml(&self, bindings_root_path: &PathBuf) -> Result<()> {
+    fn update_cargo_toml(&self, bindings_root_path: &Path) -> Result<()> {
         let cargo_toml_path = bindings_root_path.join("Cargo.toml");
         let mut cargo_toml = std::fs::OpenOptions::new()
             .append(true)
-            .open(&cargo_toml_path)
+            .open(cargo_toml_path)
             .wrap_err("Failed to open Cargo.toml for appending")?;
 
         if let Some(description) = &self.crate_description {
