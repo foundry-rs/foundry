@@ -97,14 +97,15 @@ impl Cheatcode for dumpStateCall {
         let Self { pathToStateJson } = self;
         let path = Path::new(pathToStateJson);
 
-        // Do not include system accounts in the dump.
-        let skip = |key: &Address| {
+        // Do not include system account or empty accounts in the dump.
+        let skip = |key: &Address, val: &Account| {
             key == &CHEATCODE_ADDRESS ||
                 key == &CALLER ||
                 key == &HARDHAT_CONSOLE_ADDRESS ||
                 key == &TEST_CONTRACT_ADDRESS ||
                 key == &ccx.caller ||
-                key == &ccx.state.config.evm_opts.sender
+                key == &ccx.state.config.evm_opts.sender ||
+                val.is_empty()
         };
 
         let alloc = ccx
@@ -112,7 +113,7 @@ impl Cheatcode for dumpStateCall {
             .journaled_state
             .state()
             .into_iter()
-            .filter(|(key, _)| !skip(key))
+            .filter(|(key, val)| !skip(key, val))
             .map(|(key, val)| {
                 (
                     key,
