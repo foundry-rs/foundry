@@ -261,24 +261,34 @@ pub fn run_install_commands(root: &Path) {
         let mut cmd = Command::new(args[0]);
         cmd.args(&args[1..]).current_dir(root);
         eprintln!("cd {}; {cmd:?}", root.display());
-        let st = cmd.status().unwrap();
-        eprintln!("\n\n{cmd:?}: {st}");
+        match cmd.status() {
+            Ok(s) => {
+                eprintln!("\n\n{cmd:?}: {s}");
+                s.success()
+            }
+            Err(e) => {
+                eprintln!("\n\n{cmd:?}: {e}");
+                false
+            }
+        }
     };
     let maybe_run = |path: &str, args: &[&str]| {
-        let c = contains(path);
-        if c {
-            run(args);
+        if contains(path) {
+            run(args)
+        } else {
+            false
         }
-        c
     };
 
     maybe_run("Makefile", &["make", "install"]);
-    let bun = maybe_run("bun.lockb", &["bun", "install"]);
-    let pnpm = maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
-    let yarn = maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
-    if !bun && !pnpm && !yarn && contains("package.json") {
-        run(&["npm", "install"]);
-    }
+
+    // Only run one of these for `node_modules`.
+    let mut nm = false;
+    nm = nm || maybe_run("bun.lockb", &["bun", "install", "--prefer-offline"]);
+    nm = nm || maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
+    nm = nm || maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
+    nm = nm || maybe_run("package.json", &["npm", "install", "--prefer-offline"]);
+    let _ = nm;
 }
 
 /// Setup an empty test project and return a command pointing to the forge
