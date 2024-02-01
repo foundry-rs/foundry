@@ -1,7 +1,7 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency},
+    link::{link_with_nonce_or_address, LinkOutput},
     result::SuiteResult,
     ContractRunner, TestFilter, TestOptions,
 };
@@ -24,7 +24,8 @@ use foundry_evm::{
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
+    fmt::Debug,
     iter::Iterator,
     path::Path,
     sync::{mpsc, Arc},
@@ -263,12 +264,12 @@ impl MultiContractRunnerBuilder {
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
     where
-        A: ArtifactOutput,
+        A: ArtifactOutput + Debug,
     {
+        let output = output.with_stripped_file_prefixes(&root);
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
-            .with_stripped_file_prefixes(&root)
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
@@ -281,71 +282,57 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<ResolvedDependency> {
-            let mut filtered = Vec::new();
-            let mut seen = HashSet::new();
-            for dep in deps {
-                if !seen.insert(dep.id.clone()) {
-                    continue
-                }
-                filtered.push(dep);
+        let artifact_contracts = ArtifactContracts::from_iter(contracts.clone());
+
+        for (id, contract) in contracts {
+            let abi = contract.abi.as_ref().expect("We should have an abi by now");
+
+            let LinkOutput { contracts, libs_to_deploy, .. } = link_with_nonce_or_address(
+                &artifact_contracts,
+                &Default::default(),
+                evm_opts.sender,
+                1,
+                &id,
+            )?;
+
+            let linked_contract = contracts.get(&id).unwrap().clone();
+
+            // get bytes if deployable, else add to known contracts and return.
+            // interfaces and abstract contracts should be known to enable fuzzing of their ABI
+            // but they should not be deployable and their source code should be skipped by the
+            // debugger and linker.
+            let Some(bytecode) = linked_contract.bytecode.and_then(|b| b.object.into_bytes())
+            else {
+                known_contracts.insert(id.clone(), (abi.clone(), vec![]));
+                continue;
+            };
+
+            // if it's a test, add it to deployable contracts
+            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
+            {
+                deployable_contracts.insert(
+                    id.clone(),
+                    (
+                        abi.clone(),
+                        bytecode,
+                        libs_to_deploy
+                            .into_iter()
+                            .filter_map(|(id, _)| contracts.get(id).unwrap().bytecode.clone())
+                            .filter_map(|bcode| bcode.object.into_bytes())
+                            .collect::<Vec<_>>(),
+                    ),
+                );
             }
 
-            filtered
+            contract
+                .deployed_bytecode
+                .and_then(|d_bcode| d_bcode.bytecode)
+                .and_then(|bcode| bcode.object.into_bytes())
+                .and_then(|bytes| {
+                    known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec()))
+                });
         }
-
-        link_with_nonce_or_address(
-            ArtifactContracts::from_iter(contracts),
-            &mut known_contracts,
-            Default::default(),
-            evm_opts.sender,
-            1,
-            &mut deployable_contracts,
-            |post_link_input| {
-                let PostLinkInput {
-                    contract,
-                    known_contracts,
-                    id,
-                    extra: deployable_contracts,
-                    dependencies,
-                } = post_link_input;
-                let dependencies = unique_deps(dependencies);
-
-                let abi = contract.abi.expect("We should have an abi by now");
-
-                // get bytes if deployable, else add to known contracts and return.
-                // interfaces and abstract contracts should be known to enable fuzzing of their ABI
-                // but they should not be deployable and their source code should be skipped by the
-                // debugger and linker.
-                let Some(bytecode) = contract.bytecode.and_then(|b| b.object.into_bytes()) else {
-                    known_contracts.insert(id.clone(), (abi.clone(), vec![]));
-                    return Ok(())
-                };
-
-                // if it's a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions()
-                        .any(|func| func.name.is_test() || func.name.is_invariant_test())
-                {
-                    deployable_contracts.insert(
-                        id.clone(),
-                        (
-                            abi.clone(),
-                            bytecode,
-                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
-                        ),
-                    );
-                }
-
-                contract
-                    .deployed_bytecode
-                    .and_then(|d_bcode| d_bcode.bytecode)
-                    .and_then(|bcode| bcode.object.into_bytes())
-                    .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
-                Ok(())
-            },
-            root,
-        )?;
 
         let execution_info = known_contracts.flatten();
         Ok(MultiContractRunner {
