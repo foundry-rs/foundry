@@ -229,6 +229,14 @@ impl Transaction for DepositTransactionRequest {
     fn value(&self) -> U256 {
         self.value
     }
+
+    fn encode_for_signing(&self, _out: &mut dyn alloy_rlp::BufMut) {
+        todo!()
+    }
+
+    fn payload_len_for_signature(&self) -> usize {
+        todo!()
+    }
 }
 
 impl From<DepositTransaction> for DepositTransactionRequest {

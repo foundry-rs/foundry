@@ -106,6 +106,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         server_config,
         no_mining,
         transaction_order,
+        genesis,
         ..
     } = config.clone();
 
@@ -123,7 +124,18 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let miner = Miner::new(mode);
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
-    let signers = vec![dev_signer];
+    let mut signers = vec![dev_signer];
+    if let Some(genesis) = genesis {
+        let genesis_signers = genesis
+            .alloc
+            .values()
+            .filter_map(|acc| acc.private_key)
+            .flat_map(|k| LocalWallet::from_bytes(&k))
+            .collect::<Vec<_>>();
+        if !genesis_signers.is_empty() {
+            signers.push(Box::new(DevSigner::new(genesis_signers)));
+        }
+    }
 
     let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
