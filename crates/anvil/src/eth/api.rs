@@ -2177,13 +2177,14 @@ impl EthApi {
         }
 
         self.backend
-            .with_database_at(Some(block_request), |state, block| match overrides {
-                None => self.do_estimate_gas_with_state(request, state, block),
-                Some(overrides) => {
-                    let state =
-                        state::apply_state_override(overrides.into_iter().collect(), state)?;
-                    self.do_estimate_gas_with_state(request, state, block)
+            .with_database_at(Some(block_request), |mut state, block| {
+                if let Some(overrides) = overrides {
+                    state = Box::new(state::apply_state_override(
+                        overrides.into_iter().collect(),
+                        state,
+                    )?);
                 }
+                self.do_estimate_gas_with_state(request, state, block)
             })
             .await?
     }
