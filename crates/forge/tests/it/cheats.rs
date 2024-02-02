@@ -13,8 +13,8 @@ use foundry_test_utils::Filter;
 async fn test_cheats_local() {
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
-    // todo: shuffle files around in `testdata` to have multiple projects, and separate cancun out into a new project
-    // after that, remove this line
+    // todo: shuffle files around in `testdata` to have multiple projects, and separate cancun out
+    // into a new project after that, remove this line
     config.evm_version = EvmVersion::Cancun;
     let runner = runner_with_config(config);
     let filter =
