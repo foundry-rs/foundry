@@ -142,7 +142,7 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
-    function blobhashes(bytes32[] blobhashes) external;
+    function blobhashes(bytes32[] calldata blobhashes) external;
     function breakpoint(string calldata char) external;
     function breakpoint(string calldata char, bool value) external;
     function broadcast() external;

@@ -2897,7 +2897,7 @@
       "func": {
         "id": "blobhashes",
         "description": "Sets the blobhashes in the transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
-        "declaration": "function blobhashes(bytes32[] blobhashes) external;",
+        "declaration": "function blobhashes(bytes32[] calldata blobhashes) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "blobhashes(bytes32[])",
