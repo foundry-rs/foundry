@@ -347,6 +347,12 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
 
+    /// Sets `block.blobbasefee`.
+    /// This field is specific to EVM versions from Cancun onwards.
+    /// Reverts if used on unsupported EVM versions.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function blobBaseFee(uint256 newBlobBaseFee) external;
+
     // -------- Account State --------
 
     /// Sets an address' balance.
