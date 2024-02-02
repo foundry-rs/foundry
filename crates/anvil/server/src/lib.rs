@@ -1,4 +1,4 @@
-//! Bootstrap [axum] RPC servers
+//! Bootstrap [axum] RPC servers.
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
