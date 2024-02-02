@@ -13,7 +13,6 @@ use regex::Regex;
 use std::{
     env,
     ffi::OsStr,
-    fmt::Display,
     fs,
     fs::File,
     io::{BufWriter, IsTerminal, Write},
@@ -49,6 +48,137 @@ pub const SOLC_VERSION: &str = "0.8.23";
 /// Another Solc version used when compiling tests. Necessary to avoid downloading multiple
 /// versions.
 pub const OTHER_SOLC_VERSION: &str = "0.8.22";
+
+/// External test builder
+#[derive(Clone, Debug)]
+#[must_use = "call run()"]
+pub struct ExtTester {
+    pub org: &'static str,
+    pub name: &'static str,
+    pub rev: &'static str,
+    pub style: PathStyle,
+    pub fork_block: Option<u64>,
+    pub args: Vec<String>,
+    pub envs: Vec<(String, String)>,
+}
+
+impl ExtTester {
+    /// Creates a new external test builder.
+    pub fn new(org: &'static str, name: &'static str, rev: &'static str) -> Self {
+        Self {
+            org,
+            name,
+            rev,
+            style: PathStyle::Dapptools,
+            fork_block: None,
+            args: vec![],
+            envs: vec![],
+        }
+    }
+
+    /// Sets the path style.
+    pub fn style(mut self, style: PathStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Sets the fork block.
+    pub fn fork_block(mut self, fork_block: u64) -> Self {
+        self.fork_block = Some(fork_block);
+        self
+    }
+
+    /// Adds an argument to the forge command.
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    /// Adds multiple arguments to the forge command.
+    pub fn args<I, A>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = A>,
+        A: Into<String>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Adds an environment variable to the forge command.
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.envs.push((key.into(), value.into()));
+        self
+    }
+
+    /// Adds multiple environment variables to the forge command.
+    pub fn envs<I, K, V>(mut self, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.envs.extend(envs.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+
+    /// Runs the test.
+    pub fn run(&self) {
+        // Skip fork tests if the RPC url is not set.
+        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
+            eprintln!("ETH_RPC_URL is not set; skipping");
+            return;
+        }
+
+        let (prj, mut cmd) = setup_forge(self.name, self.style.clone());
+
+        // Wipe the default structure.
+        prj.wipe();
+
+        // Clone the external repository.
+        let repo_url = format!("https://github.com/{}/{}.git", self.org, self.name);
+        let root = prj.root().to_str().unwrap();
+        clone_remote(&repo_url, root);
+
+        // Checkout the revision.
+        if self.rev.is_empty() {
+            let mut cmd = Command::new("git");
+            cmd.current_dir(root).args(["log", "-n", "1"]);
+            eprintln!("$ {cmd:?}");
+            let output = cmd.output().unwrap();
+            if !output.status.success() {
+                panic!("git log failed: {output:?}");
+            }
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let commit = stdout.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+            panic!("pin to latest commit: {commit}");
+        } else {
+            let mut cmd = Command::new("git");
+            cmd.current_dir(root).args(["checkout", self.rev]);
+            eprintln!("$ {cmd:?}");
+            let status = cmd.status().unwrap();
+            if !status.success() {
+                panic!("git checkout failed: {status}");
+            }
+        }
+
+        // Run common installation commands.
+        run_install_commands(prj.root());
+
+        // Run the tests.
+        cmd.arg("test");
+        cmd.args(&self.args);
+        cmd.args(["--fuzz-runs=256", "--ffi", "-vvvvv"]);
+
+        cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
+        cmd.env("FOUNDRY_FUZZ_RUNS", "1");
+        if let Some(fork_block) = self.fork_block {
+            cmd.env("FOUNDRY_ETH_RPC_URL", foundry_common::rpc::next_http_archive_rpc_endpoint());
+            cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
+        }
+
+        cmd.assert_non_empty_stdout();
+    }
+}
 
 /// Initializes a project with `forge init` at the given path.
 ///
@@ -112,11 +242,12 @@ pub fn initialize(target: &Path) {
 /// Clones a remote repository into the specified directory. Panics if the command fails.
 pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--depth=1", "--recursive", "--shallow-submodules", repo_url, target_dir]);
+    cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
+    cmd.args([repo_url, target_dir]);
     eprintln!("{cmd:?}");
     let status = cmd.status().unwrap();
     if !status.success() {
-        panic!("git clone failed: {status:?}");
+        panic!("git clone failed: {status}");
     }
     eprintln!();
 }
@@ -130,26 +261,34 @@ pub fn run_install_commands(root: &Path) {
         let mut cmd = Command::new(args[0]);
         cmd.args(&args[1..]).current_dir(root);
         eprintln!("cd {}; {cmd:?}", root.display());
-        #[cfg(windows)]
-        let st = cmd.status();
-        #[cfg(not(windows))]
-        let st = cmd.status().unwrap();
-        eprintln!("\n\n{cmd:?}: {st:?}");
+        match cmd.status() {
+            Ok(s) => {
+                eprintln!("\n\n{cmd:?}: {s}");
+                s.success()
+            }
+            Err(e) => {
+                eprintln!("\n\n{cmd:?}: {e}");
+                false
+            }
+        }
     };
     let maybe_run = |path: &str, args: &[&str]| {
-        let c = contains(path);
-        if c {
-            run(args);
+        if contains(path) {
+            run(args)
+        } else {
+            false
         }
-        c
     };
 
     maybe_run("Makefile", &["make", "install"]);
-    let pnpm = maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
-    let yarn = maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
-    if !pnpm && !yarn && contains("package.json") {
-        run(&["npm", "install"]);
-    }
+
+    // Only run one of these for `node_modules`.
+    let mut nm = false;
+    nm = nm || maybe_run("bun.lockb", &["bun", "install", "--prefer-offline"]);
+    nm = nm || maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
+    nm = nm || maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
+    nm = nm || maybe_run("package.json", &["npm", "install", "--prefer-offline"]);
+    let _ = nm;
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -640,8 +779,18 @@ impl TestCommand {
     }
 
     /// Set the environment variable `k` to value `v` for the command.
-    pub fn set_env(&mut self, k: impl AsRef<OsStr>, v: impl Display) {
-        self.cmd.env(k, v.to_string());
+    pub fn env(&mut self, k: impl AsRef<OsStr>, v: impl AsRef<OsStr>) {
+        self.cmd.env(k, v);
+    }
+
+    /// Set the environment variable `k` to value `v` for the command.
+    pub fn envs<I, K, V>(&mut self, envs: I)
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.cmd.envs(envs);
     }
 
     /// Unsets the environment variable `k` for the command.

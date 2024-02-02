@@ -409,7 +409,7 @@ Compiler run successful!
 
 // tests that the lib triple can be parsed
 forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
-    cmd.set_env(
+    cmd.env(
         "DAPP_LIBRARIES",
         "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
     );
