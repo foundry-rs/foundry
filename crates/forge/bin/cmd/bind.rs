@@ -25,7 +25,7 @@ pub struct BindArgs {
     )]
     pub bindings: Option<PathBuf>,
 
-    /// Create bindings only for contracts whose names match the specified filter(s)
+    /// Create bindings only for contracts whose names match the specified filter(s).
     #[clap(long)]
     pub select: Vec<regex::Regex>,
 
