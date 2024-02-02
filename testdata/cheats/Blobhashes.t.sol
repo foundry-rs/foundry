@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import "ds-test/test.sol";
-import "../cheats/Vm.sol";
+import "./Vm.sol";
 
 contract AddrTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
