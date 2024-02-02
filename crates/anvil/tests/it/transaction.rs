@@ -23,7 +23,7 @@ use ethers::{
 };
 use foundry_common::types::{to_call_request_from_tx_request, ToAlloy, ToEthers};
 use futures::{future::join_all, FutureExt, StreamExt};
-use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -990,13 +990,11 @@ async fn test_estimate_gas() {
     );
 
     // Setup state override to simulate sufficient funds for the recipient.
-    let recipient_address_formatted =
-        alloy_primitives::Address::from_str(&format!("{:#x}", recipient))
-            .expect("Failed to format recipient address");
+    let addr = alloy_primitives::Address::from_slice(recipient.as_bytes());
     let account_override =
         AccountOverride { balance: Some(alloy_primitives::U256::from(1e18)), ..Default::default() };
     let mut state_override = StateOverride::new();
-    state_override.insert(recipient_address_formatted, account_override);
+    state_override.insert(addr, account_override);
 
     // Estimate gas with state override implying sufficient funds.
     let gas_estimate = api
