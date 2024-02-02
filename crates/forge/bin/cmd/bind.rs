@@ -239,20 +239,32 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     }
     fn update_cargo_toml(&self, bindings_root_path: &Path) -> Result<()> {
         let cargo_toml_path = bindings_root_path.join("Cargo.toml");
-        let mut cargo_toml = std::fs::OpenOptions::new()
-            .append(true)
-            .open(cargo_toml_path)
-            .wrap_err("Failed to open Cargo.toml for appending")?;
+        let mut cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
+            .wrap_err("Failed to read Cargo.toml")?;
 
-        if let Some(description) = &self.crate_description {
-            writeln!(cargo_toml, "description = {:?}", description)
-                .wrap_err("Failed to write description to Cargo.toml")?;
+        if let Some(rust_version_pos) = cargo_toml_content.find(r#"rust-version"#) {
+            // Find the end of the line
+            let insert_point = cargo_toml_content[rust_version_pos..].find('\n').unwrap_or(cargo_toml_content.len()) + rust_version_pos;
+            let mut insert_content = String::new();
+
+            // Check and append description
+            if let Some(description) = &self.crate_description {
+                insert_content.push_str(&format!("\ndescription = {:?}", description));
+            }
+
+            // Check and append license
+            if let Some(license) = &self.crate_license {
+                insert_content.push_str(&format!("\nlicense = {:?}", license));
+            }
+
+            cargo_toml_content.insert_str(insert_point, &insert_content);
+        } else {
+            // Handle the case where 'rust-version = "1.75"' is not found
+            return Err(eyre::eyre!("'rust-version' not found in Cargo.toml"));
         }
 
-        if let Some(license) = &self.crate_license {
-            writeln!(cargo_toml, "license = {:?}", license)
-                .wrap_err("Failed to write license to Cargo.toml")?;
-        }
+        std::fs::write(&cargo_toml_path, cargo_toml_content)
+            .wrap_err("Failed to write updated Cargo.toml")?;
 
         Ok(())
     }
