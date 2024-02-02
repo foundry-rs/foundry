@@ -2895,6 +2895,26 @@
     },
     {
       "func": {
+        "id": "blobhashes",
+        "description": "Sets the blobhashes in the transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function blobhashes(bytes32[] blobhashes) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "blobhashes(bytes32[])",
+        "selector": "0x129de7eb",
+        "selectorBytes": [
+          18,
+          157,
+          231,
+          235
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "breakpoint_0",
         "description": "Writes a breakpoint to jump to in the debugger.",
         "declaration": "function breakpoint(string calldata char) external;",
