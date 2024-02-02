@@ -125,7 +125,7 @@ foundry-test-utils = { path = "crates/test-utils" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.0", default-features = false }
+foundry-compilers = { version = "0.3.1", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -223,5 +223,3 @@ revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_f
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors" }
-
-foundry-compilers = { git = "https://github.com/klkvr/compilers", branch = "klkvr/flatten-fix" }

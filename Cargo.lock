@@ -3106,8 +3106,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.0"
-source = "git+https://github.com/klkvr/compilers?branch=klkvr/flatten-fix#bf346c5076b14912159639b779433d0272b381d8"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd693c0870b3817b215417ff0f2f0df02cddf296dc5524c330f99186a42cf29"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
