@@ -261,7 +261,7 @@ impl Cheatcode for prevrandaoCall {
     }
 }
 
-impl Cheatcode for blobhashCall {
+impl Cheatcode for blobhashesCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blobhashes } = self;
         ensure!(

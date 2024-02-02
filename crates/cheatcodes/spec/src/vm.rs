@@ -325,7 +325,7 @@ interface Vm {
     /// Not available on EVM versions before Cancun.
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function blobhash(bytes32[] blobhashes) external;
+    function blobhashes(bytes32[] blobhashes) external;
 
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
