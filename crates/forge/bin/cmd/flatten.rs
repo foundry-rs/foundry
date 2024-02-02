@@ -4,7 +4,8 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ProjectPathsArgs},
     utils::LoadConfig,
 };
-use foundry_common::fs;
+use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_compilers::{error::SolcError, flatten::Flattener};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -38,10 +39,24 @@ impl FlattenArgs {
 
         let config = build_args.try_load_config_emit_warnings()?;
 
-        let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;
-        let flattened =
-            paths.flatten(&target_path).map_err(|err| eyre::eyre!("Failed to flatten: {err}"))?;
+
+        let project = config.ephemeral_no_artifacts_project()?;
+
+        let compiler_output = ProjectCompiler::new().files([target_path.clone()]).compile(&project);
+
+        let flattened = match compiler_output {
+            Ok(compiler_output) => {
+                Flattener::new(&project, &compiler_output, &target_path).map(|f| f.flatten())
+            }
+            Err(_) => {
+                // Fallback to the old flattening implementation if we couldn't compile the target
+                // successfully. This would be the case if the target has invalid
+                // syntax. (e.g. Solang)
+                project.paths.flatten(&target_path)
+            }
+        }
+        .map_err(|err: SolcError| eyre::eyre!("Failed to flatten: {err}"))?;
 
         match output {
             Some(output) => {
