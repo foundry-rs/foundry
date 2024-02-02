@@ -298,7 +298,20 @@ impl Cheatcode for getBlockTimestampCall {
         Ok(ccx.data.env.block.timestamp.abi_encode())
     }
 }
+impl Cheatcode for blobBaseFeeCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { newBlobBaseFee } = self;
 
+        ensure!(
+            ccx.data.env.cfg.spec_id >= SpecId::CANCUN,
+            "`blobBaseFee` is not supported before the Cancun hard fork; \
+             see relevant EIP for blob base fee"
+        );
+
+        //ccx.data.env.block. = Some(*newBlobBaseFee);
+        Ok(Default::default())
+    }
+}
 impl Cheatcode for dealCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
