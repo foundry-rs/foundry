@@ -321,6 +321,12 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prevrandao(bytes32 newPrevrandao) external;
 
+    /// Sets the blobhashes in the transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function blobhash(bytes32[] blobhashes) external;
+
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function roll(uint256 newHeight) external;

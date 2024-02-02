@@ -261,6 +261,19 @@ impl Cheatcode for prevrandaoCall {
     }
 }
 
+impl Cheatcode for blobhashCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { blobhashes } = self;
+        ensure!(
+            ccx.data.env.cfg.spec_id >= SpecId::CANCUN,
+            "`blobhash` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        ccx.data.env.tx.blob_hashes = blobhashes.clone();
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for rollCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newHeight } = self;

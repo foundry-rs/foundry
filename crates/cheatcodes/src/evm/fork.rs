@@ -10,7 +10,6 @@ use foundry_evm_core::fork::CreateFork;
 
 impl Cheatcode for activeForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self {} = self;
         ccx.data
             .db
             .active_fork_id()
