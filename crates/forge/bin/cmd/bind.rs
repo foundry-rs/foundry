@@ -6,7 +6,6 @@ use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
 };
 impl_figment_convert!(BindArgs, build_args);
@@ -101,7 +100,7 @@ impl BindArgs {
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
             println!("Bindings found. Checking for consistency.");
-            return self.check_existing_bindings(&artifacts)
+            return self.check_existing_bindings(&artifacts);
         }
 
         if self.overwrite && self.bindings_exist(&artifacts) {
@@ -131,13 +130,13 @@ impl BindArgs {
     /// Returns the filter to use for `MultiAbigen`
     fn get_filter(&self) -> ContractFilter {
         if self.select_all {
-            return ContractFilter::All
+            return ContractFilter::All;
         }
         if !self.select.is_empty() {
-            return SelectContracts::default().extend_regex(self.select.clone()).into()
+            return SelectContracts::default().extend_regex(self.select.clone()).into();
         }
         if !self.skip.is_empty() {
-            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+            return ExcludeContracts::default().extend_regex(self.skip.clone()).into();
         }
         // This excludes all Test/Script and forge-std contracts
         ExcludeContracts::default()
@@ -237,14 +236,18 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
 
         Ok(())
     }
+
     fn update_cargo_toml(&self, bindings_root_path: &Path) -> Result<()> {
         let cargo_toml_path = bindings_root_path.join("Cargo.toml");
-        let mut cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
-            .wrap_err("Failed to read Cargo.toml")?;
+        let mut cargo_toml_content =
+            std::fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
 
         if let Some(rust_version_pos) = cargo_toml_content.find(r#"rust-version"#) {
             // Find the end of the line
-            let insert_point = cargo_toml_content[rust_version_pos..].find('\n').unwrap_or(cargo_toml_content.len()) + rust_version_pos;
+            let insert_point = cargo_toml_content[rust_version_pos..]
+                .find('\n')
+                .unwrap_or(cargo_toml_content.len()) +
+                rust_version_pos;
             let mut insert_content = String::new();
 
             // Check and append description
