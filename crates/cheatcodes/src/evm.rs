@@ -311,10 +311,9 @@ impl Cheatcode for blobBaseFeeCall {
              see relevant EIP for blob base fee"
         );
 
-        let excess_blob_gas = (*newBlobBaseFee).to_ethers();
-        let c: u64 = excess_blob_gas.to_string().parse().unwrap();
+        let excess_blob_gas: u64 = (*newBlobBaseFee).to();
 
-        ccx.data.env.block.set_blob_excess_gas_and_price(c);
+        ccx.data.env.block.set_blob_excess_gas_and_price(excess_blob_gas);
         Ok(Default::default())
     }
 }
