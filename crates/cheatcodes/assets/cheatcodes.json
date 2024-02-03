@@ -2875,6 +2875,26 @@
     },
     {
       "func": {
+        "id": "blobBaseFee",
+        "description": "Sets `block.blobbasefee`.\nThis field is specific to EVM versions from Cancun onwards.\nReverts if used on unsupported EVM versions.",
+        "declaration": "function blobBaseFee(uint256 newBlobBaseFee) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "blobBaseFee(uint256)",
+        "selector": "0x6d315d7e",
+        "selectorBytes": [
+          109,
+          49,
+          93,
+          126
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "assume",
         "description": "If the condition is false, discard this run's fuzz inputs and generate new ones.",
         "declaration": "function assume(bool condition) external pure;",
