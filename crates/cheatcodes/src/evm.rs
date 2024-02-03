@@ -5,10 +5,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
-use foundry_common::{
-    fs::{read_json_file, write_json_file},
-    types::ToEthers,
-};
+use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
