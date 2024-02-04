@@ -555,6 +555,32 @@ casttest!(storage, |_prj, cmd| {
     let six = "0x0000000000000000000000000000000000000000000000000000000000000006";
     cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
     assert_eq!(cmd.stdout_lossy().trim(), six);
+
+    let rpc = next_http_rpc_endpoint();
+    let total_supply_slot = "0x01";
+    let issued = "0x000000000000000000000000000000000000000000000000000000174876e800";
+    let block_before = "4634747";
+    let block_after = "4634748";
+    cmd.cast_fuse().args([
+        "storage",
+        usdt,
+        total_supply_slot,
+        "--rpc-url",
+        &rpc,
+        "--block",
+        block_before,
+    ]);
+    assert_eq!(cmd.stdout_lossy().trim(), empty);
+    cmd.cast_fuse().args([
+        "storage",
+        usdt,
+        total_supply_slot,
+        "--rpc-url",
+        &rpc,
+        "--block",
+        block_after,
+    ]);
+    assert_eq!(cmd.stdout_lossy().trim(), issued);
 });
 
 casttest!(balance, |_prj, cmd| {
