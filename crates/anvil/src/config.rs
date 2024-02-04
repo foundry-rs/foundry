@@ -114,6 +114,8 @@ pub struct NodeConfig {
     pub no_mining: bool,
     /// port to use for the server
     pub port: u16,
+    /// engine API config
+    pub engine_config: EngineConfig,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
     /// don't print anything on startup
@@ -366,6 +368,7 @@ impl Default for NodeConfig {
             disable_block_gas_limit: false,
             gas_price: None,
             hardfork: None,
+            engine_config: Default::default(),
             signer_accounts: genesis_accounts.clone(),
             genesis_timestamp: None,
             genesis_accounts,
@@ -1180,6 +1183,17 @@ impl AccountGenerator {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EngineConfig {
+    pub port: u16,
+    pub jwt_secret: Option<String>,
+}
+
+// === impl EngineConfig ===
+
+impl EngineConfig {
+    // TODO: implement
+}
 /// Returns the path to anvil dir `~/.foundry/anvil`
 pub fn anvil_dir() -> Option<PathBuf> {
     Config::foundry_dir().map(|p| p.join("anvil"))
