@@ -14,6 +14,9 @@ foundry-common.workspace = true
 foundry-evm.workspace = true
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
+reth-rpc-types = { workspace = true, features = ["optimism"] }
+reth-rpc-types-compat = { workspace = true, features = ["optimism"] }
+
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types = { workspace = true }
 alloy-rpc-trace-types.workspace = true
@@ -44,3 +47,6 @@ anvil-core = { path = ".", features = ["serde"] }
 default = ["serde"]
 impersonated-tx = []
 serde = ["dep:serde"]
+optimism = [
+  "reth-rpc-types/optimism",
+]

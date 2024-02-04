@@ -135,6 +135,11 @@ revm = { version = "3", default-features = false }
 revm-primitives = { version = "1", default-features = false }
 revm-inspectors = { version = "0.1", default-features = false }
 
+## reth
+reth-rpc-types = { git = "https://github.com/paradigmxyz/reth", package = "reth-rpc-types", features = ["optimism"]}
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", package = "reth-rpc-types-compat", features = ["optimism"]}
+reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", package = "reth-payload-builder", features = ["optimism"]}
+
 ## ethers
 ethers = { version = "2.0", default-features = false }
 ethers-core = { version = "2.0", default-features = false }
@@ -228,3 +233,4 @@ revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_f
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors" }
+

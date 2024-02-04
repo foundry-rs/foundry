@@ -48,6 +48,11 @@ alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 
+# reused reth code
+reth-rpc-types = { workspace = true, features = ["optimism"] }
+reth-payload-builder = { workspace = true, features = ["optimism"] }
+reth-rpc-types-compat = { workspace = true, features = ["optimism"] }
+
 # axum related
 axum.workspace = true
 hyper.workspace = true
