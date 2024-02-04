@@ -70,7 +70,7 @@ semver = "1"
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
-strum = { version = "0.25", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 watchexec = "2.3.2"

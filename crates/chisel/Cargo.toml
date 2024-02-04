@@ -44,7 +44,7 @@ semver = "1"
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
-strum = { version = "0.25", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["full"] }
 yansi = "0.5"

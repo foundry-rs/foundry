@@ -167,8 +167,8 @@ alloy-dyn-abi = "0.6.2"
 alloy-json-abi = "0.6.2"
 alloy-sol-types = "0.6.2"
 syn-solidity = "0.6.0"
+alloy-chains = "0.1"
 
-alloy-chains = "0.1.10"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
@@ -186,6 +186,7 @@ rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 base64 = "0.21"
+strum = "0.26"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
