@@ -17,6 +17,8 @@ revm = { workspace = true, default-features = false, features = ["std", "serde",
 reth-rpc-types = { workspace = true, features = ["optimism"] }
 reth-rpc-types-compat = { workspace = true, features = ["optimism"] }
 
+ethers-core = { workspace = true, features = ["optimism"] }
+
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types = { workspace = true }
 alloy-rpc-trace-types.workspace = true

@@ -664,6 +664,7 @@ dependencies = [
  "alloy-rpc-types",
  "anvil-core",
  "bytes",
+ "ethers-core",
  "foundry-common",
  "foundry-evm",
  "hash-db",
