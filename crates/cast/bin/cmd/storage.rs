@@ -107,7 +107,8 @@ impl StorageArgs {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address.clone(), artifact, true).await;
+                return fetch_and_print_storage(provider, address.clone(), block, artifact, true)
+                    .await;
             }
         }
 
@@ -173,7 +174,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, artifact, true).await
+        fetch_and_print_storage(provider, address, block, artifact, true).await
     }
 }
 
@@ -211,6 +212,7 @@ impl StorageValue {
 async fn fetch_and_print_storage(
     provider: RetryProvider,
     address: NameOrAddress,
+    block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
 ) -> Result<()> {
@@ -219,7 +221,7 @@ async fn fetch_and_print_storage(
         Ok(())
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
-        let values = fetch_storage_slots(provider, address, &layout).await?;
+        let values = fetch_storage_slots(provider, address, block, &layout).await?;
         print_storage(layout, values, pretty)
     }
 }
@@ -227,12 +229,13 @@ async fn fetch_and_print_storage(
 async fn fetch_storage_slots(
     provider: RetryProvider,
     address: NameOrAddress,
+    block: Option<BlockId>,
     layout: &StorageLayout,
 ) -> Result<Vec<StorageValue>> {
     let requests = layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
         let raw_slot_value =
-            provider.get_storage_at(address.clone(), slot.to_ethers(), None).await?.to_alloy();
+            provider.get_storage_at(address.clone(), slot.to_ethers(), block).await?.to_alloy();
 
         let value = StorageValue { slot, raw_slot_value };
 
