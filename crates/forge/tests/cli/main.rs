@@ -19,6 +19,3 @@ mod test_cmd;
 mod verify;
 
 mod ext_integration;
-
-#[cfg(feature = "heavy-integration-tests")]
-mod heavy_integration;

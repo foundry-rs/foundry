@@ -9,7 +9,7 @@ use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    request::TransactionRequest, AccessList, AccessListItem, CallRequest,
+    request::TransactionRequest, AccessList, AccessListItem, CallInput, CallRequest,
     Signature as RpcSignature, Transaction as RpcTransaction,
 };
 use foundry_evm::traces::CallTraceNode;
@@ -70,6 +70,42 @@ pub struct EthTransactionRequest {
     /// Optimism Deposit Request Fields
     #[serde(flatten)]
     pub optimism_fields: Option<OptimismDepositRequestFields>,
+}
+
+impl EthTransactionRequest {
+    pub fn into_call_request(self) -> CallRequest {
+        let Self {
+            from,
+            to,
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            gas,
+            value,
+            data,
+            nonce,
+            chain_id,
+            access_list,
+            transaction_type,
+            optimism_fields: _,
+        } = self;
+        CallRequest {
+            from,
+            to,
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            gas,
+            value,
+            input: CallInput::maybe_input(data),
+            nonce: nonce.map(|n| n.to()),
+            chain_id,
+            access_list: access_list.map(AccessList),
+            max_fee_per_blob_gas: None,
+            blob_versioned_hashes: None,
+            transaction_type: transaction_type.map(|ty| ty.to()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]

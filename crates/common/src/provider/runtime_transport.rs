@@ -202,7 +202,7 @@ impl RuntimeTransport {
     }
 
     /// Sends a request using the underlying transport.
-    /// If this is the first request, it will connect to the appropiate transport depending on the
+    /// If this is the first request, it will connect to the appropriate transport depending on the
     /// URL scheme. When sending the request, retries will be automatically handled depending
     /// on the parameters set on the [RuntimeTransport].
     /// For sending the actual request, this action is delegated down to the
@@ -283,7 +283,7 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     let auth = JwtAuth::new(secret, None, None);
     let token = auth.generate_token()?;
 
-    // Essentially unrolled ethers-rs new_with_auth to accomodate the custom timeout
+    // Essentially unrolled ethers-rs new_with_auth to accommodate the custom timeout
     let auth = Authorization::Bearer(token);
 
     Ok(auth)

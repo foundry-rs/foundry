@@ -1,6 +1,5 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types::request::TransactionRequest;
 use ethers_core::types::{
@@ -15,6 +14,7 @@ use foundry_common::{
     SELECTOR_LEN,
 };
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
+use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -146,57 +146,44 @@ impl TransactionWithMetadata {
             self.opcode = CallKind::Create;
         }
 
-        self.contract_name = contracts.get(&address).map(|info| info.contract_name.clone());
+        let info = contracts.get(&address);
+        self.contract_name = info.map(|info| info.contract_name.clone());
         self.contract_address = Some(address);
 
-        if let Some(data) = self.transaction.data() {
-            if let Some(info) = contracts.get(&address) {
-                // constructor args are postfixed to creation code
-                // and create2 transactions are prefixed by 32 byte salt
-                let contains_constructor_args = if is_create2 {
-                    data.len() - 32 > info.code.len()
-                } else {
-                    data.len() > info.code.len()
-                };
+        let Some(data) = self.transaction.data() else { return Ok(()) };
+        let Some(info) = info else { return Ok(()) };
 
-                if contains_constructor_args {
-                    if let Some(constructor) = info.abi.constructor() {
-                        let creation_code = if is_create2 { &data[32..] } else { data };
-
-                        let on_err = || {
-                            let inputs = constructor
-                                .inputs
-                                .iter()
-                                .map(|p| p.ty.clone())
-                                .collect::<Vec<_>>()
-                                .join(",");
-                            let signature = format!("constructor({inputs})");
-                            let bytecode = hex::encode(creation_code);
-                            (signature, bytecode)
-                        };
-
-                        // the constructor args start after bytecode
-                        let constructor_args = &creation_code[info.code.len()..];
-
-                        let constructor_fn = Function {
-                            name: "constructor".to_string(),
-                            inputs: constructor.inputs.clone(),
-                            outputs: vec![],
-                            state_mutability: constructor.state_mutability,
-                        };
-
-                        if let Ok(arguments) =
-                            constructor_fn.abi_decode_input(constructor_args, false)
-                        {
-                            self.arguments = Some(arguments.iter().map(format_token_raw).collect());
-                        } else {
-                            let (signature, bytecode) = on_err();
-                            error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
-                        };
-                    }
-                }
+        // `create2` transactions are prefixed by a 32 byte salt.
+        let creation_code = if is_create2 {
+            if data.len() < 32 {
+                return Ok(())
             }
+            &data[32..]
+        } else {
+            data
+        };
+
+        // The constructor args start after bytecode.
+        let contains_constructor_args = creation_code.len() > info.code.len();
+        if !contains_constructor_args {
+            return Ok(());
         }
+        let constructor_args = &creation_code[info.code.len()..];
+
+        let Some(constructor) = info.abi.constructor() else { return Ok(()) };
+        let values = constructor.abi_decode_input(constructor_args, false).map_err(|e| {
+            error!(
+                contract=?self.contract_name,
+                signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
+                is_create2,
+                constructor_args=%hex::encode(constructor_args),
+                "Failed to decode constructor arguments",
+            );
+            debug!(full_data=%hex::encode(data), bytecode=%hex::encode(creation_code));
+            e
+        })?;
+        self.arguments = Some(values.iter().map(format_token_raw).collect());
+
         Ok(())
     }
 
@@ -209,44 +196,41 @@ impl TransactionWithMetadata {
     ) -> Result<()> {
         self.opcode = CallKind::Call;
 
-        if let Some(data) = self.transaction.data() {
-            if data.0.len() >= SELECTOR_LEN {
-                if let Some(info) = local_contracts.get(&target) {
-                    // This CALL is made to a local contract.
-
-                    self.contract_name = Some(info.contract_name.clone());
-                    if let Some(function) = info
-                        .abi
-                        .functions()
-                        .find(|function| function.selector() == data.0[..SELECTOR_LEN])
-                    {
-                        self.function = Some(function.signature());
-                        self.arguments = Some(
-                            function
-                                .abi_decode_input(&data.0[SELECTOR_LEN..], false)
-                                .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
-                        );
-                    }
-                } else {
-                    // This CALL is made to an external contract. We can only decode it, if it has
-                    // been verified and identified by etherscan.
-
-                    if let Some(function) =
-                        decoder.functions.get(&data.0[..SELECTOR_LEN]).and_then(|v| v.first())
-                    {
-                        self.contract_name = decoder.contracts.get(&target).cloned();
-
-                        self.function = Some(function.signature());
-                        self.arguments = Some(
-                            function
-                                .abi_decode_input(&data.0[SELECTOR_LEN..], false)
-                                .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
-                        );
-                    }
-                }
-                self.contract_address = Some(target);
-            }
+        let Some(data) = self.transaction.data() else { return Ok(()) };
+        if data.len() < SELECTOR_LEN {
+            return Ok(());
         }
+        let (selector, data) = data.split_at(SELECTOR_LEN);
+
+        let function = if let Some(info) = local_contracts.get(&target) {
+            // This CALL is made to a local contract.
+            self.contract_name = Some(info.contract_name.clone());
+            info.abi.functions().find(|function| function.selector() == selector)
+        } else {
+            // This CALL is made to an external contract; try to decode it from the given decoder.
+            decoder.functions.get(selector).and_then(|v| v.first())
+        };
+        if let Some(function) = function {
+            if self.contract_address.is_none() {
+                self.contract_name = decoder.contracts.get(&target).cloned();
+            }
+
+            self.function = Some(function.signature());
+
+            let values = function.abi_decode_input(data, false).map_err(|e| {
+                error!(
+                    contract=?self.contract_name,
+                    signature=?function,
+                    data=hex::encode(data),
+                    "Failed to decode function arguments",
+                );
+                e
+            })?;
+            self.arguments = Some(values.iter().map(format_token_raw).collect());
+        }
+
+        self.contract_address = Some(target);
+
         Ok(())
     }
 

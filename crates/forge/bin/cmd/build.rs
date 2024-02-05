@@ -87,16 +87,22 @@ impl BuildArgs {
             project = config.project()?;
         }
 
-        let output = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)
-            .bail(!self.format_json)
-            .filter(Box::new(SkipBuildFilters(self.skip.unwrap_or_default())))
-            .compile(&project)?;
+            .bail(!self.format_json);
+        if let Some(skip) = self.skip {
+            if !skip.is_empty() {
+                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
+            }
+        }
+        let output = compiler.compile(&project)?;
+
         if self.format_json {
             println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
         }
+
         Ok(output)
     }
 

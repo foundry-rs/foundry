@@ -225,7 +225,7 @@ impl Executor {
         abi: Option<&JsonAbi>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
-        let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
+        let calldata = Bytes::from(func.abi_encode_input(&args.into())?);
         let result = self.call_raw_committing(from, to, calldata, value)?;
         convert_call_result(abi, &func, result)
     }

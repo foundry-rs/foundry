@@ -24,34 +24,46 @@ pub fn expand_globs(
 /// to be compiled when the filter functions `TestFilter` functions are called.
 #[derive(Clone, Debug)]
 pub struct GlobMatcher {
-    /// The parsed glob
-    pub glob: globset::Glob,
     /// The compiled glob
     pub matcher: globset::GlobMatcher,
 }
 
 impl GlobMatcher {
+    /// Creates a new `GlobMatcher` from a `globset::Glob`.
+    pub fn new(glob: globset::Glob) -> Self {
+        Self { matcher: glob.compile_matcher() }
+    }
+
     /// Tests whether the given path matches this pattern or not.
     ///
     /// The glob `./test/*` won't match absolute paths like `test/Contract.sol`, which is common
     /// format here, so we also handle this case here
-    pub fn is_match(&self, path: &str) -> bool {
-        let mut matches = self.matcher.is_match(path);
-        if !matches && !path.starts_with("./") && self.as_str().starts_with("./") {
-            matches = self.matcher.is_match(format!("./{path}"));
+    pub fn is_match(&self, path: &Path) -> bool {
+        if self.matcher.is_match(path) {
+            return true;
         }
-        matches
+
+        if !path.starts_with("./") && self.as_str().starts_with("./") {
+            return self.matcher.is_match(format!("./{}", path.display()));
+        }
+
+        false
+    }
+
+    /// Returns the `globset::Glob`.
+    pub fn glob(&self) -> &globset::Glob {
+        self.matcher.glob()
     }
 
     /// Returns the `Glob` string used to compile this matcher.
     pub fn as_str(&self) -> &str {
-        self.glob.glob()
+        self.glob().glob()
     }
 }
 
 impl fmt::Display for GlobMatcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.glob.fmt(f)
+        self.glob().fmt(f)
     }
 }
 
@@ -59,16 +71,16 @@ impl FromStr for GlobMatcher {
     type Err = globset::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.parse::<globset::Glob>().map(Into::into)
+        s.parse::<globset::Glob>().map(Self::new)
     }
 }
 
 impl From<globset::Glob> for GlobMatcher {
     fn from(glob: globset::Glob) -> Self {
-        let matcher = glob.compile_matcher();
-        Self { glob, matcher }
+        Self::new(glob)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,7 +88,7 @@ mod tests {
     #[test]
     fn can_match_glob_paths() {
         let matcher: GlobMatcher = "./test/*".parse().unwrap();
-        assert!(matcher.is_match("test/Contract.sol"));
-        assert!(matcher.is_match("./test/Contract.sol"));
+        assert!(matcher.is_match(Path::new("test/Contract.sol")));
+        assert!(matcher.is_match(Path::new("./test/Contract.sol")));
     }
 }

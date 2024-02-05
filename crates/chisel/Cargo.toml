@@ -44,7 +44,7 @@ semver = "1"
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
-strum = { version = "0.25", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["full"] }
 yansi = "0.5"
@@ -59,6 +59,7 @@ serial_test = "2"
 default = ["rustls"]
 rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
 
 [[bench]]
 name = "session_source"

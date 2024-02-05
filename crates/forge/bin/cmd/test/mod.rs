@@ -319,14 +319,16 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         if runner.matching_test_function_count(filter) == 0 {
-            let filter_str = filter.to_string();
-            if filter_str.is_empty() {
+            println!();
+            if filter.is_empty() {
                 println!(
-                    "\nNo tests found in project! \
+                    "No tests found in project! \
                      Forge looks for functions that starts with `test`."
                 );
             } else {
-                println!("\nNo tests match the provided pattern:\n{filter_str}");
+                println!("No tests match the provided pattern:");
+                print!("{filter}");
+
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
@@ -507,7 +509,7 @@ impl TestArgs {
 
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
-        self.filter.merge_with_config(config)
+        self.filter.clone().merge_with_config(config)
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`

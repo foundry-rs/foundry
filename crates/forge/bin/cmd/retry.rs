@@ -15,7 +15,7 @@ pub struct RetryArgs {
     /// Number of attempts for retrying verification.
     #[clap(
         long,
-        value_parser = RangedU64ValueParser::<u32>::new().range(1..=10),
+        value_parser = RangedU64ValueParser::<u32>::new().range(1..),
         default_value = "5",
     )]
     pub retries: u32,

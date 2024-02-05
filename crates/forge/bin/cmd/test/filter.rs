@@ -43,29 +43,37 @@ pub struct FilterArgs {
 }
 
 impl FilterArgs {
+    /// Returns true if the filter is empty.
+    pub fn is_empty(&self) -> bool {
+        self.test_pattern.is_none() &&
+            self.test_pattern_inverse.is_none() &&
+            self.contract_pattern.is_none() &&
+            self.contract_pattern_inverse.is_none() &&
+            self.path_pattern.is_none() &&
+            self.path_pattern_inverse.is_none()
+    }
+
     /// Merges the set filter globs with the config's values
-    pub fn merge_with_config(&self, config: &Config) -> ProjectPathsAwareFilter {
-        let mut filter = self.clone();
-        if filter.test_pattern.is_none() {
-            filter.test_pattern = config.test_pattern.clone().map(|p| p.into());
+    pub fn merge_with_config(mut self, config: &Config) -> ProjectPathsAwareFilter {
+        if self.test_pattern.is_none() {
+            self.test_pattern = config.test_pattern.clone().map(Into::into);
         }
-        if filter.test_pattern_inverse.is_none() {
-            filter.test_pattern_inverse = config.test_pattern_inverse.clone().map(|p| p.into());
+        if self.test_pattern_inverse.is_none() {
+            self.test_pattern_inverse = config.test_pattern_inverse.clone().map(Into::into);
         }
-        if filter.contract_pattern.is_none() {
-            filter.contract_pattern = config.contract_pattern.clone().map(|p| p.into());
+        if self.contract_pattern.is_none() {
+            self.contract_pattern = config.contract_pattern.clone().map(Into::into);
         }
-        if filter.contract_pattern_inverse.is_none() {
-            filter.contract_pattern_inverse =
-                config.contract_pattern_inverse.clone().map(|p| p.into());
+        if self.contract_pattern_inverse.is_none() {
+            self.contract_pattern_inverse = config.contract_pattern_inverse.clone().map(Into::into);
         }
-        if filter.path_pattern.is_none() {
-            filter.path_pattern = config.path_pattern.clone().map(Into::into);
+        if self.path_pattern.is_none() {
+            self.path_pattern = config.path_pattern.clone().map(Into::into);
         }
-        if filter.path_pattern_inverse.is_none() {
-            filter.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
+        if self.path_pattern_inverse.is_none() {
+            self.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
-        ProjectPathsAwareFilter { args_filter: filter, paths: config.project_paths() }
+        ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
     }
 }
 
@@ -86,15 +94,13 @@ impl FileFilter for FilterArgs {
     /// Returns true if the file regex pattern match the `file`
     ///
     /// If no file regex is set this returns true if the file ends with `.t.sol`, see
-    /// [FoundryPathExr::is_sol_test()]
+    /// [`FoundryPathExt::is_sol_test()`].
     fn is_match(&self, file: &Path) -> bool {
-        if let Some(file) = file.as_os_str().to_str() {
-            if let Some(ref glob) = self.path_pattern {
-                return glob.is_match(file)
-            }
-            if let Some(ref glob) = self.path_pattern_inverse {
-                return !glob.is_match(file)
-            }
+        if let Some(glob) = &self.path_pattern {
+            return glob.is_match(file)
+        }
+        if let Some(glob) = &self.path_pattern_inverse {
+            return !glob.is_match(file)
         }
         file.is_sol_test()
     }
@@ -124,10 +130,6 @@ impl TestFilter for FilterArgs {
     }
 
     fn matches_path(&self, path: &Path) -> bool {
-        let Some(path) = path.to_str() else {
-            return false;
-        };
-
         let mut ok = true;
         if let Some(re) = &self.path_pattern {
             ok = ok && re.is_match(path);
@@ -141,26 +143,25 @@ impl TestFilter for FilterArgs {
 
 impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut patterns = Vec::new();
-        if let Some(ref p) = self.test_pattern {
-            patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
+        if let Some(p) = &self.test_pattern {
+            writeln!(f, "\tmatch-test: `{}`", p.as_str())?;
         }
-        if let Some(ref p) = self.test_pattern_inverse {
-            patterns.push(format!("\tno-match-test: `{}`", p.as_str()));
+        if let Some(p) = &self.test_pattern_inverse {
+            writeln!(f, "\tno-match-test: `{}`", p.as_str())?;
         }
-        if let Some(ref p) = self.contract_pattern {
-            patterns.push(format!("\tmatch-contract: `{}`", p.as_str()));
+        if let Some(p) = &self.contract_pattern {
+            writeln!(f, "\tmatch-contract: `{}`", p.as_str())?;
         }
-        if let Some(ref p) = self.contract_pattern_inverse {
-            patterns.push(format!("\tno-match-contract: `{}`", p.as_str()));
+        if let Some(p) = &self.contract_pattern_inverse {
+            writeln!(f, "\tno-match-contract: `{}`", p.as_str())?;
         }
-        if let Some(ref p) = self.path_pattern {
-            patterns.push(format!("\tmatch-path: `{}`", p.as_str()));
+        if let Some(p) = &self.path_pattern {
+            writeln!(f, "\tmatch-path: `{}`", p.as_str())?;
         }
-        if let Some(ref p) = self.path_pattern_inverse {
-            patterns.push(format!("\tno-match-path: `{}`", p.as_str()));
+        if let Some(p) = &self.path_pattern_inverse {
+            writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
         }
-        write!(f, "{}", patterns.join("\n"))
+        Ok(())
     }
 }
 
@@ -174,12 +175,17 @@ pub struct ProjectPathsAwareFilter {
 // === impl ProjectPathsAwareFilter ===
 
 impl ProjectPathsAwareFilter {
-    /// Returns the CLI arguments
+    /// Returns true if the filter is empty.
+    pub fn is_empty(&self) -> bool {
+        self.args_filter.is_empty()
+    }
+
+    /// Returns the CLI arguments.
     pub fn args(&self) -> &FilterArgs {
         &self.args_filter
     }
 
-    /// Returns the CLI arguments mutably
+    /// Returns the CLI arguments mutably.
     pub fn args_mut(&mut self) -> &mut FilterArgs {
         &mut self.args_filter
     }
