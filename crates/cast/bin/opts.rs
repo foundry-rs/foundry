@@ -27,13 +27,13 @@ const VERSION_MESSAGE: &str = concat!(
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
     next_display_order = None,
 )]
-pub struct Opts {
+pub struct Cast {
     #[clap(subcommand)]
-    pub sub: Subcommands,
+    pub cmd: CastSubcommand,
 }
 
 #[derive(Subcommand)]
-pub enum Subcommands {
+pub enum CastSubcommand {
     /// Prints the maximum value of the given integer type.
     #[clap(visible_aliases = &["--max-int", "maxi"])]
     MaxInt {
@@ -898,11 +898,17 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 mod tests {
     use super::*;
     use cast::SimpleCast;
+    use clap::CommandFactory;
     use ethers_core::types::BlockNumber;
 
     #[test]
+    fn verify_cli() {
+        Cast::command().debug_assert();
+    }
+
+    #[test]
     fn parse_proof_slot() {
-        let args: Opts = Opts::parse_from([
+        let args: Cast = Cast::parse_from([
             "foundry-cli",
             "proof",
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -912,8 +918,8 @@ mod tests {
             "0x1",
             "0x01",
         ]);
-        match args.sub {
-            Subcommands::Proof { slots, .. } => {
+        match args.cmd {
+            CastSubcommand::Proof { slots, .. } => {
                 assert_eq!(
                     slots,
                     vec![
@@ -931,15 +937,15 @@ mod tests {
 
     #[test]
     fn parse_call_data() {
-        let args: Opts = Opts::parse_from([
+        let args: Cast = Cast::parse_from([
             "foundry-cli",
             "calldata",
             "f()",
             "5c9d55b78febcc2061715ba4f57ecf8ea2711f2c",
             "2",
         ]);
-        match args.sub {
-            Subcommands::CalldataEncode { args, .. } => {
+        match args.cmd {
+            CastSubcommand::CalldataEncode { args, .. } => {
                 assert_eq!(
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
@@ -952,13 +958,13 @@ mod tests {
     // <https://github.com/foundry-rs/book/issues/1019>
     #[test]
     fn parse_signature() {
-        let args: Opts = Opts::parse_from([
+        let args: Cast = Cast::parse_from([
             "foundry-cli",
             "sig",
             "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)",
         ]);
-        match args.sub {
-            Subcommands::Sig { sig, .. } => {
+        match args.cmd {
+            CastSubcommand::Sig { sig, .. } => {
                 let sig = sig.unwrap();
                 assert_eq!(
                     sig,
