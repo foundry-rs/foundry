@@ -160,6 +160,7 @@ impl ScriptArgs {
         let contract =
             contracts.get(target).ok_or_eyre("Target contract not found in artifacts")?.clone();
 
+        // Collect all linked contracts
         let highlevel_known_contracts = contracts
             .iter()
             .filter_map(|(id, contract)| {
@@ -167,6 +168,7 @@ impl ScriptArgs {
                     .ok()
                     .map(|tc| (id.clone(), tc))
             })
+            .filter(|(_, tc)| !tc.bytecode.object.is_unlinked())
             .collect();
 
         Ok(BuildOutput {
