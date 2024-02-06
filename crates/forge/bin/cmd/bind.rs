@@ -25,11 +25,11 @@ pub struct BindArgs {
     )]
     pub bindings: Option<PathBuf>,
 
-    /// Create bindings only for contracts whose names match the specified filter(s).
+    /// Create bindings only for contracts whose names match the specified filter(s)
     #[clap(long)]
     pub select: Vec<regex::Regex>,
 
-    /// Create bindings only for contracts whose names do not match the specified filter(s).
+    /// Create bindings only for contracts whose names do not match the specified filter(s)
     #[clap(long, conflicts_with = "select")]
     pub skip: Vec<regex::Regex>,
 
@@ -242,12 +242,15 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         let mut cargo_toml_content =
             std::fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
 
-        if let Some(rust_version_pos) = cargo_toml_content.find(r#"rust-version"#) {
+        // First try finding 'rust-version', if not found, then look for 'rust-version.workspace'
+        let rust_version_pos = cargo_toml_content
+            .find(r#"rust-version"#)
+            .or_else(|| cargo_toml_content.find("rust-version.workspace"));
+
+        if let Some(pos) = rust_version_pos {
             // Find the end of the line
-            let insert_point = cargo_toml_content[rust_version_pos..]
-                .find('\n')
-                .unwrap_or(cargo_toml_content.len()) +
-                rust_version_pos;
+            let insert_point =
+                cargo_toml_content[pos..].find('\n').unwrap_or(cargo_toml_content.len()) + pos;
             let mut insert_content = String::new();
 
             // Check and append description
@@ -262,8 +265,10 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
 
             cargo_toml_content.insert_str(insert_point, &insert_content);
         } else {
-            // Handle the case where 'rust-version = "1.75"' is not found
-            return Err(eyre::eyre!("'rust-version' not found in Cargo.toml"));
+            // Handle the case where neither 'rust-version' nor 'rust-version.workspace' is found
+            return Err(eyre::eyre!(
+                "Neither 'rust-version' nor 'rust-version.workspace' found in Cargo.toml"
+            ));
         }
 
         std::fs::write(&cargo_toml_path, cargo_toml_content)
