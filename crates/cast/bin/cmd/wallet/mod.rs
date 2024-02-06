@@ -152,7 +152,14 @@ impl WalletSubcommands {
 
                 let mut json_values = if json { Some(vec![]) } else { None };
                 if let Some(path) = path {
-                    let path = dunce::canonicalize(path)?;
+                    let path = match dunce::canonicalize(path.clone()) {
+                        Ok(path) => path,
+                        // If the path doesn't exist, it will fail to be canonicalized,
+                        // so we attach more context to the error message.
+                        Err(e) => {
+                            eyre::bail!("If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}", e);
+                        }
+                    };
                     if !path.is_dir() {
                         // we require path to be an existing directory
                         eyre::bail!("`{}` is not a directory", path.display());
