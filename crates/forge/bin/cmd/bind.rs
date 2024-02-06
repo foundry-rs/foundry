@@ -29,7 +29,7 @@ pub struct BindArgs {
     #[clap(long)]
     pub select: Vec<regex::Regex>,
 
-    /// Create bindings only for contracts whose names do not match the specified filter(s)
+    /// Create bindings only for contracts whose names do not match the specified filter(s).
     #[clap(long, conflicts_with = "select")]
     pub skip: Vec<regex::Regex>,
 
