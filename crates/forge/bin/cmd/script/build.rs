@@ -60,11 +60,12 @@ impl ScriptArgs {
             })
             .collect::<Result<ArtifactContracts>>()?;
 
-        let target = self.find_target(&project, &contracts)?;
+        let target = self.find_target(&project, &contracts)?.clone();
+        script_config.target_contract = Some(target.clone());
 
         let mut output = self.link(
             project,
-            &contracts,
+            contracts,
             script_config.config.parsed_libraries()?,
             script_config.evm_opts.sender,
             script_config.sender_nonce,
@@ -72,7 +73,6 @@ impl ScriptArgs {
         )?;
 
         output.sources = sources;
-        script_config.target_contract = Some(target.clone());
 
         Ok(output)
     }
@@ -126,14 +126,14 @@ impl ScriptArgs {
     pub fn link(
         &self,
         project: Project,
-        contracts: &ArtifactContracts,
+        contracts: ArtifactContracts,
         libraries: Libraries,
         sender: Address,
         nonce: u64,
-        target: &ArtifactId,
+        target: ArtifactId,
     ) -> Result<BuildOutput> {
-        let LinkOutput { libs_to_deploy, contracts, predeployed_libs } =
-            link_with_nonce_or_address(contracts, &libraries, sender, nonce, target)?;
+        let LinkOutput { libs_to_deploy, contracts: linked_contracts, predeployed_libs } =
+            link_with_nonce_or_address(&contracts, &libraries, sender, nonce, &target)?;
 
         // Merge with user provided libraries
         let mut new_libraries = Libraries { libs: BTreeMap::new() };
@@ -148,7 +148,7 @@ impl ScriptArgs {
         let predeploy_libraries = libs_to_deploy
             .into_iter()
             .map(|(id, _)| {
-                contracts
+                linked_contracts
                     .get(id)
                     .unwrap()
                     .get_bytecode_bytes()
@@ -157,11 +157,13 @@ impl ScriptArgs {
             })
             .collect();
 
-        let contract =
-            contracts.get(target).ok_or_eyre("Target contract not found in artifacts")?.clone();
+        let contract = linked_contracts
+            .get(&target)
+            .ok_or_eyre("Target contract not found in artifacts")?
+            .clone();
 
         // Collect all linked contracts
-        let highlevel_known_contracts = contracts
+        let highlevel_known_contracts = linked_contracts
             .iter()
             .filter_map(|(id, contract)| {
                 ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
