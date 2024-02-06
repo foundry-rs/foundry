@@ -44,7 +44,8 @@ impl FsPermissions {
 
     /// Returns the permission for the matching path.
     ///
-    /// This finds the longest matching path, e.g. if we have the following permissions:
+    /// This finds the longest matching path with resolved sym links, e.g. if we have the following
+    /// permissions:
     ///
     /// `./out` = `read`
     /// `./out/contracts` = `read-write`
@@ -53,7 +54,7 @@ impl FsPermissions {
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
         let mut permission: Option<&PathPermission> = None;
         for perm in &self.permissions {
-            if path.starts_with(&perm.path) {
+            if path.starts_with(&perm.path.canonicalize().unwrap_or(perm.path.clone())) {
                 if let Some(active_perm) = permission.as_ref() {
                     // the longest path takes precedence
                     if perm.path < active_perm.path {
