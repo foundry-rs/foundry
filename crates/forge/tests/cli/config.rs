@@ -5,7 +5,8 @@ use foundry_cli::utils as forge_utils;
 use foundry_compilers::artifacts::{OptimizerDetails, RevertStrings, YulDetails};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
-    Config, FuzzConfig, InvariantConfig, SolcReq,
+    fs_permissions::{FsAccessPermission, PathPermission},
+    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -14,7 +15,11 @@ use foundry_test_utils::{
 };
 use path_slash::PathBufExt;
 use pretty_assertions::assert_eq;
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 // tests all config values that are in use
 forgetest!(can_extract_config_values, |prj, cmd| {
@@ -624,4 +629,76 @@ forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
     // only loads remappings from foundry.toml
     assert_eq!(config.remappings.len(), 1);
     assert_eq!("remapping/=lib/remapping/", config.remappings[0].to_string());
+});
+
+forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
+    let config = cmd.config();
+
+    assert_eq!(config.fs_permissions.len(), 1);
+    let out_permission = config.fs_permissions.find_permission(Path::new("out")).unwrap();
+    assert_eq!(FsAccessPermission::Read, out_permission);
+});
+
+forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
+    // explicitly set fs permissions
+    let custom_permissions = FsPermissions::new(vec![
+        PathPermission::read("./read"),
+        PathPermission::write("./write"),
+        PathPermission::read_write("./write/contracts"),
+    ]);
+
+    let config = Config { fs_permissions: custom_permissions, ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+
+    assert_eq!(config.fs_permissions.len(), 3);
+
+    // check read permission
+    let permission = config.fs_permissions.find_permission(Path::new("./read")).unwrap();
+    assert_eq!(permission, FsAccessPermission::Read);
+    // check nested write permission
+    let permission =
+        config.fs_permissions.find_permission(Path::new("./write/MyContract.sol")).unwrap();
+    assert_eq!(permission, FsAccessPermission::Write);
+    // check nested read-write permission
+    let permission = config
+        .fs_permissions
+        .find_permission(Path::new("./write/contracts/MyContract.sol"))
+        .unwrap();
+    assert_eq!(permission, FsAccessPermission::ReadWrite);
+    // check no permission
+    let permission =
+        config.fs_permissions.find_permission(Path::new("./bogus")).unwrap_or_default();
+    assert_eq!(permission, FsAccessPermission::None);
+});
+
+#[cfg(not(target_os = "windows"))]
+forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
+    // write config in packages/files/config.json
+    let config_path = prj.root().join("packages").join("files");
+    fs::create_dir_all(&config_path).unwrap();
+    fs::write(&config_path.join("config.json"), "{ enabled: true }").unwrap();
+
+    // symlink packages/files dir as links/
+    std::os::unix::fs::symlink(
+        Path::new("./packages/../packages/../packages/files"),
+        prj.root().join("links"),
+    )
+    .unwrap();
+
+    // write config, give read access to links/ symlink to packages/files/
+    let permissions =
+        FsPermissions::new(vec![PathPermission::read(Path::new("./links/config.json"))]);
+    let config = Config { fs_permissions: permissions, ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+    let mut fs_permissions = config.fs_permissions;
+    fs_permissions.join_all(prj.root());
+    assert_eq!(fs_permissions.len(), 1);
+
+    // read permission to file should be granted through symlink
+    let permission = fs_permissions.find_permission(&config_path.join("config.json")).unwrap();
+    assert_eq!(permission, FsAccessPermission::Read);
 });
