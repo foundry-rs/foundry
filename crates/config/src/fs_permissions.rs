@@ -54,7 +54,8 @@ impl FsPermissions {
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
         let mut permission: Option<&PathPermission> = None;
         for perm in &self.permissions {
-            if path.starts_with(&perm.path.canonicalize().unwrap_or(perm.path.clone())) {
+            let permission_path = dunce::canonicalize(&perm.path).unwrap_or(perm.path.clone());
+            if path.starts_with(permission_path) {
                 if let Some(active_perm) = permission.as_ref() {
                     // the longest path takes precedence
                     if perm.path < active_perm.path {
