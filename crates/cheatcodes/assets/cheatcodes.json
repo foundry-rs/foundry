@@ -6936,7 +6936,7 @@
     {
       "func": {
         "id": "stopExpectSafeMemory",
-        "description": "Clears all safe memory expectation in the current subcontext.",
+        "description": "Stops all safe memory expectation in the current subcontext.",
         "declaration": "function stopExpectSafeMemory() external;",
         "visibility": "external",
         "mutability": "",
