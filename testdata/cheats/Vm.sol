@@ -344,6 +344,7 @@ interface Vm {
     function startStateDiffRecording() external;
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
+    function stopExpectSafeMemory() external;
     function stopMappingRecording() external;
     function stopPrank() external;
     function store(address target, bytes32 slot, bytes32 value) external;

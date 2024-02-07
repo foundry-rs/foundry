@@ -701,6 +701,10 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectSafeMemory(uint64 min, uint64 max) external;
 
+    /// Stops all safe memory expectation in the current subcontext.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function stopExpectSafeMemory() external;
+
     /// Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the next created subcontext.
     /// If any other memory is written to, the test will fail. Can be called multiple times to add more ranges
     /// to the set.

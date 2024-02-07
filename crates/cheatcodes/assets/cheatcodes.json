@@ -6935,6 +6935,26 @@
     },
     {
       "func": {
+        "id": "stopExpectSafeMemory",
+        "description": "Clears all safe memory expectation in the current subcontext.",
+        "declaration": "function stopExpectSafeMemory() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopExpectSafeMemory()",
+        "selector": "0x0956441b",
+        "selectorBytes": [
+          9,
+          86,
+          68,
+          27
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "stopMappingRecording",
         "description": "Stops recording all map SSTOREs for later retrieval and clears the recorded data.",
         "declaration": "function stopMappingRecording() external;",
