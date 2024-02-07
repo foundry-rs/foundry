@@ -671,6 +671,47 @@ contract MemSafetyTest is DSTest {
     }
 
     ////////////////////////////////////////////////////////////////
+    //              `stopExpectSafeMemory` cheatcode              //
+    ////////////////////////////////////////////////////////////////
+
+    /// @dev Tests that the `stopExpectSafeMemory` cheatcode works as expected.
+    function testStopExpectSafeMemory() public {
+        uint64 initPtr;
+        assembly {
+            initPtr := mload(0x40)
+        }
+
+        vm.expectSafeMemory(initPtr, initPtr + 0x20);
+        assembly {
+            // write to allowed range
+            mstore(initPtr, 0x01)
+        }
+
+        vm.stopExpectSafeMemory();
+
+        assembly {
+            // write ouside allowed range, this should be fine
+            mstore(add(initPtr, 0x20), 0x01)
+        }
+    }
+
+    /// @dev Tests that the `stopExpectSafeMemory` cheatcode does not cause violations not being noticed.
+    function testFailStopExpectSafeMemory() public {
+        uint64 initPtr;
+        assembly {
+            initPtr := mload(0x40)
+        }
+
+        vm.expectSafeMemory(initPtr, initPtr + 0x20);
+        assembly {
+            // write outside of allowed range, this should revert
+            mstore(add(initPtr, 0x20), 0x01)
+        }
+
+        vm.stopExpectSafeMemory();
+    }
+
+    ////////////////////////////////////////////////////////////////
     //                          HELPERS                           //
     ////////////////////////////////////////////////////////////////
 
