@@ -7,6 +7,10 @@ use std::{
     str::FromStr,
 };
 
+/// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
+/// library path in the form of "./path/to/Lib.sol:Lib"
+///
+/// Optionally accepts solc version, and if present, only compares artifacts with given version.
 fn find_artifact_id_by_library_path<'a>(
     contracts: &'a ArtifactContracts,
     file: &String,
@@ -34,6 +38,7 @@ fn find_artifact_id_by_library_path<'a>(
     panic!("artifact not found for library {file} {name}");
 }
 
+/// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
 pub fn collect_dependencies<'a>(
     target: &'a ArtifactId,
     contracts: &'a ArtifactContracts,
@@ -51,9 +56,17 @@ pub fn collect_dependencies<'a>(
     }
 }
 
+/// Output of the `link_with_nonce_or_address`
 pub struct LinkOutput<'a> {
+    /// [ArtifactContracts] object containing all artifacts linked with known libraries
+    /// It is guaranteed to contain `target` and all it's dependencies fully linked, and any other
+    /// contract may still be partially unlinked.
     pub contracts: ArtifactContracts,
+    /// Vector of libraries predeployed by user (basically another form of
+    /// `deployed_library_addresses`).
     pub predeployed_libs: Vec<(&'a ArtifactId, Address)>,
+    /// Vector of libraries that need to be deployed from sender address.
+    /// The order in which they appear in the vector is the order in which they should be deployed.
     pub libs_to_deploy: Vec<(&'a ArtifactId, Address)>,
 }
 
