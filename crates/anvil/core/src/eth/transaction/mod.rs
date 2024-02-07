@@ -9,8 +9,9 @@ use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    request::TransactionRequest, AccessList, AccessListItem, CallInput, CallRequest,
-    Signature as RpcSignature, Transaction as RpcTransaction,
+    optimism::OptimismTransactionFields,
+    request::{TransactionInput, TransactionRequest},
+    AccessList, AccessListItem, Signature as RpcSignature, Transaction as RpcTransaction,
 };
 use foundry_evm::traces::CallTraceNode;
 use revm::{
@@ -30,199 +31,7 @@ pub fn impersonated_signature() -> Signature {
         .unwrap()
 }
 
-/// Represents _all_ transaction requests received from RPC
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct EthTransactionRequest {
-    /// from address
-    pub from: Option<Address>,
-    /// to address
-    pub to: Option<Address>,
-    /// legacy, gas Price
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub gas_price: Option<U256>,
-    /// max base fee per gas sender is willing to pay
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub max_fee_per_gas: Option<U256>,
-    /// miner tip
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub max_priority_fee_per_gas: Option<U256>,
-    /// gas
-    pub gas: Option<U256>,
-    /// value of th tx in wei
-    pub value: Option<U256>,
-    /// Any additional data sent
-    #[cfg_attr(feature = "serde", serde(alias = "input"))]
-    pub data: Option<Bytes>,
-    /// Transaction nonce
-    pub nonce: Option<U256>,
-    /// chain id
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub chain_id: Option<U64>,
-    /// warm storage access pre-payment
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub access_list: Option<Vec<AccessListItem>>,
-    /// EIP-2718 type
-    #[cfg_attr(feature = "serde", serde(rename = "type"))]
-    pub transaction_type: Option<U256>,
-    /// Optimism Deposit Request Fields
-    #[serde(flatten)]
-    pub optimism_fields: Option<OptimismDepositRequestFields>,
-}
-
-impl EthTransactionRequest {
-    pub fn into_call_request(self) -> CallRequest {
-        let Self {
-            from,
-            to,
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            gas,
-            value,
-            data,
-            nonce,
-            chain_id,
-            access_list,
-            transaction_type,
-            optimism_fields: _,
-        } = self;
-        CallRequest {
-            from,
-            to,
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            gas,
-            value,
-            input: CallInput::maybe_input(data),
-            nonce: nonce.map(|n| n.to()),
-            chain_id,
-            access_list: access_list.map(AccessList),
-            max_fee_per_blob_gas: None,
-            blob_versioned_hashes: None,
-            transaction_type: transaction_type.map(|ty| ty.to()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OptimismDepositRequestFields {
-    /// op-stack deposit source hash
-    pub source_hash: B256,
-    /// op-stack deposit mint
-    pub mint: U256,
-    /// op-stack deposit system tx
-    pub is_system_tx: bool,
-}
-
-impl EthTransactionRequest {
-    pub fn into_typed_request(self) -> Option<TypedTransactionRequest> {
-        let EthTransactionRequest {
-            from,
-            to,
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            gas,
-            value,
-            data,
-            nonce,
-            mut access_list,
-            transaction_type,
-            optimism_fields,
-            ..
-        } = self;
-        let transaction_type = transaction_type.map(|id| id.to::<u64>());
-        let data = data.clone().unwrap_or_default();
-        // Special case: OP-stack deposit tx
-        if transaction_type == Some(126) {
-            return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
-                from: from.unwrap_or_default(),
-                source_hash: optimism_fields.clone()?.source_hash,
-                kind: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
-                mint: optimism_fields.clone()?.mint,
-                value: value.unwrap_or_default(),
-                gas_limit: gas.unwrap_or_default(),
-                is_system_tx: optimism_fields.clone()?.is_system_tx,
-                input: data,
-            }))
-        }
-
-        match (
-            transaction_type,
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            access_list.take(),
-        ) {
-            // legacy transaction
-            (Some(0), _, None, None, None) | (None, Some(_), None, None, None) => {
-                Some(TypedTransactionRequest::Legacy(TxLegacy {
-                    nonce: nonce.unwrap_or_default().to::<u64>(),
-                    gas_price: gas_price.unwrap_or_default().to::<u128>(),
-                    gas_limit: gas.unwrap_or_default().to::<u64>(),
-                    value: value.unwrap_or(U256::ZERO),
-                    input: data,
-                    to: match to {
-                        Some(to) => TxKind::Call(to),
-                        None => TxKind::Create,
-                    },
-                    chain_id: None,
-                }))
-            }
-            // EIP2930
-            (Some(1), _, None, None, _) | (None, _, None, None, Some(_)) => {
-                Some(TypedTransactionRequest::EIP2930(TxEip2930 {
-                    nonce: nonce.unwrap_or_default().to::<u64>(),
-                    gas_price: gas_price.unwrap_or_default().to(),
-                    gas_limit: gas.unwrap_or_default().to::<u64>(),
-                    value: value.unwrap_or(U256::ZERO),
-                    input: data,
-                    to: match to {
-                        Some(to) => TxKind::Call(to),
-                        None => TxKind::Create,
-                    },
-                    chain_id: 0,
-                    access_list: to_eip_access_list(AccessList(access_list.unwrap_or_default())),
-                }))
-            }
-            // EIP1559
-            (Some(2), None, _, _, _) |
-            (None, None, Some(_), _, _) |
-            (None, None, _, Some(_), _) |
-            (None, None, None, None, None) => {
-                // Empty fields fall back to the canonical transaction schema.
-                Some(TypedTransactionRequest::EIP1559(TxEip1559 {
-                    nonce: nonce.unwrap_or_default().to::<u64>(),
-                    max_fee_per_gas: max_fee_per_gas.unwrap_or_default().to::<u128>(),
-                    max_priority_fee_per_gas: max_priority_fee_per_gas
-                        .unwrap_or_default()
-                        .to::<u128>(),
-                    gas_limit: gas.unwrap_or_default().to::<u64>(),
-                    value: value.unwrap_or(U256::ZERO),
-                    input: data,
-                    to: match to {
-                        Some(to) => TxKind::Call(to),
-                        None => TxKind::Create,
-                    },
-                    chain_id: 0,
-                    access_list: to_eip_access_list(AccessList(access_list.unwrap_or_default())),
-                }))
-            }
-            _ => None,
-        }
-    }
-}
-
+/// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTransactionRequest> {
     let TransactionRequest {
         from,
@@ -232,7 +41,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         max_priority_fee_per_gas,
         gas,
         value,
-        data,
+        input,
         nonce,
         mut access_list,
         transaction_type,
@@ -251,7 +60,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
             is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
-            input: data.unwrap_or_default(),
+            input: input.into_input().unwrap_or_default(),
         }))
     }
 
@@ -269,7 +78,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 gas_price: gas_price.unwrap_or_default().to::<u128>(),
                 gas_limit: gas.unwrap_or_default().to::<u64>(),
                 value: value.unwrap_or(U256::ZERO),
-                input: data.unwrap_or_default(),
+                input: input.into_input().unwrap_or_default(),
                 to: match to {
                     Some(to) => TxKind::Call(to),
                     None => TxKind::Create,
@@ -284,7 +93,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 gas_price: gas_price.unwrap_or_default().to(),
                 gas_limit: gas.unwrap_or_default().to::<u64>(),
                 value: value.unwrap_or(U256::ZERO),
-                input: data.unwrap_or_default(),
+                input: input.into_input().unwrap_or_default(),
                 to: match to {
                     Some(to) => TxKind::Call(to),
                     None => TxKind::Create,
@@ -305,93 +114,12 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
                 gas_limit: gas.unwrap_or_default().to::<u64>(),
                 value: value.unwrap_or(U256::ZERO),
-                input: data.unwrap_or_default(),
+                input: input.into_input().unwrap_or_default(),
                 to: match to {
                     Some(to) => TxKind::Call(to),
                     None => TxKind::Create,
                 },
                 chain_id: 0,
-                access_list: to_eip_access_list(access_list.unwrap_or_default()),
-            }))
-        }
-        _ => None,
-    }
-}
-
-pub fn call_request_to_typed(tx: CallRequest) -> Option<TypedTransactionRequest> {
-    let CallRequest {
-        to,
-        gas_price,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        gas,
-        value,
-        input,
-        chain_id,
-        nonce,
-        mut access_list,
-        transaction_type,
-        ..
-    } = tx;
-    let chain_id = chain_id.map(|id| id.to::<u64>());
-    let transaction_type = transaction_type.map(|id| id.to::<u64>());
-
-    match (
-        transaction_type,
-        gas_price,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        access_list.take(),
-    ) {
-        // legacy transaction
-        (Some(0), _, None, None, None) | (None, Some(_), None, None, None) => {
-            Some(TypedTransactionRequest::Legacy(TxLegacy {
-                nonce: nonce.unwrap_or_default().to::<u64>(),
-                gas_price: gas_price.unwrap_or_default().to::<u128>(),
-                gas_limit: gas.unwrap_or_default().to::<u64>(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.try_into_unique_input().unwrap_or_default().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
-                chain_id,
-            }))
-        }
-        // EIP2930
-        (Some(1), _, None, None, _) | (None, _, None, None, Some(_)) => {
-            Some(TypedTransactionRequest::EIP2930(TxEip2930 {
-                nonce: nonce.unwrap_or_default().to::<u64>(),
-                gas_price: gas_price.unwrap_or_default().to(),
-                gas_limit: gas.unwrap_or_default().to::<u64>(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.try_into_unique_input().unwrap_or_default().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
-                chain_id: chain_id.unwrap_or_default(),
-                access_list: to_eip_access_list(access_list.unwrap_or_default()),
-            }))
-        }
-        // EIP1559
-        (Some(2), None, _, _, _) |
-        (None, None, Some(_), _, _) |
-        (None, None, _, Some(_), _) |
-        (None, None, None, None, None) => {
-            // Empty fields fall back to the canonical transaction schema.
-            Some(TypedTransactionRequest::EIP1559(TxEip1559 {
-                nonce: nonce.unwrap_or_default().to::<u64>(),
-                max_fee_per_gas: max_fee_per_gas.unwrap_or_default().to::<u128>(),
-                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
-                gas_limit: gas.unwrap_or_default().to::<u64>(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.try_into_unique_input().unwrap_or_default().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
-                chain_id: chain_id.unwrap_or_default(),
                 access_list: to_eip_access_list(access_list.unwrap_or_default()),
             }))
         }

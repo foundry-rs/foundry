@@ -2,7 +2,11 @@
 
 use alloy_json_abi::{Event, EventParam, Function, InternalType, Param, StateMutability};
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U128, U256, U64};
-use alloy_rpc_types::{AccessList, AccessListItem, CallInput, CallRequest, Signature, Transaction};
+use alloy_rpc_types::{
+    other::OtherFields,
+    request::{TransactionInput, TransactionRequest as CallRequest},
+    AccessList, AccessListItem, Signature, Transaction,
+};
 use alloy_signer::{LocalWallet, Signer};
 use ethers_core::{
     abi as ethabi,
@@ -177,13 +181,15 @@ pub fn to_call_request_from_tx_request(tx: TransactionRequest) -> CallRequest {
         max_priority_fee_per_gas: None,
         gas: tx.gas.map(|g| g.to_alloy()),
         value: tx.value.map(|v| v.to_alloy()),
-        input: CallInput::maybe_input(tx.data.map(|b| b.0.into())),
+        input: TransactionInput::maybe_input(tx.data.map(|b| b.0.into())),
         nonce: tx.nonce.map(|n| U64::from(n.as_u64())),
         chain_id: tx.chain_id.map(|c| c.to_alloy()),
         access_list: None,
         max_fee_per_blob_gas: None,
         blob_versioned_hashes: None,
         transaction_type: None,
+        sidecar: None,
+        other: OtherFields::default(),
     }
 }
 

@@ -90,7 +90,7 @@ dependencies = [
 [[package]]
 name = "alloy-consensus"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-eips",
  "alloy-network",
@@ -122,7 +122,7 @@ dependencies = [
 [[package]]
 name = "alloy-eips"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -133,10 +133,10 @@ dependencies = [
 [[package]]
 name = "alloy-genesis"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "serde",
 ]
 
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "alloy-network"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-eips",
  "alloy-json-rpc",
@@ -205,13 +205,13 @@ dependencies = [
 [[package]]
 name = "alloy-providers"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-rpc-client",
- "alloy-rpc-trace-types",
- "alloy-rpc-types",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "alloy-transport",
  "alloy-transport-http",
  "async-trait",
@@ -224,7 +224,7 @@ dependencies = [
 [[package]]
 name = "alloy-pubsub"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -263,7 +263,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -280,12 +280,36 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-trace-types"
 version = "0.1.0"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "alloy-rpc-trace-types"
+version = "0.1.0"
 source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy)",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "alloy-rpc-types"
+version = "0.1.0"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "itertools 0.12.1",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -304,7 +328,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -365,7 +389,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-json-rpc",
  "base64 0.21.7",
@@ -381,7 +405,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -394,7 +418,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ipc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -412,7 +436,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ws"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy#32618e9243a761858a0843e7e55575e48fdbf500"
+source = "git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest#093af2313ed25104ff7ca9e0850e0fcbe2256111"
 dependencies = [
  "alloy-pubsub",
  "alloy-transport",
@@ -519,8 +543,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-providers",
  "alloy-rlp",
- "alloy-rpc-trace-types",
- "alloy-rpc-types",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "alloy-signer",
  "alloy-sol-types",
  "alloy-transport",
@@ -580,8 +604,8 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-trace-types",
- "alloy-rpc-types",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "anvil-core",
  "bytes",
  "foundry-common",
@@ -1358,7 +1382,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "clap",
  "criterion",
  "dirs 5.0.1",
@@ -2835,7 +2859,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "anvil",
  "async-trait",
  "axum",
@@ -2976,7 +3000,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-providers",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "alloy-signer",
  "alloy-sol-types",
  "base64 0.21.7",
@@ -3061,7 +3085,7 @@ dependencies = [
  "alloy-providers",
  "alloy-pubsub",
  "alloy-rpc-client",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "alloy-signer",
  "alloy-sol-types",
  "alloy-transport",
@@ -3194,7 +3218,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "alloy-signer",
  "alloy-sol-types",
  "const-hex",
@@ -3228,7 +3252,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-providers",
- "alloy-rpc-types",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy?branch=onbjerg/rm-callrequest)",
  "alloy-sol-types",
  "alloy-transport",
  "const-hex",
@@ -6163,8 +6187,8 @@ version = "0.1.0"
 source = "git+https://github.com/paradigmxyz/evm-inspectors?rev=e90052361276aebcdc67cb24d8e2c4d907b6d299#e90052361276aebcdc67cb24d8e2c4d907b6d299"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-trace-types",
- "alloy-rpc-types",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/alloy-rs/alloy)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/alloy-rs/alloy)",
  "alloy-sol-types",
  "revm",
  "serde",

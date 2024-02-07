@@ -146,22 +146,22 @@ ethers-middleware = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy" }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
-alloy-network = { git = "https://github.com/alloy-rs/alloy" }
-alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy" }
-alloy-providers = { git = "https://github.com/alloy-rs/alloy" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
-alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy" }
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-providers = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", branch = "onbjerg/rm-callrequest" }
 alloy-primitives = "0.6.2"
 alloy-dyn-abi = "0.6.2"
 alloy-json-abi = "0.6.2"
