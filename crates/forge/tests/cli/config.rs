@@ -678,7 +678,7 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     // write config in packages/files/config.json
     let config_path = prj.root().join("packages").join("files");
     fs::create_dir_all(&config_path).unwrap();
-    fs::write(&config_path.join("config.json"), "{ enabled: true }").unwrap();
+    fs::write(config_path.join("config.json"), "{ enabled: true }").unwrap();
 
     // symlink packages/files dir as links/
     std::os::unix::fs::symlink(
