@@ -50,8 +50,10 @@ pub static CHISEL_CHAR: &str = "⚒️";
 static COMMENT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
 
-/// Matches Ethereum addresses
-static ADDRESS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"0x[a-fA-F0-9]{40}").unwrap());
+/// Matches Ethereum addresses that are not strings
+static ADDRESS_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(([^"']\s*)|^)(?P<address>0x[a-fA-F0-9]{40})((\s*[^"'\w])|$)"#).unwrap()
+});
 
 /// Chisel input dispatcher
 #[derive(Debug)]
@@ -786,9 +788,10 @@ impl ChiselDispatcher {
         // If there is an address (or multiple addresses) in the input, ensure that they are
         // encoded with a valid checksum per EIP-55.
         let mut heap_input = input.to_string();
-        ADDRESS_RE.find_iter(input).for_each(|m| {
+        ADDRESS_RE.captures_iter(input).for_each(|m| {
             // Convert the match to a string slice
-            let match_str = m.as_str();
+            let match_str = m.name("address").expect("exists").as_str();
+
             // We can always safely unwrap here due to the regex matching.
             let addr: Address = match_str.parse().expect("Valid address regex");
             // Replace all occurrences of the address with a checksummed version
@@ -966,5 +969,17 @@ mod tests {
         assert!(COMMENT_RE.is_match("/* block comment */"));
         assert!(COMMENT_RE.is_match(" \t\n  /* block \n \t comment */\n"));
         assert!(!COMMENT_RE.is_match("/* block \n \t comment */\nwith \tother"));
+    }
+
+    #[test]
+    fn test_address_regex() {
+        assert!(ADDRESS_RE.is_match("0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4"));
+        assert!(ADDRESS_RE.is_match(" 0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4 "));
+        assert!(ADDRESS_RE.is_match("0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4,"));
+        assert!(ADDRESS_RE.is_match("(0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4)"));
+        assert!(!ADDRESS_RE.is_match("0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4aaa"));
+        assert!(!ADDRESS_RE.is_match("'0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4'"));
+        assert!(!ADDRESS_RE.is_match("'    0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4'"));
+        assert!(!ADDRESS_RE.is_match("'0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4'"));
     }
 }
