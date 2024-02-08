@@ -368,6 +368,7 @@ impl CallTraceDecoder {
             }
             "broadcast" | "startBroadcast" => {
                 // Redact private key if defined
+                // broadcast(uint256) / startBroadcast(uint256)
                 if !func.inputs.is_empty() && func.inputs[0].ty == "uint256" {
                     Some(vec!["<pk>".to_string()])
                 } else {
@@ -376,6 +377,7 @@ impl CallTraceDecoder {
             }
             "getNonce" => {
                 // Redact private key if defined
+                // getNonce(Wallet)
                 if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
                     Some(vec!["<pk>".to_string()])
                 } else {
@@ -577,6 +579,7 @@ fn indexed_inputs(event: &Event) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::hex;
 
     #[test]
     fn test_should_redact_pk() {
@@ -605,12 +608,14 @@ mod tests {
             // Should redact private key and replace in trace in cases:
             (
                 "sign(uint256,bytes32)",
-                vec![
-                    227, 65, 234, 164, 124, 133, 33, 24, 41, 78, 81, 230, 83, 113, 42, 129, 224,
-                    88, 0, 244, 25, 20, 23, 81, 190, 88, 246, 5, 195, 113, 225, 81, 65, 176, 7,
-                    166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0,
-                ],
+                hex!(
+                    "
+                    e341eaa4
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
                 Some(vec![
                     "\"<pk>\"".to_string(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -619,12 +624,14 @@ mod tests {
             ),
             (
                 "signP256(uint256,bytes32)",
-                vec![
-                    131, 33, 27, 64, 124, 133, 33, 24, 41, 78, 81, 230, 83, 113, 42, 129, 224, 88,
-                    0, 244, 25, 20, 23, 81, 190, 88, 246, 5, 195, 113, 225, 81, 65, 176, 7, 166, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0,
-                ],
+                hex!(
+                    "
+                    83211b40
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
                 Some(vec![
                     "\"<pk>\"".to_string(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000"
