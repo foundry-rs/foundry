@@ -1,7 +1,7 @@
 use super::*;
 use alloy_primitives::{Address, Bytes};
-use eyre::{Context, ContextCompat, OptionExt, Result};
-use forge::link::{link_with_nonce_or_address, LinkOutput};
+use eyre::{Context, ContextCompat, Result};
+use forge::link::{LinkOutput, Linker};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
@@ -9,7 +9,7 @@ use foundry_common::{
     fs,
 };
 use foundry_compilers::{
-    artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome, Libraries},
+    artifacts::{ContractBytecode, ContractBytecodeSome, Libraries},
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
@@ -64,19 +64,27 @@ impl ScriptArgs {
         script_config.target_contract = Some(target.clone());
 
         let libraries = script_config.config.solc_settings()?.libraries;
+        let linker = Linker::new(project.root(), contracts);
 
-        let mut output = self.link_script_target(
-            project,
-            contracts,
+        let (highlevel_known_contracts, libraries, predeploy_libraries) = self.link_script_target(
+            &linker,
             libraries,
             script_config.evm_opts.sender,
             script_config.sender_nonce,
-            target,
+            target.clone(),
         )?;
 
-        output.sources = sources;
+        let contract = highlevel_known_contracts.get(&target).unwrap();
 
-        Ok(output)
+        Ok(BuildOutput {
+            project,
+            linker,
+            contract: contract.clone(),
+            highlevel_known_contracts,
+            libraries,
+            predeploy_libraries,
+            sources,
+        })
     }
 
     /// Tries to find artifact for the target script contract.
@@ -133,34 +141,17 @@ impl ScriptArgs {
     /// be predeployed and `highlevel_known_contracts` - set of known fully linked contracts
     pub fn link_script_target(
         &self,
-        project: Project,
-        contracts: ArtifactContracts,
+        linker: &Linker,
         libraries: Libraries,
         sender: Address,
         nonce: u64,
         target: ArtifactId,
-    ) -> Result<BuildOutput> {
-        let LinkOutput {
-            libs_to_deploy: predeploy_libraries,
-            contracts: linked_contracts,
-            libraries,
-        } = link_with_nonce_or_address(
-            &contracts,
-            libraries,
-            sender,
-            nonce,
-            &target,
-            project.root(),
-        )?;
-
-        // Get linked target artifact
-        let contract = linked_contracts
-            .get(&target)
-            .ok_or_eyre("Target contract not found in artifacts")?
-            .clone();
+    ) -> Result<(ArtifactContracts<ContractBytecodeSome>, Libraries, Vec<Bytes>)> {
+        let LinkOutput { libs_to_deploy, contracts, libraries } =
+            linker.link_with_nonce_or_address(libraries, sender, nonce, &target)?;
 
         // Collect all linked contracts
-        let highlevel_known_contracts = linked_contracts
+        let highlevel_known_contracts = contracts
             .iter()
             .filter_map(|(id, contract)| {
                 ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
@@ -170,15 +161,7 @@ impl ScriptArgs {
             .filter(|(_, tc)| !tc.bytecode.object.is_unlinked())
             .collect();
 
-        Ok(BuildOutput {
-            contract,
-            known_contracts: contracts,
-            highlevel_known_contracts,
-            predeploy_libraries,
-            sources: Default::default(),
-            project,
-            libraries,
-        })
+        Ok((highlevel_known_contracts, libraries, libs_to_deploy))
     }
 
     pub fn get_project_and_output(
@@ -239,8 +222,8 @@ impl ScriptArgs {
 
 pub struct BuildOutput {
     pub project: Project,
-    pub contract: CompactContractBytecode,
-    pub known_contracts: ArtifactContracts,
+    pub contract: ContractBytecodeSome,
+    pub linker: Linker,
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<Bytes>,

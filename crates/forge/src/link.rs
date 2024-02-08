@@ -8,103 +8,11 @@ use std::{
     str::FromStr,
 };
 
-/// Helper method to convert [ArtifactId] to the format in which libraries are stored in [Libraries]
-/// object.
-///
-/// Strips project root path from source file path.
-fn convert_artifact_id_to_lib_path(id: &ArtifactId, root_path: &Path) -> (PathBuf, String) {
-    let path = id.source.strip_prefix(root_path).unwrap_or(&id.source);
-    // name is either {LibName} or {LibName}.{version}
-    let name = id.name.split('.').next().unwrap();
-
-    (path.to_path_buf(), name.to_owned())
-}
-
-/// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
-/// library path in the form of "./path/to/Lib.sol:Lib"
-///
-/// Optionally accepts solc version, and if present, only compares artifacts with given version.
-fn find_artifact_id_by_library_path<'a>(
-    contracts: &'a ArtifactContracts,
-    file: &str,
-    name: &str,
-    version: Option<&Version>,
-    root_path: &Path,
-) -> Option<&'a ArtifactId> {
-    for id in contracts.keys() {
-        if let Some(version) = version {
-            if id.version != *version {
-                continue;
-            }
-        }
-        let (artifact_path, artifact_name) = convert_artifact_id_to_lib_path(id, root_path);
-
-        if artifact_name == *name && artifact_path == Path::new(file) {
-            return Some(id);
-        }
-    }
-
-    None
-}
-
-/// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
-pub fn collect_dependencies<'a>(
-    target: &'a ArtifactId,
-    contracts: &'a ArtifactContracts,
-    deps: &mut BTreeSet<&'a ArtifactId>,
-    root_path: &Path,
-) -> Result<()> {
-    let references = contracts
-        .get(target)
-        .ok_or_eyre("target artifact must be present at given artifacts set")?
-        .all_link_references();
-    for (file, libs) in &references {
-        for contract in libs.keys() {
-            let id = find_artifact_id_by_library_path(
-                contracts,
-                file,
-                contract,
-                Some(&target.version),
-                root_path,
-            )
-            .ok_or_else(|| {
-                eyre::eyre!("wasn't able to find artifact for library {} at {}", file, contract)
-            })?;
-            if deps.insert(id) {
-                collect_dependencies(id, contracts, deps, root_path)?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Links given artifacts with given library addresses.
-///
-/// Artifacts returned by this function may still be partially unlinked if some of their
-/// dependencies weren't present in `libraries`.
-pub fn link(contracts: &ArtifactContracts, libraries: &Libraries) -> Result<ArtifactContracts> {
-    contracts
-        .iter()
-        .map(|(id, contract)| {
-            let mut contract = contract.clone();
-
-            for (file, libs) in &libraries.libs {
-                for (name, address) in libs {
-                    let address = Address::from_str(address)?;
-                    if let Some(bytecode) = contract.bytecode.as_mut() {
-                        bytecode.link(file.to_string_lossy(), name, address);
-                    }
-                    if let Some(deployed_bytecode) =
-                        contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
-                    {
-                        deployed_bytecode.link(file.to_string_lossy(), name, address);
-                    }
-                }
-            }
-            Ok((id.clone(), contract))
-        })
-        .collect()
+pub struct Linker {
+    /// Root of the project, used to determine whether artifact/library path can be stripped.
+    pub root: PathBuf,
+    /// Compilation artifacts.
+    contracts: ArtifactContracts,
 }
 
 /// Output of the `link_with_nonce_or_address`
@@ -121,52 +29,154 @@ pub struct LinkOutput {
     pub libs_to_deploy: Vec<Bytes>,
 }
 
-/// Links given artifact with either given library addresses or address computed from sender and
-/// nonce.
-///
-/// Each key in `libraries` should either be a global path or relative to project root. All
-/// remappings should be resolved.
-pub fn link_with_nonce_or_address<'a>(
-    contracts: &'a ArtifactContracts,
-    libraries: Libraries,
-    sender: Address,
-    mut nonce: u64,
-    target: &'a ArtifactId,
-    root_path: &Path,
-) -> Result<LinkOutput> {
-    // Library paths in `link_references` keys are always stripped, so we have to strip
-    // user-provided paths to be able to match them correctly.
-    let mut libraries = libraries.with_stripped_file_prefixes(root_path);
-
-    let mut needed_libraries = BTreeSet::new();
-    collect_dependencies(target, contracts, &mut needed_libraries, root_path)?;
-
-    let mut libs_to_deploy = Vec::new();
-
-    // If `libraries` does not contain needed dependency, compute its address and add to
-    // `libs_to_deploy`.
-    for id in needed_libraries {
-        let (lib_path, lib_name) = convert_artifact_id_to_lib_path(id, root_path);
-
-        libraries.libs.entry(lib_path).or_default().entry(lib_name).or_insert_with(|| {
-            let address = sender.create(nonce);
-            libs_to_deploy.push((id, address));
-            nonce += 1;
-
-            address.to_checksum(None)
-        });
+impl Linker {
+    pub fn new(root: impl Into<PathBuf>, contracts: ArtifactContracts) -> Self {
+        Linker { root: root.into(), contracts }
     }
 
-    // Link contracts
-    let contracts = link(contracts, &libraries)?;
+    /// Helper method to convert [ArtifactId] to the format in which libraries are stored in
+    /// [Libraries] object.
+    ///
+    /// Strips project root path from source file path.
+    fn convert_artifact_id_to_lib_path(&self, id: &ArtifactId) -> (PathBuf, String) {
+        let path = id.source.strip_prefix(self.root.as_path()).unwrap_or(&id.source);
+        // name is either {LibName} or {LibName}.{version}
+        let name = id.name.split('.').next().unwrap();
 
-    // Collect bytecodes for `libs_to_deploy`, as we have them linked now.
-    let libs_to_deploy = libs_to_deploy
-        .into_iter()
-        .map(|(id, _)| contracts.get(id).unwrap().get_bytecode_bytes().unwrap().into_owned())
-        .collect();
+        (path.to_path_buf(), name.to_owned())
+    }
 
-    Ok(LinkOutput { contracts, libraries, libs_to_deploy })
+    /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
+    /// library path in the form of "./path/to/Lib.sol:Lib"
+    ///
+    /// Optionally accepts solc version, and if present, only compares artifacts with given version.
+    fn find_artifact_id_by_library_path<'a>(
+        &'a self,
+        file: &str,
+        name: &str,
+        version: Option<&Version>,
+    ) -> Option<&'a ArtifactId> {
+        for id in self.contracts.keys() {
+            if let Some(version) = version {
+                if id.version != *version {
+                    continue;
+                }
+            }
+            let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
+
+            if artifact_name == *name && artifact_path == Path::new(file) {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
+    /// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
+    fn collect_dependencies<'a>(
+        &'a self,
+        target: &'a ArtifactId,
+        deps: &mut BTreeSet<&'a ArtifactId>,
+    ) -> Result<()> {
+        let references = self
+            .contracts
+            .get(target)
+            .ok_or_eyre("target artifact must be present at given artifacts set")?
+            .all_link_references();
+        for (file, libs) in &references {
+            for contract in libs.keys() {
+                let id = self
+                    .find_artifact_id_by_library_path(file, contract, Some(&target.version))
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "wasn't able to find artifact for library {} at {}",
+                            file,
+                            contract
+                        )
+                    })?;
+                if deps.insert(id) {
+                    self.collect_dependencies(id, deps)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Links given artifact with either given library addresses or address computed from sender and
+    /// nonce.
+    ///
+    /// Each key in `libraries` should either be a global path or relative to project root. All
+    /// remappings should be resolved.
+    pub fn link_with_nonce_or_address<'a>(
+        &'a self,
+        libraries: Libraries,
+        sender: Address,
+        mut nonce: u64,
+        target: &'a ArtifactId,
+    ) -> Result<LinkOutput> {
+        // Library paths in `link_references` keys are always stripped, so we have to strip
+        // user-provided paths to be able to match them correctly.
+        let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
+
+        let mut needed_libraries = BTreeSet::new();
+        self.collect_dependencies(target, &mut needed_libraries)?;
+
+        let mut libs_to_deploy = Vec::new();
+
+        // If `libraries` does not contain needed dependency, compute its address and add to
+        // `libs_to_deploy`.
+        for id in needed_libraries {
+            let (lib_path, lib_name) = self.convert_artifact_id_to_lib_path(id);
+
+            libraries.libs.entry(lib_path).or_default().entry(lib_name).or_insert_with(|| {
+                let address = sender.create(nonce);
+                libs_to_deploy.push((id, address));
+                nonce += 1;
+
+                address.to_checksum(None)
+            });
+        }
+
+        // Link contracts
+        let contracts = self.link(&libraries)?;
+
+        // Collect bytecodes for `libs_to_deploy`, as we have them linked now.
+        let libs_to_deploy = libs_to_deploy
+            .into_iter()
+            .map(|(id, _)| contracts.get(id).unwrap().get_bytecode_bytes().unwrap().into_owned())
+            .collect();
+
+        Ok(LinkOutput { contracts, libraries, libs_to_deploy })
+    }
+
+    /// Links given artifacts with given library addresses.
+    ///
+    /// Artifacts returned by this function may still be partially unlinked if some of their
+    /// dependencies weren't present in `libraries`.
+    pub fn link(&self, libraries: &Libraries) -> Result<ArtifactContracts> {
+        self.contracts
+            .iter()
+            .map(|(id, contract)| {
+                let mut contract = contract.clone();
+
+                for (file, libs) in &libraries.libs {
+                    for (name, address) in libs {
+                        let address = Address::from_str(address)?;
+                        if let Some(bytecode) = contract.bytecode.as_mut() {
+                            bytecode.link(file.to_string_lossy(), name, address);
+                        }
+                        if let Some(deployed_bytecode) =
+                            contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
+                        {
+                            deployed_bytecode.link(file.to_string_lossy(), name, address);
+                        }
+                    }
+                }
+                Ok((id.clone(), contract))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -178,7 +188,7 @@ mod tests {
 
     struct LinkerTest {
         project: Project,
-        contracts: ArtifactContracts,
+        linker: Linker,
         dependency_assertions: HashMap<String, Vec<(String, Address)>>,
     }
 
@@ -207,7 +217,9 @@ mod tests {
                 .map(|(id, c)| (id, c.into_contract_bytecode()))
                 .collect::<ArtifactContracts>();
 
-            Self { project, contracts, dependency_assertions: HashMap::new() }
+            let linker = Linker::new(project.root(), contracts);
+
+            Self { project, linker, dependency_assertions: HashMap::new() }
         }
 
         fn assert_dependencies(
@@ -220,7 +232,7 @@ mod tests {
         }
 
         fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: u64) {
-            for id in self.contracts.keys() {
+            for id in self.linker.contracts.keys() {
                 // If we didn't strip paths, artifacts will have absolute paths.
                 // That's expected and we want to ensure that only `libraries` object has relative
                 // paths, artifacts should be kept as is.
@@ -237,15 +249,10 @@ mod tests {
                     continue;
                 }
 
-                let LinkOutput { libs_to_deploy, libraries, .. } = link_with_nonce_or_address(
-                    &self.contracts,
-                    Default::default(),
-                    sender,
-                    initial_nonce,
-                    id,
-                    self.project.root(),
-                )
-                .expect("Linking failed");
+                let LinkOutput { libs_to_deploy, libraries, .. } = self
+                    .linker
+                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
+                    .expect("Linking failed");
 
                 let assertions = self
                     .dependency_assertions

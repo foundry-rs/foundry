@@ -1,7 +1,7 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    link::{link_with_nonce_or_address, LinkOutput},
+    link::{LinkOutput, Linker},
     result::SuiteResult,
     ContractRunner, TestFilter, TestOptions,
 };
@@ -284,17 +284,13 @@ impl MultiContractRunnerBuilder {
 
         let artifact_contracts = ArtifactContracts::from_iter(contracts.clone());
 
+        let linker = Linker::new(root.as_ref(), artifact_contracts);
+
         for (id, contract) in contracts {
             let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
 
-            let LinkOutput { contracts, libs_to_deploy, .. } = link_with_nonce_or_address(
-                &artifact_contracts,
-                Default::default(),
-                evm_opts.sender,
-                1,
-                &id,
-                root.as_ref(),
-            )?;
+            let LinkOutput { contracts, libs_to_deploy, .. } =
+                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, &id)?;
 
             let linked_contract = contracts.get(&id).unwrap().clone();
 
