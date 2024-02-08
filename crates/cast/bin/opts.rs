@@ -1,7 +1,8 @@
 use crate::cmd::{
     access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
+    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
+    wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
@@ -380,6 +381,10 @@ pub enum CastSubcommand {
         /// The hex encoded bytecode.
         bytecode: String,
     },
+
+    /// Build and sign a transaction.
+    #[clap(name = "mktx", visible_alias = "m")]
+    MakeTx(MakeTxArgs),
 
     /// Calculate the ENS namehash of a name.
     #[clap(visible_aliases = &["na", "nh"])]
