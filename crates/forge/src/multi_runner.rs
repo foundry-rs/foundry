@@ -289,7 +289,7 @@ impl MultiContractRunnerBuilder {
 
             let LinkOutput { contracts, libs_to_deploy, .. } = link_with_nonce_or_address(
                 &artifact_contracts,
-                &Default::default(),
+                Default::default(),
                 evm_opts.sender,
                 1,
                 &id,
@@ -314,18 +314,7 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                 abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
             {
-                deployable_contracts.insert(
-                    id.clone(),
-                    (
-                        abi.clone(),
-                        bytecode,
-                        libs_to_deploy
-                            .into_iter()
-                            .filter_map(|(id, _)| contracts.get(id).unwrap().bytecode.clone())
-                            .filter_map(|bcode| bcode.object.into_bytes())
-                            .collect::<Vec<_>>(),
-                    ),
-                );
+                deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
             }
 
             contract

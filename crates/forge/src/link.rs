@@ -1,11 +1,8 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use eyre::Result;
-use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, ArtifactId};
+use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId};
 use semver::Version;
-use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
-};
+use std::{collections::HashSet, path::PathBuf, str::FromStr};
 
 /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
 /// library path in the form of "./path/to/Lib.sol:Lib"
@@ -28,7 +25,7 @@ fn find_artifact_id_by_library_path<'a>(
             continue;
         }
 
-        if !(id.source.ends_with(file)) {
+        if id.source != PathBuf::from(file) {
             continue;
         }
 
@@ -56,76 +53,94 @@ pub fn collect_dependencies<'a>(
     }
 }
 
+/// Links given artifacts with given library addresses.
+///
+/// Artifacts returned by this function may still be partially unlinked if some of their
+/// dependencies weren't present in `libraries`.
+pub fn link(contracts: &ArtifactContracts, libraries: &Libraries) -> Result<ArtifactContracts> {
+    contracts
+        .iter()
+        .map(|(id, contract)| {
+            let mut contract = contract.clone();
+
+            for (file, libs) in &libraries.libs {
+                for (name, address) in libs {
+                    let address = Address::from_str(address)?;
+                    if let Some(bytecode) = contract.bytecode.as_mut() {
+                        bytecode.link(file.to_string_lossy(), name, address);
+                    }
+                    if let Some(deployed_bytecode) =
+                        contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
+                    {
+                        deployed_bytecode.link(file.to_string_lossy(), name, address);
+                    }
+                }
+            }
+            Ok((id.clone(), contract))
+        })
+        .collect()
+}
+
 /// Output of the `link_with_nonce_or_address`
-pub struct LinkOutput<'a> {
+pub struct LinkOutput {
     /// [ArtifactContracts] object containing all artifacts linked with known libraries
     /// It is guaranteed to contain `target` and all it's dependencies fully linked, and any other
     /// contract may still be partially unlinked.
     pub contracts: ArtifactContracts,
     /// Vector of libraries predeployed by user (basically another form of
     /// `deployed_library_addresses`).
-    pub predeployed_libs: Vec<(&'a ArtifactId, Address)>,
+    pub libraries: Libraries,
     /// Vector of libraries that need to be deployed from sender address.
     /// The order in which they appear in the vector is the order in which they should be deployed.
-    pub libs_to_deploy: Vec<(&'a ArtifactId, Address)>,
+    pub libs_to_deploy: Vec<Bytes>,
 }
 
+/// Links given artifact with either given library addresses or address computed from sender and
+/// nonce.
+///
+/// Current linking implementation assumes that all link_references keys are matching the format in
+/// which sources appear in [ArtifactId] keys.
+///
+/// You should make sure to strip paths via `with_stripped_file_prefixes` for both
+/// `libraries` and `contracts` *before* invoking linker.
+///
+/// This function will always link target contract completely, however, in case of paths format
+/// mismatch it may not recognize some of the predeployed libraries, leading to more deployments
+/// than needed.
 pub fn link_with_nonce_or_address<'a>(
     contracts: &'a ArtifactContracts,
-    deployed_library_addresses: &Libraries,
+    mut libraries: Libraries,
     sender: Address,
     mut nonce: u64,
     target: &'a ArtifactId,
-) -> Result<LinkOutput<'a>> {
+) -> Result<LinkOutput> {
     let mut needed_libraries = HashSet::new();
     collect_dependencies(target, contracts, &mut needed_libraries);
 
-    let mut predeployed_libs = HashMap::new();
-
-    // Populate predeployed libs firstly
-    for (path, libs) in &deployed_library_addresses.libs {
-        let path = path.to_string_lossy().to_string();
-        for (name, address) in libs {
-            let artifact_id = find_artifact_id_by_library_path(contracts, &path, name, None);
-            if needed_libraries.contains(artifact_id) {
-                let address = Address::from_str(address)?;
-                predeployed_libs.insert(artifact_id, address);
-            }
-        }
-    }
-
     let mut libs_to_deploy = Vec::new();
 
+    // If `libraries` does not contain needed dependency, compute its address and add to
+    // `libs_to_deploy`.
     for id in needed_libraries {
-        if !predeployed_libs.contains_key(id) {
-            libs_to_deploy.push((id, sender.create(nonce)));
+        let lib_name = id.name.split(".").next().unwrap().to_owned();
+        libraries.libs.entry(id.source.clone()).or_default().entry(lib_name).or_insert_with(|| {
+            let address = sender.create(nonce);
+            libs_to_deploy.push((id, address));
             nonce += 1;
-        }
+
+            address.to_checksum(None)
+        });
     }
 
-    let predeployed_libs = predeployed_libs.into_iter().collect::<Vec<_>>();
-
     // Link contracts
-    let contracts = contracts
-        .iter()
-        .map(|(id, contract)| {
-            let mut contract = contract.clone();
+    let contracts = link(contracts, &libraries)?;
 
-            for (id, address) in libs_to_deploy.iter().chain(predeployed_libs.iter()) {
-                if let Some(bytecode) = contract.bytecode.as_mut() {
-                    bytecode.link(id.source.to_string_lossy(), &id.name, *address);
-                }
-                if let Some(deployed_bytecode) =
-                    contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
-                {
-                    deployed_bytecode.link(id.source.to_string_lossy(), &id.name, *address);
-                }
-            }
-            (id.clone(), contract)
-        })
-        .collect::<ArtifactContracts>();
+    let libs_to_deploy = libs_to_deploy
+        .into_iter()
+        .map(|(id, _)| contracts.get(id).unwrap().get_bytecode_bytes().unwrap().into_owned())
+        .collect();
 
-    Ok(LinkOutput { contracts, predeployed_libs, libs_to_deploy })
+    Ok(LinkOutput { contracts, libraries, libs_to_deploy })
 }
 
 #[cfg(test)]
@@ -185,7 +200,7 @@ mod tests {
 
                 let LinkOutput { libs_to_deploy, .. } = link_with_nonce_or_address(
                     &self.contracts,
-                    &Default::default(),
+                    Default::default(),
                     sender,
                     initial_nonce,
                     id,

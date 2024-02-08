@@ -13,9 +13,9 @@ use foundry_compilers::{
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
-    Artifact, ArtifactId, Project, ProjectCompileOutput,
+    ArtifactId, Project, ProjectCompileOutput,
 };
-use std::{collections::BTreeMap, str::FromStr};
+use std::str::FromStr;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
@@ -63,10 +63,12 @@ impl ScriptArgs {
         let target = self.find_target(&project, &contracts)?.clone();
         script_config.target_contract = Some(target.clone());
 
-        let mut output = self.link(
+        let libraries = script_config.config.solc_settings()?.libraries;
+
+        let mut output = self.link_script_target(
             project,
             contracts,
-            script_config.config.parsed_libraries()?,
+            libraries,
             script_config.evm_opts.sender,
             script_config.sender_nonce,
             target,
@@ -123,7 +125,7 @@ impl ScriptArgs {
         target.ok_or_eyre(format!("Could not find target contract: {}", target_fname))
     }
 
-    pub fn link(
+    pub fn link_script_target(
         &self,
         project: Project,
         contracts: ArtifactContracts,
@@ -132,31 +134,13 @@ impl ScriptArgs {
         nonce: u64,
         target: ArtifactId,
     ) -> Result<BuildOutput> {
-        let LinkOutput { libs_to_deploy, contracts: linked_contracts, predeployed_libs } =
-            link_with_nonce_or_address(&contracts, &libraries, sender, nonce, &target)?;
+        let LinkOutput {
+            libs_to_deploy: predeploy_libraries,
+            contracts: linked_contracts,
+            libraries,
+        } = link_with_nonce_or_address(&contracts, libraries, sender, nonce, &target)?;
 
-        // Merge with user provided libraries
-        let mut new_libraries = Libraries { libs: BTreeMap::new() };
-        for (id, address) in libs_to_deploy.iter().chain(predeployed_libs.iter()) {
-            new_libraries
-                .libs
-                .entry(id.source.clone())
-                .or_default()
-                .insert(id.name.split('.').next().unwrap().to_owned(), address.to_string());
-        }
-
-        let predeploy_libraries = libs_to_deploy
-            .into_iter()
-            .map(|(id, _)| {
-                linked_contracts
-                    .get(id)
-                    .unwrap()
-                    .get_bytecode_bytes()
-                    .unwrap_or_else(|| panic!("bytecode for {} is unlinked", id.name))
-                    .into_owned()
-            })
-            .collect();
-
+        // Get linked target artifact
         let contract = linked_contracts
             .get(&target)
             .ok_or_eyre("Target contract not found in artifacts")?
@@ -180,7 +164,7 @@ impl ScriptArgs {
             predeploy_libraries,
             sources: Default::default(),
             project,
-            libraries: new_libraries,
+            libraries,
         })
     }
 

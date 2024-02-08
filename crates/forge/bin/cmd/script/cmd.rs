@@ -276,14 +276,19 @@ impl ScriptArgs {
             // We might have predeployed libraries from the broadcasting, so we need to
             // relink the contracts with them, since their mapping is
             // not included in the solc cache files.
-            let BuildOutput { highlevel_known_contracts, .. } = self.link(
-                project,
-                default_known_contracts,
-                Libraries::parse(&deployment_sequence.libraries)?,
-                script_config.config.sender, // irrelevant, since we're not creating any
-                0,                           // irrelevant, since we're not creating any
-                target,
-            )?;
+            let BuildOutput { highlevel_known_contracts, predeploy_libraries, .. } = self
+                .link_script_target(
+                    project,
+                    default_known_contracts,
+                    Libraries::parse(&deployment_sequence.libraries)?,
+                    script_config.config.sender, // irrelevant, since we're not creating any
+                    0,                           // irrelevant, since we're not creating any
+                    target,
+                )?;
+
+            if predeploy_libraries.len() > 0 {
+                eyre::bail!("Incomplete set of libraries in deployment artifact.");
+            }
 
             verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
 
@@ -317,7 +322,7 @@ impl ScriptArgs {
 
         let BuildOutput {
             libraries, contract, highlevel_known_contracts, predeploy_libraries, ..
-        } = self.link(
+        } = self.link_script_target(
             project,
             default_known_contracts,
             script_config.config.parsed_libraries()?,
