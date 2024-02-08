@@ -375,7 +375,7 @@ impl CallTraceDecoder {
                 }
             }
             "getNonce" => {
-                // Redact private key in Wallet struct if defined
+                // Redact private key if defined
                 if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
                     Some(vec!["<pk>".to_string()])
                 } else {
@@ -582,6 +582,7 @@ mod tests {
     fn test_should_redact_pk() {
         let decoder = CallTraceDecoder::new();
 
+        // [function_signature, data, expected]
         let cheatcode_input_test_cases = vec![
             // Should redact private key from traces in all cases:
             ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
@@ -632,6 +633,7 @@ mod tests {
             ),
         ];
 
+        // [function_signature, expected]
         let cheatcode_output_test_cases = vec![
             // Should redact private key on output in all cases:
             ("createWallet(string)", Some("<pk>".to_string())),
