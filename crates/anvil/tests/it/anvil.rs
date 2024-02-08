@@ -1,8 +1,8 @@
 //! tests for anvil specific logic
 
-use anvil::{spawn, NodeConfig};
 use alloy_primitives::Address;
 use alloy_providers::provider::TempProvider;
+use anvil::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -39,10 +39,7 @@ async fn can_get_default_dev_keys() {
     let provider = handle.http_provider();
 
     let dev_accounts = handle.dev_accounts().collect::<Vec<_>>();
-    let accounts = provider
-        .get_accounts()
-        .await
-        .unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
     assert_eq!(dev_accounts, accounts);
 }
 
@@ -62,7 +59,10 @@ async fn test_can_set_genesis_timestamp() {
         spawn(NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into())).await;
     let provider = handle.http_provider();
 
-    assert_eq!(genesis_timestamp, provider.get_block(0.into(), false).await.unwrap().unwrap().header.timestamp.to::<u64>());
+    assert_eq!(
+        genesis_timestamp,
+        provider.get_block(0.into(), false).await.unwrap().unwrap().header.timestamp.to::<u64>()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,5 +70,8 @@ async fn test_can_use_default_genesis_timestamp() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    assert_ne!(0u64, provider.get_block(0.into(), false).await.unwrap().unwrap().header.timestamp.to::<u64>());
+    assert_ne!(
+        0u64,
+        provider.get_block(0.into(), false).await.unwrap().unwrap().header.timestamp.to::<u64>()
+    );
 }

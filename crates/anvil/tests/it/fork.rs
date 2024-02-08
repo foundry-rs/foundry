@@ -4,7 +4,7 @@ use crate::{
     abi::*,
     utils::{self, ethers_http_provider},
 };
-use alloy_primitives::{U256 as rU256, Address as rAddress};
+use alloy_primitives::{Address as rAddress, U256 as rU256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockNumberOrTag, CallRequest};
 use alloy_signer::Signer as AlloySigner;

@@ -1,15 +1,15 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config, utils::ethers_http_provider};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::BlockNumberOrTag;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
     types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
-use alloy_primitives::{U256 as rU256, B256, U64 as rU64, Address as rAddress};
 use ethers::{
-    abi::{ethereum_types::BigEndianHash, AbiDecode},
+    abi::AbiDecode,
     prelude::{Middleware, SignerMiddleware},
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
@@ -360,13 +360,15 @@ async fn test_timestamp_interval() {
     let interval = 10;
 
     for _ in 0..5 {
-        let block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
+        let block =
+            provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
         // mock timestamp
         api.evm_set_block_timestamp_interval(interval).unwrap();
         api.evm_mine(None).await.unwrap();
 
-        let new_block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
+        let new_block =
+            provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
         assert_eq!(new_block.header.timestamp, block.header.timestamp + rU256::from(interval));
     }
@@ -389,13 +391,15 @@ async fn test_timestamp_interval() {
     assert!(api.evm_remove_block_timestamp_interval().unwrap());
 
     api.evm_mine(None).await.unwrap();
-    let new_block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
+    let new_block =
+        provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
 
     // offset is applied correctly after resetting the interval
     assert!(new_block.header.timestamp > block.header.timestamp);
 
     api.evm_mine(None).await.unwrap();
-    let another_block = provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
+    let another_block =
+        provider.get_block(BlockNumberOrTag::Latest.into(), false).await.unwrap().unwrap();
     // check interval is disabled
     assert!(another_block.header.timestamp - new_block.header.timestamp < rU256::from(interval));
 }

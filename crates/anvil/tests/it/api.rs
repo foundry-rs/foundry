@@ -4,6 +4,7 @@ use crate::{
     abi::{MulticallContract, SimpleStorage},
     utils::ethers_http_provider,
 };
+use alloy_chains::NamedChain;
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
@@ -19,7 +20,7 @@ use ethers::{
     abi::{Address, Tokenizable},
     prelude::{builders::ContractCall, decode_function_data, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, U256},
+    types::{Block, BlockNumber, Transaction, TransactionRequest, U256},
     utils::get_contract_address,
 };
 use foundry_common::types::{ToAlloy, ToEthers};
@@ -87,14 +88,14 @@ async fn can_get_chain_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_modify_chain_id() {
-    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(Chain::Goerli))).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Goerli))).await;
+    let provider = &handle.http_provider();
 
-    let chain_id = provider.get_chainid().await.unwrap();
-    assert_eq!(chain_id, Chain::Goerli.into());
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id.to::<u64>(), NamedChain::Goerli as u64);
 
     let chain_id = provider.get_net_version().await.unwrap();
-    assert_eq!(chain_id, (Chain::Goerli as u64).to_string());
+    assert_eq!(chain_id.to::<u64>(), (NamedChain::Goerli as u64));
 }
 
 #[tokio::test(flavor = "multi_thread")]
