@@ -485,11 +485,10 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
     use clap::Parser;
     use foundry_cli::utils::LoadConfig;
     use foundry_common::fs;
-    use foundry_test_utils::{forgetest, forgetest_async};
+    use foundry_test_utils::forgetest_async;
     use tempfile::tempdir;
 
     #[test]
@@ -639,7 +638,7 @@ mod tests {
         let args = VerifyArgs::parse_from([
             "foundry-cli",
             "0x0000000000000000000000000000000000000000",
-            &format!("src/Counter1.sol:Counter"),
+            "src/Counter1.sol:Counter",
             "--root",
             &prj.root().to_string_lossy(),
         ]);
