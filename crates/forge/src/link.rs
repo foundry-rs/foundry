@@ -2,11 +2,7 @@ use alloy_primitives::{Address, Bytes};
 use eyre::Result;
 use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId};
 use semver::Version;
-use std::{
-    collections::{BTreeSet, HashSet},
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{collections::BTreeSet, path::PathBuf, str::FromStr};
 
 /// Helper method to convert [ArtifactId] to the format in which libraries are stored in [Libraries]
 /// object.
