@@ -387,8 +387,8 @@ impl CallTraceDecoder {
 
                 // Redact private key and replace in trace
                 // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
-                if !decoded.is_empty()
-                    && (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
+                if !decoded.is_empty() &&
+                    (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
                 {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
