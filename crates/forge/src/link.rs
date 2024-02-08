@@ -1,14 +1,18 @@
 use alloy_primitives::{Address, Bytes};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId};
 use semver::Version;
-use std::{collections::BTreeSet, path::PathBuf, str::FromStr};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Helper method to convert [ArtifactId] to the format in which libraries are stored in [Libraries]
 /// object.
 ///
 /// Strips project root path from source file path.
-fn convert_artifact_id_to_lib_path(id: &ArtifactId, root_path: &PathBuf) -> (PathBuf, String) {
+fn convert_artifact_id_to_lib_path(id: &ArtifactId, root_path: &Path) -> (PathBuf, String) {
     let path = id.source.strip_prefix(root_path).unwrap_or(&id.source);
     // name is either {LibName} or {LibName}.{version}
     let name = id.name.split('.').next().unwrap();
@@ -22,11 +26,11 @@ fn convert_artifact_id_to_lib_path(id: &ArtifactId, root_path: &PathBuf) -> (Pat
 /// Optionally accepts solc version, and if present, only compares artifacts with given version.
 fn find_artifact_id_by_library_path<'a>(
     contracts: &'a ArtifactContracts,
-    file: &String,
-    name: &String,
+    file: &str,
+    name: &str,
     version: Option<&Version>,
-    root_path: &PathBuf,
-) -> &'a ArtifactId {
+    root_path: &Path,
+) -> Option<&'a ArtifactId> {
     for id in contracts.keys() {
         if let Some(version) = version {
             if id.version != *version {
@@ -35,12 +39,12 @@ fn find_artifact_id_by_library_path<'a>(
         }
         let (artifact_path, artifact_name) = convert_artifact_id_to_lib_path(id, root_path);
 
-        if artifact_name == *name && artifact_path == PathBuf::from(file) {
-            return id;
+        if artifact_name == *name && artifact_path == Path::new(file) {
+            return Some(id);
         }
     }
 
-    panic!("artifact not found for library {file} {name}");
+    None
 }
 
 /// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
@@ -48,9 +52,12 @@ pub fn collect_dependencies<'a>(
     target: &'a ArtifactId,
     contracts: &'a ArtifactContracts,
     deps: &mut BTreeSet<&'a ArtifactId>,
-    root_path: &PathBuf,
-) {
-    let references = contracts.get(target).unwrap().all_link_references();
+    root_path: &Path,
+) -> Result<()> {
+    let references = contracts
+        .get(target)
+        .ok_or_eyre("target artifact must be present at given artifacts set")?
+        .all_link_references();
     for (file, libs) in &references {
         for contract in libs.keys() {
             let id = find_artifact_id_by_library_path(
@@ -59,12 +66,18 @@ pub fn collect_dependencies<'a>(
                 contract,
                 Some(&target.version),
                 root_path,
-            );
+            )
+            .ok_or_eyre(format!(
+                "wasn't able to find artifact for library {} at {}",
+                file, contract
+            ))?;
             if deps.insert(id) {
-                collect_dependencies(id, contracts, deps, root_path);
+                collect_dependencies(id, contracts, deps, root_path)?;
             }
         }
     }
+
+    Ok(())
 }
 
 /// Links given artifacts with given library addresses.
@@ -120,14 +133,14 @@ pub fn link_with_nonce_or_address<'a>(
     sender: Address,
     mut nonce: u64,
     target: &'a ArtifactId,
-    root_path: &PathBuf,
+    root_path: &Path,
 ) -> Result<LinkOutput> {
     // Library paths in `link_references` keys are always stripped, so we have to strip
     // user-provided paths to be able to match them correctly.
     let mut libraries = libraries.with_stripped_file_prefixes(root_path);
 
     let mut needed_libraries = BTreeSet::new();
-    collect_dependencies(target, contracts, &mut needed_libraries, root_path);
+    collect_dependencies(target, contracts, &mut needed_libraries, root_path)?;
 
     let mut libs_to_deploy = Vec::new();
 

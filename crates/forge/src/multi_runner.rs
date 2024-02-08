@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
     artifacts::CompactContractBytecode, contracts::ArtifactContracts, Artifact, ArtifactId,
@@ -285,7 +285,7 @@ impl MultiContractRunnerBuilder {
         let artifact_contracts = ArtifactContracts::from_iter(contracts.clone());
 
         for (id, contract) in contracts {
-            let abi = contract.abi.as_ref().expect("We should have an abi by now");
+            let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
 
             let LinkOutput { contracts, libs_to_deploy, .. } = link_with_nonce_or_address(
                 &artifact_contracts,
@@ -293,7 +293,7 @@ impl MultiContractRunnerBuilder {
                 evm_opts.sender,
                 1,
                 &id,
-                &root.as_ref().to_path_buf(),
+                root.as_ref(),
             )?;
 
             let linked_contract = contracts.get(&id).unwrap().clone();
