@@ -2,7 +2,11 @@ use alloy_primitives::{Address, Bytes};
 use eyre::Result;
 use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId};
 use semver::Version;
-use std::{collections::HashSet, path::PathBuf, str::FromStr};
+use std::{
+    collections::{BTreeSet, HashSet},
+    path::PathBuf,
+    str::FromStr,
+};
 
 /// Helper method to convert [ArtifactId] to the format in which libraries are stored in [Libraries]
 /// object.
@@ -47,7 +51,7 @@ fn find_artifact_id_by_library_path<'a>(
 pub fn collect_dependencies<'a>(
     target: &'a ArtifactId,
     contracts: &'a ArtifactContracts,
-    deps: &mut HashSet<&'a ArtifactId>,
+    deps: &mut BTreeSet<&'a ArtifactId>,
     root_path: &PathBuf,
 ) {
     let references = contracts.get(target).unwrap().all_link_references();
@@ -126,7 +130,7 @@ pub fn link_with_nonce_or_address<'a>(
     // user-provided paths to be able to match them correctly.
     let mut libraries = libraries.with_stripped_file_prefixes(root_path);
 
-    let mut needed_libraries = HashSet::new();
+    let mut needed_libraries = BTreeSet::new();
     collect_dependencies(target, contracts, &mut needed_libraries, root_path);
 
     let mut libs_to_deploy = Vec::new();
@@ -167,7 +171,7 @@ mod tests {
     struct LinkerTest {
         project: Project,
         contracts: ArtifactContracts,
-        dependency_assertions: HashMap<String, Vec<(String, u64, Address)>>,
+        dependency_assertions: HashMap<String, Vec<(String, Address)>>,
     }
 
     impl LinkerTest {
@@ -197,7 +201,7 @@ mod tests {
         fn assert_dependencies(
             mut self,
             artifact_id: String,
-            deps: Vec<(String, u64, Address)>,
+            deps: Vec<(String, Address)>,
         ) -> Self {
             self.dependency_assertions.insert(artifact_id, deps);
             self
@@ -228,28 +232,24 @@ mod tests {
                     .get(&identifier)
                     .unwrap_or_else(|| panic!("Unexpected artifact: {identifier}"));
 
-                let expected_libs =
-                    assertions.iter().map(|(identifier, _, _)| identifier).collect::<HashSet<_>>();
-
                 assert_eq!(
                     libs_to_deploy.len(),
-                    expected_libs.len(),
+                    assertions.len(),
                     "artifact {identifier} has more/less dependencies than expected ({} vs {}): {:#?}",
                     libs_to_deploy.len(),
                     assertions.len(),
                     libs_to_deploy
                 );
 
-                let identifiers = libraries
-                    .libs
-                    .iter()
-                    .flat_map(|(file, libs)| {
-                        libs.iter().map(|(name, _)| format!("{}:{}", file.to_string_lossy(), name))
-                    })
-                    .collect::<Vec<_>>();
-
-                for lib in expected_libs {
-                    assert!(identifiers.contains(lib));
+                for (dep_identifier, address) in assertions {
+                    let (file, name) = dep_identifier.split_once(":").unwrap();
+                    if let Some(lib_address) =
+                        libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
+                    {
+                        assert_eq!(*lib_address, address.to_string(), "incorrect library address for dependency {dep_identifier} of {identifier}");
+                    } else {
+                        panic!("Library not found")
+                    }
                 }
             }
         }
@@ -263,7 +263,6 @@ mod tests {
                 "simple/Simple.t.sol:LibraryConsumer".to_string(),
                 vec![(
                     "simple/Simple.t.sol:Lib".to_string(),
-                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -271,7 +270,6 @@ mod tests {
                 "simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                 vec![(
                     "simple/Simple.t.sol:Lib".to_string(),
-                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -286,7 +284,6 @@ mod tests {
                 "nested/Nested.t.sol:NestedLib".to_string(),
                 vec![(
                     "nested/Nested.t.sol:Lib".to_string(),
-                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -297,18 +294,11 @@ mod tests {
                     // have the same address and nonce.
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        1,
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
-                    ),
-                    (
-                        "nested/Nested.t.sol:Lib".to_string(),
-                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:NestedLib".to_string(),
-                        2,
-                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                        Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D").unwrap(),
                     ),
                 ],
             )
@@ -317,17 +307,10 @@ mod tests {
                 vec![
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        1,
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
-                    ),
-                    (
-                        "nested/Nested.t.sol:Lib".to_string(),
-                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:NestedLib".to_string(),
-                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                 ],
@@ -355,7 +338,6 @@ mod tests {
                 "duplicate/Duplicate.t.sol:C".to_string(),
                 vec![(
                     "duplicate/Duplicate.t.sol:A".to_string(),
-                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -363,7 +345,6 @@ mod tests {
                 "duplicate/Duplicate.t.sol:D".to_string(),
                 vec![(
                     "duplicate/Duplicate.t.sol:B".to_string(),
-                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -372,12 +353,10 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                 ],
@@ -387,47 +366,22 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:B".to_string(),
-                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
-                    ),
-                    (
-                        "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        3,
                         Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
-                    ),
-                    (
-                        "duplicate/Duplicate.t.sol:B".to_string(),
-                        2,
-                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:D".to_string(),
-                        4,
                         Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782").unwrap(),
                     ),
                     (
-                        "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
-                    ),
-                    (
-                        "duplicate/Duplicate.t.sol:C".to_string(),
-                        3,
-                        Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
-                    ),
-                    (
                         "duplicate/Duplicate.t.sol:E".to_string(),
-                        5,
                         Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f").unwrap(),
                     ),
                 ],
@@ -437,47 +391,22 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:B".to_string(),
-                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
-                    ),
-                    (
-                        "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        3,
                         Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
-                    ),
-                    (
-                        "duplicate/Duplicate.t.sol:B".to_string(),
-                        2,
-                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:D".to_string(),
-                        4,
                         Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782").unwrap(),
                     ),
                     (
-                        "duplicate/Duplicate.t.sol:A".to_string(),
-                        1,
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
-                    ),
-                    (
-                        "duplicate/Duplicate.t.sol:C".to_string(),
-                        3,
-                        Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
-                    ),
-                    (
                         "duplicate/Duplicate.t.sol:E".to_string(),
-                        5,
                         Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f").unwrap(),
                     ),
                 ],
