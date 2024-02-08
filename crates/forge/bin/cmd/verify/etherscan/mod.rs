@@ -630,24 +630,21 @@ mod tests {
         );
     }
 
-    forgetest_async!(
-        respects_path_for_duplicate,
-        |prj, cmd| {
-            prj.add_source("Counter1", "contract Counter {}").unwrap();
-            prj.add_source("Counter2", "contract Counter {}").unwrap();
+    forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
+        prj.add_source("Counter1", "contract Counter {}").unwrap();
+        prj.add_source("Counter2", "contract Counter {}").unwrap();
 
-            cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
+        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
 
-            let args = VerifyArgs::parse_from([
-                "foundry-cli",
-                "0x0000000000000000000000000000000000000000",
-                &format!("src/Counter1.sol:Counter"),
-                "--root",
-                &prj.root().to_string_lossy()
-            ]);
-            
-            let mut etherscan = EtherscanVerificationProvider::default();
-            etherscan.preflight_check(args).await.unwrap();
-        }
-    );
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            &format!("src/Counter1.sol:Counter"),
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        let mut etherscan = EtherscanVerificationProvider::default();
+        etherscan.preflight_check(args).await.unwrap();
+    });
 }
