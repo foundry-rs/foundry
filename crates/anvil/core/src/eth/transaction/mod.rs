@@ -9,9 +9,8 @@ use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    optimism::OptimismTransactionFields,
-    request::{TransactionInput, TransactionRequest},
-    AccessList, AccessListItem, Signature as RpcSignature, Transaction as RpcTransaction,
+    request::TransactionRequest, AccessList, Signature as RpcSignature,
+    Transaction as RpcTransaction,
 };
 use foundry_evm::traces::CallTraceNode;
 use revm::{
@@ -32,6 +31,7 @@ pub fn impersonated_signature() -> Signature {
 }
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
+/// Should be removed once the call builder abstraction for providers is in place.
 pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTransactionRequest> {
     let TransactionRequest {
         from,
