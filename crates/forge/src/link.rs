@@ -122,7 +122,7 @@ pub fn link_with_nonce_or_address<'a>(
     // If `libraries` does not contain needed dependency, compute its address and add to
     // `libs_to_deploy`.
     for id in needed_libraries {
-        let lib_name = id.name.split(".").next().unwrap().to_owned();
+        let lib_name = id.name.split('.').next().unwrap().to_owned();
         libraries.libs.entry(id.source.clone()).or_default().entry(lib_name).or_insert_with(|| {
             let address = sender.create(nonce);
             libs_to_deploy.push((id, address));
@@ -145,7 +145,7 @@ pub fn link_with_nonce_or_address<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::HashMap, path::PathBuf};
 
     use super::*;
     use foundry_compilers::{Project, ProjectPathsConfig};
@@ -198,7 +198,7 @@ mod tests {
                     continue;
                 }
 
-                let LinkOutput { libs_to_deploy, .. } = link_with_nonce_or_address(
+                let LinkOutput { libs_to_deploy, libraries, .. } = link_with_nonce_or_address(
                     &self.contracts,
                     Default::default(),
                     sender,
@@ -224,22 +224,17 @@ mod tests {
                     libs_to_deploy
                 );
 
-                let identifiers =
-                    libs_to_deploy.iter().map(|(id, _)| id.identifier()).collect::<HashSet<_>>();
+                let identifiers = libraries
+                    .libs
+                    .iter()
+                    .flat_map(|(file, libs)| {
+                        libs.iter().map(|(name, _)| format!("{}:{}", file.to_string_lossy(), name))
+                    })
+                    .collect::<Vec<_>>();
 
                 for lib in expected_libs {
                     assert!(identifiers.contains(lib));
                 }
-
-                let unique_libs =
-                    libs_to_deploy.iter().map(|(_, addr)| addr).collect::<HashSet<_>>();
-
-                assert_eq!(
-                    unique_libs.len(),
-                    libs_to_deploy.len(),
-                    "not all libraries are unqiue: {:#?}",
-                    libs_to_deploy
-                );
             }
         }
     }

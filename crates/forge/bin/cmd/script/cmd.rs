@@ -286,7 +286,7 @@ impl ScriptArgs {
                     target,
                 )?;
 
-            if predeploy_libraries.len() > 0 {
+            if !predeploy_libraries.is_empty() {
                 eyre::bail!("Incomplete set of libraries in deployment artifact.");
             }
 
