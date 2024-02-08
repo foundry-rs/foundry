@@ -123,7 +123,7 @@ impl ScriptArgs {
             }
         }
 
-        target.ok_or_eyre(format!("Could not find target contract: {}", target_fname))
+        target.ok_or_else(|| eyre::eyre!("Could not find target contract: {}", target_fname))
     }
 
     /// Links script artifact with given libraries or library addresses computed from script sender

@@ -67,10 +67,9 @@ pub fn collect_dependencies<'a>(
                 Some(&target.version),
                 root_path,
             )
-            .ok_or_eyre(format!(
-                "wasn't able to find artifact for library {} at {}",
-                file, contract
-            ))?;
+            .ok_or_else(|| {
+                eyre::eyre!("wasn't able to find artifact for library {} at {}", file, contract)
+            })?;
             if deps.insert(id) {
                 collect_dependencies(id, contracts, deps, root_path)?;
             }
