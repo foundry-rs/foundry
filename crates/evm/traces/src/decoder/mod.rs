@@ -360,52 +360,60 @@ impl CallTraceDecoder {
 
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
+        info!("{:?}", func);
+        info!("{:?}", data);
+
         match func.name.as_str() {
             "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
-            "rememberKey" | "startBroadcast" | "broadcast" => {
-                // these functions accept a private key as uint256, which should not be
-                // converted to plain text
-                if !func.inputs.is_empty() && func.inputs[0].ty != "uint256" {
-                    // redact private key input
+            "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
+                // Redact private key in all cases
+                Some(vec!["<pk>".to_string()])
+            }
+            "broadcast" | "startBroadcast" => {
+                // Redact private key if defined
+                if !func.inputs.is_empty() && func.inputs[0].ty == "uint256" {
                     Some(vec!["<pk>".to_string()])
                 } else {
                     None
                 }
             }
-            "sign" => {
-                // sign(uint256,bytes32)
+            "sign" | "signP256" | "getNonce" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                if !decoded.is_empty() && func.inputs[0].ty != "uint256" {
+
+                // Redact private key and replace in trace
+                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32) / getNonce(Wallet)
+                if !decoded.is_empty()
+                    && (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
+                {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
+
                 Some(decoded.iter().map(format_token).collect())
             }
-            "addr" => Some(vec!["<pk>".to_string()]),
-            "deriveKey" => Some(vec!["<pk>".to_string()]),
-            "parseJson" |
-            "parseJsonUint" |
-            "parseJsonUintArray" |
-            "parseJsonInt" |
-            "parseJsonIntArray" |
-            "parseJsonString" |
-            "parseJsonStringArray" |
-            "parseJsonAddress" |
-            "parseJsonAddressArray" |
-            "parseJsonBool" |
-            "parseJsonBoolArray" |
-            "parseJsonBytes" |
-            "parseJsonBytesArray" |
-            "parseJsonBytes32" |
-            "parseJsonBytes32Array" |
-            "writeJson" |
-            "keyExists" |
-            "serializeBool" |
-            "serializeUint" |
-            "serializeInt" |
-            "serializeAddress" |
-            "serializeBytes32" |
-            "serializeString" |
-            "serializeBytes" => {
+            "parseJson"
+            | "parseJsonUint"
+            | "parseJsonUintArray"
+            | "parseJsonInt"
+            | "parseJsonIntArray"
+            | "parseJsonString"
+            | "parseJsonStringArray"
+            | "parseJsonAddress"
+            | "parseJsonAddressArray"
+            | "parseJsonBool"
+            | "parseJsonBoolArray"
+            | "parseJsonBytes"
+            | "parseJsonBytesArray"
+            | "parseJsonBytes32"
+            | "parseJsonBytes32Array"
+            | "writeJson"
+            | "keyExists"
+            | "serializeBool"
+            | "serializeUint"
+            | "serializeInt"
+            | "serializeAddress"
+            | "serializeBytes32"
+            | "serializeString"
+            | "serializeBytes" => {
                 if self.verbosity >= 5 {
                     None
                 } else {
@@ -460,7 +468,7 @@ impl CallTraceDecoder {
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
-            "deriveKey" => Some("<pk>"),
+            "createWallet" | "deriveKey" => Some("<pk>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,
@@ -559,4 +567,41 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
 
 fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use alloy_json_abi::{AbiItem, Function, Param};
+
+    #[test]
+    fn test_should_redact_pk() {
+        // Should redact private key from traces in all cases:
+        // - `addr(...)`
+        // - `createWallet(...)`
+        // - `deriveKey(...)`
+        // - `rememberKey(...)`
+
+        // Should redact private key from traces in specific cases:
+        // - `broadcast(uint256)`
+        // - `startBroadcast(uint256)`
+
+        // Should redact private key and replace in trace in cases:
+        // - `sign(uint256,bytes32)`
+        // - `signP256(uint256,bytes32)`
+        // - `getNonce(Wallet)`
+
+        // Function { name: "addr", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [Param { ty: "address", name: "keyAddr", components: [], internal_type: None }], state_mutability: Pure }
+        // Function { name: "createWallet", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [Param { ty: "tuple", name: "wallet", components: [Param { ty: "address", name: "addr", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyX", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyY", components: [], internal_type: None }, Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], internal_type: None }], state_mutability: NonPayable }
+        // Function { name: "deriveKey", inputs: [Param { ty: "string", name: "mnemonic", components: [], internal_type: None }, Param { ty: "uint32", name: "index", components: [], internal_type: None }], outputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], state_mutability: Pure }
+        // Function { name: "rememberKey", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [Param { ty: "address", name: "keyAddr", components: [], internal_type: None }], state_mutability: NonPayable }
+
+        // Function { name: "broadcast", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [], state_mutability: NonPayable }
+        // Function { name: "startBroadcast", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [], state_mutability: NonPayable }
+
+        // Function { name: "sign", inputs: [Param { ty: "tuple", name: "wallet", components: [Param { ty: "address", name: "addr", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyX", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyY", components: [], internal_type: None }, Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], internal_type: None }, Param { ty: "bytes32", name: "digest", components: [], internal_type: None }], outputs: [Param { ty: "uint8", name: "v", components: [], internal_type: None }, Param { ty: "bytes32", name: "r", components: [], internal_type: None }, Param { ty: "bytes32", name: "s", components: [], internal_type: None }], state_mutability: NonPayable }
+        // Function { name: "signP256", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }, Param { ty: "bytes32", name: "digest", components: [], internal_type: None }], outputs: [Param { ty: "bytes32", name: "r", components: [], internal_type: None }, Param { ty: "bytes32", name: "s", components: [], internal_type: None }], state_mutability: Pure }
+        // Function { name: "getNonce", inputs: [Param { ty: "tuple", name: "wallet", components: [Param { ty: "address", name: "addr", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyX", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyY", components: [], internal_type: None }, Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], internal_type: None }], outputs: [Param { ty: "uint64", name: "nonce", components: [], internal_type: None }], state_mutability: NonPayable }
+    }
 }
