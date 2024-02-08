@@ -360,9 +360,6 @@ impl CallTraceDecoder {
 
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
-        info!("{:?}", func);
-        info!("{:?}", data);
-
         match func.name.as_str() {
             "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
             "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
