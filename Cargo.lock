@@ -3104,8 +3104,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.2"
-source = "git+https://github.com/foundry-rs/compilers?branch=main#757652ef7fc2f90cfe490319d99dd1cf13f54564"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff5eea089774ef60f8f4aa28a24fcc903ff054ff210cada46a32145213aff71d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

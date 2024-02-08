@@ -273,6 +273,8 @@ impl ScriptArgs {
 
         if self.verify {
             let target = self.find_target(&project, &default_known_contracts)?.clone();
+            let libraries = Libraries::parse(&deployment_sequence.libraries)?
+                .with_stripped_file_prefixes(project.root());
             // We might have predeployed libraries from the broadcasting, so we need to
             // relink the contracts with them, since their mapping is
             // not included in the solc cache files.
@@ -280,7 +282,7 @@ impl ScriptArgs {
                 .link_script_target(
                     project,
                     default_known_contracts,
-                    Libraries::parse(&deployment_sequence.libraries)?,
+                    libraries,
                     script_config.config.sender, // irrelevant, since we're not creating any
                     0,                           // irrelevant, since we're not creating any
                     target,
