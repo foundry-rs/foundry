@@ -584,145 +584,73 @@ mod tests {
     #[test]
     fn test_should_redact_pk() {
         let decoder = CallTraceDecoder::new();
-        let empty: &[u8] = &[];
 
-        // Should redact private key from traces in all cases:
-        // - `addr(...)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(&Function::parse("addr(uint256)").unwrap(), empty),
-            Some(vec!["<pk>".to_string()])
-        );
-
-        // - `createWallet(...)`
-        assert_eq!(
-            decoder
-                .decode_cheatcode_inputs(&Function::parse("createWallet(string)").unwrap(), empty),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            decoder
-                .decode_cheatcode_inputs(&Function::parse("createWallet(uint256)").unwrap(), empty),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            decoder.decode_cheatcode_outputs(&Function::parse("createWallet(string)").unwrap()),
-            Some("<pk>".to_string())
-        );
-
-        // - `deriveKey(...)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("deriveKey(string,uint32)").unwrap(),
-                empty
-            ),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("deriveKey(string,string,uint32)").unwrap(),
-                empty
-            ),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("deriveKey(string,uint32,string)").unwrap(),
-                empty
-            ),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("deriveKey(string,string,uint32,string)").unwrap(),
-                empty
-            ),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            decoder.decode_cheatcode_outputs(&Function::parse("deriveKey(string,uint32)").unwrap()),
-            Some("<pk>".to_string())
-        );
-
-        // - `rememberKey(...)`
-        assert_eq!(
-            decoder
-                .decode_cheatcode_inputs(&Function::parse("rememberKey(uint256)").unwrap(), empty),
-            Some(vec!["<pk>".to_string()])
-        );
-
-        // - `getNonce(Wallet)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("getNonce((address,uint256,uint256,uint256))").unwrap(),
-                empty
-            ),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            // Should ignore `getNonce(address)`.
-            decoder.decode_cheatcode_inputs(&Function::parse("getNonce(address)").unwrap(), empty),
-            None
-        );
-
-        // Should redact private key from traces in specific cases:
-        // - `broadcast(uint256)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(&Function::parse("broadcast(uint256)").unwrap(), empty),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            // Should ignore `broadcast()` without a supplied private key.
-            decoder.decode_cheatcode_inputs(&Function::parse("broadcast()").unwrap(), empty),
-            None
-        );
-
-        // - `startBroadcast(uint256)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("startBroadcast(uint256)").unwrap(),
-                empty
-            ),
-            Some(vec!["<pk>".to_string()])
-        );
-        assert_eq!(
-            // Should ignore `startBroadcast()` without a supplied private key.
-            decoder.decode_cheatcode_inputs(&Function::parse("startBroadcast()").unwrap(), empty),
-            None
-        );
-
-        // Should redact private key and replace in trace in cases:
-        // - `sign(uint256,bytes32)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("sign(uint256,bytes32)").unwrap(),
-                &[
+        let cheatcode_input_test_cases = vec![
+            // Should redact private key from traces in all cases:
+            ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createWallet(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            //
+            // Should redact private key from traces in specific cases with exceptions:
+            ("broadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("broadcast()", vec![], None), // Ignore: `private key` is not passed.
+            ("startBroadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("startBroadcast()", vec![], None), // Ignore: `private key` is not passed.
+            ("getNonce((address,uint256,uint256,uint256))", vec![], Some(vec!["<pk>".to_string()])),
+            ("getNonce(address)", vec![], None), // Ignore: `address` is public.
+            //
+            // Should redact private key and replace in trace in cases:
+            (
+                "sign(uint256,bytes32)",
+                vec![
                     227, 65, 234, 164, 124, 133, 33, 24, 41, 78, 81, 230, 83, 113, 42, 129, 224,
                     88, 0, 244, 25, 20, 23, 81, 190, 88, 246, 5, 195, 113, 225, 81, 65, 176, 7,
                     166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0
-                ]
+                    0, 0, 0, 0, 0, 0, 0,
+                ],
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
             ),
-            Some(vec![
-                "\"<pk>\"".to_string(),
-                "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
-            ])
-        );
-
-        // - `signP256(uint256,bytes32)`
-        assert_eq!(
-            decoder.decode_cheatcode_inputs(
-                &Function::parse("signP256(uint256,bytes32)").unwrap(),
-                &[
+            (
+                "signP256(uint256,bytes32)",
+                vec![
                     131, 33, 27, 64, 124, 133, 33, 24, 41, 78, 81, 230, 83, 113, 42, 129, 224, 88,
                     0, 244, 25, 20, 23, 81, 190, 88, 246, 5, 195, 113, 225, 81, 65, 176, 7, 166, 0,
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0
-                ]
+                    0, 0, 0, 0, 0,
+                ],
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
             ),
-            Some(vec![
-                "\"<pk>\"".to_string(),
-                "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
-            ])
-        );
+        ];
+
+        let cheatcode_output_test_cases = vec![
+            // Should redact private key on output in all cases:
+            ("createWallet(string)", Some("<pk>".to_string())),
+            ("deriveKey(string,uint32)", Some("<pk>".to_string())),
+        ];
+
+        for (function_signature, data, expected) in cheatcode_input_test_cases {
+            let function = Function::parse(function_signature).unwrap();
+            let result = decoder.decode_cheatcode_inputs(&function, &data);
+            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+        }
+
+        for (function_signature, expected) in cheatcode_output_test_cases {
+            let function = Function::parse(function_signature).unwrap();
+            let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
+            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+        }
     }
 }
