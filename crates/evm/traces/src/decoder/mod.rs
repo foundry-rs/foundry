@@ -377,11 +377,19 @@ impl CallTraceDecoder {
                     None
                 }
             }
-            "sign" | "signP256" | "getNonce" => {
+            "getNonce" => {
+                // Redact private key in Wallet struct if defined
+                if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
+                    Some(vec!["<pk>".to_string()])
+                } else {
+                    None
+                }
+            }
+            "sign" | "signP256" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
 
                 // Redact private key and replace in trace
-                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32) / getNonce(Wallet)
+                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
                 if !decoded.is_empty()
                     && (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
                 {
@@ -573,35 +581,148 @@ fn indexed_inputs(event: &Event) -> usize {
 mod tests {
     use super::*;
 
-    use alloy_json_abi::{AbiItem, Function, Param};
-
     #[test]
     fn test_should_redact_pk() {
+        let decoder = CallTraceDecoder::new();
+        let empty: &[u8] = &[];
+
         // Should redact private key from traces in all cases:
         // - `addr(...)`
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(&Function::parse("addr(uint256)").unwrap(), empty),
+            Some(vec!["<pk>".to_string()])
+        );
+
         // - `createWallet(...)`
+        assert_eq!(
+            decoder
+                .decode_cheatcode_inputs(&Function::parse("createWallet(string)").unwrap(), empty),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            decoder
+                .decode_cheatcode_inputs(&Function::parse("createWallet(uint256)").unwrap(), empty),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            decoder.decode_cheatcode_outputs(&Function::parse("createWallet(string)").unwrap()),
+            Some("<pk>".to_string())
+        );
+
         // - `deriveKey(...)`
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("deriveKey(string,uint32)").unwrap(),
+                empty
+            ),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("deriveKey(string,string,uint32)").unwrap(),
+                empty
+            ),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("deriveKey(string,uint32,string)").unwrap(),
+                empty
+            ),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("deriveKey(string,string,uint32,string)").unwrap(),
+                empty
+            ),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            decoder.decode_cheatcode_outputs(&Function::parse("deriveKey(string,uint32)").unwrap()),
+            Some("<pk>".to_string())
+        );
+
         // - `rememberKey(...)`
+        assert_eq!(
+            decoder
+                .decode_cheatcode_inputs(&Function::parse("rememberKey(uint256)").unwrap(), empty),
+            Some(vec!["<pk>".to_string()])
+        );
+
+        // - `getNonce(Wallet)`
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("getNonce((address,uint256,uint256,uint256))").unwrap(),
+                empty
+            ),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            // Should ignore `getNonce(address)`.
+            decoder.decode_cheatcode_inputs(&Function::parse("getNonce(address)").unwrap(), empty),
+            None
+        );
 
         // Should redact private key from traces in specific cases:
         // - `broadcast(uint256)`
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(&Function::parse("broadcast(uint256)").unwrap(), empty),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            // Should ignore `broadcast()` without a supplied private key.
+            decoder.decode_cheatcode_inputs(&Function::parse("broadcast()").unwrap(), empty),
+            None
+        );
+
         // - `startBroadcast(uint256)`
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("startBroadcast(uint256)").unwrap(),
+                empty
+            ),
+            Some(vec!["<pk>".to_string()])
+        );
+        assert_eq!(
+            // Should ignore `startBroadcast()` without a supplied private key.
+            decoder.decode_cheatcode_inputs(&Function::parse("startBroadcast()").unwrap(), empty),
+            None
+        );
 
         // Should redact private key and replace in trace in cases:
         // - `sign(uint256,bytes32)`
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("sign(uint256,bytes32)").unwrap(),
+                &[
+                    227, 65, 234, 164, 124, 133, 33, 24, 41, 78, 81, 230, 83, 113, 42, 129, 224,
+                    88, 0, 244, 25, 20, 23, 81, 190, 88, 246, 5, 195, 113, 225, 81, 65, 176, 7,
+                    166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0
+                ]
+            ),
+            Some(vec![
+                "\"<pk>\"".to_string(),
+                "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
+            ])
+        );
+
         // - `signP256(uint256,bytes32)`
-        // - `getNonce(Wallet)`
-
-        // Function { name: "addr", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [Param { ty: "address", name: "keyAddr", components: [], internal_type: None }], state_mutability: Pure }
-        // Function { name: "createWallet", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [Param { ty: "tuple", name: "wallet", components: [Param { ty: "address", name: "addr", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyX", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyY", components: [], internal_type: None }, Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], internal_type: None }], state_mutability: NonPayable }
-        // Function { name: "deriveKey", inputs: [Param { ty: "string", name: "mnemonic", components: [], internal_type: None }, Param { ty: "uint32", name: "index", components: [], internal_type: None }], outputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], state_mutability: Pure }
-        // Function { name: "rememberKey", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [Param { ty: "address", name: "keyAddr", components: [], internal_type: None }], state_mutability: NonPayable }
-
-        // Function { name: "broadcast", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [], state_mutability: NonPayable }
-        // Function { name: "startBroadcast", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], outputs: [], state_mutability: NonPayable }
-
-        // Function { name: "sign", inputs: [Param { ty: "tuple", name: "wallet", components: [Param { ty: "address", name: "addr", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyX", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyY", components: [], internal_type: None }, Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], internal_type: None }, Param { ty: "bytes32", name: "digest", components: [], internal_type: None }], outputs: [Param { ty: "uint8", name: "v", components: [], internal_type: None }, Param { ty: "bytes32", name: "r", components: [], internal_type: None }, Param { ty: "bytes32", name: "s", components: [], internal_type: None }], state_mutability: NonPayable }
-        // Function { name: "signP256", inputs: [Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }, Param { ty: "bytes32", name: "digest", components: [], internal_type: None }], outputs: [Param { ty: "bytes32", name: "r", components: [], internal_type: None }, Param { ty: "bytes32", name: "s", components: [], internal_type: None }], state_mutability: Pure }
-        // Function { name: "getNonce", inputs: [Param { ty: "tuple", name: "wallet", components: [Param { ty: "address", name: "addr", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyX", components: [], internal_type: None }, Param { ty: "uint256", name: "publicKeyY", components: [], internal_type: None }, Param { ty: "uint256", name: "privateKey", components: [], internal_type: None }], internal_type: None }], outputs: [Param { ty: "uint64", name: "nonce", components: [], internal_type: None }], state_mutability: NonPayable }
+        assert_eq!(
+            decoder.decode_cheatcode_inputs(
+                &Function::parse("signP256(uint256,bytes32)").unwrap(),
+                &[
+                    131, 33, 27, 64, 124, 133, 33, 24, 41, 78, 81, 230, 83, 113, 42, 129, 224, 88,
+                    0, 244, 25, 20, 23, 81, 190, 88, 246, 5, 195, 113, 225, 81, 65, 176, 7, 166, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0
+                ]
+            ),
+            Some(vec![
+                "\"<pk>\"".to_string(),
+                "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
+            ])
+        );
     }
 }
