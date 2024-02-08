@@ -221,18 +221,17 @@ impl EtherscanVerificationProvider {
         }
 
         let cache = project.read_cache_file()?;
-        let (path, entry) = match contract.path.as_ref() {
-            Some(path) => {
-                let path = project.root().join(path);
-                (
-                    path.clone(),
-                    cache
-                        .entry(&path)
-                        .ok_or_eyre(format!("Cache entry not found for {}", path.display()))?
-                        .to_owned(),
-                )
-            }
-            None => get_cached_entry_by_name(&cache, &contract.name)?,
+        let (path, entry) = if let Some(path) = contract.path.as_ref() {
+            let path = project.root().join(path);
+            (
+                path.clone(),
+                cache
+                    .entry(&path)
+                    .ok_or_eyre(format!("Cache entry not found for {}", path.display()))?
+                    .to_owned(),
+            )
+        } else {
+            get_cached_entry_by_name(&cache, &contract.name)?
         };
         let contract: CompactContract = cache.read_artifact(path.clone(), &contract.name)?;
         Ok(self.cached_entry.insert((path, entry, contract)))
