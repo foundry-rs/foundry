@@ -1,7 +1,7 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
-use eyre::{eyre, Context, OptionExt, Result};
+use eyre::{eyre, Context, Result};
 use forge::hashbrown::HashSet;
 use foundry_block_explorers::{
     errors::EtherscanError,
@@ -227,7 +227,9 @@ impl EtherscanVerificationProvider {
                 path.clone(),
                 cache
                     .entry(&path)
-                    .ok_or_eyre(format!("Cache entry not found for {}", path.display()))?
+                    .ok_or_else(|| {
+                        eyre::eyre!(format!("Cache entry not found for {}", path.display()))
+                    })?
                     .to_owned(),
             )
         } else {
@@ -360,14 +362,13 @@ impl EtherscanVerificationProvider {
     /// Get the target contract path. If it wasn't provided, attempt a lookup
     /// in cache. Validate the path indeed exists on disk.
     fn contract_path(&mut self, args: &VerifyArgs, project: &Project) -> Result<PathBuf> {
-        let path = match args.contract.path.as_ref() {
-            Some(path) => project.root().join(path),
-            None => {
-                let (path, _, _) = self.cache_entry(project, &args.contract).wrap_err(
-                    "If cache is disabled, contract info must be provided in the format <path>:<name>",
-                )?;
-                path.to_owned()
-            }
+        let path = if let Some(path) = args.contract.path.as_ref() {
+            project.root().join(path)
+        } else {
+            let (path, _, _) = self.cache_entry(project, &args.contract).wrap_err(
+                "If cache is disabled, contract info must be provided in the format <path>:<name>",
+            )?;
+            path.to_owned()
         };
 
         // check that the provided contract is part of the source dir
