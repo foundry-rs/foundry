@@ -320,12 +320,14 @@ impl ScriptArgs {
         script_config.sender_nonce = nonce;
         let target = self.find_target(&project, &default_known_contracts)?.clone();
 
+        let libraries = script_config.config.solc_settings()?.libraries;
+
         let BuildOutput {
             libraries, contract, highlevel_known_contracts, predeploy_libraries, ..
         } = self.link_script_target(
             project,
             default_known_contracts,
-            script_config.config.parsed_libraries()?,
+            libraries,
             new_sender,
             nonce,
             target,

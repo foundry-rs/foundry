@@ -293,6 +293,7 @@ impl MultiContractRunnerBuilder {
                 evm_opts.sender,
                 1,
                 &id,
+                &root.as_ref().to_path_buf(),
             )?;
 
             let linked_contract = contracts.get(&id).unwrap().clone();

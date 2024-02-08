@@ -138,7 +138,14 @@ impl ScriptArgs {
             libs_to_deploy: predeploy_libraries,
             contracts: linked_contracts,
             libraries,
-        } = link_with_nonce_or_address(&contracts, libraries, sender, nonce, &target)?;
+        } = link_with_nonce_or_address(
+            &contracts,
+            libraries,
+            sender,
+            nonce,
+            &target,
+            project.root(),
+        )?;
 
         // Get linked target artifact
         let contract = linked_contracts
