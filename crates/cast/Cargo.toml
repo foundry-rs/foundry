@@ -80,6 +80,7 @@ criterion = "0.5"
 default = ["rustls"]
 rustls = ["foundry-cli/rustls"]
 openssl = ["foundry-cli/openssl"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
 
 [[bench]]
 name = "vanity"

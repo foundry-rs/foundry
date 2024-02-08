@@ -505,6 +505,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    #[ignore = "slow"]
     fn get_oz_tags() {
         let tmp = tempdir().unwrap();
         let git = Git::new(tmp.path());

@@ -11,11 +11,11 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
-    genesis::Genesis,
     mem,
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
+use alloy_genesis::Genesis;
 use alloy_primitives::{hex, utils::Unit, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -412,7 +412,7 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(U256::from)))
             .unwrap_or_else(|| U256::from(INITIAL_BASE_FEE))
     }
 
@@ -457,7 +457,7 @@ impl NodeConfig {
     /// Returns the chain ID to use
     pub fn get_chain_id(&self) -> u64 {
         self.chain_id
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.chain_id()))
+            .or_else(|| self.genesis.as_ref().map(|g| g.config.chain_id))
             .unwrap_or(CHAIN_ID)
     }
 
@@ -532,7 +532,7 @@ impl NodeConfig {
     /// Returns the genesis timestamp to use
     pub fn get_genesis_timestamp(&self) -> u64 {
         self.genesis_timestamp
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.timestamp))
+            .or_else(|| self.genesis.as_ref().map(|g| g.timestamp))
             .unwrap_or_else(|| duration_since_unix_epoch().as_secs())
     }
 
@@ -834,7 +834,15 @@ impl NodeConfig {
 
         // if provided use all settings of `genesis.json`
         if let Some(ref genesis) = self.genesis {
-            genesis.apply(&mut env);
+            env.cfg.chain_id = genesis.config.chain_id;
+            env.block.timestamp = U256::from(genesis.timestamp);
+            if let Some(base_fee) = genesis.base_fee_per_gas {
+                env.block.basefee = U256::from(base_fee);
+            }
+            if let Some(number) = genesis.number {
+                env.block.number = U256::from(number);
+            }
+            env.block.coinbase = genesis.coinbase;
         }
 
         let genesis = GenesisConfig {

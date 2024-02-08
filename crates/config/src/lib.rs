@@ -95,6 +95,7 @@ pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
 mod inline;
+use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 /// Foundry configuration
@@ -557,6 +558,29 @@ impl Config {
         }
 
         self
+    }
+
+    /// Normalizes the evm version if a [SolcReq] is set
+    pub fn normalized_evm_version(mut self) -> Self {
+        self.normalize_evm_version();
+        self
+    }
+
+    /// Normalizes the evm version if a [SolcReq] is set to a valid version.
+    pub fn normalize_evm_version(&mut self) {
+        self.evm_version = self.get_normalized_evm_version();
+    }
+
+    /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version.
+    ///
+    /// Otherwise it returns the configured [EvmVersion].
+    pub fn get_normalized_evm_version(&self) -> EvmVersion {
+        if let Some(SolcReq::Version(version)) = &self.solc {
+            if let Some(evm_version) = self.evm_version.normalize_version(version) {
+                return evm_version;
+            }
+        }
+        self.evm_version
     }
 
     /// Returns a sanitized version of the Config where are paths are set correctly and potential
@@ -1551,10 +1575,30 @@ impl Config {
         figment = figment.merge(provider);
         figment
     }
+
+    /// Check if any defaults need to be normalized.
+    ///
+    /// This normalizes the default `evm_version` if a `solc` was provided in the config.
+    ///
+    /// See also <https://github.com/foundry-rs/foundry/issues/7014>
+    fn normalize_defaults(&mut self, figment: Figment) -> Figment {
+        if let Ok(version) = figment.extract_inner::<Version>("solc") {
+            // check if evm_version is set
+            // TODO: add a warning if evm_version is provided but incompatible
+            if figment.find_value("evm_version").is_err() {
+                if let Some(version) = self.evm_version.normalize_version(&version) {
+                    // normalize evm_version based on the provided solc version
+                    self.evm_version = version;
+                }
+            }
+        }
+
+        figment
+    }
 }
 
 impl From<Config> for Figment {
-    fn from(c: Config) -> Figment {
+    fn from(mut c: Config) -> Figment {
         let profile = Config::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
 
@@ -1587,6 +1631,7 @@ impl From<Config> for Figment {
                     .global(),
             )
             .merge(DappEnvCompatProvider)
+            .merge(EtherscanEnvProvider::default())
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
@@ -1604,15 +1649,6 @@ impl From<Config> for Figment {
             )
             .select(profile.clone());
 
-        // Ensure only non empty etherscan var is merged
-        // This prevents `ETHERSCAN_API_KEY=""` if it's set but empty
-        let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
-        if let Some((key, value)) = env_provider.iter().next() {
-            if !value.trim().is_empty() {
-                figment = figment.merge((key.as_str(), value));
-            }
-        }
-
         // we try to merge remappings after we've merged all other providers, this prevents
         // redundant fs lookups to determine the default remappings that are eventually updated by
         // other providers, like the toml file
@@ -1628,6 +1664,9 @@ impl From<Config> for Figment {
             remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
         };
         let merge = figment.merge(remappings);
+
+        // normalize defaults
+        let merge = c.normalize_defaults(merge);
 
         Figment::from(c).merge(merge).select(profile)
     }
@@ -3884,7 +3923,7 @@ mod tests {
     #[test]
     fn can_handle_deviating_dapp_aliases() {
         figment::Jail::expect_with(|jail| {
-            let addr = Address::random();
+            let addr = Address::ZERO;
             jail.set_env("DAPP_TEST_NUMBER", 1337);
             jail.set_env("DAPP_TEST_ADDRESS", format!("{addr:?}"));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
@@ -4358,6 +4397,45 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(loaded.etherscan_api_key, Some("DUMMY".into()));
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_etherscan_api_key_figment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+                etherscan_api_key = 'DUMMY'
+            ",
+            )?;
+            jail.set_env("ETHERSCAN_API_KEY", "ETHER");
+
+            let figment = Config::figment_with_root(jail.directory())
+                .merge(("etherscan_api_key", "USER_KEY"));
+
+            let loaded = Config::from_provider(figment);
+            assert_eq!(loaded.etherscan_api_key, Some("USER_KEY".into()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_normalize_defaults() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+                solc = '0.8.13'
+            ",
+            )?;
+
+            let loaded = Config::load().sanitized();
+            assert_eq!(loaded.evm_version, EvmVersion::London);
             Ok(())
         });
     }

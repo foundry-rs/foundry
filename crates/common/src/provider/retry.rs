@@ -1,6 +1,6 @@
 //! An utility trait for retrying requests based on the error type. See [TransportError].
 use alloy_json_rpc::ErrorPayload;
-use alloy_transport::TransportError;
+use alloy_transport::{TransportError, TransportErrorKind};
 use serde::Deserialize;
 
 /// [RetryPolicy] defines logic for which [JsonRpcClient::Error] instances should
@@ -24,7 +24,9 @@ pub struct RateLimitRetryPolicy;
 impl RetryPolicy for RateLimitRetryPolicy {
     fn should_retry(&self, error: &TransportError) -> bool {
         match error {
-            TransportError::Transport(_) => true,
+            // There was a transport-level error. This is either a non-retryable error,
+            // or a server error that should be retried.
+            TransportError::Transport(err) => should_retry_transport_level_error(err),
             // The transport could not serialize the error itself. The request was malformed from
             // the start.
             TransportError::SerError(_) => false,
@@ -62,6 +64,18 @@ impl RetryPolicy for RateLimitRetryPolicy {
             }
         }
         None
+    }
+}
+
+/// Analyzes the [TransportErrorKind] and decides if the request should be retried based on the
+/// variant.
+fn should_retry_transport_level_error(error: &TransportErrorKind) -> bool {
+    match error {
+        // Missing batch response errors can be retried.
+        TransportErrorKind::MissingBatchResponse(_) => true,
+        // If the backend is gone, or there's a completely custom error, we should assume it's not
+        // retryable.
+        _ => false,
     }
 }
 

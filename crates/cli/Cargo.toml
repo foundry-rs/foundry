@@ -42,7 +42,7 @@ regex = { version = "1", default-features = false }
 rpassword = "7"
 serde.workspace = true
 strsim = "0.10"
-strum = { version = "0.25", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["macros"] }
 tracing-error = "0.2"

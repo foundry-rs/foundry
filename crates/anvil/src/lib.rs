@@ -52,8 +52,6 @@ pub use hardfork::Hardfork;
 pub mod eth;
 /// support for polling filters
 pub mod filter;
-/// support for handling `genesis.json` files
-pub mod genesis;
 /// commandline output
 pub mod logging;
 /// types for subscriptions
@@ -128,11 +126,14 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
     if let Some(genesis) = genesis {
-        // include all signers from genesis.json if any
-        let genesis_signers = genesis.private_keys();
+        let genesis_signers = genesis
+            .alloc
+            .values()
+            .filter_map(|acc| acc.private_key)
+            .flat_map(|k| LocalWallet::from_bytes(&k))
+            .collect::<Vec<_>>();
         if !genesis_signers.is_empty() {
-            let genesis_signers: Box<dyn EthSigner> = Box::new(DevSigner::new(genesis_signers));
-            signers.push(genesis_signers);
+            signers.push(Box::new(DevSigner::new(genesis_signers)));
         }
     }
 
