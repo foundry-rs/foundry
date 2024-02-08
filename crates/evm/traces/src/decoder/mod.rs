@@ -395,30 +395,30 @@ impl CallTraceDecoder {
 
                 Some(decoded.iter().map(format_token).collect())
             }
-            "parseJson"
-            | "parseJsonUint"
-            | "parseJsonUintArray"
-            | "parseJsonInt"
-            | "parseJsonIntArray"
-            | "parseJsonString"
-            | "parseJsonStringArray"
-            | "parseJsonAddress"
-            | "parseJsonAddressArray"
-            | "parseJsonBool"
-            | "parseJsonBoolArray"
-            | "parseJsonBytes"
-            | "parseJsonBytesArray"
-            | "parseJsonBytes32"
-            | "parseJsonBytes32Array"
-            | "writeJson"
-            | "keyExists"
-            | "serializeBool"
-            | "serializeUint"
-            | "serializeInt"
-            | "serializeAddress"
-            | "serializeBytes32"
-            | "serializeString"
-            | "serializeBytes" => {
+            "parseJson" |
+            "parseJsonUint" |
+            "parseJsonUintArray" |
+            "parseJsonInt" |
+            "parseJsonIntArray" |
+            "parseJsonString" |
+            "parseJsonStringArray" |
+            "parseJsonAddress" |
+            "parseJsonAddressArray" |
+            "parseJsonBool" |
+            "parseJsonBoolArray" |
+            "parseJsonBytes" |
+            "parseJsonBytesArray" |
+            "parseJsonBytes32" |
+            "parseJsonBytes32Array" |
+            "writeJson" |
+            "keyExists" |
+            "serializeBool" |
+            "serializeUint" |
+            "serializeInt" |
+            "serializeAddress" |
+            "serializeBytes32" |
+            "serializeString" |
+            "serializeBytes" => {
                 if self.verbosity >= 5 {
                     None
                 } else {
