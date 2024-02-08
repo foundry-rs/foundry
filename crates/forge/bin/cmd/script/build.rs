@@ -79,6 +79,7 @@ impl ScriptArgs {
         Ok(output)
     }
 
+    /// Tries to find artifact for the target script contract.
     pub fn find_target<'a>(
         &self,
         project: &Project,
@@ -125,6 +126,11 @@ impl ScriptArgs {
         target.ok_or_eyre(format!("Could not find target contract: {}", target_fname))
     }
 
+    /// Links script artifact with given libraries or library addresses computed from script sender
+    /// and nonce.
+    ///
+    /// Populates [BuildOutput] with linked target contract, libraries, bytes of libs that need to
+    /// be predeployed and `highlevel_known_contracts` - set of known fully linked contracts
     pub fn link_script_target(
         &self,
         project: Project,
