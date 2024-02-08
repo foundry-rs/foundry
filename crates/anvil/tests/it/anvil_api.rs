@@ -1,15 +1,19 @@
 //! tests for custom anvil endpoints
-use crate::{abi::*, fork::fork_config, utils::ethers_http_provider};
+use crate::{
+    abi::{BinanceUSD, Greeter, Multicall, SolGreeter},
+    fork::fork_config,
+    utils::ethers_http_provider,
+};
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
+use alloy_sol_types::SolCall;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
     types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
 use ethers::{
-    abi::AbiDecode,
     prelude::{Middleware, SignerMiddleware},
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
@@ -153,6 +157,7 @@ async fn can_impersonate_contract() {
 
     let greeter_contract =
         Greeter::deploy(provider, "Hello World!".to_string()).unwrap().send().await.unwrap();
+    let greeter = SolGreeter::new(greeter_contract.address().to_alloy(), handle.http_provider());
     let impersonate = greeter_contract.address();
 
     let to = Address::random();
@@ -170,7 +175,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx.clone(), None).await;
     res.unwrap_err();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
+    let greeting = greeter.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 
     api.anvil_impersonate_account(impersonate.to_alloy()).await.unwrap();
@@ -185,7 +190,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx, None).await;
     res.unwrap_err();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
+    let greeting = greeter.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 }
 
@@ -409,7 +414,6 @@ async fn test_timestamp_interval() {
 async fn test_can_set_storage_bsc_fork() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
-    let provider = Arc::new(ethers_http_provider(&handle.http_endpoint()));
 
     let busd_addr: Address = "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56".parse().unwrap();
     let idx: U256 =
@@ -425,11 +429,14 @@ async fn test_can_set_storage_bsc_fork() {
         hex::decode("70a082310000000000000000000000000000000000000000000000000000000000000000")
             .unwrap();
 
-    let busd = BUSD::new(busd_addr, provider);
-    let call = busd::BalanceOfCall::decode(&input).unwrap();
+    let provider = handle.http_provider();
 
-    let balance = busd.balance_of(call.0).call().await.unwrap();
-    assert_eq!(balance, U256::from(12345u64));
+    let contract = BinanceUSD::new(busd_addr.to_alloy(), provider);
+    let busd_call_input = BinanceUSD::balanceOfCall::abi_decode(&input, false).unwrap();
+
+    let balance = contract.balanceOf(busd_call_input.account).call().await.unwrap()._0;
+
+    assert_eq!(balance, rU256::from(12345u64));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -605,7 +612,6 @@ async fn test_fork_revert_next_block_timestamp() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_revert_call_latest_block_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
 
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
@@ -615,25 +621,25 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.mine_one().await;
     api.evm_revert(snapshot_id).await.unwrap();
 
-    let multicall = MulticallContract::new(
-        Address::from_str("0xeefba1e63905ef1d7acba5a8513c70307c1ce441").unwrap(),
-        provider.into(),
+    let multicall = Multicall::new(
+        rAddress::from_str("0xeefba1e63905ef1d7acba5a8513c70307c1ce441").unwrap(),
+        handle.http_provider(),
     );
 
     assert_eq!(
-        multicall.get_current_block_timestamp().await.unwrap(),
-        latest_block.header.timestamp.to_ethers()
+        multicall.getCurrentBlockTimestamp().call().await.unwrap().timestamp,
+        latest_block.header.timestamp
     );
     assert_eq!(
-        multicall.get_current_block_difficulty().await.unwrap(),
-        latest_block.header.difficulty.to_ethers()
+        multicall.getCurrentBlockDifficulty().call().await.unwrap().difficulty,
+        latest_block.header.difficulty
     );
     assert_eq!(
-        multicall.get_current_block_gas_limit().await.unwrap(),
-        latest_block.header.gas_limit.to_ethers()
+        multicall.getCurrentBlockGasLimit().call().await.unwrap().gaslimit,
+        latest_block.header.gas_limit
     );
     assert_eq!(
-        multicall.get_current_block_coinbase().await.unwrap(),
-        latest_block.header.miner.to_ethers()
+        multicall.getCurrentBlockCoinbase().call().await.unwrap().coinbase,
+        latest_block.header.miner
     );
 }
