@@ -26,6 +26,7 @@ use std::time::Instant;
 
 pub mod cmd;
 pub mod opts;
+pub mod tx;
 
 use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
 

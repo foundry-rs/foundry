@@ -1,4 +1,4 @@
-use cast::TxBuilder;
+use crate::tx;
 use clap::Parser;
 use ethers_core::types::NameOrAddress;
 use ethers_middleware::MiddlewareBuilder;
@@ -75,10 +75,7 @@ impl MakeTxArgs {
             None
         };
 
-        // ensure mandatory fields are provided
-        if code.is_none() && to.is_none() {
-            eyre::bail!("Must specify a recipient address or contract code to deploy");
-        }
+        tx::validate_to_address(&code, &to)?;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -89,19 +86,7 @@ impl MakeTxArgs {
         let signer = eth.wallet.signer(chain.id()).await?;
         let from = signer.address();
 
-        // prevent misconfigured hwlib from sending a transaction that defies
-        // user-specified --from
-        if let Some(specified_from) = eth.wallet.from {
-            if specified_from != from.to_alloy() {
-                eyre::bail!(
-                    "\
-The specified sender via CLI/env vars does not match the sender configured via
-the hardware wallet's HD Path.
-Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
-corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
-                )
-            }
-        }
+        tx::validate_from_address(eth.wallet.from, from.to_alloy())?;
 
         if resend {
             tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
@@ -109,29 +94,8 @@ corresponds to the sender, or let foundry automatically detect it by not specify
 
         let provider = provider.with_signer(signer);
 
-        let params = sig.as_deref().map(|sig| (sig, args));
-        let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
-        builder
-            .etherscan_api_key(api_key)
-            .gas(tx.gas_limit)
-            .gas_price(tx.gas_price)
-            .priority_gas_price(tx.priority_gas_price)
-            .value(tx.value)
-            .nonce(tx.nonce);
-
-        if let Some(code) = code {
-            let mut data = hex::decode(code)?;
-
-            if let Some((sig, args)) = params {
-                let (mut sigdata, _) = builder.create_args(sig, args).await?;
-                data.append(&mut sigdata);
-            }
-
-            builder.set_data(data);
-        } else {
-            builder.args(params).await?;
-        }
-        let (mut tx, _) = builder.build();
+        let (mut tx, _) =
+            tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key).await?;
 
         // Fill nonce, gas limit, gas price, and max priority fee per gas if needed
         provider.fill_transaction(&mut tx, None).await?;

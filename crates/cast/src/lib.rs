@@ -31,7 +31,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-use tx::{TxBuilderOutput, TxBuilderPeekOutput};
+use tx::TxBuilderPeekOutput;
 
 pub use foundry_evm::*;
 pub use rusoto_core::{
@@ -39,7 +39,7 @@ pub use rusoto_core::{
     request::HttpClient as AwsHttpClient, Client as AwsClient,
 };
 pub use rusoto_kms::KmsClient;
-pub use tx::TxBuilder;
+pub use tx::{TxBuilder, TxBuilderOutput};
 
 pub mod base;
 pub mod errors;
