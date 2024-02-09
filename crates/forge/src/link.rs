@@ -108,6 +108,10 @@ impl Linker {
     ///
     /// Each key in `libraries` should either be a global path or relative to project root. All
     /// remappings should be resolved.
+    ///
+    /// When calling for `target` being an external library itself, you should check that `target`
+    /// does not appear in `libs_to_deploy` to avoid deploying it twice. It may happen in cases
+    /// when there is a dependency cycle including `target`.
     pub fn link_with_nonce_or_address<'a>(
         &'a self,
         libraries: Libraries,
