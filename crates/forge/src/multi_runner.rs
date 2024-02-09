@@ -314,7 +314,7 @@ impl MultiContractRunnerBuilder {
                 deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
             }
 
-            contract
+            linked_contract
                 .deployed_bytecode
                 .and_then(|d_bcode| d_bcode.bytecode)
                 .and_then(|bcode| bcode.object.into_bytes())
