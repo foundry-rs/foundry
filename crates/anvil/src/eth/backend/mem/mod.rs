@@ -89,6 +89,7 @@ use std::{
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use trie_db::{Recorder, Trie};
+use anvil_core::eth::trie::RefTrieDBBuilder;
 
 pub mod cache;
 pub mod fork_db;
@@ -2219,8 +2220,8 @@ impl Backend {
 
             let data: &dyn HashDB<_, _> = db.deref();
             let mut recorder = Recorder::new();
-            let trie = RefTrieDB::new(&data, &root.0)
-                .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+            let trie = RefTrieDBBuilder::new(data, &root.0).build();
+                // .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
 
             let maybe_account: Option<BasicAccount> = {
                 let acc_decoder = |mut bytes: &[u8]| {
@@ -2511,9 +2512,7 @@ pub fn prove_storage(
 ) -> Result<(Vec<Vec<u8>>, B256), BlockchainError> {
     let data: &dyn HashDB<_, _> = data.deref();
     let mut recorder = Recorder::new();
-    let trie = RefTrieDB::new(&data, &acc.storage_root.0)
-        .map_err(|err| BlockchainError::TrieError(err.to_string()))
-        .unwrap();
+    let trie = RefTrieDBBuilder::new(data, &acc.storage_root.0).build();
 
     let item: U256 = {
         let decode_value =

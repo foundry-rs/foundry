@@ -31,7 +31,7 @@ bytes = "1.4"
 hash-db = { version = "0.15", default-features = false }
 hash256-std-hasher = { version = "0.15", default-features = false }
 triehash = { version = "0.8", default-features = false }
-reference-trie = "0.25"
+reference-trie = "0.29"
 keccak-hasher = "0.15"
 
 # misc
