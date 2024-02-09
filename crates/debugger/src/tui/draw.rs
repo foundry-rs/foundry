@@ -358,20 +358,20 @@ impl DebuggerContext<'_> {
                 let ic = pc_ic_map.get(pc)?;
                 let source_element = source_map.swap_remove(ic);
                 // if the source element has an index, find the sourcemap for that index
-                source_element.index.and_then(|index| {
+                source_element.index.and_then(|index| 
                     // if index matches current file_id, return current source code
-                    (index == *file_id).then_some((source_element.clone(), source_code)).or_else(
+                    (index == *file_id).then_some((source_element.clone(), source_code))).or_else(
                         || {
                             // otherwise find the source code for the element's index
                             self.debugger
                                 .contracts_sources
                                 .sources_by_id
-                                .get(&index)
+                                .get(&(source_element.index?))
                                 .map(|(source_code, _)| (source_element.clone(), source_code))
                         },
                     )
                 })
-            })
+            
         else {
             return Err(format!("No source map for contract {contract_name}"));
         };
