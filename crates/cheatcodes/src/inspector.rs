@@ -15,7 +15,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
-use alloy_rpc_types::request::TransactionRequest;
+use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_signer::LocalWallet;
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
@@ -836,7 +836,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             from: Some(broadcast.new_origin),
                             to: Some(call.contract),
                             value: Some(call.transfer.value),
-                            data: Some(call.input.clone()),
+                            input: TransactionInput::new(call.input.clone()),
                             nonce: Some(U64::from(account.info.nonce)),
                             gas: if is_fixed_gas_limit {
                                 Some(U256::from(call.gas_limit))
@@ -1222,7 +1222,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             from: Some(broadcast.new_origin),
                             to,
                             value: Some(call.value),
-                            data: Some(bytecode),
+                            input: TransactionInput::new(bytecode),
                             nonce: Some(U64::from(nonce)),
                             gas: if is_fixed_gas_limit {
                                 Some(U256::from(call.gas_limit))

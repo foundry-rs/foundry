@@ -38,8 +38,8 @@ use alloy_rpc_trace_types::{
     parity::LocalizedTransactionTrace,
 };
 use alloy_rpc_types::{
-    state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
-    BlockNumberOrTag as BlockNumber, CallRequest, EIP1186AccountProofResponse as AccountProof,
+    request::TransactionRequest, state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
+    BlockNumberOrTag as BlockNumber, EIP1186AccountProofResponse as AccountProof,
     EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Log,
     Transaction, TransactionReceipt,
 };
@@ -1015,14 +1015,14 @@ impl Backend {
         outcome
     }
 
-    /// Executes the [CallRequest] without writing to the DB
+    /// Executes the [TransactionRequest] without writing to the DB
     ///
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
     pub async fn call(
         &self,
-        request: CallRequest,
+        request: TransactionRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         overrides: Option<StateOverride>,
@@ -1043,11 +1043,11 @@ impl Backend {
 
     fn build_call_env(
         &self,
-        request: CallRequest,
+        request: TransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Env {
-        let CallRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
+        let TransactionRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
@@ -1094,7 +1094,7 @@ impl Backend {
     pub fn call_with_state<D>(
         &self,
         state: D,
-        request: CallRequest,
+        request: TransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError>
@@ -1140,7 +1140,7 @@ impl Backend {
 
     pub async fn call_with_tracing(
         &self,
-        request: CallRequest,
+        request: TransactionRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         opts: GethDefaultTracingOptions,
@@ -1180,7 +1180,7 @@ impl Backend {
     pub fn build_access_list_with_state<D>(
         &self,
         state: D,
-        request: CallRequest,
+        request: TransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
