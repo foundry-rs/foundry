@@ -299,8 +299,8 @@ impl MultiContractRunnerBuilder {
             // but they should not be deployable and their source code should be skipped by the
             // debugger and linker.
             let Some(bytecode) = linked_contract
-                .bytecode
-                .and_then(|b| b.object.into_bytes())
+                .get_bytecode_bytes()
+                .map(|b| b.into_owned())
                 .filter(|b| !b.is_empty())
             else {
                 known_contracts.insert(id.clone(), (abi.clone(), vec![]));
@@ -314,13 +314,9 @@ impl MultiContractRunnerBuilder {
                 deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
             }
 
-            linked_contract
-                .deployed_bytecode
-                .and_then(|d_bcode| d_bcode.bytecode)
-                .and_then(|bcode| bcode.object.into_bytes())
-                .and_then(|bytes| {
-                    known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec()))
-                });
+            linked_contract.get_deployed_bytecode_bytes().map(|b| b.into_owned()).and_then(
+                |bytes| known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec())),
+            );
         }
 
         let execution_info = known_contracts.flatten();
