@@ -134,7 +134,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
 // Tests that execution throws upon encountering a revert in the script with --json option.
 // <https://github.com/foundry-rs/foundry/issues/2508>
-forgetest_async!(test_exit_code_error_on_failure_script_with_json, |prj, cmd| {
+forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
 
