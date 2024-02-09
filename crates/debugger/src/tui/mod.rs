@@ -66,7 +66,7 @@ impl Debugger {
         breakpoints: Breakpoints,
     ) -> Self {
         let pc_ic_maps = contracts_sources
-            .0
+            .sources_by_name
             .iter()
             .flat_map(|(contract_name, files_sources)| {
                 files_sources.iter().filter_map(|(_, (_, contract))| {

@@ -272,11 +272,7 @@ impl TestArgs {
                     let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
-                    sources
-                        .0
-                        .entry(id.name.clone())
-                        .or_default()
-                        .insert(source.id, (source_code, source_contract));
+                    sources.insert(&id, source.id, source_code, source_contract);
                 }
             }
 

@@ -271,9 +271,41 @@ impl ProjectCompiler {
     }
 }
 
-/// Map over artifacts contract sources name -> file_id -> (source, contract)
+/// Contract source code and bytecode.
 #[derive(Clone, Debug, Default)]
-pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
+pub struct ContractSources {
+    /// Map over artifacts contract sources name -> file_id -> (source, contract)
+    pub sources_by_name: HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
+    /// Map over artifacts contract sources file_id -> (source, contract)
+    pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
+}
+
+impl ContractSources {
+    /// Inserts a contract into the sources.
+    pub fn insert(
+        &mut self,
+        artifact_id: &ArtifactId,
+        file_id: u32,
+        source: String,
+        bytecode: ContractBytecodeSome,
+    ) {
+        self.sources_by_name
+            .entry(artifact_id.name.clone())
+            .or_default()
+            .insert(file_id, (source.clone(), bytecode.clone()));
+        self.sources_by_id.insert(file_id, (source, bytecode));
+    }
+
+    /// Returns the sources for contracts by name.
+    pub fn get(&self, name: &str) -> Option<&HashMap<u32, (String, ContractBytecodeSome)>> {
+        self.sources_by_name.get(name)
+    }
+
+    /// Returns the source for a contract by file ID.
+    pub fn get_by_id(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
+        self.sources_by_id.get(&id)
+    }
+}
 
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;

@@ -48,11 +48,7 @@ impl ScriptArgs {
                     })?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
-                    sources
-                        .0
-                        .entry(id.clone().name)
-                        .or_default()
-                        .insert(source.id, (source_code, source_contract));
+                    sources.insert(&id, source.id, source_code, source_contract);
                 } else {
                     warn!(?id, "source not found");
                 }
