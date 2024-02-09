@@ -1,5 +1,4 @@
 use alloy_primitives::{Address, Bytes};
-use eyre::{OptionExt, Result};
 use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId};
 use semver::Version;
 use std::{
@@ -7,6 +6,17 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+/// Errors that can occur during linking.
+#[derive(Debug, thiserror::Error)]
+pub enum LinkerError {
+    #[error("wasn't able to find artifact for library {name} at {file}")]
+    MissingLibraryArtifact { file: String, name: String },
+    #[error("target artifact is not present in provided artifacts set")]
+    MissingTargetArtifact,
+    #[error(transparent)]
+    InvalidAddress(<Address as std::str::FromStr>::Err),
+}
 
 pub struct Linker {
     /// Root of the project, used to determine whether artifact/library path can be stripped.
@@ -77,22 +87,19 @@ impl Linker {
         &'a self,
         target: &'a ArtifactId,
         deps: &mut BTreeSet<&'a ArtifactId>,
-    ) -> Result<()> {
+    ) -> Result<(), LinkerError> {
         let references = self
             .contracts
             .get(target)
-            .ok_or_eyre("target artifact must be present at given artifacts set")?
+            .ok_or(LinkerError::MissingTargetArtifact)?
             .all_link_references();
         for (file, libs) in &references {
             for contract in libs.keys() {
                 let id = self
                     .find_artifact_id_by_library_path(file, contract, Some(&target.version))
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "wasn't able to find artifact for library {} at {}",
-                            file,
-                            contract
-                        )
+                    .ok_or_else(|| LinkerError::MissingLibraryArtifact {
+                        file: file.to_string(),
+                        name: contract.to_string(),
                     })?;
                 if deps.insert(id) {
                     self.collect_dependencies(id, deps)?;
@@ -118,7 +125,7 @@ impl Linker {
         sender: Address,
         mut nonce: u64,
         target: &'a ArtifactId,
-    ) -> Result<LinkOutput> {
+    ) -> Result<LinkOutput, LinkerError> {
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
@@ -158,7 +165,7 @@ impl Linker {
     ///
     /// Artifacts returned by this function may still be partially unlinked if some of their
     /// dependencies weren't present in `libraries`.
-    pub fn link(&self, libraries: &Libraries) -> Result<ArtifactContracts> {
+    pub fn link(&self, libraries: &Libraries) -> Result<ArtifactContracts, LinkerError> {
         self.contracts
             .iter()
             .map(|(id, contract)| {
@@ -166,7 +173,8 @@ impl Linker {
 
                 for (file, libs) in &libraries.libs {
                     for (name, address) in libs {
-                        let address = Address::from_str(address)?;
+                        let address = Address::from_str(address)
+                            .map_err(|err| LinkerError::InvalidAddress(err))?;
                         if let Some(bytecode) = contract.bytecode.as_mut() {
                             bytecode.link(file.to_string_lossy(), name, address);
                         }
