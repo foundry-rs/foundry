@@ -668,14 +668,12 @@ contract ATest is DSTest {
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
-    let create_config =
-        |ignored_file_paths: Vec<PathBuf>, ignored_error_codes: Vec<SolidityErrorCode>| -> Config {
-            Config { ignored_file_paths, ignored_error_codes, ..Default::default() }
-        };
-
-    // Ignoring path and setting empty error_codes as default would set SpdxLicenseNotProvided
-    let config_with_ignored_paths = create_config(vec![Path::new("src").to_path_buf()], vec![]);
-    prj.write_config(config_with_ignored_paths);
+    // Ignoring path and setting empty error_codes as default would set would set some error codes
+    prj.write_config(Config {
+        ignored_file_paths: vec![Path::new("src").to_path_buf()],
+        ignored_error_codes: vec![],
+        ..Default::default()
+    });
 
     prj.add_raw_source(
         "src/example.sol",
@@ -688,7 +686,6 @@ contract A {
     )
     .unwrap();
 
-    // Build and check for no warnings
     cmd.args(["build", "--force"]);
     let out = cmd.stdout_lossy();
     // expect no warning as path is ignored
@@ -696,8 +693,8 @@ contract A {
     assert!(!out.contains("Compiler run successful with warnings:"));
 
     // Reconfigure without ignored paths or error codes and check for warnings
-    let config_no_ignored = create_config(vec![], vec![]);
-    prj.write_config(Config::default());
+    // need to reset empty error codes as default would set some error codes
+    prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
 
     let out = cmd.stdout_lossy();
     // expect warnings as path is not ignored
