@@ -697,7 +697,7 @@ contract A {
 
     // Reconfigure without ignored paths or error codes and check for warnings
     let config_no_ignored = create_config(vec![], vec![]);
-    prj.write_config(config_no_ignored);
+    prj.write_config(Config::default());
 
     let out = cmd.stdout_lossy();
     // expect warnings as path is not ignored
