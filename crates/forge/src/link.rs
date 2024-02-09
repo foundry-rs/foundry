@@ -21,7 +21,7 @@ pub struct LinkOutput {
     /// It is guaranteed to contain `target` and all it's dependencies fully linked, and any other
     /// contract may still be partially unlinked.
     pub contracts: ArtifactContracts,
-    /// Resulted library addresses. Contains both user-provided and newly deployed libraries.
+    /// Resolved library addresses. Contains both user-provided and newly deployed libraries.
     /// It will always contain library paths with stripped path prefixes.
     pub libraries: Libraries,
     /// Vector of libraries that need to be deployed from sender address.
