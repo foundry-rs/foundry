@@ -150,7 +150,7 @@ impl ScriptArgs {
         let LinkOutput { libs_to_deploy, contracts, libraries } =
             linker.link_with_nonce_or_address(libraries, sender, nonce, &target)?;
 
-        // Collect all linked contracts
+        // Collect all linked contracts with non-empty bytecode
         let highlevel_known_contracts = contracts
             .iter()
             .filter_map(|(id, contract)| {
@@ -158,7 +158,7 @@ impl ScriptArgs {
                     .ok()
                     .map(|tc| (id.clone(), tc))
             })
-            .filter(|(_, tc)| !tc.bytecode.object.is_unlinked())
+            .filter(|(_, tc)| tc.bytecode.object.is_non_empty_bytecode())
             .collect();
 
         Ok((highlevel_known_contracts, libraries, libs_to_deploy))
