@@ -106,7 +106,7 @@ etherscan_api_key = "YOURETHERSCANAPIKEY"
 # known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname"]
 # additional warnings can be added using their numeric error code: ["license", 1337]
 ignored_error_codes = ["license", "code-size"]
-ignored_file_paths = ["path_to_ignore"]
+ignored_warnings_from = ["path_to_ignore"]
 deny_warnings = false
 match_test = "Foo"
 no_match_test = "Bar"

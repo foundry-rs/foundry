@@ -215,6 +215,7 @@ pub struct Config {
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// list of file paths to ignore
+    #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
     /// When true, compiler warnings are treated as errors
     pub deny_warnings: bool,
@@ -3518,7 +3519,7 @@ mod tests {
                 gas_price = 0
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
-                ignored_file_paths = ["something"]
+                ignored_warnings_from = ["something"]
                 deny_warnings = false
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
@@ -4603,7 +4604,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [default]
-                ignored_file_paths = ["something"]
+                ignored_warnings_from = ["something"]
             "#,
             )?;
 
