@@ -55,7 +55,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
-            kind: TxKind::Create,
+            kind: to.into(),
             mint: other.get_deserialized::<U256>("mint")?.ok()?,
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
