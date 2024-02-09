@@ -97,20 +97,19 @@ pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 ///
 /// Will fail for small contracts that are essentially all immutable variables.
 pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
-    let cutoff_len = usize::min(a.len(), b.len());
-    if cutoff_len == 0 {
-        return 1.0
-    }
+    let max_len = usize::max(a.len(), b.len());
+    let min_len = usize::min(a.len(), b.len());
 
-    let a = &a[..cutoff_len];
-    let b = &b[..cutoff_len];
+    let a = &a[..min_len];
+    let b = &b[..min_len];
     let mut diff_chars = 0;
-    for i in 0..cutoff_len {
+    for i in 0..min_len {
         if a[i] != b[i] {
             diff_chars += 1;
         }
     }
-    diff_chars as f64 / cutoff_len as f64
+    diff_chars += max_len - min_len;
+    diff_chars as f64 / max_len as f64
 }
 
 /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
