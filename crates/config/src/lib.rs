@@ -214,6 +214,9 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// list of file paths to ignore
+    #[serde(rename = "ignored_warnings_from")]
+    pub ignored_file_paths: Vec<PathBuf>,
     /// When true, compiler warnings are treated as errors
     pub deny_warnings: bool,
     /// Only run test functions matching the specified regex pattern.
@@ -657,6 +660,7 @@ impl Config {
             .include_paths(&self.include_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
+            .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
                 Severity::Warning
             } else {
@@ -1868,6 +1872,7 @@ impl Default for Config {
                 SolidityErrorCode::ContractExceeds24576Bytes,
                 SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
             ],
+            ignored_file_paths: vec![],
             deny_warnings: false,
             via_ir: false,
             rpc_storage_caching: Default::default(),
@@ -3514,6 +3519,7 @@ mod tests {
                 gas_price = 0
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
+                ignored_warnings_from = ["something"]
                 deny_warnings = false
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
@@ -3561,6 +3567,7 @@ mod tests {
 
             let config = Config::load_with_root(jail.directory());
 
+            assert_eq!(config.ignored_file_paths, vec![PathBuf::from("something")]);
             assert_eq!(config.fuzz.seed, Some(U256::from(1000)));
             assert_eq!(
                 config.remappings,
@@ -4585,6 +4592,24 @@ mod tests {
                     SolidityErrorCode::Other(1337)
                 ]
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_file_paths() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                ignored_warnings_from = ["something"]
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.ignored_file_paths, vec![Path::new("something").to_path_buf()]);
 
             Ok(())
         });

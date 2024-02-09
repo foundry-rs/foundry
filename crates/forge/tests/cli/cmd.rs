@@ -10,7 +10,7 @@ use foundry_test_utils::{
 use semver::Version;
 use std::{
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
@@ -665,6 +665,42 @@ contract ATest is DSTest {
         let _ = cmd.output();
     }
 );
+
+// test that `forge build` does not print `(with warnings)` if file path is ignored
+forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
+    // Ignoring path and setting empty error_codes as default would set would set some error codes
+    prj.write_config(Config {
+        ignored_file_paths: vec![Path::new("src").to_path_buf()],
+        ignored_error_codes: vec![],
+        ..Default::default()
+    });
+
+    prj.add_raw_source(
+        "src/example.sol",
+        r"
+pragma solidity *;
+contract A {
+    function testExample() public {}
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["build", "--force"]);
+    let out = cmd.stdout_lossy();
+    // expect no warning as path is ignored
+    assert!(out.contains("Compiler run successful!"));
+    assert!(!out.contains("Compiler run successful with warnings:"));
+
+    // Reconfigure without ignored paths or error codes and check for warnings
+    // need to reset empty error codes as default would set some error codes
+    prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
+
+    let out = cmd.stdout_lossy();
+    // expect warnings as path is not ignored
+    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
+    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
+});
 
 // test that `forge build` does not print `(with warnings)` if there arent any
 forgetest!(can_compile_without_warnings, |prj, cmd| {

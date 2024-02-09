@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_primitives::{Address as rAddress, U256 as rU256};
 use alloy_providers::provider::TempProvider;
-use alloy_rpc_types::{BlockNumberOrTag, CallRequest};
+use alloy_rpc_types::{request::TransactionRequest as CallRequest, BlockNumberOrTag};
 use alloy_signer::Signer as AlloySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
