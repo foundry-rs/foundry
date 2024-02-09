@@ -275,7 +275,7 @@ impl ProjectCompiler {
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
     /// Map over artifacts contract sources name -> file_id -> (source, contract)
-    pub sources_by_name: HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
+    pub ids_by_name: HashMap<String, Vec<u32>>,
     /// Map over artifacts contract sources file_id -> (source, contract)
     pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
 }
@@ -289,21 +289,31 @@ impl ContractSources {
         source: String,
         bytecode: ContractBytecodeSome,
     ) {
-        self.sources_by_name
-            .entry(artifact_id.name.clone())
-            .or_default()
-            .insert(file_id, (source.clone(), bytecode.clone()));
+        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
         self.sources_by_id.insert(file_id, (source, bytecode));
     }
 
-    /// Returns the sources for contracts by name.
-    pub fn get(&self, name: &str) -> Option<&HashMap<u32, (String, ContractBytecodeSome)>> {
-        self.sources_by_name.get(name)
+    /// Returns the source for a contract by file ID.
+    pub fn get(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
+        self.sources_by_id.get(&id)
     }
 
-    /// Returns the source for a contract by file ID.
-    pub fn get_by_id(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
-        self.sources_by_id.get(&id)
+    /// Returns all sources for a contract by name.
+    pub fn get_sources(&self, name: &str) -> Option<Vec<(u32, &(String, ContractBytecodeSome))>> {
+        self.ids_by_name.get(name).map(|ids| {
+            ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))).collect()
+        })
+    }
+
+    /// Returns all (name, source) pairs.
+    pub fn entries(&self) -> Vec<(String, &(String, ContractBytecodeSome))> {
+        self.ids_by_name
+            .iter()
+            .flat_map(|(name, ids)| {
+                ids.iter()
+                    .filter_map(move |id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
+            })
+            .collect()
     }
 }
 

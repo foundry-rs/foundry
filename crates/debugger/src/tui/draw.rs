@@ -334,8 +334,7 @@ impl DebuggerContext<'_> {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        let Some(files_source_code) =
-            self.debugger.contracts_sources.sources_by_name.get(contract_name)
+        let Some(files_source_code) = self.debugger.contracts_sources.get_sources(contract_name)
         else {
             return Err(format!("No source map index for contract {contract_name}"));
         };
