@@ -3146,6 +3146,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "dirs-next",
+ "dunce",
  "eyre",
  "figment",
  "foundry-block-explorers",
