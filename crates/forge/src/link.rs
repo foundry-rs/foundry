@@ -457,4 +457,42 @@ mod tests {
                 .test_with_sender_and_nonce(Address::default(), 1);
         });
     }
+
+    #[test]
+    fn link_cycle() {
+        link_test("../../testdata/linking/cycle", |linker| {
+            linker
+                .assert_dependencies(
+                    "cycle/Cycle.t.sol:Foo".to_string(),
+                    vec![
+                        (
+                            "cycle/Cycle.t.sol:Foo".to_string(),
+                            Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
+                                .unwrap(),
+                        ),
+                        (
+                            "cycle/Cycle.t.sol:Bar".to_string(),
+                            Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .assert_dependencies(
+                    "cycle/Cycle.t.sol:Bar".to_string(),
+                    vec![
+                        (
+                            "cycle/Cycle.t.sol:Foo".to_string(),
+                            Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
+                                .unwrap(),
+                        ),
+                        (
+                            "cycle/Cycle.t.sol:Bar".to_string(),
+                            Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .test_with_sender_and_nonce(Address::default(), 1);
+        });
+    }
 }
