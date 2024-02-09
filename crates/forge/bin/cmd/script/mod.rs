@@ -364,6 +364,13 @@ impl ScriptArgs {
         let j = serde_json::to_string(&output)?;
         shell::println(j)?;
 
+        if !result.success {
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                decode::decode_revert(&result.returned[..], None, None)
+            ));
+        }
+
         Ok(())
     }
 
