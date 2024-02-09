@@ -19,6 +19,7 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 revm-primitives = { workspace = true, default-features = false, features = ["std"] }
 
 dirs-next = "2"
+dunce = "1"
 eyre.workspace = true
 figment = { version = "0.10", features = ["toml", "env"] }
 globset = "0.4"

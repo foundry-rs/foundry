@@ -5,8 +5,9 @@ use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::{fs, retry::Retry};
 use foundry_compilers::ConfigurableContractArtifact;
 use futures::FutureExt;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
@@ -69,13 +70,15 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let resp = retry
             .run_async(|| {
                 async {
-                    let url = format!(
-                        "{}check-by-addresses?addresses={}&chainIds={}",
+                    let url = Url::from_str(
                         args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL),
+                    )?;
+                    let query = format!(
+                        "check-by-addresses?addresses={}&chainIds={}",
                         args.id,
                         args.etherscan.chain.unwrap_or_default().id(),
                     );
-
+                    let url = url.join(&query)?;
                     let response = reqwest::get(url).await?;
                     if !response.status().is_success() {
                         eyre::bail!(
@@ -200,4 +203,19 @@ pub struct SourcifyResponseElement {
     status: String,
     #[serde(rename = "storageTimestamp")]
     storage_timestamp: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_addresses_url() {
+        let url = Url::from_str("https://server-verify.hashscan.io").unwrap();
+        let url = url.join("check-by-addresses?addresses=0x1234&chainIds=1").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://server-verify.hashscan.io/check-by-addresses?addresses=0x1234&chainIds=1"
+        );
+    }
 }

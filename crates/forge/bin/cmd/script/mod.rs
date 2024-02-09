@@ -415,7 +415,7 @@ impl ScriptArgs {
                 rpc: fork_url.clone(),
                 transaction: TransactionRequest {
                     from: Some(from),
-                    data: Some(bytes.clone()),
+                    input: Some(bytes.clone()).into(),
                     nonce: Some(U64::from(nonce + i as u64)),
                     ..Default::default()
                 },
@@ -510,8 +510,9 @@ impl ScriptArgs {
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
-                    .data
+                    .input
                     .clone()
+                    .into_input()
                     .filter(|data| data.len() > max_size)
                     .map(|data| (data, tx.transaction.to))
             })
