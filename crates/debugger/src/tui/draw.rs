@@ -361,7 +361,7 @@ impl DebuggerContext<'_> {
                 // if the source element has an index, find the sourcemap for that index
                 source_element
                     .index
-                    .and_then(|index| 
+                    .and_then(|index|
                     // if index matches current file_id, return current source code
                     (index == file_id).then(|| (source_element.clone(), source_code)))
                     .or_else(|| {
