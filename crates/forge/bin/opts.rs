@@ -39,14 +39,14 @@ const VERSION_MESSAGE: &str = concat!(
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
     next_display_order = None,
 )]
-pub struct Opts {
+pub struct Forge {
     #[clap(subcommand)]
-    pub sub: Subcommands,
+    pub cmd: ForgeSubcommand,
 }
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
-pub enum Subcommands {
+pub enum ForgeSubcommand {
     /// Run the project's tests.
     #[clap(visible_alias = "t")]
     Test(test::TestArgs),
@@ -167,4 +167,15 @@ pub enum Subcommands {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn verify_cli() {
+        Forge::command().debug_assert();
+    }
 }

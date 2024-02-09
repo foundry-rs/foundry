@@ -282,6 +282,14 @@ impl Cheatcode for expectSafeMemoryCall {
     }
 }
 
+impl Cheatcode for stopExpectSafeMemoryCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        ccx.state.allowed_mem_writes.remove(&ccx.data.journaled_state.depth());
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for expectSafeMemoryCallCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
