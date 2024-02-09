@@ -100,6 +100,10 @@ pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
     let max_len = usize::max(a.len(), b.len());
     let min_len = usize::min(a.len(), b.len());
 
+    if max_len == 0 {
+        return 1.0;
+    }
+
     let a = &a[..min_len];
     let b = &b[..min_len];
     let mut diff_chars = 0;
