@@ -257,6 +257,12 @@ impl DebuggerContext<'_> {
                 // no unused space
             }
 
+            // since above is subtracted from before.len(), and the resulting
+            // start_line is used to index into before, above must be at least
+            // 1 to avoid out-of-range accesses.
+            if above == 0 {
+                above = 1;
+            }
             (before.len().saturating_sub(above), mid_len + below)
         };
 
