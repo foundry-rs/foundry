@@ -69,7 +69,7 @@ impl TransactionWithMetadata {
                 from: transaction.from.map(ToEthers::to_ethers),
                 to: transaction.to.map(ToEthers::to_ethers).map(Into::into),
                 value: transaction.value.map(ToEthers::to_ethers),
-                data: transaction.data.map(ToEthers::to_ethers),
+                data: transaction.input.into_input().map(ToEthers::to_ethers),
                 nonce: transaction.nonce.map(|n| n.to::<u64>().into()),
                 gas: transaction.gas.map(ToEthers::to_ethers),
                 ..Default::default()

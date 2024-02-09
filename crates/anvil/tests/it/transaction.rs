@@ -4,12 +4,12 @@ use crate::{
 };
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{
+    request::TransactionRequest as AlloyTransactionRequest,
     state::{AccountOverride, StateOverride},
     BlockNumberOrTag,
 };
 use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, Hardfork, NodeConfig};
-use anvil_core::eth::transaction::EthTransactionRequest;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{
@@ -1088,7 +1088,7 @@ async fn can_mine_multiple_in_block() {
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let tx = EthTransactionRequest {
+    let tx = AlloyTransactionRequest {
         from: Some("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap()),
         ..Default::default()
     };

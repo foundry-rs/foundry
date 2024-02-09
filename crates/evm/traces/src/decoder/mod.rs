@@ -362,26 +362,41 @@ impl CallTraceDecoder {
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
             "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
-            "rememberKey" | "startBroadcast" | "broadcast" => {
-                // these functions accept a private key as uint256, which should not be
-                // converted to plain text
-                if !func.inputs.is_empty() && func.inputs[0].ty != "uint256" {
-                    // redact private key input
+            "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
+                // Redact private key in all cases
+                Some(vec!["<pk>".to_string()])
+            }
+            "broadcast" | "startBroadcast" => {
+                // Redact private key if defined
+                // broadcast(uint256) / startBroadcast(uint256)
+                if !func.inputs.is_empty() && func.inputs[0].ty == "uint256" {
                     Some(vec!["<pk>".to_string()])
                 } else {
                     None
                 }
             }
-            "sign" => {
-                // sign(uint256,bytes32)
+            "getNonce" => {
+                // Redact private key if defined
+                // getNonce(Wallet)
+                if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
+                    Some(vec!["<pk>".to_string()])
+                } else {
+                    None
+                }
+            }
+            "sign" | "signP256" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                if !decoded.is_empty() && func.inputs[0].ty != "uint256" {
+
+                // Redact private key and replace in trace
+                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
+                if !decoded.is_empty() &&
+                    (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
+                {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
+
                 Some(decoded.iter().map(format_token).collect())
             }
-            "addr" => Some(vec!["<pk>".to_string()]),
-            "deriveKey" => Some(vec!["<pk>".to_string()]),
             "parseJson" |
             "parseJsonUint" |
             "parseJsonUintArray" |
@@ -460,7 +475,7 @@ impl CallTraceDecoder {
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
-            "deriveKey" => Some("<pk>"),
+            "createWallet" | "deriveKey" => Some("<pk>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,
@@ -559,4 +574,89 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
 
 fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::hex;
+
+    #[test]
+    fn test_should_redact_pk() {
+        let decoder = CallTraceDecoder::new();
+
+        // [function_signature, data, expected]
+        let cheatcode_input_test_cases = vec![
+            // Should redact private key from traces in all cases:
+            ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createWallet(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            //
+            // Should redact private key from traces in specific cases with exceptions:
+            ("broadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("broadcast()", vec![], None), // Ignore: `private key` is not passed.
+            ("startBroadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("startBroadcast()", vec![], None), // Ignore: `private key` is not passed.
+            ("getNonce((address,uint256,uint256,uint256))", vec![], Some(vec!["<pk>".to_string()])),
+            ("getNonce(address)", vec![], None), // Ignore: `address` is public.
+            //
+            // Should redact private key and replace in trace in cases:
+            (
+                "sign(uint256,bytes32)",
+                hex!(
+                    "
+                    e341eaa4
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                "signP256(uint256,bytes32)",
+                hex!(
+                    "
+                    83211b40
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+        ];
+
+        // [function_signature, expected]
+        let cheatcode_output_test_cases = vec![
+            // Should redact private key on output in all cases:
+            ("createWallet(string)", Some("<pk>".to_string())),
+            ("deriveKey(string,uint32)", Some("<pk>".to_string())),
+        ];
+
+        for (function_signature, data, expected) in cheatcode_input_test_cases {
+            let function = Function::parse(function_signature).unwrap();
+            let result = decoder.decode_cheatcode_inputs(&function, &data);
+            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+        }
+
+        for (function_signature, expected) in cheatcode_output_test_cases {
+            let function = Function::parse(function_signature).unwrap();
+            let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
+            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+        }
+    }
 }
