@@ -173,8 +173,8 @@ impl Linker {
 
                 for (file, libs) in &libraries.libs {
                     for (name, address) in libs {
-                        let address = Address::from_str(address)
-                            .map_err(|err| LinkerError::InvalidAddress(err))?;
+                        let address =
+                            Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
                         if let Some(bytecode) = contract.bytecode.as_mut() {
                             bytecode.link(file.to_string_lossy(), name, address);
                         }
