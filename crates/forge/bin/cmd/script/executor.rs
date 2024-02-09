@@ -143,7 +143,7 @@ impl ScriptArgs {
                         tx.from
                             .expect("transaction doesn't have a `from` address at execution time"),
                         tx.to,
-                        tx.data.clone(),
+                        tx.input.clone().into_input(),
                         tx.value,
                     )
                     .wrap_err("Internal EVM error during simulation")?;

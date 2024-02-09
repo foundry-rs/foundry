@@ -1311,6 +1311,8 @@ impl EthApi {
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
             reward: Some(Default::default()),
+            base_fee_per_blob_gas: Default::default(),
+            blob_gas_used_ratio: Default::default(),
         };
 
         let mut rewards = Vec::new();
