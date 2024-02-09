@@ -67,7 +67,6 @@ impl Debugger {
     ) -> Self {
         let pc_ic_maps = contracts_sources
             .entries()
-            .iter()
             .filter_map(|(contract_name, (_, contract))| {
                 Some((
                     contract_name.clone(),

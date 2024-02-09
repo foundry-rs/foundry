@@ -274,9 +274,9 @@ impl ProjectCompiler {
 /// Contract source code and bytecode.
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
-    /// Map over artifacts contract sources name -> file_id -> (source, contract)
+    /// Map over artifacts' contract names -> vector of file IDs
     pub ids_by_name: HashMap<String, Vec<u32>>,
-    /// Map over artifacts contract sources file_id -> (source, contract)
+    /// Map over file_id -> (source code, contract)
     pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
 }
 
@@ -299,21 +299,20 @@ impl ContractSources {
     }
 
     /// Returns all sources for a contract by name.
-    pub fn get_sources(&self, name: &str) -> Option<Vec<(u32, &(String, ContractBytecodeSome))>> {
-        self.ids_by_name.get(name).map(|ids| {
-            ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))).collect()
-        })
+    pub fn get_sources(
+        &self,
+        name: &str,
+    ) -> Option<impl Iterator<Item = (u32, &(String, ContractBytecodeSome))>> {
+        self.ids_by_name
+            .get(name)
+            .map(|ids| ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))))
     }
 
     /// Returns all (name, source) pairs.
-    pub fn entries(&self) -> Vec<(String, &(String, ContractBytecodeSome))> {
-        self.ids_by_name
-            .iter()
-            .flat_map(|(name, ids)| {
-                ids.iter()
-                    .filter_map(move |id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
-            })
-            .collect()
+    pub fn entries(&self) -> impl Iterator<Item = (String, &(String, ContractBytecodeSome))> {
+        self.ids_by_name.iter().flat_map(|(name, ids)| {
+            ids.iter().filter_map(|id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
+        })
     }
 }
 

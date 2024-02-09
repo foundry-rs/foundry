@@ -334,7 +334,7 @@ impl DebuggerContext<'_> {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        let Some(files_source_code) = self.debugger.contracts_sources.get_sources(contract_name)
+        let Some(mut files_source_code) = self.debugger.contracts_sources.get_sources(contract_name)
         else {
             return Err(format!("No source map index for contract {contract_name}"));
         };
@@ -346,7 +346,7 @@ impl DebuggerContext<'_> {
         let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
         let pc = self.current_step().pc;
         let Some((source_element, source_code)) =
-            files_source_code.iter().find_map(|(file_id, (source_code, contract_source))| {
+            files_source_code.find_map(|(file_id, (source_code, contract_source))| {
                 let bytecode = if is_create {
                     &contract_source.bytecode
                 } else {
@@ -360,7 +360,7 @@ impl DebuggerContext<'_> {
                 // if the source element has an index, find the sourcemap for that index
                 source_element.index.and_then(|index| 
                     // if index matches current file_id, return current source code
-                    (index == *file_id).then_some((source_element.clone(), source_code))).or_else(
+                    (index == file_id).then_some((source_element.clone(), source_code))).or_else(
                         || {
                             // otherwise find the source code for the element's index
                             self.debugger
