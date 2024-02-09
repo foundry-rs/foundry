@@ -363,7 +363,7 @@ impl DebuggerContext<'_> {
                     .index
                     .and_then(|index| 
                     // if index matches current file_id, return current source code
-                    (index == file_id).then_some((source_element.clone(), source_code)))
+                    (index == file_id).then(|| (source_element.clone(), source_code)))
                     .or_else(|| {
                         // otherwise find the source code for the element's index
                         self.debugger
