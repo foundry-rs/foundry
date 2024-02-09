@@ -127,7 +127,11 @@ foundry-test-utils = { path = "crates/test-utils" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
+<<<<<<< HEAD
 foundry-compilers = { version = "0.3.2", default-features = false }
+=======
+foundry-compilers = { version = "0.3.4", default-features = false }
+>>>>>>> 2287c230 (parsing file paths from foundry.toml)
 
 ## revm
 # no default features to avoid c-kzg
@@ -162,7 +166,7 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy" }
-alloy-primitives = "0.6.2"
+alloy-primitives = { version ="0.6.2", features = ["getrandom"] }
 alloy-dyn-abi = "0.6.2"
 alloy-json-abi = "0.6.2"
 alloy-sol-types = "0.6.2"
