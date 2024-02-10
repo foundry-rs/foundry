@@ -87,11 +87,7 @@ impl EtherscanIdentifier {
         for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
             let (artifact_id, file_id, bytecode) = results?;
-            sources
-                .0
-                .entry(artifact_id.clone().name)
-                .or_default()
-                .insert(file_id, (metadata.source_code(), bytecode));
+            sources.insert(&artifact_id, file_id, metadata.source_code(), bytecode);
         }
 
         Ok(sources)
