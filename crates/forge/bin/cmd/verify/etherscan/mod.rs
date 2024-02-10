@@ -11,7 +11,9 @@ use foundry_block_explorers::{
 };
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::{abi::encode_function_args, retry::Retry};
-use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
+use foundry_compilers::{
+    artifacts::CompactContract, cache::CacheEntry, info::ContractInfo, Project, Solc,
+};
 use foundry_config::{Chain, Config, SolcReq};
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -212,15 +214,28 @@ impl EtherscanVerificationProvider {
     fn cache_entry(
         &mut self,
         project: &Project,
-        contract_name: &str,
+        contract: &ContractInfo,
     ) -> Result<&(PathBuf, CacheEntry, CompactContract)> {
         if let Some(ref entry) = self.cached_entry {
             return Ok(entry)
         }
 
         let cache = project.read_cache_file()?;
-        let (path, entry) = get_cached_entry_by_name(&cache, contract_name)?;
-        let contract: CompactContract = cache.read_artifact(path.clone(), contract_name)?;
+        let (path, entry) = if let Some(path) = contract.path.as_ref() {
+            let path = project.root().join(path);
+            (
+                path.clone(),
+                cache
+                    .entry(&path)
+                    .ok_or_else(|| {
+                        eyre::eyre!(format!("Cache entry not found for {}", path.display()))
+                    })?
+                    .to_owned(),
+            )
+        } else {
+            get_cached_entry_by_name(&cache, &contract.name)?
+        };
+        let contract: CompactContract = cache.read_artifact(path.clone(), &contract.name)?;
         Ok(self.cached_entry.insert((path, entry, contract)))
     }
 
@@ -347,14 +362,13 @@ impl EtherscanVerificationProvider {
     /// Get the target contract path. If it wasn't provided, attempt a lookup
     /// in cache. Validate the path indeed exists on disk.
     fn contract_path(&mut self, args: &VerifyArgs, project: &Project) -> Result<PathBuf> {
-        let path = match args.contract.path.as_ref() {
-            Some(path) => project.root().join(path),
-            None => {
-                let (path, _, _) = self.cache_entry(project, &args.contract.name).wrap_err(
-                    "If cache is disabled, contract info must be provided in the format <path>:<name>",
-                )?;
-                path.to_owned()
-            }
+        let path = if let Some(path) = args.contract.path.as_ref() {
+            project.root().join(path)
+        } else {
+            let (path, _, _) = self.cache_entry(project, &args.contract).wrap_err(
+                "If cache is disabled, contract info must be provided in the format <path>:<name>",
+            )?;
+            path.to_owned()
         };
 
         // check that the provided contract is part of the source dir
@@ -391,7 +405,7 @@ impl EtherscanVerificationProvider {
             }
         }
 
-        let (_, entry, _) = self.cache_entry(project, &args.contract.name).wrap_err(
+        let (_, entry, _) = self.cache_entry(project, &args.contract).wrap_err(
             "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
         )?;
         let artifacts = entry.artifacts_versions().collect::<Vec<_>>();
@@ -423,7 +437,7 @@ impl EtherscanVerificationProvider {
     /// return whatever was set in the [VerifyArgs] args.
     fn constructor_args(&mut self, args: &VerifyArgs, project: &Project) -> Result<Option<String>> {
         if let Some(ref constructor_args_path) = args.constructor_args_path {
-            let (_, _, contract) = self.cache_entry(project, &args.contract.name).wrap_err(
+            let (_, _, contract) = self.cache_entry(project, &args.contract).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
             )?;
             let abi =
@@ -474,6 +488,7 @@ mod tests {
     use clap::Parser;
     use foundry_cli::utils::LoadConfig;
     use foundry_common::fs;
+    use foundry_test_utils::forgetest_async;
     use tempfile::tempdir;
 
     #[test]
@@ -613,4 +628,22 @@ mod tests {
             "Cache must be enabled in order to use the `--constructor-args-path` option",
         );
     }
+
+    forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
+        prj.add_source("Counter1", "contract Counter {}").unwrap();
+        prj.add_source("Counter2", "contract Counter {}").unwrap();
+
+        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
+
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter1.sol:Counter",
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        let mut etherscan = EtherscanVerificationProvider::default();
+        etherscan.preflight_check(args).await.unwrap();
+    });
 }
