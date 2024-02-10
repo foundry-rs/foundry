@@ -107,6 +107,47 @@ contract Demo {
     );
 });
 
+static FAILING_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract FailingScript is Script {
+    function run() external {
+        revert("failed");
+    }
+}
+"#;
+
+// Tests that execution throws upon encountering a revert in the script.
+forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+
+    // set up command
+    cmd.arg("script").arg(script);
+
+    // run command and assert error exit code
+    cmd.assert_err();
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("script failed: revert: failed"));
+});
+
+// Tests that execution throws upon encountering a revert in the script with --json option.
+// <https://github.com/foundry-rs/foundry/issues/2508>
+forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+
+    // set up command
+    cmd.arg("script").arg(script).arg("--json");
+
+    // run command and assert error exit code
+    cmd.assert_err();
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("script failed: revert: failed"));
+});
+
 // Tests that the manually specified gas limit is used when using the --unlocked option
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
