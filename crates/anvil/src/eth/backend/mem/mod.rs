@@ -1892,10 +1892,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .debug_trace_transaction(hash, opts)
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable)
+            return fork.debug_trace_transaction(hash, opts).await.map_err(|err| {
+                warn!(target: "backend", "error delegating debug_traceTransaction: {:?}", err);
+                BlockchainError::DataUnavailable
+            })
         }
 
         Ok(GethTrace::Default(Default::default()))
@@ -1921,7 +1921,10 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return fork.trace_block(number).await.map_err(|_| BlockchainError::DataUnavailable)
+                return fork.trace_block(number).await.map_err(|err| {
+                    warn!(target: "backend", "error delegating trace_block: {:?}", err);
+                    BlockchainError::DataUnavailable
+                })
             }
         }
 
