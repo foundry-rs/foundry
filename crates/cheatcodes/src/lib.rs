@@ -39,7 +39,7 @@ mod utils;
 pub use test::expect::ExpectedCallTracker;
 
 /// Cheatcode implementation.
-pub(crate) trait Cheatcode: CheatcodeDef {
+pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you don't need access to the EVM data.
@@ -65,13 +65,17 @@ pub(crate) trait Cheatcode: CheatcodeDef {
         trace_return(&result);
         return result;
 
-        // Separate functions to avoid inline and monomorphization bloat.
-        fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
-            if enabled!(tracing::Level::TRACE) {
-                trace_span!(target: "cheatcodes", "apply", cheat=?cheat)
-            } else {
-                debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.func.id)
+        // Separate and non-generic functions to avoid inline and monomorphization bloat.
+        fn trace_span(cheat: &dyn DynCheatcode) -> tracing::Span {
+            let span = debug_span!(target: "cheatcodes", "apply");
+            if !span.is_disabled() {
+                if enabled!(tracing::Level::TRACE) {
+                    span.record("cheat", tracing::field::debug(cheat.as_debug()));
+                } else {
+                    span.record("id", cheat.cheatcode().func.id);
+                }
             }
+            span
         }
 
         fn trace_call() {
@@ -87,6 +91,21 @@ pub(crate) trait Cheatcode: CheatcodeDef {
                 }
             );
         }
+    }
+}
+
+pub(crate) trait DynCheatcode {
+    fn cheatcode(&self) -> &'static foundry_cheatcodes_spec::Cheatcode<'static>;
+    fn as_debug(&self) -> &dyn std::fmt::Debug;
+}
+
+impl<T: Cheatcode> DynCheatcode for T {
+    fn cheatcode(&self) -> &'static foundry_cheatcodes_spec::Cheatcode<'static> {
+        T::CHEATCODE
+    }
+
+    fn as_debug(&self) -> &dyn std::fmt::Debug {
+        self
     }
 }
 

@@ -173,10 +173,7 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "std",
-] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
 derive_more = "0.99"
 eyre = "0.6"
@@ -194,7 +191,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 evm-disassembler = "0.4"
-vergen = "8"
+vergen = { version = "8", default-features = false }
 # TODO: bumping to >=0.13.2 breaks ecrecover: https://github.com/foundry-rs/foundry/pull/6969
 # TODO: unpin on next revm release: https://github.com/bluealloy/revm/pull/870
 k256 = "=0.13.1"
