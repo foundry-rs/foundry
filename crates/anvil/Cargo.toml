@@ -31,9 +31,9 @@ foundry-evm.workspace = true
 bytes = "1.4.0"
 k256.workspace = true
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
-trie-db = "0.23"
+trie-db = "0.27"
 hash-db = "0.15"
-memory-db = "0.29"
+memory-db = "0.32"
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus.workspace = true
 alloy-network.workspace = true
