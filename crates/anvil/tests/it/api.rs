@@ -207,30 +207,19 @@ async fn can_call_on_pending_block() {
     for block_number in 1..(api.block_number().unwrap().to::<usize>() + 1) {
         let block_number = alloy_rpc_types::BlockNumberOrTag::Number(block_number as u64);
         let block = api.block_by_number(block_number).await.unwrap().unwrap();
-        let multicall = Multicall::new(pending_contract.address().to_alloy(), alloy_provider.clone());
+        let multicall =
+            Multicall::new(pending_contract.address().to_alloy(), alloy_provider.clone());
 
-        let block_timestamp = multicall
-            .getCurrentBlockTimestamp()
-            .block(block_number.into())
-            .call()
-            .await
-            .unwrap();
+        let block_timestamp =
+            multicall.getCurrentBlockTimestamp().block(block_number.into()).call().await.unwrap();
         assert_eq!(block.header.timestamp, block_timestamp.timestamp);
 
-        let block_gas_limit = multicall
-            .getCurrentBlockGasLimit()
-            .block(block_number.into())
-            .call()
-            .await
-            .unwrap();
+        let block_gas_limit =
+            multicall.getCurrentBlockGasLimit().block(block_number.into()).call().await.unwrap();
         assert_eq!(block.header.gas_limit, block_gas_limit.gaslimit);
 
-        let block_coinbase = multicall
-            .getCurrentBlockCoinbase()
-            .block(block_number.into())
-            .call()
-            .await
-            .unwrap();
+        let block_coinbase =
+            multicall.getCurrentBlockCoinbase().block(block_number.into()).call().await.unwrap();
         assert_eq!(block.header.miner, block_coinbase.coinbase);
     }
 }

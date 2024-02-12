@@ -1,7 +1,7 @@
 //! various fork related test
 
 use crate::{
-    abi::{Greeter, Erc721, SolGreeter, ERC721},
+    abi::{Erc721, Greeter, SolGreeter, ERC721},
     utils::{self, ethers_http_provider},
 };
 use alloy_primitives::{Address as rAddress, U256 as rU256};
