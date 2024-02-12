@@ -1,14 +1,13 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{
-    utils::{keccak256, ParseUnits, Unit},
-    Address, I256, U256,
+    utils::{keccak256, ParseUnits, Unit}, Address, Bytes, B256, I256, U256
 };
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    types::{transaction::eip2718::TypedTransaction, *},
+    types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, NameOrAddress, Signature, H160, H256, U64},
     utils::rlp,
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
@@ -264,7 +263,7 @@ where
             None => raw_tx,
         };
         let tx = Bytes::from(hex::decode(raw_tx)?);
-        let res = self.provider.send_raw_transaction(tx).await?;
+        let res = self.provider.send_raw_transaction(tx.0.into()).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -1398,7 +1397,7 @@ impl SimpleCast {
 
         let padded = format!("{s:0<64}");
         // need to use the Debug implementation
-        Ok(format!("{:?}", H256::from_str(&padded)?))
+        Ok(format!("{}", B256::from_str(&padded)?))
     }
 
     /// Encodes string into bytes32 value
