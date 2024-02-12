@@ -171,7 +171,8 @@ impl MultiFork {
 
 type Handler = BackendHandler<Arc<Provider<BoxTransport>>>;
 
-type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
+type CreateFuture =
+    Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;
 type GetEnvSender = OneshotSender<Option<Env>>;
 
@@ -258,26 +259,35 @@ impl MultiForkHandler {
         let fork_id = ForkId::new(&fork.url, fork.evm_opts.fork_block_number);
         trace!(?fork_id, "created new forkId");
 
-        if let Some(fork) = self.forks.get(&fork_id).cloned() {
-            // assign a new unique fork id but reuse the existing backend
-            let unique_fork_id: ForkId =
-                format!("{}-{}", fork_id.as_str(), fork.num_senders()).into();
-            trace!(?fork_id, ?unique_fork_id, "created new unique forkId");
-            fork.inc_senders();
-            let backend = fork.backend.clone();
-            let env = fork.opts.env.clone();
-            self.forks.insert(unique_fork_id.clone(), fork);
-            let _ = sender.send(Ok((unique_fork_id, backend, env)));
-        } else {
-            // there could already be a task for the requested fork in progress
-            if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
-                in_progress.push(sender);
-                return;
-            }
+        if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
+            in_progress.push(sender);
+            return;
+        }
 
-            // need to create a new fork
-            let task = Box::pin(create_fork(fork));
-            self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
+        // need to create a new fork
+        let task = Box::pin(create_fork(fork));
+        self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
+    }
+
+    fn insert_new_fork(
+        &mut self,
+        fork_id: ForkId,
+        fork: CreatedFork,
+        sender: CreateSender,
+        additional_senders: Vec<CreateSender>,
+    ) {
+        self.forks.insert(fork_id.clone(), fork.clone());
+        let _ = sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.opts.env.clone())));
+
+        // notify all additional senders and track unique forkIds
+        for sender in additional_senders {
+            let next_fork_id = fork.inc_senders(fork_id.clone());
+            self.forks.insert(next_fork_id.clone(), fork.clone());
+            let _ = sender.send(Ok((
+                next_fork_id.clone(),
+                fork.backend.clone(),
+                fork.opts.env.clone(),
+            )));
         }
     }
 
@@ -346,25 +356,17 @@ impl Future for MultiForkHandler {
                 ForkTask::Create(mut fut, id, sender, additional_senders) => {
                     if let Poll::Ready(resp) = fut.poll_unpin(cx) {
                         match resp {
-                            Ok((fork, handler)) => {
-                                pin.handlers.push((id.clone(), handler));
-                                let backend = fork.backend.clone();
-                                let env = fork.opts.env.clone();
-                                pin.forks.insert(id.clone(), fork.clone());
-
-                                let _ = sender.send(Ok((id.clone(), backend.clone(), env.clone())));
-
-                                // also notify all additional senders and track unique forkIds
-                                for sender in additional_senders {
-                                    fork.inc_senders();
-                                    let unique_fork_id: ForkId =
-                                        format!("{}-{}", id.as_str(), fork.num_senders()).into();
-                                    pin.forks.insert(unique_fork_id.clone(), fork.clone());
-                                    let _ = sender.send(Ok((
-                                        unique_fork_id,
-                                        backend.clone(),
-                                        env.clone(),
-                                    )));
+                            Ok((fork_id, fork, handler)) => {
+                                if let Some(fork) = pin.forks.get(&fork_id).cloned() {
+                                    pin.insert_new_fork(
+                                        fork.inc_senders(fork_id.clone()),
+                                        fork,
+                                        sender,
+                                        additional_senders,
+                                    );
+                                } else {
+                                    pin.handlers.push((fork_id.clone(), handler));
+                                    pin.insert_new_fork(fork_id, fork, sender, additional_senders);
                                 }
                             }
                             Err(err) => {
@@ -446,12 +448,14 @@ impl CreatedFork {
         Self { opts, backend, num_senders: Arc::new(AtomicUsize::new(1)) }
     }
 
-    fn inc_senders(&self) {
-        self.num_senders.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    fn num_senders(&self) -> usize {
-        self.num_senders.load(std::sync::atomic::Ordering::Relaxed)
+    /// Increment senders and return unique identifier of the fork
+    fn inc_senders(&self, fork_id: ForkId) -> ForkId {
+        format!(
+            "{}-{}",
+            fork_id.as_str(),
+            self.num_senders.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )
+        .into()
     }
 }
 
@@ -483,7 +487,7 @@ impl Drop for ShutDownMultiFork {
 /// Creates a new fork
 ///
 /// This will establish a new `Provider` to the endpoint and return the Fork Backend
-async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler)> {
+async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork, Handler)> {
     let provider = Arc::new(
         ProviderBuilder::new(fork.url.as_str())
             .maybe_max_retry(fork.evm_opts.fork_retries)
@@ -511,5 +515,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.to::<u64>().into()));
     let fork = CreatedFork::new(fork, backend);
-    Ok((fork, handler))
+    let fork_id = ForkId::new(&fork.opts.url, number.to::<u64>().into());
+
+    Ok((fork_id, fork, handler))
 }
