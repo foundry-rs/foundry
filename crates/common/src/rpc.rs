@@ -4,6 +4,9 @@ use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+const RETH_PUBLIC_HTTP: &str = "http://69.67.151.138:8545";
+const RETH_PUBLIC_WS: &str = "ws://69.67.151.138:8546";
+
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
     let mut keys = vec![
@@ -67,14 +70,16 @@ fn num_keys() -> usize {
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_http_rpc_endpoint() -> String {
-    next_rpc_endpoint("mainnet")
+    // next_rpc_endpoint("mainnet")
+    RETH_PUBLIC_HTTP.to_string()
 }
 
 /// Returns the next _mainnet_ rpc endpoint in inline
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_ws_rpc_endpoint() -> String {
-    next_ws_endpoint("mainnet")
+    // next_ws_endpoint("mainnet")
+    RETH_PUBLIC_WS.to_string()
 }
 
 /// Returns the next HTTP RPC endpoint.
@@ -101,14 +106,16 @@ pub fn next_ws_endpoint(network: &str) -> String {
 
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
-    format!("https://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+    RETH_PUBLIC_HTTP.to_string()
+    // let idx = next() % ALCHEMY_MAINNET_KEYS.len();
+    // format!("https://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
 }
 
 /// Returns endpoint that has access to archive state
 pub fn next_ws_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
-    format!("wss://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+    RETH_PUBLIC_WS.to_string()
+    // let idx = next() % ALCHEMY_MAINNET_KEYS.len();
+    // format!("wss://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
 }
 
 #[cfg(test)]
