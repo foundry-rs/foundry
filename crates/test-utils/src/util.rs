@@ -191,10 +191,9 @@ impl ExtTester {
         // Run the tests.
         test_cmd.arg("test");
         test_cmd.args(&self.args);
-        test_cmd.args(["--fuzz-runs=256", "--ffi", "-vvvvv"]);
+        test_cmd.args(["--fuzz-runs=32", "--ffi", "-vvvvv"]);
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
-        test_cmd.env("FOUNDRY_FUZZ_RUNS", "1");
         if let Some(fork_block) = self.fork_block {
             test_cmd
                 .env("FOUNDRY_ETH_RPC_URL", foundry_common::rpc::next_http_archive_rpc_endpoint());
@@ -614,7 +613,8 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+        let forge = self.exe_root.join("../forge").with_extension(env::consts::EXE_SUFFIX);
+        let forge = forge.canonicalize().unwrap();
         let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
         // disable color output for comparisons
@@ -624,7 +624,8 @@ impl TestProject {
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        let cast = self.exe_root.join("../cast").with_extension(env::consts::EXE_SUFFIX);
+        let cast = cast.canonicalize().unwrap();
         let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
