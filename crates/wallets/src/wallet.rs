@@ -1,4 +1,7 @@
-use crate::opts::error::PrivateKeyError;
+use crate::{
+    error::{PrivateKeyError, WalletSignerError},
+    raw_wallet::RawWallet,
+};
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use clap::Parser;
@@ -7,8 +10,8 @@ use ethers_core::types::{
     Signature,
 };
 use ethers_signers::{
-    coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger, LedgerError,
-    LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath, WalletError,
+    coins_bip39::English, AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder,
+    Signer, Trezor, TrezorHDPath, WalletError,
 };
 use eyre::{bail, Result, WrapErr};
 use foundry_common::{fs, types::ToAlloy};
@@ -23,48 +26,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-
-pub mod multi_wallet;
-pub use multi_wallet::*;
-
-pub mod error;
-
-/// A wrapper for the raw data options for `Wallet`, extracted to also be used standalone.
-/// The raw wallet options can either be:
-/// 1. Private Key (cleartext in CLI)
-/// 2. Private Key (interactively via secure prompt)
-/// 3. Mnemonic (via file path)
-#[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Wallet options - raw", about = None, long_about = None)]
-pub struct RawWallet {
-    /// Open an interactive prompt to enter your private key.
-    #[clap(long, short)]
-    pub interactive: bool,
-
-    /// Use the provided private key.
-    #[clap(long, value_name = "RAW_PRIVATE_KEY")]
-    pub private_key: Option<String>,
-
-    /// Use the mnemonic phrase of mnemonic file at the specified path.
-    #[clap(long, alias = "mnemonic-path")]
-    pub mnemonic: Option<String>,
-
-    /// Use a BIP39 passphrase for the mnemonic.
-    #[clap(long, value_name = "PASSPHRASE")]
-    pub mnemonic_passphrase: Option<String>,
-
-    /// The wallet derivation path.
-    ///
-    /// Works with both --mnemonic-path and hardware wallets.
-    #[clap(long = "mnemonic-derivation-path", alias = "hd-path", value_name = "PATH")]
-    pub hd_path: Option<String>,
-
-    /// Use the private key from the given mnemonic index.
-    ///
-    /// Used with --mnemonic-path.
-    #[clap(long, conflicts_with = "hd_path", default_value_t = 0, value_name = "INDEX")]
-    pub mnemonic_index: u32,
-}
 
 /// The wallet options can either be:
 /// 1. Raw (via private key / mnemonic file, see `RawWallet`)
@@ -141,12 +102,6 @@ pub struct Wallet {
     /// Use AWS Key Management Service.
     #[clap(long, help_heading = "Wallet options - AWS KMS")]
     pub aws: bool,
-}
-
-impl From<RawWallet> for Wallet {
-    fn from(options: RawWallet) -> Self {
-        Self { raw: options, ..Default::default() }
-    }
 }
 
 impl Wallet {
@@ -407,22 +362,16 @@ pub trait WalletTrait {
     }
 }
 
+impl From<RawWallet> for Wallet {
+    fn from(options: RawWallet) -> Self {
+        Self { raw: options, ..Default::default() }
+    }
+}
+
 impl WalletTrait for Wallet {
     fn sender(&self) -> Option<Address> {
         self.from
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum WalletSignerError {
-    #[error(transparent)]
-    Local(#[from] WalletError),
-    #[error(transparent)]
-    Ledger(#[from] LedgerError),
-    #[error(transparent)]
-    Trezor(#[from] TrezorError),
-    #[error(transparent)]
-    Aws(#[from] AwsSignerError),
 }
 
 #[derive(Debug)]

@@ -19,7 +19,6 @@ use forge::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
-use foundry_cli::opts::MultiWallet;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     contracts::get_contract_name,
@@ -47,6 +46,7 @@ use foundry_evm::{
     decode,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
+use foundry_wallets::MultiWallet;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};

@@ -1,0 +1,38 @@
+[package]
+name = "foundry-wallets"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers = { workspace = true, features = ["aws", "ledger", "trezor"] }
+
+rusoto_core = { version = "0.48", default-features = false }
+rusoto_kms = { version = "0.48", default-features = false }
+
+foundry-config.workspace = true
+foundry-common.workspace = true
+
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+eyre.workspace = true
+hex = { workspace = true, features = ["serde"] }
+itertools.workspace = true
+rpassword = "7"
+serde.workspace = true
+thiserror = "1"
+tracing.workspace = true
+
+[features]
+default = ["rustls"]
+rustls = ["ethers-providers/rustls", "rusoto_core/rustls"]
+openssl = ["ethers-providers/openssl"]
