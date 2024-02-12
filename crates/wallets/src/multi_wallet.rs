@@ -1,4 +1,4 @@
-use super::{WalletSigner, WalletTrait};
+use crate::wallet::{WalletSigner, WalletTrait};
 use alloy_primitives::Address;
 use clap::Parser;
 use ethers_providers::Middleware;
