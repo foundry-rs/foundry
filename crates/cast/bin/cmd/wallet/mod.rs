@@ -218,7 +218,7 @@ impl WalletSubcommands {
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
                 let wallets = (0..accounts)
-                    .map(|i| builder.clone().derivation_path(&format!("{derivation_path}{i}")))
+                    .map(|i| builder.clone().derivation_path(format!("{derivation_path}{i}")))
                     .collect::<Result<Vec<_>, _>>()?;
                 let wallets =
                     wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
@@ -363,7 +363,7 @@ flag to set your key via:
                 let index = if let Some(i) = mnemonic_index { i } else { 0 };
                 let wallet = builder
                     .clone()
-                    .derivation_path(&format!("{derivation_path}{index}"))?
+                    .derivation_path(format!("{derivation_path}{index}"))?
                     .build()?;
                 println!("- Account:");
                 println!("Address:     {}", wallet.address());
