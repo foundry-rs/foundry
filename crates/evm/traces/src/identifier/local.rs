@@ -1,7 +1,8 @@
 use super::{AddressIdentity, TraceIdentifier};
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::Address;
 use foundry_common::contracts::{diff_score, ContractsByArtifact};
+use foundry_compilers::ArtifactId;
 use ordered_float::OrderedFloat;
 use std::borrow::Cow;
 
@@ -24,6 +25,24 @@ impl<'a> LocalTraceIdentifier<'a> {
     pub fn events(&self) -> impl Iterator<Item = &Event> {
         self.known_contracts.iter().flat_map(|(_, (abi, _))| abi.events())
     }
+
+    fn find_contract_from_bytecode(&self, code: &[u8]) -> Option<(&ArtifactId, &JsonAbi)> {
+        self.known_contracts
+            .iter()
+            .filter_map(|(id, (abi, known_code))| {
+                let score = diff_score(known_code, code);
+                // Note: the diff score can be inaccurate for small contracts so we're using
+                // a relatively high threshold here to avoid filtering out too many
+                // contracts.
+                if score < 0.85 {
+                    Some((score, id, abi))
+                } else {
+                    None
+                }
+            })
+            .min_by_key(|(score, _, _)| OrderedFloat(*score))
+            .map(|(_, id, abi)| (id, abi))
+    }
 }
 
 impl TraceIdentifier for LocalTraceIdentifier<'_> {
@@ -33,23 +52,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
     {
         addresses
             .filter_map(|(address, code)| {
-                let code = code?;
-                let (_, id, abi) = self
-                    .known_contracts
-                    .iter()
-                    .filter_map(|(id, (abi, known_code))| {
-                        let score = diff_score(known_code, code);
-                        // Note: the diff score can be inaccurate for small contracts so we're using
-                        // a relatively high threshold here to avoid filtering out too many
-                        // contracts.
-                        if score < 0.85 {
-                            Some((OrderedFloat(score), id, abi))
-                        } else {
-                            None
-                        }
-                    })
-                    .min_by_key(|(score, _, _)| *score)?;
-
+                let (id, abi) = self.find_contract_from_bytecode(code?)?;
                 Some(AddressIdentity {
                     address: *address,
                     contract: Some(id.identifier()),

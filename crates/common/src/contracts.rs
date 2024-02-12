@@ -25,6 +25,7 @@ impl ContractsByArtifact {
     pub fn find_by_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
     }
+
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
     /// found, return error.
     pub fn find_by_name_or_identifier(
@@ -95,25 +96,16 @@ pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 
 /// Very simple fuzzy matching of contract bytecode.
 ///
+/// Returns a value between `0.0` (identical) and `1.0` (completely different).
+///
 /// Will fail for small contracts that are essentially all immutable variables.
 pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
-    let max_len = usize::max(a.len(), b.len());
-    let min_len = usize::min(a.len(), b.len());
-
-    if max_len == 0 {
+    if a.len() != b.len() {
         return 1.0;
     }
 
-    let a = &a[..min_len];
-    let b = &b[..min_len];
-    let mut diff_chars = 0;
-    for i in 0..min_len {
-        if a[i] != b[i] {
-            diff_chars += 1;
-        }
-    }
-    diff_chars += max_len - min_len;
-    diff_chars as f64 / max_len as f64
+    let n_different_bytes = std::iter::zip(a, b).filter(|(a, b)| a != b).count();
+    n_different_bytes as f64 / a.len() as f64
 }
 
 /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
