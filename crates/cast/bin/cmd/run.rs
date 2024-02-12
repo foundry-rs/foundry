@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockTransactions;
 use clap::Parser;
-use alloy_providers::provider::TempProvider;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -88,7 +88,11 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::alloy::ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).compute_units_per_second_opt(compute_units_per_second).build()?;
+        let provider = foundry_common::provider::alloy::ProviderBuilder::new(
+            &config.get_rpc_url_or_localhost_http()?,
+        )
+        .compute_units_per_second_opt(compute_units_per_second)
+        .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider
@@ -142,8 +146,9 @@ impl RunArgs {
                 match block.transactions {
                     BlockTransactions::Full(txs) => {
                         for (index, tx) in txs.into_iter().enumerate() {
-                            // System transactions such as on L2s don't contain any pricing info so we skip
-                            // them otherwise this would cause reverts
+                            // System transactions such as on L2s don't contain any pricing info so
+                            // we skip them otherwise this would cause
+                            // reverts
                             if is_known_system_sender(tx.from) ||
                                 tx.transaction_type.map(|ty| ty.to::<u64>()) ==
                                     Some(SYSTEM_TRANSACTION_TYPE)
@@ -174,9 +179,9 @@ impl RunArgs {
                                         error => {
                                             return Err(error).wrap_err_with(|| {
                                                 format!(
-                                                    "Failed to deploy transaction: {:?} in block {}",
-                                                    tx.hash, env.block.number
-                                                )
+                                                "Failed to deploy transaction: {:?} in block {}",
+                                                tx.hash, env.block.number
+                                            )
                                             })
                                         }
                                     }
@@ -186,8 +191,12 @@ impl RunArgs {
                             update_progress!(pb, index);
                         }
                     }
-                    BlockTransactions::Hashes(_) => return Err(eyre::eyre!("Unexpectedly got block hashes")),
-                    BlockTransactions::Uncle => return Err(eyre::eyre!("Unexpectedly got block hashes")),
+                    BlockTransactions::Hashes(_) => {
+                        return Err(eyre::eyre!("Unexpectedly got block hashes"))
+                    }
+                    BlockTransactions::Uncle => {
+                        return Err(eyre::eyre!("Unexpectedly got block hashes"))
+                    }
                 }
             }
         }

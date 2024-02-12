@@ -1,22 +1,18 @@
-use alloy_primitives::Address;
-use clap::Parser;
-use ethers_core::{
-    rand::thread_rng,
-    types::{transaction::eip712::TypedData, Signature},
-};
-use ethers_signers::{
+use alloy_primitives::{Address, Signature, B256};
+use alloy_signer::{
     coins_bip39::{English, Mnemonic},
-    LocalWallet, MnemonicBuilder, Signer,
+    LocalWallet, MnemonicBuilder, Signer as AlloySigner,
 };
+use clap::Parser;
+use ethers_core::types::transaction::eip712::TypedData;
+use ethers_signers::Signer;
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
-use foundry_common::{
-    fs,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
+use rand::thread_rng;
 use serde_json::json;
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 use yansi::Paint;
 
 pub mod vanity;
@@ -178,7 +174,7 @@ impl WalletSubcommands {
 
                         if let Some(json) = json_values.as_mut() {
                             json.push(json!({
-                                "address": wallet.address().to_alloy().to_checksum(None),
+                                "address": wallet.address().to_checksum(None),
                                 "path": format!("{}", path.join(uuid).display()),
                             }
                             ));
@@ -187,7 +183,7 @@ impl WalletSubcommands {
                                 "Created new encrypted keystore file: {}",
                                 path.join(uuid).display()
                             );
-                            println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
+                            println!("Address: {}", wallet.address().to_checksum(None));
                         }
                     }
 
@@ -196,19 +192,16 @@ impl WalletSubcommands {
                     }
                 } else {
                     for _ in 0..number {
-                        let wallet = LocalWallet::new(&mut rng);
+                        let wallet = LocalWallet::random();
 
                         if let Some(json) = json_values.as_mut() {
                             json.push(json!({
-                                "address": wallet.address().to_alloy().to_checksum(None),
+                                "address": wallet.address().to_checksum(None),
                                 "private_key": format!("0x{}", hex::encode(wallet.signer().to_bytes())),
                             }))
                         } else {
                             println!("Successfully created new keypair.");
-                            println!(
-                                "Address:     {}",
-                                wallet.address().to_alloy().to_checksum(None)
-                            );
+                            println!("Address:     {}", wallet.address().to_checksum(None));
                             println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
                         }
                     }
@@ -235,7 +228,7 @@ impl WalletSubcommands {
                 println!("\nAccounts:");
                 for (i, wallet) in wallets.iter().enumerate() {
                     println!("- Account {i}:");
-                    println!("Address:     {}", wallet.address().to_alloy());
+                    println!("Address:     {}", wallet.address());
                     println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
                 }
             }
@@ -271,13 +264,12 @@ impl WalletSubcommands {
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                match signature.verify(Self::hex_str_to_bytes(&message)?, address.to_ethers()) {
-                    Ok(_) => {
-                        println!("Validation succeeded. Address {address} signed this message.")
-                    }
-                    Err(_) => {
-                        println!("Validation failed. Address {address} did not sign this message.")
-                    }
+                let recovered_address =
+                    signature.recover_address_from_prehash(&B256::from_str(&message)?)?;
+                if recovered_address == address {
+                    println!("Validation succeeded. Address {address} signed this message.");
+                } else {
+                    println!("Validation failed. Address {address} did not sign this message.");
                 }
             }
             WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
@@ -374,7 +366,7 @@ flag to set your key via:
                     .derivation_path(&format!("{derivation_path}{index}"))?
                     .build()?;
                 println!("- Account:");
-                println!("Address:     {}", wallet.address().to_alloy());
+                println!("Address:     {}", wallet.address());
                 println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
             }
         };

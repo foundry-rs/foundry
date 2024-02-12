@@ -1,5 +1,4 @@
-use alloy_primitives::{Sign, I256, U256};
-use alloy_primitives::utils::ParseUnits;
+use alloy_primitives::{utils::ParseUnits, Sign, I256, U256};
 use eyre::Result;
 use std::{
     convert::Infallible,
