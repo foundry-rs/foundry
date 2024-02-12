@@ -184,9 +184,7 @@ impl ExtTester {
                         break;
                     }
                 }
-                Err(e) => {
-                    eprintln!("\n\n{install_cmd:?}: {e}")
-                }
+                Err(e) => eprintln!("\n\n{install_cmd:?}: {e}"),
             }
         }
 

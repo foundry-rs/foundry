@@ -10,6 +10,8 @@ fn solmate() {
 fn prb_math() {
     ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60")
         .install_command(&["bun", "install", "--prefer-offline"])
+        // Try npm if bun fails / is not installed
+        .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
@@ -18,6 +20,8 @@ fn prb_math() {
 fn prb_proxy() {
     ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06")
         .install_command(&["bun", "install", "--prefer-offline"])
+        // Try npm if bun fails / is not installed
+        .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
@@ -30,6 +34,8 @@ fn sablier_v2() {
         // run tests without optimizations
         .env("FOUNDRY_PROFILE", "lite")
         .install_command(&["bun", "install", "--prefer-offline"])
+        // Try npm if bun fails / is not installed
+        .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
