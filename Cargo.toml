@@ -124,6 +124,7 @@ foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
+foundry-wallets = { path = "crates/wallets" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
