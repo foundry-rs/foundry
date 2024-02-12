@@ -8,13 +8,17 @@ fn solmate() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
-    ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60").run();
+    ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60")
+        .install_command(&["bun", "install", "--prefer-offline"])
+        .run();
 }
 
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_proxy() {
-    ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06").run();
+    ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06")
+        .install_command(&["bun", "install", "--prefer-offline"])
+        .run();
 }
 
 #[test]
@@ -25,6 +29,7 @@ fn sablier_v2() {
         .args(["--nmc", "Fork"])
         // run tests without optimizations
         .env("FOUNDRY_PROFILE", "lite")
+        .install_command(&["bun", "install", "--prefer-offline"])
         .run();
 }
 
@@ -49,7 +54,9 @@ fn stringutils() {
 
 #[test]
 fn lootloose() {
-    ExtTester::new("gakonst", "lootloose", "7b639efe97836155a6a6fc626bf1018d4f8b2495").run();
+    ExtTester::new("gakonst", "lootloose", "7b639efe97836155a6a6fc626bf1018d4f8b2495")
+        .install_command(&["make", "install"])
+        .run();
 }
 
 #[test]
@@ -93,7 +100,7 @@ fn gunilev() {
 }
 
 #[test]
-fn convex() {
+fn convex_shutdown_simulation() {
     ExtTester::new(
         "mds1",
         "convex-shutdown-simulation",
