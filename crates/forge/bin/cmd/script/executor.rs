@@ -14,7 +14,6 @@ use forge::{
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{provider::ethers::RpcUrl, shell};
-use foundry_compilers::artifacts::CompactContractBytecode;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -25,21 +24,17 @@ impl ScriptArgs {
     pub async fn execute(
         &self,
         script_config: &mut ScriptConfig,
-        contract: CompactContractBytecode,
+        contract: ContractBytecodeSome,
         sender: Address,
         predeploy_libraries: &[Bytes],
     ) -> Result<ScriptResult> {
         trace!(target: "script", "start executing script");
 
-        let CompactContractBytecode { abi, bytecode, .. } = contract;
+        let ContractBytecodeSome { abi, bytecode, .. } = contract;
 
-        let abi = abi.ok_or_else(|| eyre::eyre!("no ABI found for contract"))?;
-        let bytecode = bytecode
-            .ok_or_else(|| eyre::eyre!("no bytecode found for contract"))?
-            .into_bytes()
-            .ok_or_else(|| {
-                eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
-            })?;
+        let bytecode = bytecode.into_bytes().ok_or_else(|| {
+            eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
+        })?;
 
         ensure_clean_constructor(&abi)?;
 
