@@ -60,7 +60,7 @@ pub struct ExtTester {
     pub fork_block: Option<u64>,
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
-    pub install_command: Vec<String>,
+    pub install_commands: Vec<Vec<String>>,
 }
 
 impl ExtTester {
@@ -74,7 +74,7 @@ impl ExtTester {
             fork_block: None,
             args: vec![],
             envs: vec![],
-            install_command: vec![],
+            install_commands: vec![],
         }
     }
 
@@ -128,7 +128,7 @@ impl ExtTester {
     /// Note that the command is run in the project's root directory, and it won't fail the test if
     /// it fails.
     pub fn install_command(mut self, command: &[&str]) -> Self {
-        self.install_command.extend(command.iter().map(|s| s.to_string()));
+        self.install_commands.push(command.iter().map(|s| s.to_string()).collect());
         self
     }
 
@@ -173,16 +173,19 @@ impl ExtTester {
         }
 
         // Run installation command.
-        if !self.install_command.is_empty() {
-            let mut install_cmd = Command::new(&self.install_command[0]);
-            install_cmd.args(&self.install_command[1..]).current_dir(root);
+        for install_command in &self.install_commands {
+            let mut install_cmd = Command::new(&install_command[0]);
+            install_cmd.args(&install_command[1..]).current_dir(root);
             eprintln!("cd {root}; {install_cmd:?}");
             match install_cmd.status() {
                 Ok(s) => {
                     eprintln!("\n\n{install_cmd:?}: {s}");
+                    if s.success() {
+                        break;
+                    }
                 }
                 Err(e) => {
-                    eprintln!("\n\n{install_cmd:?}: {e}");
+                    eprintln!("\n\n{install_cmd:?}: {e}")
                 }
             }
         }
