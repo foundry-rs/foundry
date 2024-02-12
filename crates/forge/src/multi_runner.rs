@@ -10,7 +10,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::{OptionExt, Result};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
-    artifacts::CompactContractBytecode, contracts::ArtifactContracts, Artifact, ArtifactId,
+    artifacts::CompactContractBytecode, Artifact, ArtifactId,
     ArtifactOutput, ProjectCompileOutput,
 };
 use foundry_evm::{
@@ -282,7 +282,7 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        let artifact_contracts = ArtifactContracts::from_iter(contracts.clone());
+        let artifact_contracts = contracts.iter().cloned().collect();
 
         let linker = Linker::new(root.as_ref(), artifact_contracts);
 
