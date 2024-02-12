@@ -10,8 +10,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::{OptionExt, Result};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
-    artifacts::CompactContractBytecode, Artifact, ArtifactId,
-    ArtifactOutput, ProjectCompileOutput,
+    artifacts::CompactContractBytecode, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
 };
 use foundry_evm::{
     backend::Backend,
