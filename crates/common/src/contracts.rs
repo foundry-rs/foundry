@@ -1,7 +1,7 @@
 //! Commonly used contract types and functions.
 
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{hex, Address, B256};
+use alloy_primitives::{hex, Address, Selector, B256};
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
     ArtifactId, ProjectPathsConfig,
@@ -43,36 +43,34 @@ impl ContractsByArtifact {
         Ok(contracts.first().cloned())
     }
 
-    /// Flattens a group of contracts into maps of all events and functions
-    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<B256, Event>, JsonAbi) {
-        let flattened_funcs: BTreeMap<[u8; 4], Function> = self
-            .iter()
-            .flat_map(|(_name, (abi, _code))| {
-                abi.functions()
-                    .map(|func| (func.selector().into(), func.clone()))
-                    .collect::<BTreeMap<[u8; 4], Function>>()
-            })
-            .collect();
+    /// Flattens the contracts into functions, events and errors.
+    pub fn flatten(&self) -> (BTreeMap<Selector, Function>, BTreeMap<B256, Event>, JsonAbi) {
+        let mut funcs = BTreeMap::new();
+        let mut events = BTreeMap::new();
+        let mut errors_abi = JsonAbi::new();
+        for (_name, (abi, _code)) in self.iter() {
+            for func in abi.functions() {
+                funcs.insert(func.selector(), func.clone());
+            }
+            for event in abi.events() {
+                events.insert(event.selector(), event.clone());
+            }
+            for error in abi.errors() {
+                errors_abi.errors.entry(error.name.clone()).or_default().push(error.clone());
+            }
+        }
+        (funcs, events, errors_abi)
+    }
 
-        let flattened_events: BTreeMap<B256, Event> = self
-            .iter()
-            .flat_map(|(_name, (abi, _code))| {
-                abi.events()
-                    .map(|event| (event.selector(), event.clone()))
-                    .collect::<BTreeMap<B256, Event>>()
-            })
-            .collect();
-
-        // We need this for better revert decoding, and want it in abi form
-        let mut errors_abi = JsonAbi::default();
-        self.iter().for_each(|(_name, (abi, _code))| {
-            abi.errors().for_each(|error| {
-                let entry =
-                    errors_abi.errors.entry(error.name.clone()).or_insert_with(Default::default);
-                entry.push(error.clone());
-            });
-        });
-        (flattened_funcs, flattened_events, errors_abi)
+    /// Flattens the errors into a single JsonAbi.
+    pub fn flatten_errors(&self) -> JsonAbi {
+        let mut errors_abi = JsonAbi::new();
+        for (_name, (abi, _code)) in self.iter() {
+            for error in abi.errors() {
+                errors_abi.errors.entry(error.name.clone()).or_default().push(error.clone());
+            }
+        }
+        errors_abi
     }
 }
 

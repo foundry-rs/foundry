@@ -316,7 +316,7 @@ impl MultiContractRunnerBuilder {
             );
         }
 
-        let execution_info = known_contracts.flatten();
+        let errors = known_contracts.flatten_errors();
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
@@ -324,7 +324,7 @@ impl MultiContractRunnerBuilder {
             env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
             sender: self.sender,
-            errors: Some(execution_info.2),
+            errors: Some(errors),
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default().into(),
