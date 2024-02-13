@@ -284,11 +284,7 @@ impl MultiForkHandler {
         for sender in additional_senders {
             let next_fork_id = fork.inc_senders(fork_id.clone());
             self.forks.insert(next_fork_id.clone(), fork.clone());
-            let _ = sender.send(Ok((
-                next_fork_id.clone(),
-                fork.backend.clone(),
-                fork.opts.env.clone(),
-            )));
+            let _ = sender.send(Ok((next_fork_id, fork.backend.clone(), fork.opts.env.clone())));
         }
     }
 
@@ -360,7 +356,7 @@ impl Future for MultiForkHandler {
                             Ok((fork_id, fork, handler)) => {
                                 if let Some(fork) = pin.forks.get(&fork_id).cloned() {
                                     pin.insert_new_fork(
-                                        fork.inc_senders(fork_id.clone()),
+                                        fork.inc_senders(fork_id),
                                         fork,
                                         sender,
                                         additional_senders,
