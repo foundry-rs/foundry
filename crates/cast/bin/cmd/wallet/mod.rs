@@ -192,7 +192,7 @@ impl WalletSubcommands {
                     }
                 } else {
                     for _ in 0..number {
-                        let wallet = LocalWallet::random();
+                        let wallet = LocalWallet::random_with(&mut rng);
 
                         if let Some(json) = json_values.as_mut() {
                             json.push(json!({

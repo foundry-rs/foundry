@@ -1401,7 +1401,7 @@ impl SimpleCast {
 
         let padded = format!("{s:0<64}");
         // need to use the Debug implementation
-        Ok(format!("{}", B256::from_str(&padded)?))
+        Ok(padded.parse::<B256>()?.to_string())
     }
 
     /// Encodes string into bytes32 value
