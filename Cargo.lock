@@ -3295,7 +3295,6 @@ dependencies = [
  "hashbrown 0.14.3",
  "itertools 0.11.0",
  "once_cell",
- "ordered-float",
  "revm-inspectors",
  "serde",
  "tempfile",
@@ -5130,15 +5129,6 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
-
-[[package]]
-name = "ordered-float"
-version = "4.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a76df7075c7d4d01fdcb46c912dd17fba5b60c78ea480b475f2b6ab6f666584e"
-dependencies = [
- "num-traits",
-]
 
 [[package]]
 name = "overload"
