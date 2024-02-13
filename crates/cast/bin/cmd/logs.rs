@@ -1,3 +1,4 @@
+use alloy_rpc_types::BlockHashOrNumber;
 use cast::Cast;
 use clap::Parser;
 use ethers_core::{
@@ -5,13 +6,12 @@ use ethers_core::{
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
         Address, Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
     },
-    types::{
-        BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256, U256,
-    },
+    types::{BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256, U256},
 };
 use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
+use foundry_common::types::ToEthers;
 use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};
@@ -23,13 +23,13 @@ pub struct LogsArgs {
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
     #[clap(long)]
-    from_block: Option<BlockId>,
+    from_block: Option<BlockHashOrNumber>,
 
     /// The block height to stop query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
     #[clap(long)]
-    to_block: Option<BlockId>,
+    to_block: Option<BlockHashOrNumber>,
 
     /// The contract address to filter on.
     #[clap(
@@ -91,8 +91,8 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = cast.convert_block_number(from_block).await?;
-        let to_block = cast.convert_block_number(to_block).await?;
+        let from_block = cast.convert_block_number(from_block).await?.map(ToEthers::to_ethers);
+        let to_block = cast.convert_block_number(to_block).await?.map(ToEthers::to_ethers);
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 

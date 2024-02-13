@@ -89,8 +89,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::provider::ethers:
     get_provider_builder(config)?.build()
 }
 
-/// Returns a [RetryProvider](foundry_common::alloy::RetryProvider) instantiated using [Config]'s RPC
-pub fn get_alloy_provider(config: &Config) -> Result<foundry_common::provider::alloy::RetryProvider> {
+/// Returns a [RetryProvider](foundry_common::alloy::RetryProvider) instantiated using [Config]'s
+/// RPC
+pub fn get_alloy_provider(
+    config: &Config,
+) -> Result<foundry_common::provider::alloy::RetryProvider> {
     get_alloy_provider_builder(config)?.build()
 }
 
@@ -116,8 +119,9 @@ pub fn get_provider_builder(
     Ok(builder)
 }
 
-/// Returns a [ProviderBuilder](foundry_common::provider::alloy::ProviderBuilder) instantiated using [Config] values.
-/// 
+/// Returns a [ProviderBuilder](foundry_common::provider::alloy::ProviderBuilder) instantiated using
+/// [Config] values.
+///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_alloy_provider_builder(
     config: &Config,

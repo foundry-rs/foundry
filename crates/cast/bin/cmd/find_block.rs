@@ -25,7 +25,7 @@ impl FindBlockArgs {
         let ts_target = U256::from(timestamp);
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
-            let alloy_provider = utils::get_alloy_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
 
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider, alloy_provider);

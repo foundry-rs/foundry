@@ -200,7 +200,9 @@ async fn main() -> Result<()> {
             let alloy_provider = utils::get_alloy_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider, alloy_provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
+                Cast::new(provider, alloy_provider)
+                    .age(block.unwrap_or(BlockId::Number(Latest)))
+                    .await?
             );
         }
         CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
@@ -232,7 +234,10 @@ async fn main() -> Result<()> {
                         )
                         .await?;
                     let builder_output = builder.build();
-                    println!("{}", Cast::new(provider, alloy_provider).call(builder_output, block).await?);
+                    println!(
+                        "{}",
+                        Cast::new(provider, alloy_provider).call(builder_output, block).await?
+                    );
                 }
                 None => {
                     let value = Cast::new(provider, alloy_provider).balance(who, block).await?;
@@ -250,7 +255,9 @@ async fn main() -> Result<()> {
             let alloy_provider = utils::get_alloy_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider, alloy_provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
+                Cast::new(provider, alloy_provider)
+                    .base_fee(block.unwrap_or(BlockId::Number(Latest)))
+                    .await?
             );
         }
         CastSubcommand::Block { block, full, field, json, rpc } => {
@@ -291,7 +298,10 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
-            println!("{}", Cast::new(provider, alloy_provider).code(who, block, disassemble).await?);
+            println!(
+                "{}",
+                Cast::new(provider, alloy_provider).code(who, block, disassemble).await?
+            );
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
@@ -305,7 +315,8 @@ async fn main() -> Result<()> {
             let alloy_provider = utils::get_alloy_provider(&config)?;
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
-            let computed = Cast::new(&provider, alloy_provider).compute_address(address, nonce).await?;
+            let computed =
+                Cast::new(&provider, alloy_provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", computed.to_checksum(None));
         }
         CastSubcommand::Disassemble { bytecode } => {
@@ -413,7 +424,10 @@ async fn main() -> Result<()> {
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            println!("{}", Cast::new(&provider, alloy_provider).transaction(tx_hash, field, raw, json).await?)
+            println!(
+                "{}",
+                Cast::new(&provider, alloy_provider).transaction(tx_hash, field, raw, json).await?
+            )
         }
 
         // 4Byte

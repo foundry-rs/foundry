@@ -4,14 +4,14 @@ use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U128, U256, U64};
 use alloy_rpc_types::{
     other::OtherFields,
     request::{TransactionInput, TransactionRequest as CallRequest},
-    AccessList, AccessListItem, Signature, Transaction,
+    AccessList, AccessListItem, BlockNumberOrTag, Signature, Transaction,
 };
 use alloy_signer::{LocalWallet, Signer};
 use ethers_core::types::{
     transaction::eip2930::{
         AccessList as EthersAccessList, AccessListItem as EthersAccessListItem,
     },
-    Bloom as EthersBloom, Bytes as EthersBytes, TransactionRequest, H160, H256, H64,
+    BlockNumber, Bloom as EthersBloom, Bytes as EthersBytes, TransactionRequest, H160, H256, H64,
     I256 as EthersI256, U256 as EthersU256, U64 as EthersU64,
 };
 
@@ -258,5 +258,21 @@ impl ToEthers for Bytes {
     #[inline(always)]
     fn to_ethers(self) -> Self::To {
         EthersBytes(self.0)
+    }
+}
+
+impl ToEthers for BlockNumberOrTag {
+    type To = BlockNumber;
+
+    #[inline(always)]
+    fn to_ethers(self) -> Self::To {
+        match self {
+            BlockNumberOrTag::Number(n) => BlockNumber::Number(n.into()),
+            BlockNumberOrTag::Earliest => BlockNumber::Earliest,
+            BlockNumberOrTag::Latest => BlockNumber::Latest,
+            BlockNumberOrTag::Pending => BlockNumber::Pending,
+            BlockNumberOrTag::Finalized => BlockNumber::Finalized,
+            BlockNumberOrTag::Safe => BlockNumber::Safe,
+        }
     }
 }

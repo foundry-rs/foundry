@@ -65,14 +65,31 @@ impl AccessListArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, alloy_provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
-            .await?;
+        access_list(
+            &provider,
+            alloy_provider,
+            sender.to_ethers(),
+            to,
+            sig,
+            args,
+            data,
+            tx,
+            chain,
+            block,
+            to_json,
+        )
+        .await?;
         Ok(())
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<M: Middleware, P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn access_list<
+    M: Middleware,
+    P: TempProvider,
+    F: Into<NameOrAddress>,
+    T: Into<NameOrAddress>,
+>(
     provider: M,
     alloy_provider: P,
     from: F,

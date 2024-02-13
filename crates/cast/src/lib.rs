@@ -2,16 +2,17 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
-    Address, Bytes, B256, I256, U256,
+    Address, Bytes, B256, I256, U256, U64,
 };
-use alloy_rlp::Decodable;
 use alloy_providers::provider::TempProvider;
+use alloy_rlp::Decodable;
+use alloy_rpc_types::{BlockHashOrNumber, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
     types::{
-        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, NameOrAddress,
-        Signature, H160, H256, U64,
+        transaction::eip2718::TypedTransaction, BlockId, Filter, NameOrAddress, Signature, H160,
+        H256,
     },
     utils::rlp,
 };
@@ -465,15 +466,15 @@ where
     }
 
     pub async fn chain_id(&self) -> Result<U256> {
-        Ok(self.provider.get_chainid().await?.to_alloy())
+        Ok(U256::from(self.alloy_provider.get_chain_id().await?))
     }
 
     pub async fn block_number(&self) -> Result<U64> {
-        Ok(self.provider.get_block_number().await?)
+        Ok(U64::from(self.alloy_provider.get_block_number().await?))
     }
 
     pub async fn gas_price(&self) -> Result<U256> {
-        Ok(self.provider.get_gas_price().await?.to_alloy())
+        Ok(self.alloy_provider.get_gas_price().await?)
     }
 
     /// # Example
@@ -761,9 +762,10 @@ where
     /// ```
     pub async fn rpc<T>(&self, method: &str, params: T) -> Result<String>
     where
-        T: std::fmt::Debug + serde::Serialize + Send + Sync,
+        T: std::fmt::Debug + serde::Serialize + Send + Sync + Clone,
     {
-        let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
+        let method = Box::new(method.to_string()).leak();
+        let res = self.alloy_provider.raw_request::<T, serde_json::Value>(method, params).await?;
         Ok(serde_json::to_string(&res)?)
     }
 
@@ -848,14 +850,18 @@ where
     /// ```
     pub async fn convert_block_number(
         &self,
-        block: Option<BlockId>,
-    ) -> Result<Option<BlockNumber>, eyre::Error> {
+        block: Option<BlockHashOrNumber>,
+    ) -> Result<Option<BlockNumberOrTag>, eyre::Error> {
         match block {
             Some(block) => match block {
-                BlockId::Number(block_number) => Ok(Some(block_number)),
-                BlockId::Hash(hash) => {
-                    let block = self.provider.get_block(hash).await?;
-                    Ok(block.map(|block| block.number.unwrap()).map(BlockNumber::from))
+                BlockHashOrNumber::Number(block_number) => {
+                    Ok(Some(BlockNumberOrTag::Number(block_number)))
+                }
+                BlockHashOrNumber::Hash(hash) => {
+                    let block = self.alloy_provider.get_block_by_hash(hash, false).await?;
+                    Ok(block
+                        .map(|block| block.header.number.unwrap().to::<u64>())
+                        .map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
