@@ -160,7 +160,7 @@ impl RunArgs {
                                 break;
                             }
 
-                            configure_tx_env(&mut env, &tx.clone());
+                            configure_tx_env(&mut env, &tx);
 
                             if let Some(to) = tx.to {
                                 trace!(tx=?tx.hash,?to, "executing previous call transaction");
@@ -195,7 +195,7 @@ impl RunArgs {
                         return Err(eyre::eyre!("Unexpectedly got block hashes"))
                     }
                     BlockTransactions::Uncle => {
-                        return Err(eyre::eyre!("Unexpectedly got block hashes"))
+                        return Err(eyre::eyre!("Unexpectedly got uncle block"))
                     }
                 }
             }
@@ -205,7 +205,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx.clone());
+            configure_tx_env(&mut env, &tx);
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
