@@ -3,7 +3,8 @@ use alloy_primitives::Bytes;
 
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
-use eyre::Result;
+use eyre::{OptionExt, Result};
+use forge::link::Linker;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{
     contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
@@ -51,11 +52,10 @@ impl ScriptArgs {
         );
 
         let BuildOutput {
-            project,
             contract,
             mut highlevel_known_contracts,
             predeploy_libraries,
-            known_contracts: default_known_contracts,
+            linker,
             sources,
             mut libraries,
             ..
@@ -70,16 +70,7 @@ impl ScriptArgs {
             self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
         if self.resume || (self.verify && !self.broadcast) {
-            return self
-                .resume_deployment(
-                    script_config,
-                    project,
-                    default_known_contracts,
-                    libraries,
-                    result,
-                    verify,
-                )
-                .await;
+            return self.resume_deployment(script_config, linker, libraries, result, verify).await;
         }
 
         let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
@@ -96,13 +87,7 @@ impl ScriptArgs {
         }
 
         if let Some((new_traces, updated_libraries, updated_contracts)) = self
-            .maybe_prepare_libraries(
-                &mut script_config,
-                project,
-                default_known_contracts,
-                predeploy_libraries,
-                &mut result,
-            )
+            .maybe_prepare_libraries(&mut script_config, linker, predeploy_libraries, &mut result)
             .await?
         {
             decoder = new_traces;
@@ -128,8 +113,7 @@ impl ScriptArgs {
     async fn maybe_prepare_libraries(
         &mut self,
         script_config: &mut ScriptConfig,
-        project: Project,
-        default_known_contracts: ArtifactContracts,
+        linker: Linker,
         predeploy_libraries: Vec<Bytes>,
         result: &mut ScriptResult,
     ) -> Result<Option<NewSenderChanges>> {
@@ -139,15 +123,8 @@ impl ScriptArgs {
             &predeploy_libraries,
         )? {
             // We have a new sender, so we need to relink all the predeployed libraries.
-            let (libraries, highlevel_known_contracts) = self
-                .rerun_with_new_deployer(
-                    project,
-                    script_config,
-                    new_sender,
-                    result,
-                    default_known_contracts,
-                )
-                .await?;
+            let (libraries, highlevel_known_contracts) =
+                self.rerun_with_new_deployer(script_config, new_sender, result, linker).await?;
 
             // redo traces for the new addresses
             let new_traces = self.decode_traces(
@@ -184,8 +161,7 @@ impl ScriptArgs {
     async fn resume_deployment(
         &mut self,
         script_config: ScriptConfig,
-        project: Project,
-        default_known_contracts: ArtifactContracts,
+        linker: Linker,
         libraries: Libraries,
         result: ScriptResult,
         verify: VerifyBundle,
@@ -207,8 +183,7 @@ impl ScriptArgs {
         }
         self.resume_single_deployment(
             script_config,
-            project,
-            default_known_contracts,
+            linker,
             result,
             verify,
         )
@@ -222,8 +197,7 @@ impl ScriptArgs {
     async fn resume_single_deployment(
         &mut self,
         script_config: ScriptConfig,
-        project: Project,
-        default_known_contracts: ArtifactContracts,
+        linker: Linker,
         result: ScriptResult,
         mut verify: VerifyBundle,
     ) -> Result<()> {
@@ -272,16 +246,23 @@ impl ScriptArgs {
         }
 
         if self.verify {
+            let target = script_config.target_contract();
+            let libraries = Libraries::parse(&deployment_sequence.libraries)?
+                .with_stripped_file_prefixes(linker.root.as_path());
             // We might have predeployed libraries from the broadcasting, so we need to
             // relink the contracts with them, since their mapping is
             // not included in the solc cache files.
-            let BuildOutput { highlevel_known_contracts, .. } = self.link(
-                project,
-                default_known_contracts,
-                Libraries::parse(&deployment_sequence.libraries)?,
+            let (highlevel_known_contracts, _, predeploy_libraries) = self.link_script_target(
+                &linker,
+                libraries,
                 script_config.config.sender, // irrelevant, since we're not creating any
                 0,                           // irrelevant, since we're not creating any
+                target.clone(),
             )?;
+
+            if !predeploy_libraries.is_empty() {
+                eyre::bail!("Incomplete set of libraries in deployment artifact.");
+            }
 
             verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
 
@@ -294,11 +275,10 @@ impl ScriptArgs {
     /// Reruns the execution with a new sender and relinks the libraries accordingly
     async fn rerun_with_new_deployer(
         &mut self,
-        project: Project,
         script_config: &mut ScriptConfig,
         new_sender: Address,
         first_run_result: &mut ScriptResult,
-        default_known_contracts: ArtifactContracts,
+        linker: Linker,
     ) -> Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
@@ -311,16 +291,17 @@ impl ScriptArgs {
         )
         .await?;
         script_config.sender_nonce = nonce;
+        let target = script_config.target_contract();
 
-        let BuildOutput {
-            libraries, contract, highlevel_known_contracts, predeploy_libraries, ..
-        } = self.link(
-            project,
-            default_known_contracts,
-            script_config.config.parsed_libraries()?,
-            new_sender,
-            nonce,
-        )?;
+        let libraries = script_config.config.solc_settings()?.libraries;
+
+        let (highlevel_known_contracts, libraries, predeploy_libraries) =
+            self.link_script_target(&linker, libraries, new_sender, nonce, target.clone())?;
+
+        let contract = highlevel_known_contracts
+            .get(target)
+            .ok_or_eyre("target not found in linked artifacts")?
+            .clone();
 
         let mut txs = self.create_deploy_transactions(
             new_sender,

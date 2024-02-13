@@ -125,12 +125,9 @@ pub fn flatten_contracts(
         contracts
             .iter()
             .filter_map(|(id, c)| {
-                let bytecode = if deployed_code {
-                    c.deployed_bytecode.clone().into_bytes()
-                } else {
-                    c.bytecode.clone().into_bytes()
-                };
-                bytecode.map(|bytecode| (id.clone(), (c.abi.clone(), bytecode.into())))
+                let bytecode =
+                    if deployed_code { c.deployed_bytecode.bytes() } else { c.bytecode.bytes() };
+                bytecode.cloned().map(|code| (id.clone(), (c.abi.clone(), code.into())))
             })
             .collect(),
     )

@@ -1,7 +1,7 @@
 use super::*;
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, ContextCompat, Result};
-use forge::link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency};
+use forge::link::{LinkOutput, Linker};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
@@ -9,13 +9,13 @@ use foundry_common::{
     fs,
 };
 use foundry_compilers::{
-    artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome, Libraries},
+    artifacts::{ContractBytecode, ContractBytecodeSome, Libraries},
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
     ArtifactId, Project, ProjectCompileOutput,
 };
-use std::{collections::BTreeMap, str::FromStr};
+use std::str::FromStr;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
@@ -56,32 +56,39 @@ impl ScriptArgs {
             })
             .collect::<Result<ArtifactContracts>>()?;
 
-        let mut output = self.link(
-            project,
-            contracts,
-            script_config.config.parsed_libraries()?,
+        let target = self.find_target(&project, &contracts)?.clone();
+        script_config.target_contract = Some(target.clone());
+
+        let libraries = script_config.config.solc_settings()?.libraries;
+        let linker = Linker::new(project.root(), contracts);
+
+        let (highlevel_known_contracts, libraries, predeploy_libraries) = self.link_script_target(
+            &linker,
+            libraries,
             script_config.evm_opts.sender,
             script_config.sender_nonce,
+            target.clone(),
         )?;
 
-        output.sources = sources;
-        script_config.target_contract = Some(output.target.clone());
+        let contract = highlevel_known_contracts.get(&target).unwrap();
 
-        Ok(output)
+        Ok(BuildOutput {
+            project,
+            linker,
+            contract: contract.clone(),
+            highlevel_known_contracts,
+            libraries,
+            predeploy_libraries,
+            sources,
+        })
     }
 
-    pub fn link(
+    /// Tries to find artifact for the target script contract.
+    pub fn find_target<'a>(
         &self,
-        project: Project,
-        contracts: ArtifactContracts,
-        libraries_addresses: Libraries,
-        sender: Address,
-        nonce: u64,
-    ) -> Result<BuildOutput> {
-        let mut run_dependencies = vec![];
-        let mut contract = CompactContractBytecode::default();
-        let mut highlevel_known_contracts = BTreeMap::new();
-
+        project: &Project,
+        contracts: &'a ArtifactContracts,
+    ) -> Result<&'a ArtifactId> {
         let mut target_fname = dunce::canonicalize(&self.path)
             .wrap_err("Couldn't convert contract path to absolute path.")?
             .strip_prefix(project.root())
@@ -97,114 +104,60 @@ impl ScriptArgs {
             true
         };
 
-        let mut extra_info = ExtraLinkingInfo {
-            no_target_name,
-            target_fname: target_fname.clone(),
-            contract: &mut contract,
-            dependencies: &mut run_dependencies,
-            matched: false,
-            target_id: None,
-        };
+        let mut target = None;
 
-        // link_with_nonce_or_address expects absolute paths
-        let mut libs = libraries_addresses.clone();
-        for (file, libraries) in libraries_addresses.libs.iter() {
-            if file.is_relative() {
-                let mut absolute_path = project.root().clone();
-                absolute_path.push(file);
-                libs.libs.insert(absolute_path, libraries.clone());
+        for (id, contract) in contracts.iter() {
+            if no_target_name {
+                // Match artifact source, and ignore interfaces
+                if id.source == std::path::Path::new(&target_fname) &&
+                    contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0)
+                {
+                    if target.is_some() {
+                        eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
+                    }
+                    target = Some(id);
+                }
+            } else {
+                let (path, name) =
+                    target_fname.rsplit_once(':').expect("The target specifier is malformed.");
+                let path = std::path::Path::new(path);
+                if path == id.source && name == id.name {
+                    target = Some(id);
+                }
             }
         }
 
-        link_with_nonce_or_address(
-            contracts.clone(),
-            &mut highlevel_known_contracts,
-            libs,
-            sender,
-            nonce,
-            &mut extra_info,
-            |post_link_input| {
-                let PostLinkInput {
-                    contract,
-                    known_contracts: highlevel_known_contracts,
-                    id,
-                    extra,
-                    dependencies,
-                } = post_link_input;
+        target.ok_or_else(|| eyre::eyre!("Could not find target contract: {}", target_fname))
+    }
 
-                fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<(String, Bytes)> {
-                    let mut filtered = Vec::new();
-                    let mut seen = HashSet::new();
-                    for dep in deps {
-                        if !seen.insert(dep.id.clone()) {
-                            continue
-                        }
-                        filtered.push((dep.id, dep.bytecode));
-                    }
+    /// Links script artifact with given libraries or library addresses computed from script sender
+    /// and nonce.
+    ///
+    /// Populates [BuildOutput] with linked target contract, libraries, bytes of libs that need to
+    /// be predeployed and `highlevel_known_contracts` - set of known fully linked contracts
+    pub fn link_script_target(
+        &self,
+        linker: &Linker,
+        libraries: Libraries,
+        sender: Address,
+        nonce: u64,
+        target: ArtifactId,
+    ) -> Result<(ArtifactContracts<ContractBytecodeSome>, Libraries, Vec<Bytes>)> {
+        let LinkOutput { libs_to_deploy, contracts, libraries } =
+            linker.link_with_nonce_or_address(libraries, sender, nonce, &target)?;
 
-                    filtered
-                }
+        // Collect all linked contracts with non-empty bytecode
+        let highlevel_known_contracts = contracts
+            .iter()
+            .filter_map(|(id, contract)| {
+                ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
+                    .ok()
+                    .map(|tc| (id.clone(), tc))
+            })
+            .filter(|(_, tc)| tc.bytecode.object.is_non_empty_bytecode())
+            .collect();
 
-                // if it's the target contract, grab the info
-                if extra.no_target_name {
-                    // Match artifact source, and ignore interfaces
-                    if id.source == std::path::Path::new(&extra.target_fname) &&
-                        contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0)
-                    {
-                        if extra.matched {
-                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
-                        }
-                        *extra.dependencies = unique_deps(dependencies);
-                        *extra.contract = contract.clone();
-                        extra.matched = true;
-                        extra.target_id = Some(id.clone());
-                    }
-                } else {
-                    let (path, name) = extra
-                        .target_fname
-                        .rsplit_once(':')
-                        .expect("The target specifier is malformed.");
-                    let path = std::path::Path::new(path);
-                    if path == id.source && name == id.name {
-                        *extra.dependencies = unique_deps(dependencies);
-                        *extra.contract = contract.clone();
-                        extra.matched = true;
-                        extra.target_id = Some(id.clone());
-                    }
-                }
-
-                if let Ok(tc) = ContractBytecode::from(contract).try_into() {
-                    highlevel_known_contracts.insert(id, tc);
-                }
-
-                Ok(())
-            },
-            project.root(),
-        )?;
-
-        let target = extra_info
-            .target_id
-            .ok_or_else(|| eyre::eyre!("Could not find target contract: {}", target_fname))?;
-
-        let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
-            run_dependencies.into_iter().unzip();
-
-        // Merge with user provided libraries
-        let mut new_libraries = Libraries::parse(&new_libraries)?;
-        for (file, libraries) in libraries_addresses.libs.into_iter() {
-            new_libraries.libs.entry(file).or_default().extend(libraries)
-        }
-
-        Ok(BuildOutput {
-            target,
-            contract,
-            known_contracts: contracts,
-            highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
-            predeploy_libraries,
-            sources: Default::default(),
-            project,
-            libraries: new_libraries,
-        })
+        Ok((highlevel_known_contracts, libraries, libs_to_deploy))
     }
 
     pub fn get_project_and_output(
@@ -263,20 +216,10 @@ impl ScriptArgs {
     }
 }
 
-struct ExtraLinkingInfo<'a> {
-    no_target_name: bool,
-    target_fname: String,
-    contract: &'a mut CompactContractBytecode,
-    dependencies: &'a mut Vec<(String, Bytes)>,
-    matched: bool,
-    target_id: Option<ArtifactId>,
-}
-
 pub struct BuildOutput {
     pub project: Project,
-    pub target: ArtifactId,
-    pub contract: CompactContractBytecode,
-    pub known_contracts: ArtifactContracts,
+    pub contract: ContractBytecodeSome,
+    pub linker: Linker,
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<Bytes>,

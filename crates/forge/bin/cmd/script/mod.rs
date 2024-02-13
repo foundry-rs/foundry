@@ -31,7 +31,7 @@ use foundry_common::{
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
     contracts::ArtifactContracts,
-    ArtifactId, Project,
+    ArtifactId,
 };
 use foundry_config::{
     figment,
