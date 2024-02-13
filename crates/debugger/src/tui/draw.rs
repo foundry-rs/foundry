@@ -1,6 +1,6 @@
 //! TUI draw implementation.
 
-use super::context::DebuggerContext;
+use super::context::{ActiveBuffer, BufferReadAccess, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::sourcemap::SourceElement;
@@ -77,7 +77,7 @@ impl DebuggerContext<'_> {
     /// |-----------------------------|
     /// |            stack            |
     /// |-----------------------------|
-    /// |             mem             |
+    /// |             buf             |
     /// |-----------------------------|
     /// |                             |
     /// |             src             |
@@ -120,7 +120,7 @@ impl DebuggerContext<'_> {
         self.draw_src(f, src_pane);
         self.draw_op_list(f, op_pane);
         self.draw_stack(f, stack_pane);
-        self.draw_memory(f, memory_pane);
+        self.draw_buffer(f, memory_pane);
     }
 
     /// Draws the layout in horizontal mode.
@@ -130,7 +130,7 @@ impl DebuggerContext<'_> {
     /// |        op       |   stack   |
     /// |-----------------|-----------|
     /// |                 |           |
-    /// |       src       |    mem    |
+    /// |       src       |    buf    |
     /// |                 |           |
     /// |-----------------|-----------|
     /// ```
@@ -180,12 +180,12 @@ impl DebuggerContext<'_> {
         self.draw_src(f, src_pane);
         self.draw_op_list(f, op_pane);
         self.draw_stack(f, stack_pane);
-        self.draw_memory(f, memory_pane);
+        self.draw_buffer(f, memory_pane);
     }
 
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end";
-        let l2 = "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help";
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [b]: cycle memory/calldata/returndata buffers";
+        let l2 = "[t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         let lines =
             vec![Line::from(Span::styled(l1, dimmed)), Line::from(Span::styled(l2, dimmed))];
@@ -500,11 +500,15 @@ impl DebuggerContext<'_> {
         f.render_widget(paragraph, area);
     }
 
-    fn draw_memory(&self, f: &mut Frame<'_>, area: Rect) {
+    fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
-        let memory = &step.memory;
+        let buf = match self.active_buffer {
+            ActiveBuffer::MEMORY => &step.memory,
+            ActiveBuffer::CALLDATA => &step.calldata,
+            ActiveBuffer::RETURNDATA => &step.returndata,
+        };
 
-        let min_len = hex_digits(memory.len());
+        let min_len = hex_digits(buf.len());
 
         // Color memory region based on read/write.
         let mut offset = None;
@@ -513,13 +517,14 @@ impl DebuggerContext<'_> {
         if let Instruction::OpCode(op) = step.instruction {
             let stack_len = step.stack.len();
             if stack_len > 0 {
-                let (read_offset, read_size, write_offset, write_size) =
-                    get_memory_access(op, &step.stack);
-                if read_offset.is_some() {
+                let (read_buffer_accessed, read_offset, read_size, write_offset, write_size) =
+                    get_buffer_access(op, &step.stack);
+                if read_offset.is_some() && self.active_buffer.compare(&read_buffer_accessed) {
                     offset = read_offset;
                     size = read_size;
                     color = Some(Color::Cyan);
-                } else if write_offset.is_some() {
+                } else if write_offset.is_some() && self.active_buffer == ActiveBuffer::MEMORY {
+                    // memory is the only volatile buffer, so hardcode memory check
                     offset = write_offset;
                     size = write_size;
                     color = Some(Color::Red);
@@ -532,8 +537,9 @@ impl DebuggerContext<'_> {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
             if let Instruction::OpCode(op) = prev_step.instruction {
-                let (_, _, write_offset, write_size) = get_memory_access(op, &prev_step.stack);
-                if write_offset.is_some() {
+                let (_, _, _, write_offset, write_size) = get_buffer_access(op, &prev_step.stack);
+                if write_offset.is_some() && self.active_buffer == ActiveBuffer::MEMORY {
+                    // memory is the only volatile buffer, so hardcode memory check
                     offset = write_offset;
                     size = write_size;
                     color = Some(Color::Green);
@@ -542,24 +548,24 @@ impl DebuggerContext<'_> {
         }
 
         let height = area.height as usize;
-        let end_line = self.draw_memory.current_mem_startline + height;
+        let end_line = self.draw_memory.current_buf_startline + height;
 
-        let text: Vec<Line> = memory
+        let text: Vec<Line> = buf
             .chunks(32)
             .enumerate()
-            .skip(self.draw_memory.current_mem_startline)
+            .skip(self.draw_memory.current_buf_startline)
             .take_while(|(i, _)| *i < end_line)
-            .map(|(i, mem_word)| {
+            .map(|(i, buf_word)| {
                 let mut spans = Vec::with_capacity(1 + 32 * 2 + 1 + 32 / 4 + 1);
 
-                // Memory index.
+                // Buffer index.
                 spans.push(Span::styled(
                     format!("{:0min_len$x}| ", i * 32),
                     Style::new().fg(Color::White),
                 ));
 
                 // Word hex bytes.
-                hex_bytes_spans(mem_word, &mut spans, |j, _| {
+                hex_bytes_spans(buf_word, &mut spans, |j, _| {
                     let mut byte_color = Color::White;
                     if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
                         let idx = i * 32 + j;
@@ -573,9 +579,9 @@ impl DebuggerContext<'_> {
                     Style::new().fg(byte_color)
                 });
 
-                if self.mem_utf {
+                if self.buf_utf {
                     spans.push(Span::raw("|"));
-                    for utf in mem_word.chunks(4) {
+                    for utf in buf_word.chunks(4) {
                         if let Ok(utf_str) = std::str::from_utf8(utf) {
                             spans.push(Span::raw(utf_str.replace('\0', ".")));
                         } else {
@@ -590,7 +596,7 @@ impl DebuggerContext<'_> {
             })
             .collect();
 
-        let title = format!("Memory (max expansion: {} bytes)", memory.len());
+        let title = self.active_buffer.title(buf.len());
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
@@ -628,30 +634,37 @@ impl<'a> SourceLines<'a> {
     }
 }
 
-/// The memory_access variable stores the index on the stack that indicates the memory
+/// The memory_access variable stores the index on the stack that indicates the buffer
 /// offset/size accessed by the given opcode:
-///   (read memory offset, read memory size, write memory offset, write memory size)
+///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
 ///   >= 1: the stack index
 ///   0: no memory access
 ///   -1: a fixed size of 32 bytes
 ///   -2: a fixed size of 1 byte
-/// The return value is a tuple about accessed memory region by the given opcode:
-///   (read memory offset, read memory size, write memory offset, write memory size)
-fn get_memory_access(
+/// The return value is a tuple about accessed buffer region by the given opcode:
+///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
+fn get_buffer_access(
     op: u8,
     stack: &[U256],
-) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
-    let memory_access = match op {
-        opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => (1, 2, 0, 0),
-        opcode::CALLDATACOPY | opcode::CODECOPY | opcode::RETURNDATACOPY => (0, 0, 1, 3),
-        opcode::EXTCODECOPY => (0, 0, 2, 4),
-        opcode::MLOAD => (1, -1, 0, 0),
-        opcode::MSTORE => (0, 0, 1, -1),
-        opcode::MSTORE8 => (0, 0, 1, -2),
-        opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => (1, 2, 0, 0),
-        opcode::CREATE | opcode::CREATE2 => (2, 3, 0, 0),
-        opcode::CALL | opcode::CALLCODE => (4, 5, 0, 0),
-        opcode::DELEGATECALL | opcode::STATICCALL => (3, 4, 0, 0),
+) -> (BufferReadAccess, Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+    let buffer_access = match op {
+        opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
+            (BufferReadAccess::MEMORY, 1, 2, 0, 0)
+        }
+        opcode::CALLDATACOPY => (BufferReadAccess::CALLDATA, 2, 3, 1, 3),
+        opcode::RETURNDATACOPY => (BufferReadAccess::RETURNDATA, 2, 3, 1, 3),
+        opcode::CALLDATALOAD => (BufferReadAccess::CALLDATA, 1, -1, 0, 0),
+        opcode::CODECOPY => (BufferReadAccess::MEMORY, 0, 0, 1, 3),
+        opcode::EXTCODECOPY => (BufferReadAccess::MEMORY, 0, 0, 2, 4),
+        opcode::MLOAD => (BufferReadAccess::MEMORY, 1, -1, 0, 0),
+        opcode::MSTORE => (BufferReadAccess::MEMORY, 0, 0, 1, -1),
+        opcode::MSTORE8 => (BufferReadAccess::MEMORY, 0, 0, 1, -2),
+        opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
+            (BufferReadAccess::MEMORY, 1, 2, 0, 0)
+        }
+        opcode::CREATE | opcode::CREATE2 => (BufferReadAccess::MEMORY, 2, 3, 0, 0),
+        opcode::CALL | opcode::CALLCODE => (BufferReadAccess::MEMORY, 4, 5, 0, 0),
+        opcode::DELEGATECALL | opcode::STATICCALL => (BufferReadAccess::MEMORY, 3, 4, 0, 0),
         _ => Default::default(),
     };
 
@@ -670,13 +683,14 @@ fn get_memory_access(
         _ => panic!("invalid stack index"),
     };
 
-    let (read_offset, read_size, write_offset, write_size) = (
-        get_size(memory_access.0),
-        get_size(memory_access.1),
-        get_size(memory_access.2),
-        get_size(memory_access.3),
+    let (read_buffer_accessed, read_offset, read_size, write_offset, write_size) = (
+        buffer_access.0,
+        get_size(buffer_access.1),
+        get_size(buffer_access.2),
+        get_size(buffer_access.3),
+        get_size(buffer_access.4),
     );
-    (read_offset, read_size, write_offset, write_size)
+    (read_buffer_accessed, read_offset, read_size, write_offset, write_size)
 }
 
 fn hex_bytes_spans(bytes: &[u8], spans: &mut Vec<Span<'_>>, f: impl Fn(usize, u8) -> Style) {
