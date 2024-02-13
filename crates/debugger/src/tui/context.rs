@@ -219,7 +219,6 @@ impl DebuggerContext<'_> {
             }
             KeyCode::Char('b') => {
                 self.active_buffer = self.active_buffer.next();
-                // todo: keep track of last scroll position?
                 self.draw_memory.current_buf_startline = 0;
             }
             // Go to top of file
