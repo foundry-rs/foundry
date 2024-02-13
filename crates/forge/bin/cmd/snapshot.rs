@@ -1,11 +1,8 @@
-use super::{
-    test,
-    test::{Test, TestOutcome},
-};
+use super::test;
 use alloy_primitives::U256;
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::result::TestKindReport;
+use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -175,7 +172,7 @@ impl SnapshotConfig {
         true
     }
 
-    fn apply(&self, outcome: TestOutcome) -> Vec<Test> {
+    fn apply(&self, outcome: TestOutcome) -> Vec<SuiteTestResult> {
         let mut tests = outcome
             .into_tests()
             .filter(|test| self.is_in_gas_range(test.gas_used()))
@@ -274,7 +271,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> Result<Vec<SnapshotEntry>> {
 
 /// Writes a series of tests to a snapshot file after sorting them
 fn write_to_snapshot_file(
-    tests: &[Test],
+    tests: &[SuiteTestResult],
     path: impl AsRef<Path>,
     _format: Option<Format>,
 ) -> Result<()> {
@@ -318,7 +315,7 @@ impl SnapshotDiff {
 /// Compares the set of tests with an existing snapshot
 ///
 /// Returns true all tests match
-fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
+fn check(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -352,7 +349,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) ->
 }
 
 /// Compare the set of tests with an existing snapshot
-fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> Result<()> {
+fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
