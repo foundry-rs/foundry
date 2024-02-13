@@ -503,9 +503,9 @@ impl DebuggerContext<'_> {
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
         let buf = match self.active_buffer {
-            ActiveBuffer::MEMORY => &step.memory,
-            ActiveBuffer::CALLDATA => &step.calldata,
-            ActiveBuffer::RETURNDATA => &step.returndata,
+            ActiveBuffer::Memory => &step.memory,
+            ActiveBuffer::Calldata => &step.calldata,
+            ActiveBuffer::Returndata => &step.returndata,
         };
 
         let min_len = hex_digits(buf.len());
@@ -523,7 +523,7 @@ impl DebuggerContext<'_> {
                     offset = read_offset;
                     size = read_size;
                     color = Some(Color::Cyan);
-                } else if write_offset.is_some() && self.active_buffer == ActiveBuffer::MEMORY {
+                } else if write_offset.is_some() && self.active_buffer == ActiveBuffer::Memory {
                     // memory is the only volatile buffer, so hardcode memory check
                     offset = write_offset;
                     size = write_size;
@@ -538,7 +538,7 @@ impl DebuggerContext<'_> {
             let prev_step = &self.debug_steps()[prev_step];
             if let Instruction::OpCode(op) = prev_step.instruction {
                 let (_, _, _, write_offset, write_size) = get_buffer_access(op, &prev_step.stack);
-                if write_offset.is_some() && self.active_buffer == ActiveBuffer::MEMORY {
+                if write_offset.is_some() && self.active_buffer == ActiveBuffer::Memory {
                     // memory is the only volatile buffer, so hardcode memory check
                     offset = write_offset;
                     size = write_size;
@@ -649,22 +649,22 @@ fn get_buffer_access(
 ) -> (BufferReadAccess, Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
-            (BufferReadAccess::MEMORY, 1, 2, 0, 0)
+            (BufferReadAccess::Memory, 1, 2, 0, 0)
         }
-        opcode::CALLDATACOPY => (BufferReadAccess::CALLDATA, 2, 3, 1, 3),
-        opcode::RETURNDATACOPY => (BufferReadAccess::RETURNDATA, 2, 3, 1, 3),
-        opcode::CALLDATALOAD => (BufferReadAccess::CALLDATA, 1, -1, 0, 0),
-        opcode::CODECOPY => (BufferReadAccess::MEMORY, 0, 0, 1, 3),
-        opcode::EXTCODECOPY => (BufferReadAccess::MEMORY, 0, 0, 2, 4),
-        opcode::MLOAD => (BufferReadAccess::MEMORY, 1, -1, 0, 0),
-        opcode::MSTORE => (BufferReadAccess::MEMORY, 0, 0, 1, -1),
-        opcode::MSTORE8 => (BufferReadAccess::MEMORY, 0, 0, 1, -2),
+        opcode::CALLDATACOPY => (BufferReadAccess::Calldata, 2, 3, 1, 3),
+        opcode::RETURNDATACOPY => (BufferReadAccess::Returndata, 2, 3, 1, 3),
+        opcode::CALLDATALOAD => (BufferReadAccess::Calldata, 1, -1, 0, 0),
+        opcode::CODECOPY => (BufferReadAccess::Memory, 0, 0, 1, 3),
+        opcode::EXTCODECOPY => (BufferReadAccess::Memory, 0, 0, 2, 4),
+        opcode::MLOAD => (BufferReadAccess::Memory, 1, -1, 0, 0),
+        opcode::MSTORE => (BufferReadAccess::Memory, 0, 0, 1, -1),
+        opcode::MSTORE8 => (BufferReadAccess::Memory, 0, 0, 1, -2),
         opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-            (BufferReadAccess::MEMORY, 1, 2, 0, 0)
+            (BufferReadAccess::Memory, 1, 2, 0, 0)
         }
-        opcode::CREATE | opcode::CREATE2 => (BufferReadAccess::MEMORY, 2, 3, 0, 0),
-        opcode::CALL | opcode::CALLCODE => (BufferReadAccess::MEMORY, 4, 5, 0, 0),
-        opcode::DELEGATECALL | opcode::STATICCALL => (BufferReadAccess::MEMORY, 3, 4, 0, 0),
+        opcode::CREATE | opcode::CREATE2 => (BufferReadAccess::Memory, 2, 3, 0, 0),
+        opcode::CALL | opcode::CALLCODE => (BufferReadAccess::Memory, 4, 5, 0, 0),
+        opcode::DELEGATECALL | opcode::STATICCALL => (BufferReadAccess::Memory, 3, 4, 0, 0),
         _ => Default::default(),
     };
 

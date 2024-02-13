@@ -21,46 +21,46 @@ pub(crate) struct DrawMemory {
 #[derive(Debug, PartialEq, Default)]
 pub(crate) enum ActiveBuffer {
     #[default]
-    MEMORY,
-    CALLDATA,
-    RETURNDATA,
+    Memory,
+    Calldata,
+    Returndata,
 }
 
 /// Used to note which buffer is being read from by an opcode, if any.
 #[derive(Debug, Default)]
 pub(crate) enum BufferReadAccess {
     #[default]
-    NONE,
-    MEMORY,
-    CALLDATA,
-    RETURNDATA,
+    None,
+    Memory,
+    Calldata,
+    Returndata,
 }
 
 impl ActiveBuffer {
     /// Helper to cycle through the active buffers.
     pub(crate) fn next(&self) -> Self {
         match self {
-            ActiveBuffer::MEMORY => ActiveBuffer::CALLDATA,
-            ActiveBuffer::CALLDATA => ActiveBuffer::RETURNDATA,
-            ActiveBuffer::RETURNDATA => ActiveBuffer::MEMORY,
+            ActiveBuffer::Memory => ActiveBuffer::Calldata,
+            ActiveBuffer::Calldata => ActiveBuffer::Returndata,
+            ActiveBuffer::Returndata => ActiveBuffer::Memory,
         }
     }
 
     /// Helper to compare the active buffer with a buffer read access.
     pub(crate) fn compare(&self, other: &BufferReadAccess) -> bool {
         match self {
-            ActiveBuffer::MEMORY => matches!(other, BufferReadAccess::MEMORY),
-            ActiveBuffer::CALLDATA => matches!(other, BufferReadAccess::CALLDATA),
-            ActiveBuffer::RETURNDATA => matches!(other, BufferReadAccess::RETURNDATA),
+            ActiveBuffer::Memory => matches!(other, BufferReadAccess::Memory),
+            ActiveBuffer::Calldata => matches!(other, BufferReadAccess::Calldata),
+            ActiveBuffer::Returndata => matches!(other, BufferReadAccess::Returndata),
         }
     }
 
     /// Helper to format the title of the active buffer pane
     pub(crate) fn title(&self, size: usize) -> String {
         match self {
-            ActiveBuffer::MEMORY => format!("Memory (max expansion: {} bytes)", size),
-            ActiveBuffer::CALLDATA => format!("Calldata (size: {} bytes)", size),
-            ActiveBuffer::RETURNDATA => format!("Returndata (size: {} bytes)", size),
+            ActiveBuffer::Memory => format!("Memory (max expansion: {} bytes)", size),
+            ActiveBuffer::Calldata => format!("Calldata (size: {} bytes)", size),
+            ActiveBuffer::Returndata => format!("Returndata (size: {} bytes)", size),
         }
     }
 }
@@ -98,7 +98,7 @@ impl<'a> DebuggerContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
-            active_buffer: ActiveBuffer::MEMORY,
+            active_buffer: ActiveBuffer::Memory,
         }
     }
 
