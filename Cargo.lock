@@ -3089,9 +3089,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7accbeb76f0a3f75a7fed9c4c008b956311f1c4edbd0b301716647c12f763f6c"
+checksum = "ba64504d49ebda9141869b2ba23db2d685ae4cf17bcddf5e61f0e4bc515ebb25"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3101,6 +3101,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
+ "itertools 0.12.1",
  "md-5 0.10.6",
  "memmap2 0.9.4",
  "once_cell",
