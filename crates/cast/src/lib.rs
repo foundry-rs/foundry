@@ -1400,7 +1400,6 @@ impl SimpleCast {
         }
 
         let padded = format!("{s:0<64}");
-        // need to use the Debug implementation
         Ok(padded.parse::<B256>()?.to_string())
     }
 
