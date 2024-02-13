@@ -143,60 +143,54 @@ impl RunArgs {
                 let pb = init_progress!(block.transactions, "tx");
                 pb.set_position(0);
 
-                match block.transactions {
-                    BlockTransactions::Full(txs) => {
-                        for (index, tx) in txs.into_iter().enumerate() {
-                            // System transactions such as on L2s don't contain any pricing info so
-                            // we skip them otherwise this would cause
-                            // reverts
-                            if is_known_system_sender(tx.from) ||
-                                tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                                    Some(SYSTEM_TRANSACTION_TYPE)
-                            {
-                                update_progress!(pb, index);
-                                continue;
-                            }
-                            if tx.hash == tx_hash {
-                                break;
-                            }
+                let BlockTransactions::Full(txs) = block.transactions else {
+                    return Err(eyre::eyre!("Could not get block txs"))
+                };
 
-                            configure_tx_env(&mut env, &tx);
+                for (index, tx) in txs.into_iter().enumerate() {
+                    // System transactions such as on L2s don't contain any pricing info so
+                    // we skip them otherwise this would cause
+                    // reverts
+                    if is_known_system_sender(tx.from) ||
+                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
+                            Some(SYSTEM_TRANSACTION_TYPE)
+                    {
+                        update_progress!(pb, index);
+                        continue;
+                    }
+                    if tx.hash == tx_hash {
+                        break;
+                    }
 
-                            if let Some(to) = tx.to {
-                                trace!(tx=?tx.hash,?to, "executing previous call transaction");
-                                executor.commit_tx_with_env(env.clone()).wrap_err_with(|| {
-                                    format!(
-                                        "Failed to execute transaction: {:?} in block {}",
-                                        tx.hash, env.block.number
-                                    )
-                                })?;
-                            } else {
-                                trace!(tx=?tx.hash, "executing previous create transaction");
-                                if let Err(error) = executor.deploy_with_env(env.clone(), None) {
-                                    match error {
-                                        // Reverted transactions should be skipped
-                                        EvmError::Execution(_) => (),
-                                        error => {
-                                            return Err(error).wrap_err_with(|| {
-                                                format!(
-                                                "Failed to deploy transaction: {:?} in block {}",
-                                                tx.hash, env.block.number
-                                            )
-                                            })
-                                        }
-                                    }
+                    configure_tx_env(&mut env, &tx);
+
+                    if let Some(to) = tx.to {
+                        trace!(tx=?tx.hash,?to, "executing previous call transaction");
+                        executor.commit_tx_with_env(env.clone()).wrap_err_with(|| {
+                            format!(
+                                "Failed to execute transaction: {:?} in block {}",
+                                tx.hash, env.block.number
+                            )
+                        })?;
+                    } else {
+                        trace!(tx=?tx.hash, "executing previous create transaction");
+                        if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                            match error {
+                                // Reverted transactions should be skipped
+                                EvmError::Execution(_) => (),
+                                error => {
+                                    return Err(error).wrap_err_with(|| {
+                                        format!(
+                                            "Failed to deploy transaction: {:?} in block {}",
+                                            tx.hash, env.block.number
+                                        )
+                                    })
                                 }
                             }
-
-                            update_progress!(pb, index);
                         }
                     }
-                    BlockTransactions::Hashes(_) => {
-                        return Err(eyre::eyre!("Unexpectedly got block hashes"))
-                    }
-                    BlockTransactions::Uncle => {
-                        return Err(eyre::eyre!("Unexpectedly got uncle block"))
-                    }
+
+                    update_progress!(pb, index);
                 }
             }
         }
