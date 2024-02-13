@@ -1,3 +1,4 @@
+use alloy_providers::provider::TempProvider;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers_core::types::NameOrAddress;
@@ -114,6 +115,7 @@ impl SendTxArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
@@ -152,6 +154,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
+                alloy_provider,
                 config.sender.to_ethers(),
                 to,
                 code,
@@ -195,6 +198,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
 
             cast_send(
                 provider,
+                alloy_provider,
                 from,
                 to,
                 code,
@@ -212,8 +216,9 @@ corresponds to the sender, or let foundry automatically detect it by not specify
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn cast_send<M: Middleware, P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
+    alloy_provider: P,
     from: F,
     to: Option<T>,
     code: Option<String>,
@@ -253,7 +258,7 @@ where
     };
     let builder_output = builder.build();
 
-    let cast = Cast::new(provider);
+    let cast = Cast::new(provider, alloy_provider);
 
     let pending_tx = cast.send(builder_output).await?;
     let tx_hash = *pending_tx;

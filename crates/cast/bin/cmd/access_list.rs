@@ -1,3 +1,4 @@
+use alloy_providers::provider::TempProvider;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers_core::types::{BlockId, NameOrAddress};
@@ -60,18 +61,20 @@ impl AccessListArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
+        access_list(&provider, alloy_provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
             .await?;
         Ok(())
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn access_list<M: Middleware, P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
+    alloy_provider: P,
     from: F,
     to: Option<T>,
     sig: Option<String>,
@@ -104,7 +107,7 @@ where
 
     let builder_output = builder.peek();
 
-    let cast = Cast::new(&provider);
+    let cast = Cast::new(&provider, alloy_provider);
 
     let access_list: String = cast.access_list(builder_output, block, to_json).await?;
 

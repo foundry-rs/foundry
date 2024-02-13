@@ -89,6 +89,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::provider::ethers:
     get_provider_builder(config)?.build()
 }
 
+/// Returns a [RetryProvider](foundry_common::alloy::RetryProvider) instantiated using [Config]'s RPC
+pub fn get_alloy_provider(config: &Config) -> Result<foundry_common::provider::alloy::RetryProvider> {
+    get_alloy_provider_builder(config)?.build()
+}
+
 /// Returns a [ProviderBuilder](foundry_common::ProviderBuilder) instantiated using [Config]'s RPC
 /// URL and chain.
 ///
@@ -98,6 +103,27 @@ pub fn get_provider_builder(
 ) -> Result<foundry_common::provider::ethers::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let mut builder = foundry_common::provider::ethers::ProviderBuilder::new(url.as_ref());
+
+    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
+        builder = builder.chain(chain);
+    }
+
+    let jwt = config.get_rpc_jwt_secret()?;
+    if let Some(jwt) = jwt {
+        builder = builder.jwt(jwt.as_ref());
+    }
+
+    Ok(builder)
+}
+
+/// Returns a [ProviderBuilder](foundry_common::provider::alloy::ProviderBuilder) instantiated using [Config] values.
+/// 
+/// Defaults to `http://localhost:8545` and `Mainnet`.
+pub fn get_alloy_provider_builder(
+    config: &Config,
+) -> Result<foundry_common::provider::alloy::ProviderBuilder> {
+    let url = config.get_rpc_url_or_localhost_http()?;
+    let mut builder = foundry_common::provider::alloy::ProviderBuilder::new(url.as_ref());
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);

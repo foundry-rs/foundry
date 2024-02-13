@@ -197,14 +197,16 @@ async fn main() -> Result<()> {
         CastSubcommand::Age { block, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
+                Cast::new(provider, alloy_provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
 
             match erc20 {
                 Some(token) => {
@@ -230,10 +232,10 @@ async fn main() -> Result<()> {
                         )
                         .await?;
                     let builder_output = builder.build();
-                    println!("{}", Cast::new(provider).call(builder_output, block).await?);
+                    println!("{}", Cast::new(provider, alloy_provider).call(builder_output, block).await?);
                 }
                 None => {
-                    let value = Cast::new(provider).balance(who, block).await?;
+                    let value = Cast::new(provider, alloy_provider).balance(who, block).await?;
                     if ether {
                         println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
                     } else {
@@ -245,17 +247,19 @@ async fn main() -> Result<()> {
         CastSubcommand::BaseFee { block, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
+                Cast::new(provider, alloy_provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         CastSubcommand::Block { block, full, field, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider)
+                Cast::new(provider, alloy_provider)
                     .block(block.unwrap_or(BlockId::Number(Latest)), full, field, json)
                     .await?
             );
@@ -263,17 +267,20 @@ async fn main() -> Result<()> {
         CastSubcommand::BlockNumber { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).block_number().await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).block_number().await?);
         }
         CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).chain().await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).chain().await?);
         }
         CastSubcommand::ChainId { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).chain_id().await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).chain_id().await?);
         }
         CastSubcommand::Client { rpc } => {
             let config = Config::from(&rpc);
@@ -283,19 +290,22 @@ async fn main() -> Result<()> {
         CastSubcommand::Code { block, who, disassemble, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).code(who, block, disassemble).await?);
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).codesize(who, block).await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).codesize(who, block).await?);
         }
         CastSubcommand::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
-            let computed = Cast::new(&provider).compute_address(address, nonce).await?;
+            let computed = Cast::new(&provider, alloy_provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", computed.to_checksum(None));
         }
         CastSubcommand::Disassemble { bytecode } => {
@@ -328,7 +338,8 @@ async fn main() -> Result<()> {
         CastSubcommand::GasPrice { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).gas_price().await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).gas_price().await?);
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
             println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
@@ -336,17 +347,20 @@ async fn main() -> Result<()> {
         CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).implementation(who, block).await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).implementation(who, block).await?);
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).admin(who, block).await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).admin(who, block).await?);
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).nonce(who, block).await?);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            println!("{}", Cast::new(provider, alloy_provider).nonce(who, block).await?);
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
@@ -365,7 +379,8 @@ async fn main() -> Result<()> {
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let cast = Cast::new(&provider);
+            let alloy_provider = utils::get_alloy_provider(&config)?;
+            let cast = Cast::new(&provider, alloy_provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = *pending_tx;
 
@@ -380,9 +395,10 @@ async fn main() -> Result<()> {
         CastSubcommand::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider)
+                Cast::new(provider, alloy_provider)
                     .receipt(tx_hash, field, confirmations, cast_async, json)
                     .await?
             );
@@ -392,11 +408,12 @@ async fn main() -> Result<()> {
         CastSubcommand::Tx { tx_hash, field, raw, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
 
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw, json).await?)
+            println!("{}", Cast::new(&provider, alloy_provider).transaction(tx_hash, field, raw, json).await?)
         }
 
         // 4Byte

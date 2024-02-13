@@ -76,8 +76,9 @@ impl LogsArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
 
-        let cast = Cast::new(&provider);
+        let cast = Cast::new(&provider, alloy_provider);
 
         let address = match address {
             Some(address) => {

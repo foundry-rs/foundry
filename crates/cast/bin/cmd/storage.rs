@@ -82,10 +82,11 @@ impl StorageArgs {
         let Self { address, slot, block, build, .. } = self;
 
         let provider = utils::get_provider(&config)?;
+            let alloy_provider = utils::get_alloy_provider(&config)?;
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
-            let cast = Cast::new(provider);
+            let cast = Cast::new(provider, alloy_provider);
             println!("{}", cast.storage(address, slot.to_ethers(), block).await?);
             return Ok(());
         }

@@ -116,6 +116,7 @@ impl CallArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
@@ -196,7 +197,7 @@ impl CallArgs {
         };
 
         let builder_output = builder.build();
-        println!("{}", Cast::new(provider).call(builder_output, block).await?);
+        println!("{}", Cast::new(provider, alloy_provider).call(builder_output, block).await?);
 
         Ok(())
     }

@@ -5,6 +5,7 @@ use alloy_primitives::{
     Address, Bytes, B256, I256, U256,
 };
 use alloy_rlp::Decodable;
+use alloy_providers::provider::TempProvider;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -53,11 +54,12 @@ use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
-pub struct Cast<M> {
+pub struct Cast<M, P> {
     provider: M,
+    alloy_provider: P,
 }
 
-impl<M: Middleware> Cast<M>
+impl<M: Middleware, P: TempProvider> Cast<M, P>
 where
     M::Error: 'static,
 {
@@ -75,8 +77,8 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: M) -> Self {
-        Self { provider }
+    pub fn new(provider: M, alloy_provider: P) -> Self {
+        Self { provider, alloy_provider }
     }
 
     /// Makes a read-only call to the specified address

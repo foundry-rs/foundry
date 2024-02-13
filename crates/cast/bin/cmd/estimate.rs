@@ -81,6 +81,7 @@ impl EstimateArgs {
 
         let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
         let config = Config::try_from(figment)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
 
         let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
@@ -109,7 +110,7 @@ impl EstimateArgs {
         };
 
         let builder_output = builder.peek();
-        let gas = Cast::new(&provider).estimate(builder_output).await?;
+        let gas = Cast::new(&provider, alloy_provider).estimate(builder_output).await?;
         println!("{gas}");
         Ok(())
     }
