@@ -2,7 +2,7 @@ Compiling 1 files with 0.8.23
  
 Compiler run successful!
 
-Running 1 test for test/Contract.t.sol:USDCCallingTest
+Ran 1 test for test/Contract.t.sol:USDCCallingTest
 [PASS] test() (gas: 16799)
 Traces:
   [16799] USDCCallingTest::test()
@@ -15,5 +15,5 @@ Traces:
     └─ ← ()
 
 Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.43s
- 
-Ran 1 test suites: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+Ran 1 test suite: 1 tests passed, 0 failed, 0 skipped (1 total tests)

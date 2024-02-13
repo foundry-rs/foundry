@@ -117,13 +117,15 @@ impl TestOutcome {
     /// Formats the aggregated summary of all test suites into a string (for printing).
     pub fn summary(&self) -> String {
         let num_test_suites = self.results.len();
+        let suites = if num_test_suites == 1 { "suite" } else { "suites" };
         let total_passed = self.passed();
         let total_failed = self.failed();
         let total_skipped = self.skipped();
         let total_tests = total_passed + total_failed + total_skipped;
         format!(
-            "\nRan {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
+            "\nRan {} test {}: {} tests passed, {} failed, {} skipped ({} total tests)",
             num_test_suites,
+            suites,
             Paint::green(total_passed),
             Paint::red(total_failed),
             Paint::yellow(total_skipped),
