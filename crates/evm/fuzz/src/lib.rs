@@ -8,7 +8,7 @@
 extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log};
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
@@ -157,18 +157,16 @@ pub struct FuzzTestResult {
 impl FuzzTestResult {
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::median_sorted(&values).to::<u64>()
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::mean(&values).to::<u64>()
+        calc::mean(&values)
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
@@ -223,19 +221,17 @@ impl FuzzedCases {
     /// Returns the median gas of all test cases
     #[inline]
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::median_sorted(&values).to::<u64>()
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::mean(&values).to::<u64>()
+        calc::mean(&values)
     }
 
     #[inline]

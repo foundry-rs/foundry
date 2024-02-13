@@ -1291,36 +1291,34 @@ contract ContractThreeTest is DSTest {
     .unwrap();
 
     // report for One
-    prj.write_config(Config {
-        gas_reports: (vec!["ContractOne".to_string()]),
-        gas_reports_ignore: (vec![]),
-        ..Default::default()
-    });
+    prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
-    assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
+    assert!(
+        first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"),
+        "foo:\n{first_out}"
+    );
 
     // report for Two
-    cmd.forge_fuse();
-    prj.write_config(Config {
-        gas_reports: (vec!["ContractTwo".to_string()]),
-        ..Default::default()
-    });
+    prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
     cmd.forge_fuse();
     let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(
-        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
+        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz"),
+        "bar:\n{second_out}"
     );
 
     // report for Three
-    cmd.forge_fuse();
     prj.write_config(Config {
-        gas_reports: (vec!["ContractThree".to_string()]),
+        gas_reports: vec!["ContractThree".to_string()],
         ..Default::default()
     });
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
-    assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
+    assert!(
+        !third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"),
+        "baz:\n{third_out}"
+    );
 });
 
 forgetest!(gas_ignore_some_contracts, |prj, cmd| {

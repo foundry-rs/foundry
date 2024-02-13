@@ -99,12 +99,14 @@ pub struct CallTraceDecoder {
     pub labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: Vec<Address>,
+
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// All known errors.
     pub errors: JsonAbi,
+
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
@@ -174,6 +176,13 @@ impl CallTraceDecoder {
             receive_contracts: Default::default(),
             verbosity: 0,
         }
+    }
+
+    /// Clears all known addresses.
+    pub fn clear_addresses(&mut self) {
+        self.contracts.clear();
+        self.labels.clear();
+        self.receive_contracts.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.

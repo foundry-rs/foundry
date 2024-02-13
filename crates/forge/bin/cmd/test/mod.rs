@@ -312,7 +312,8 @@ impl TestArgs {
             async move { runner.test(&filter, tx, test_options).await }
         });
 
-        let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
+        let mut gas_report =
+            self.gas_report.then(|| GasReport::new(config.gas_reports, config.gas_reports_ignore));
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
@@ -364,11 +365,19 @@ impl TestArgs {
                     }
                 }
 
-                decoder
-                    .labels
-                    .extend(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())));
+                // We shouldn't break out of the outer loop directly here so that we finish
+                // processing the remaining tests and print the suite summary.
+                any_test_failed |= result.status == TestStatus::Failure;
 
-                // Decode traces.
+                if result.traces.is_empty() {
+                    continue;
+                }
+
+                // Clear the addresses and labels from previous runs.
+                decoder.clear_addresses();
+                decoder.labels = result.labeled_addresses.clone();
+
+                // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
@@ -403,13 +412,9 @@ impl TestArgs {
                     }
                 }
 
-                if self.gas_report {
+                if let Some(gas_report) = &mut gas_report {
                     gas_report.analyze(&result.traces, &decoder).await;
                 }
-
-                // We shouldn't break out of the outer loop directly here so that we finish
-                // processing the remaining tests and print the suite summary.
-                any_test_failed |= result.status == TestStatus::Failure;
             }
 
             // Print suite summary.
@@ -428,7 +433,7 @@ impl TestArgs {
 
         outcome.decoder = Some(decoder);
 
-        if self.gas_report {
+        if let Some(gas_report) = gas_report {
             shell::println(gas_report.finalize())?;
         }
 

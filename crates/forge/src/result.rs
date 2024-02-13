@@ -27,7 +27,10 @@ pub struct TestOutcome {
     /// Whether to allow test failures without failing the entire test run.
     pub allow_failure: bool,
     /// The decoder used to decode traces and logs.
+    ///
     /// This is `None` if traces and logs were not decoded.
+    ///
+    /// Note that `Address` fields only contain the last executed test case's data.
     pub decoder: Option<CallTraceDecoder>,
 }
 
