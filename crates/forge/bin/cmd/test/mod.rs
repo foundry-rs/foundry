@@ -327,6 +327,9 @@ impl TestArgs {
         }
         let mut decoder = builder.build();
 
+        // We identify addresses if we're going to print *any* trace or gas report.
+        let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
@@ -368,6 +371,11 @@ impl TestArgs {
                 // Decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
+                    if identify_addresses {
+                        decoder.identify(arena, &mut local_identifier);
+                        decoder.identify(arena, &mut etherscan_identifier);
+                    }
+
                     // verbosity:
                     // - 0..3: nothing
                     // - 3: only display traces for failed tests
@@ -382,12 +390,6 @@ impl TestArgs {
                         }
                         TraceKind::Deployment => false,
                     };
-
-                    // Traces need to be identified for gas reports too.
-                    if should_include || self.gas_report {
-                        decoder.identify(arena, &mut local_identifier);
-                        decoder.identify(arena, &mut etherscan_identifier);
-                    }
 
                     if should_include {
                         decoded_traces.push(render_trace_arena(arena, &decoder).await?);
