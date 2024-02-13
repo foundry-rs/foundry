@@ -1,9 +1,7 @@
 use alloy_primitives::Address;
+use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address, LocalWallet, Signer};
 use clap::{builder::TypedValueParser, Parser};
-use ethers_core::{k256::ecdsa::SigningKey, rand, utils::secret_key_to_address};
-use ethers_signers::{LocalWallet, Signer};
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -66,7 +64,7 @@ struct Wallets {
 impl WalletData {
     pub fn new(wallet: &LocalWallet) -> Self {
         WalletData {
-            address: wallet.address().to_alloy().to_checksum(None),
+            address: wallet.address().to_checksum(None),
             private_key: format!("0x{}", hex::encode(wallet.signer().to_bytes())),
         }
     }
@@ -156,11 +154,11 @@ impl VanityArgs {
             timer.elapsed().as_secs(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
-                wallet.address().to_alloy().create(nonce.unwrap()).to_checksum(None)
+                wallet.address().create(nonce.unwrap()).to_checksum(None)
             } else {
                 String::new()
             },
-            wallet.address().to_alloy().to_checksum(None),
+            wallet.address().to_checksum(None),
             hex::encode(wallet.signer().to_bytes()),
         );
 
@@ -229,7 +227,7 @@ pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, impl Fn(()) -> Generate
 pub fn generate_wallet() -> GeneratedWallet {
     let key = SigningKey::random(&mut rand::thread_rng());
     let address = secret_key_to_address(&key);
-    (key, address.to_alloy())
+    (key, address)
 }
 
 /// A trait to match vanity addresses.
