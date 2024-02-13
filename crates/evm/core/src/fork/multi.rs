@@ -259,6 +259,7 @@ impl MultiForkHandler {
         let fork_id = ForkId::new(&fork.url, fork.evm_opts.fork_block_number);
         trace!(?fork_id, "created new forkId");
 
+        // there could already be a task for the requested fork in progress
         if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
             in_progress.push(sender);
             return;
@@ -503,19 +504,19 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
 
     // we need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number = block.header.number.unwrap_or(meta.block_env.number);
+    let number = block.header.number.unwrap_or(meta.block_env.number).to::<u64>();
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
-        Config::foundry_block_cache_dir(meta.cfg_env.chain_id, number.to::<u64>())
+        Config::foundry_block_cache_dir(meta.cfg_env.chain_id, number)
     } else {
         None
     };
 
     let db = BlockchainDb::new(meta, cache_path);
-    let (backend, handler) = SharedBackend::new(provider, db, Some(number.to::<u64>().into()));
+    let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork = CreatedFork::new(fork, backend);
-    let fork_id = ForkId::new(&fork.opts.url, number.to::<u64>().into());
+    let fork_id = ForkId::new(&fork.opts.url, number.into());
 
     Ok((fork_id, fork, handler))
 }
