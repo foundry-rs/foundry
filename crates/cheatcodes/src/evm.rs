@@ -12,7 +12,7 @@ use foundry_evm_core::{
 };
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
-    EVMData,
+    EvmContext,
 };
 use std::{collections::HashMap, path::Path};
 
@@ -60,8 +60,8 @@ impl Cheatcode for loadCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
-        ccx.data.journaled_state.load_account(target, ccx.data.db)?;
-        let (val, _) = ccx.data.journaled_state.sload(target, slot.into(), ccx.data.db)?;
+        ccx.data.journaled_state.load_account(target, &mut ccx.data.db)?;
+        let (val, _) = ccx.data.journaled_state.sload(target, slot.into(), &mut ccx.data.db)?;
         Ok(val.abi_encode())
     }
 }
@@ -314,7 +314,7 @@ impl Cheatcode for etchCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
-        ccx.data.journaled_state.load_account(*target, ccx.data.db)?;
+        ccx.data.journaled_state.load_account(*target, &mut ccx.data.db)?;
         let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode)).to_checked();
         ccx.data.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
@@ -367,7 +367,7 @@ impl Cheatcode for storeCall {
         ensure_not_precompile!(&target, ccx);
         // ensure the account is touched
         let _ = journaled_account(ccx.data, target)?;
-        ccx.data.journaled_state.sstore(target, slot.into(), value.into(), ccx.data.db)?;
+        ccx.data.journaled_state.sstore(target, slot.into(), value.into(), &mut ccx.data.db)?;
         Ok(Default::default())
     }
 }
@@ -393,7 +393,7 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, ccx.data.env).abi_encode())
+        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, ccx.data.env()).abi_encode())
     }
 }
 
@@ -403,7 +403,7 @@ impl Cheatcode for revertToCall {
         let result = if let Some(journaled_state) = ccx.data.db.revert(
             *snapshotId,
             &ccx.data.journaled_state,
-            ccx.data.env,
+            ccx.data.env(),
             RevertSnapshotAction::RevertKeep,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
@@ -422,7 +422,7 @@ impl Cheatcode for revertToAndDeleteCall {
         let result = if let Some(journaled_state) = ccx.data.db.revert(
             *snapshotId,
             &ccx.data.journaled_state,
-            ccx.data.env,
+            ccx.data.env(),
             RevertSnapshotAction::RevertRemove,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
@@ -467,7 +467,7 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     super::script::correct_sender_nonce(ccx)?;
-    let (account, _) = ccx.data.journaled_state.load_account(*address, ccx.data.db)?;
+    let (account, _) = ccx.data.journaled_state.load_account(*address, &mut ccx.data.db)?;
     Ok(account.info.nonce.abi_encode())
 }
 
@@ -521,10 +521,10 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
 
 /// Ensures the `Account` is loaded and touched.
 pub(super) fn journaled_account<'a, DB: DatabaseExt>(
-    data: &'a mut EVMData<'_, DB>,
+    data: &'a mut EvmContext<DB>,
     addr: Address,
 ) -> Result<&'a mut Account> {
-    data.journaled_state.load_account(addr, data.db)?;
+    data.journaled_state.load_account(addr, &mut data.db)?;
     data.journaled_state.touch(&addr);
     Ok(data.journaled_state.state.get_mut(&addr).expect("account is loaded"))
 }
