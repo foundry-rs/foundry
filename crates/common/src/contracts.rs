@@ -23,8 +23,9 @@ pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, (JsonAbi, Vec<u8>)>);
 impl ContractsByArtifact {
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
-        self.iter().find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
+        self.iter().find(|(_, (_, known_code))| bytecode_diff_score(known_code, code) <= 0.1)
     }
+
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
     /// found, return error.
     pub fn find_by_name_or_identifier(
@@ -93,25 +94,27 @@ pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 
 /// Very simple fuzzy matching of contract bytecode.
 ///
-/// Will fail for small contracts that are essentially all immutable variables.
-pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
-    let max_len = usize::max(a.len(), b.len());
-    let min_len = usize::min(a.len(), b.len());
+/// Returns a value between `0.0` (identical) and `1.0` (completely different).
+pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
+    if a.len() < b.len() {
+        std::mem::swap(&mut a, &mut b);
+    }
 
-    if max_len == 0 {
+    // Account for different lengths.
+    let mut n_different_bytes = a.len() - b.len();
+
+    // If the difference is more than 32 bytes and more than 10% of the total length,
+    // we assume the bytecodes are completely different.
+    // This is a simple heuristic to avoid checking every byte when the lengths are very different.
+    // 32 is chosen to be a reasonable minimum as it's the size of metadata hashes and one EVM word.
+    if n_different_bytes > 32 && n_different_bytes * 10 > a.len() {
         return 1.0;
     }
 
-    let a = &a[..min_len];
-    let b = &b[..min_len];
-    let mut diff_chars = 0;
-    for i in 0..min_len {
-        if a[i] != b[i] {
-            diff_chars += 1;
-        }
-    }
-    diff_chars += max_len - min_len;
-    diff_chars as f64 / max_len as f64
+    // Count different bytes.
+    n_different_bytes += std::iter::zip(a, b).filter(|(a, b)| a != b).count();
+
+    n_different_bytes as f64 / a.len() as f64
 }
 
 /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
@@ -269,5 +272,21 @@ mod tests {
             DynSolType::String,
         ]);
         let _decoded = params.abi_decode_params(args).unwrap();
+    }
+
+    #[test]
+    fn bytecode_diffing() {
+        assert_eq!(bytecode_diff_score(b"a", b"a"), 0.0);
+        assert_eq!(bytecode_diff_score(b"a", b"b"), 1.0);
+
+        let a_100 = &b"a".repeat(100)[..];
+        assert_eq!(bytecode_diff_score(a_100, &b"b".repeat(100)), 1.0);
+        assert_eq!(bytecode_diff_score(a_100, &b"b".repeat(99)), 1.0);
+        assert_eq!(bytecode_diff_score(a_100, &b"b".repeat(101)), 1.0);
+        assert_eq!(bytecode_diff_score(a_100, &b"b".repeat(120)), 1.0);
+        assert_eq!(bytecode_diff_score(a_100, &b"b".repeat(1000)), 1.0);
+
+        let a_99 = &b"a".repeat(99)[..];
+        assert!(bytecode_diff_score(a_100, a_99) <= 0.01);
     }
 }
