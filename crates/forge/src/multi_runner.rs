@@ -311,9 +311,9 @@ impl MultiContractRunnerBuilder {
                 deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
             }
 
-            linked_contract.get_deployed_bytecode_bytes().map(|b| b.into_owned()).and_then(
-                |bytes| known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec())),
-            );
+            if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
+                known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec()));
+            }
         }
 
         let errors = known_contracts.flatten_errors();

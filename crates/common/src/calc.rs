@@ -9,7 +9,7 @@ pub fn mean(values: &[u64]) -> u64 {
         return 0;
     }
 
-    values.iter().sum::<u64>() / (values.len() as u64)
+    (values.iter().map(|x| *x as u128).sum::<u128>() / values.len() as u128) as u64
 }
 
 /// Returns the median of a _sorted_ slice.
@@ -77,6 +77,12 @@ mod tests {
     fn calc_mean() {
         let m = mean(&[0, 1, 2, 3, 4, 5, 6]);
         assert_eq!(m, 3);
+    }
+
+    #[test]
+    fn calc_mean_overflow() {
+        let m = mean(&[0, 1, 2, u32::MAX as u64, 3, u16::MAX as u64, u64::MAX, 6]);
+        assert_eq!(m, 2305843009750573057);
     }
 
     #[test]
