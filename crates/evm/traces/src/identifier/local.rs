@@ -7,10 +7,9 @@ use std::borrow::Cow;
 
 /// A trace identifier that tries to identify addresses using local contracts.
 pub struct LocalTraceIdentifier<'a> {
+    /// Known contracts to search through.
     known_contracts: &'a ContractsByArtifact,
-
-    // Vector of pairs of artifact id and the code length of the given artifact.
-    // Stored in descending order of code length to optimize the search.
+    /// Vector of pairs of artifact ID and the code length of the given artifact.
     ordered_ids: Vec<(&'a ArtifactId, usize)>,
 }
 
