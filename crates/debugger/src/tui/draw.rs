@@ -667,24 +667,22 @@ struct BufferAccesses {
 fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
-            (Some((BufferKind::Memory, 1, 2)), Some((0, 0)))
+            (Some((BufferKind::Memory, 1, 2)), None)
         }
         opcode::CALLDATACOPY => (Some((BufferKind::Calldata, 2, 3)), Some((1, 3))),
         opcode::RETURNDATACOPY => (Some((BufferKind::Returndata, 2, 3)), Some((1, 3))),
-        opcode::CALLDATALOAD => (Some((BufferKind::Calldata, 1, -1)), Some((0, 0))),
-        opcode::CODECOPY => (Some((BufferKind::Memory, 0, 0)), Some((1, 3))),
-        opcode::EXTCODECOPY => (Some((BufferKind::Memory, 0, 0)), Some((2, 4))),
-        opcode::MLOAD => (Some((BufferKind::Memory, 1, -1)), Some((0, 0))),
-        opcode::MSTORE => (Some((BufferKind::Memory, 0, 0)), Some((1, -1))),
-        opcode::MSTORE8 => (Some((BufferKind::Memory, 0, 0)), Some((1, -2))),
+        opcode::CALLDATALOAD => (Some((BufferKind::Calldata, 1, -1)), None),
+        opcode::CODECOPY => (None, Some((1, 3))),
+        opcode::EXTCODECOPY => (None, Some((2, 4))),
+        opcode::MLOAD => (Some((BufferKind::Memory, 1, -1)), None),
+        opcode::MSTORE => (None, Some((1, -1))),
+        opcode::MSTORE8 => (None, Some((1, -2))),
         opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-            (Some((BufferKind::Memory, 1, 2)), Some((0, 0)))
+            (Some((BufferKind::Memory, 1, 2)), None)
         }
-        opcode::CREATE | opcode::CREATE2 => (Some((BufferKind::Memory, 2, 3)), Some((0, 0))),
-        opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), Some((0, 0))),
-        opcode::DELEGATECALL | opcode::STATICCALL => {
-            (Some((BufferKind::Memory, 3, 4)), Some((0, 0)))
-        }
+        opcode::CREATE | opcode::CREATE2 => (Some((BufferKind::Memory, 2, 3)), None),
+        opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
+        opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
         _ => Default::default(),
     };
 
