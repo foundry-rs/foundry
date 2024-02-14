@@ -52,7 +52,7 @@ impl<'a> LocalTraceIdentifier<'a> {
                 // a relatively high threshold here to avoid filtering out too many
                 // contracts.
                 let score = bytecode_diff_score(known_code, code);
-                (score < 0.85).then(|| (score, id, abi))
+                (score < 0.85).then_some((score, id, abi))
             })
             .min_by_key(|(score, _, _)| OrderedFloat(*score))
             .map(|(_, id, abi)| (id, abi))
