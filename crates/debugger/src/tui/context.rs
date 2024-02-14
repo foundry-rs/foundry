@@ -3,9 +3,10 @@
 use crate::{Debugger, ExitReason};
 use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use foundry_common::fs::write_json_file;
 use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
 use revm_inspectors::tracing::types::CallKind;
-use std::{cell::RefCell, ops::ControlFlow};
+use std::{cell::RefCell, collections::HashMap, ops::ControlFlow, path::PathBuf};
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]
@@ -295,6 +296,50 @@ impl DebuggerContext<'_> {
             KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
             // toggle help notice
             KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
+            // dump memory+calldata+returndata to timestamped file
+            KeyCode::Char('w') => {
+                use std::time::SystemTime;
+                // create a json file with the current memory, calldata, and returndata
+                // and write it to the current directory
+                // the file should be named with the current timestamp
+                let debug_step = self.current_step();
+                let memory_ascii = format!(
+                    "0x{}",
+                    debug_step
+                        .memory
+                        .iter()
+                        .map(|byte| format!("{:02x}", byte))
+                        .collect::<String>()
+                );
+                let calldata_ascii = format!(
+                    "0x{}",
+                    debug_step
+                        .calldata
+                        .iter()
+                        .map(|byte| format!("{:02x}", byte))
+                        .collect::<String>()
+                );
+                let returndata_ascii = format!(
+                    "0x{}",
+                    debug_step
+                        .returndata
+                        .iter()
+                        .map(|byte| format!("{:02x}", byte))
+                        .collect::<String>()
+                );
+                let filename: PathBuf = format!(
+                    "debug_dump_{}.json",
+                    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+                )
+                .into();
+                let mapping: HashMap<&str, &String> = [
+                    ("memory", &memory_ascii),
+                    ("calldata", &calldata_ascii),
+                    ("returndata", &returndata_ascii),
+                ]
+                .into();
+                write_json_file(&filename, &mapping).unwrap();
+            }
             KeyCode::Char(
                 other @ ('0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\''),
             ) => self.key_buffer.push(other),
