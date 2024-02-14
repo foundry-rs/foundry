@@ -14,43 +14,6 @@ use revm::primitives::{HaltReason, SuccessReason};
 
 pub use crate::ic::*;
 
-/// Small helper function to convert an Eval into an InstructionResult
-#[inline]
-pub fn eval_to_instruction_result(reason: SuccessReason) -> InstructionResult {
-    match reason {
-        SuccessReason::Return => InstructionResult::Return,
-        SuccessReason::Stop => InstructionResult::Stop,
-        SuccessReason::SelfDestruct => InstructionResult::SelfDestruct,
-    }
-}
-
-/// Small helper function to convert a Halt into an InstructionResult
-#[inline]
-pub fn halt_to_instruction_result(halt: HaltReason) -> InstructionResult {
-    match halt {
-        HaltReason::OutOfGas(_) => InstructionResult::OutOfGas,
-        HaltReason::OpcodeNotFound => InstructionResult::OpcodeNotFound,
-        HaltReason::InvalidFEOpcode => InstructionResult::InvalidFEOpcode,
-        HaltReason::InvalidJump => InstructionResult::InvalidJump,
-        HaltReason::NotActivated => InstructionResult::NotActivated,
-        HaltReason::StackOverflow => InstructionResult::StackOverflow,
-        HaltReason::StackUnderflow => InstructionResult::StackUnderflow,
-        HaltReason::OutOfOffset => InstructionResult::OutOfOffset,
-        HaltReason::CreateCollision => InstructionResult::CreateCollision,
-        HaltReason::PrecompileError => InstructionResult::PrecompileError,
-        HaltReason::NonceOverflow => InstructionResult::NonceOverflow,
-        HaltReason::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
-        HaltReason::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
-        HaltReason::OverflowPayment => InstructionResult::OverflowPayment,
-        HaltReason::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
-        HaltReason::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
-        HaltReason::CallTooDeep => InstructionResult::CallTooDeep,
-        HaltReason::FailedDeposit => InstructionResult::Return,
-        HaltReason::CreateInitCodeSizeLimit => InstructionResult::CreateInitCodeSizeLimit,
-        HaltReason::OutOfFunds => InstructionResult::OutOfFunds,
-    }
-}
-
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// This checks for:

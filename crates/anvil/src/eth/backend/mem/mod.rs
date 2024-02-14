@@ -74,7 +74,6 @@ use foundry_evm::{
         },
     },
     traces::{TracingInspector, TracingInspectorConfig},
-    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
@@ -799,14 +798,12 @@ impl Backend {
         let state = result_and_state.state;
         let (exit_reason, gas_used, out, logs) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+                (reason.into(), gas_used, Some(output), Some(logs))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
         };
 
         inspector.print_logs();
@@ -1125,14 +1122,12 @@ impl Backend {
         let state = result_and_state.state;
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output))
+                (reason.into(), gas_used, Some(output))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
         inspector.print_logs();
         Ok((exit_reason, out, gas_used, state))
@@ -1158,13 +1153,13 @@ impl Backend {
                 };
             let (exit_reason, gas_used, out, ) = match result_and_state.result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
-                    (eval_to_instruction_result(reason), gas_used, Some(output), )
+                    (reason.into(), gas_used, Some(output), )
                 },
                 ExecutionResult::Revert { gas_used, output} => {
                     (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
                 },
                 ExecutionResult::Halt { reason, gas_used } => {
-                    (halt_to_instruction_result(reason), gas_used, None)
+                    (reason.into(), gas_used, None)
                 },
             };
             let res = inspector.tracer.unwrap_or(TracingInspector::new(TracingInspectorConfig::all())).into_geth_builder().geth_traces(gas_used, match &out {
@@ -1211,14 +1206,12 @@ impl Backend {
         };
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output))
+                (reason.into(), gas_used, Some(output))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
         let access_list = tracer.access_list();
         Ok((exit_reason, out, gas_used, access_list))

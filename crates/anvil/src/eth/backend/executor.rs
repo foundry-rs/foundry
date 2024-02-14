@@ -22,7 +22,6 @@ use foundry_evm::{
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
     traces::CallTraceNode,
-    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use std::sync::Arc;
 
@@ -304,14 +303,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+                (reason.into(), gas_used, Some(output), Some(logs))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
         };
 
         if exit_reason == InstructionResult::OutOfGas {

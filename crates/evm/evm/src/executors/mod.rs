@@ -21,7 +21,7 @@ use foundry_evm_core::{
     },
     debug::DebugArena,
     decode,
-    utils::{eval_to_instruction_result, halt_to_instruction_result, StateChangeset},
+    utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
@@ -765,15 +765,13 @@ fn convert_executed_result(
     let ResultAndState { result: exec_result, state: state_changeset } = result;
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, output, .. } => {
-            (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output))
+            (reason.into(), gas_refunded, gas_used, Some(output))
         }
         ExecutionResult::Revert { gas_used, output } => {
             // Need to fetch the unused gas
             (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)))
         }
-        ExecutionResult::Halt { reason, gas_used } => {
-            (halt_to_instruction_result(reason), 0_u64, gas_used, None)
-        }
+        ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
     };
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
