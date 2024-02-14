@@ -39,20 +39,20 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
-        let ids_start = match self
-            .ordered_ids
-            .binary_search_by(|(_, known_code_len)| known_code_len.cmp(&code.len()))
-        {
-            // Exact match.
-            Ok(i) => i,
-            // Not found, start searching from the previous index.
-            Err(i) => i.saturating_sub(1),
-        };
-        for &(id, _) in &self.ordered_ids[ids_start..] {
+        let len = code.len();
+        let (Ok(mut start) | Err(mut start)) =
+            self.ordered_ids.binary_search_by(|(_, probe)| probe.cmp(&len));
+
+        // In case of multiple artifacts with the same code length, we need to find the first one.
+        while start > 0 && self.ordered_ids[start - 1].1 == len {
+            start -= 1;
+        }
+
+        for &(id, _) in &self.ordered_ids[start..] {
             let (abi, known_code) = self.known_contracts.get(id)?;
             let score = bytecode_diff_score(known_code, code);
-            trace!(%score, abi=?abi.functions().collect::<Vec<_>>());
-            if score < 0.1 {
+            if score <= 0.1 {
+                trace!(%score, "found close-enough match");
                 return Some((id, abi));
             }
             if score < min_score {
