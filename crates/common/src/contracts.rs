@@ -105,7 +105,10 @@ pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
     // Account for different lengths.
     let mut n_different_bytes = a.len() - b.len();
 
-    // Skip checking individual bytes if the lengths are too different.
+    // If the difference is more than 32 bytes and more than 10% of the total length,
+    // we assume the bytecodes are completely different.
+    // This is a simple heuristic to avoid checking every byte when the lengths are very different.
+    // 32 is chosen to be a reasonable minimum as it's the size of metadata hashes and one EVM word.
     if n_different_bytes > 32 && n_different_bytes * 10 > a.len() {
         return 1.0;
     }
