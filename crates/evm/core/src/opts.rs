@@ -102,7 +102,6 @@ impl EvmOpts {
     pub fn local_evm_env(&self) -> revm::primitives::Env {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
-        cfg.spec_id = SpecId::MERGE;
         cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
         cfg.memory_limit = self.memory_limit;
         // EIP-3607 rejects transactions from senders with deployed code.

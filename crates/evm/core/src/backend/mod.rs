@@ -12,11 +12,12 @@ use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
+    inspector_handle_register,
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        SpecId, StorageSlot, TransactTo, KECCAK_EMPTY,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
+        ResultAndState, SpecId, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
@@ -747,9 +748,9 @@ impl Backend {
     /// Initializes settings we need to keep track of.
     ///
     /// We need to track these mainly to prevent issues when switching between different evms
-    pub(crate) fn initialize(&mut self, env: &Env) {
+    pub(crate) fn initialize(&mut self, env: &EnvWithHandlerCfg) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(PrecompileSpecId::from_spec_id(env.cfg.spec_id));
+        self.set_spec_id(PrecompileSpecId::from_spec_id(env.handler_cfg.spec_id));
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
@@ -767,17 +768,24 @@ impl Backend {
     /// Executes the configured test call of the `env` without committing state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
+        env: EnvWithHandlerCfg,
+        inspector: INSP,
     ) -> eyre::Result<ResultAndState>
     where
         INSP: Inspector<Self>,
     {
-        self.initialize(env);
+        self.initialize(&env);
 
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
+        let mut evm = revm::Evm::builder()
+            .with_db(self)
+            .with_external_context(inspector)
+            .with_env_with_handler_cfg(env)
+            .append_handler_register(inspector_handle_register)
+            .build();
+
+        match evm.transact() {
             Ok(res) => Ok(res),
-            Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
+            Err(err) => eyre::bail!("backend: failed while inspecting: {err}"),
         }
     }
 
@@ -1761,7 +1769,7 @@ impl Default for BackendInner {
             caller: None,
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),
-            precompile_id: revm::precompile::SpecId::LATEST,
+            precompile_id: PrecompileSpecId::LATEST,
             // grant the cheatcode,default test and caller address access to execute cheatcodes
             // itself
             cheatcode_access_accounts: HashSet::from([
@@ -1872,26 +1880,28 @@ fn update_env_block(env: &mut Env, fork_block: U64, block: &Block) {
 /// state, with an optional inspector
 fn commit_transaction<I: Inspector<Backend>>(
     tx: Transaction,
-    mut env: Env,
+    mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
     inspector: I,
 ) -> eyre::Result<()> {
-    configure_tx_env(&mut env, &tx);
+    configure_tx_env(&mut env.env, &tx);
 
     let now = Instant::now();
     let state = {
-        let mut evm = EVM::new();
-        evm.env = env;
-
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let db = crate::utils::RuntimeOrHandle::new()
             .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
-        evm.database(db);
+        let mut evm = revm::Evm::builder()
+            .with_db(db)
+            .with_external_context(inspector)
+            .with_env_with_handler_cfg(env)
+            .append_handler_register(inspector_handle_register)
+            .build();
 
-        match evm.inspect(inspector) {
+        match evm.transact() {
             Ok(res) => res.state,
             Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
         }

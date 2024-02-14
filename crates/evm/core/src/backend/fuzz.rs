@@ -11,7 +11,8 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Bytecode, Env, ResultAndState},
+    inspector_handle_register,
+    primitives::{AccountInfo, Bytecode, Env, EnvWithHandlerCfg, ResultAndState},
     Database, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -50,8 +51,8 @@ impl<'a> FuzzBackendWrapper<'a> {
     /// Executes the configured transaction of the `env` without committing state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
+        env: EnvWithHandlerCfg,
+        inspector: INSP,
     ) -> eyre::Result<ResultAndState>
     where
         INSP: Inspector<Self>,
@@ -59,9 +60,16 @@ impl<'a> FuzzBackendWrapper<'a> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
-            Ok(result) => Ok(result),
-            Err(e) => eyre::bail!("fuzz: failed to inspect: {e}"),
+        let mut evm = revm::Evm::builder()
+            .with_db(self)
+            .with_external_context(inspector)
+            .with_env_with_handler_cfg(env)
+            .append_handler_register(inspector_handle_register)
+            .build();
+
+        match evm.transact() {
+            Ok(res) => Ok(res),
+            Err(err) => eyre::bail!("backend: failed while inspecting: {err}"),
         }
     }
 
