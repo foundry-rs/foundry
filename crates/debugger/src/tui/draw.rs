@@ -517,20 +517,22 @@ impl DebuggerContext<'_> {
         if let Instruction::OpCode(op) = step.instruction {
             let stack_len = step.stack.len();
             if stack_len > 0 {
-                let (read_buffer_accessed, read_offset, read_size, write_offset, write_size) =
-                    get_buffer_access(op, &step.stack);
-
-                if read_offset.is_some() &&
-                    read_buffer_accessed.is_some_and(|b| b == self.active_buffer)
-                {
-                    offset = read_offset;
-                    size = read_size;
-                    color = Some(Color::Cyan);
-                } else if write_offset.is_some() && self.active_buffer == BufferKind::Memory {
-                    // memory is the only volatile buffer, so hardcode memory check
-                    offset = write_offset;
-                    size = write_size;
-                    color = Some(Color::Red);
+                if let Some(accesses) = get_buffer_accesses(op, &step.stack) {
+                    if let Some(read_access) = accesses.read {
+                        if read_access.0 == self.active_buffer {
+                            offset = Some(read_access.1.offset);
+                            size = Some(read_access.1.size);
+                            color = Some(Color::Cyan);
+                        }
+                    } else if let Some(write_access) = accesses.write {
+                        // TODO: with MCOPY, it will be possible to both read from and write to the
+                        // memory buffer with the same opcode
+                        if self.active_buffer == BufferKind::Memory {
+                            offset = Some(write_access.offset);
+                            size = Some(write_access.size);
+                            color = Some(Color::Red);
+                        }
+                    }
                 }
             }
         }
@@ -540,12 +542,14 @@ impl DebuggerContext<'_> {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
             if let Instruction::OpCode(op) = prev_step.instruction {
-                let (_, _, _, write_offset, write_size) = get_buffer_access(op, &prev_step.stack);
-                if write_offset.is_some() && self.active_buffer == BufferKind::Memory {
-                    // memory is the only volatile buffer, so hardcode memory check
-                    offset = write_offset;
-                    size = write_size;
-                    color = Some(Color::Green);
+                if let Some(write_access) =
+                    get_buffer_accesses(op, &prev_step.stack).and_then(|a| a.write)
+                {
+                    if self.active_buffer == BufferKind::Memory {
+                        offset = Some(write_access.offset);
+                        size = Some(write_access.size);
+                        color = Some(Color::Green);
+                    }
                 }
             }
         }
@@ -637,6 +641,20 @@ impl<'a> SourceLines<'a> {
     }
 }
 
+/// Container for buffer access information.
+struct BufferAccess {
+    offset: usize,
+    size: usize,
+}
+
+/// Container for read and write buffer access information.
+struct BufferAccesses {
+    /// The read buffer kind and access information.
+    read: Option<(BufferKind, BufferAccess)>,
+    /// The only mutable buffer is the memory buffer, so don't store the buffer kind.
+    write: Option<BufferAccess>,
+}
+
 /// The memory_access variable stores the index on the stack that indicates the buffer
 /// offset/size accessed by the given opcode:
 ///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
@@ -646,28 +664,27 @@ impl<'a> SourceLines<'a> {
 ///   -2: a fixed size of 1 byte
 /// The return value is a tuple about accessed buffer region by the given opcode:
 ///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
-fn get_buffer_access(
-    op: u8,
-    stack: &[U256],
-) -> (Option<BufferKind>, Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
-            (Some(BufferKind::Memory), 1, 2, 0, 0)
+            (Some((BufferKind::Memory, 1, 2)), Some((0, 0)))
         }
-        opcode::CALLDATACOPY => (Some(BufferKind::Calldata), 2, 3, 1, 3),
-        opcode::RETURNDATACOPY => (Some(BufferKind::Returndata), 2, 3, 1, 3),
-        opcode::CALLDATALOAD => (Some(BufferKind::Calldata), 1, -1, 0, 0),
-        opcode::CODECOPY => (Some(BufferKind::Memory), 0, 0, 1, 3),
-        opcode::EXTCODECOPY => (Some(BufferKind::Memory), 0, 0, 2, 4),
-        opcode::MLOAD => (Some(BufferKind::Memory), 1, -1, 0, 0),
-        opcode::MSTORE => (Some(BufferKind::Memory), 0, 0, 1, -1),
-        opcode::MSTORE8 => (Some(BufferKind::Memory), 0, 0, 1, -2),
+        opcode::CALLDATACOPY => (Some((BufferKind::Calldata, 2, 3)), Some((1, 3))),
+        opcode::RETURNDATACOPY => (Some((BufferKind::Returndata, 2, 3)), Some((1, 3))),
+        opcode::CALLDATALOAD => (Some((BufferKind::Calldata, 1, -1)), Some((0, 0))),
+        opcode::CODECOPY => (Some((BufferKind::Memory, 0, 0)), Some((1, 3))),
+        opcode::EXTCODECOPY => (Some((BufferKind::Memory, 0, 0)), Some((2, 4))),
+        opcode::MLOAD => (Some((BufferKind::Memory, 1, -1)), Some((0, 0))),
+        opcode::MSTORE => (Some((BufferKind::Memory, 0, 0)), Some((1, -1))),
+        opcode::MSTORE8 => (Some((BufferKind::Memory, 0, 0)), Some((1, -2))),
         opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-            (Some(BufferKind::Memory), 1, 2, 0, 0)
+            (Some((BufferKind::Memory, 1, 2)), Some((0, 0)))
         }
-        opcode::CREATE | opcode::CREATE2 => (Some(BufferKind::Memory), 2, 3, 0, 0),
-        opcode::CALL | opcode::CALLCODE => (Some(BufferKind::Memory), 4, 5, 0, 0),
-        opcode::DELEGATECALL | opcode::STATICCALL => (Some(BufferKind::Memory), 3, 4, 0, 0),
+        opcode::CREATE | opcode::CREATE2 => (Some((BufferKind::Memory, 2, 3)), Some((0, 0))),
+        opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), Some((0, 0))),
+        opcode::DELEGATECALL | opcode::STATICCALL => {
+            (Some((BufferKind::Memory, 3, 4)), Some((0, 0)))
+        }
         _ => Default::default(),
     };
 
@@ -686,14 +703,20 @@ fn get_buffer_access(
         _ => panic!("invalid stack index"),
     };
 
-    let (read_buffer_accessed, read_offset, read_size, write_offset, write_size) = (
-        buffer_access.0,
-        get_size(buffer_access.1),
-        get_size(buffer_access.2),
-        get_size(buffer_access.3),
-        get_size(buffer_access.4),
-    );
-    (read_buffer_accessed, read_offset, read_size, write_offset, write_size)
+    if buffer_access.0.is_some() || buffer_access.1.is_some() {
+        let (read, write) = buffer_access;
+        let read_access = read.and_then(|b| {
+            let (buffer, offset, size) = b;
+            Some((buffer, BufferAccess { offset: get_size(offset)?, size: get_size(size)? }))
+        });
+        let write_access = write.and_then(|b| {
+            let (offset, size) = b;
+            Some(BufferAccess { offset: get_size(offset)?, size: get_size(size)? })
+        });
+        Some(BufferAccesses { read: read_access, write: write_access })
+    } else {
+        None
+    }
 }
 
 fn hex_bytes_spans(bytes: &[u8], spans: &mut Vec<Span<'_>>, f: impl Fn(usize, u8) -> Style) {
