@@ -3,7 +3,7 @@
 use crate::{Debugger, ExitReason};
 use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_common::fs::write_json_file;
+use foundry_common::fs::{create_dir, write_json_file};
 use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
 use revm_inspectors::tracing::types::CallKind;
 use std::{cell::RefCell, collections::HashMap, ops::ControlFlow, path::PathBuf};
@@ -299,6 +299,7 @@ impl DebuggerContext<'_> {
             // dump memory+calldata+returndata to timestamped file
             KeyCode::Char('w') => {
                 use std::time::SystemTime;
+                let address_str = self.address().to_string();
                 // create a json file with the current memory, calldata, and returndata
                 // and write it to the current directory
                 // the file should be named with the current timestamp
@@ -328,7 +329,8 @@ impl DebuggerContext<'_> {
                         .collect::<String>()
                 );
                 let filename: PathBuf = format!(
-                    "debug_dump_{}.json",
+                    "debug/debug_dump_{}_{}.json",
+                    address_str,
                     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
                 )
                 .into();
@@ -338,6 +340,7 @@ impl DebuggerContext<'_> {
                     ("returndata", &returndata_ascii),
                 ]
                 .into();
+                create_dir("debug").err();
                 write_json_file(&filename, &mapping).unwrap();
             }
             KeyCode::Char(
