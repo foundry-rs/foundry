@@ -1,5 +1,8 @@
 use clap::Parser;
+use eyre::Result;
 use serde::Serialize;
+
+use crate::{utils, PendingSigner, WalletSigner};
 
 /// A wrapper for the raw data options for `Wallet`, extracted to also be used standalone.
 /// The raw wallet options can either be:
@@ -36,4 +39,24 @@ pub struct RawWallet {
     /// Used with --mnemonic-path.
     #[clap(long, conflicts_with = "hd_path", default_value_t = 0, value_name = "INDEX")]
     pub mnemonic_index: u32,
+}
+
+impl RawWallet {
+    pub fn signer(&self) -> Result<Option<WalletSigner>> {
+        if self.interactive {
+            return Ok(Some(PendingSigner::Interactive.unlock()?));
+        }
+        if let Some(private_key) = &self.private_key {
+            return Ok(Some(utils::create_private_key_signer(private_key)?))
+        }
+        if let Some(mnemonic) = &self.mnemonic {
+            return Ok(Some(utils::create_mnemonic_signer(
+                mnemonic,
+                self.mnemonic_passphrase.as_deref(),
+                self.hd_path.as_deref(),
+                self.mnemonic_index,
+            )?))
+        }
+        Ok(None)
+    }
 }

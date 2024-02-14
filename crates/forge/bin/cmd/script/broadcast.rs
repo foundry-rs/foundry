@@ -54,12 +54,39 @@ impl ScriptArgs {
                 );
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
-                let local_wallets = self
-                    .wallets
-                    .find_all(provider.clone(), required_addresses, script_wallets)
-                    .await?;
-                let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
-                (SendTransactionsKind::Raw(local_wallets), chain)
+                let mut multi_wallet = self.wallets.get_multi_wallet().await?;
+                multi_wallet.add_signers(script_wallets.iter().cloned().map(WalletSigner::Local));
+
+                let signers = multi_wallet.into_signers()?;
+
+                let mut missing_addresses = Vec::new();
+
+                println!("\n###\nFinding wallets for all the necessary addresses...");
+                for addr in &required_addresses {
+                    if !signers.contains_key(addr) {
+                        missing_addresses.push(addr);
+                    }
+                }
+
+                if !missing_addresses.is_empty() {
+                    let mut error_msg = String::new();
+
+                    // This is an actual used address
+                    if required_addresses.contains(&Config::DEFAULT_SENDER) {
+                        error_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.\n";
+                    }
+
+                    eyre::bail!(
+                        "{}No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
+                        error_msg,
+                        missing_addresses,
+                        signers.keys().collect::<Vec<_>>()
+                    );
+                }
+
+                let chain = provider.get_chainid().await?.as_u64();
+
+                (SendTransactionsKind::Raw(signers), chain)
             };
 
             // We only wait for a transaction receipt before sending the next transaction, if there

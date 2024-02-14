@@ -46,7 +46,7 @@ use foundry_evm::{
     decode,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
-use foundry_wallets::MultiWallet;
+use foundry_wallets::MultiWalletOpts;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -180,7 +180,7 @@ pub struct ScriptArgs {
     pub opts: BuildArgs,
 
     #[clap(flatten)]
-    pub wallets: MultiWallet,
+    pub wallets: MultiWalletOpts,
 
     #[clap(flatten)]
     pub evm_opts: EvmArgs,

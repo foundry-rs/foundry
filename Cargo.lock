@@ -3360,6 +3360,7 @@ dependencies = [
  "rusoto_kms",
  "serde",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 

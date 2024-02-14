@@ -4,8 +4,11 @@ extern crate tracing;
 pub mod error;
 pub mod multi_wallet;
 pub mod raw_wallet;
+pub mod utils;
 pub mod wallet;
+pub mod wallet_signer;
 
-pub use multi_wallet::MultiWallet;
+pub use multi_wallet::MultiWalletOpts;
 pub use raw_wallet::RawWallet;
-pub use wallet::{Wallet, WalletSigner};
+pub use wallet::Wallet;
+pub use wallet_signer::{PendingSigner, WalletSigner};

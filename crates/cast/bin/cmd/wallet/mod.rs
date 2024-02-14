@@ -9,7 +9,7 @@ use ethers_signers::Signer;
 use eyre::{Context, Result};
 use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
-use foundry_wallets::{RawWallet, Wallet};
+use foundry_wallets::{RawWallet, Wallet, WalletSigner};
 use rand::thread_rng;
 use serde_json::json;
 use std::{path::Path, str::FromStr};
@@ -242,13 +242,13 @@ impl WalletSubcommands {
                         ..Default::default()
                     })
                     .unwrap_or(wallet)
-                    .signer(0)
+                    .signer()
                     .await?;
                 let addr = wallet.address();
                 println!("{}", addr.to_alloy().to_checksum(None));
             }
             WalletSubcommands::Sign { message, data, from_file, wallet } => {
-                let wallet = wallet.signer(0).await?;
+                let wallet = wallet.signer().await?;
                 let sig = if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
@@ -291,16 +291,21 @@ impl WalletSubcommands {
                 }
 
                 // get wallet
-                let wallet: Wallet = raw_wallet_options.into();
-                let wallet = wallet.try_resolve_local_wallet()?.ok_or_else(|| {
-                    eyre::eyre!(
-                        "\
+                let wallet = raw_wallet_options
+                    .signer()?
+                    .and_then(|s| match s {
+                        WalletSigner::Local(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "\
 Did you set a private key or mnemonic?
 Run `cast wallet import --help` and use the corresponding CLI
 flag to set your key via:
 --private-key, --mnemonic-path or --interactive."
-                    )
-                })?;
+                        )
+                    })?;
 
                 let private_key = wallet.signer().to_bytes();
                 let password = rpassword::prompt_password("Enter password: ")?;

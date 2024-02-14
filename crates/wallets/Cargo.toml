@@ -32,6 +32,9 @@ serde.workspace = true
 thiserror = "1"
 tracing.workspace = true
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros"] }
+
 [features]
 default = ["rustls"]
 rustls = ["ethers-providers/rustls", "rusoto_core/rustls"]

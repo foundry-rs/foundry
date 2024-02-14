@@ -11,7 +11,7 @@ use ethers_core::{
         TransactionReceipt, TransactionRequest,
     },
 };
-use ethers_middleware::MiddlewareBuilder;
+use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -145,8 +145,8 @@ impl CreateArgs {
             self.deploy(abi, bin, params, provider, chain_id).await
         } else {
             // Deploy with signer
-            let signer = self.eth.wallet.signer(chain_id).await?;
-            let provider = provider.with_signer(signer);
+            let signer = self.eth.wallet.signer().await?;
+            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
             self.deploy(abi, bin, params, provider, chain_id).await
         }
     }

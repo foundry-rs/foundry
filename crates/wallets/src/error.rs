@@ -19,4 +19,6 @@ pub enum WalletSignerError {
     Trezor(#[from] TrezorError),
     #[error(transparent)]
     Aws(#[from] AwsSignerError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
