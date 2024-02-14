@@ -266,7 +266,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
-            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            storage_type.map_or("?", |t| &t.number_of_bytes),
             &converted_value.to_string(),
             &value.to_string(),
             &slot.contract,

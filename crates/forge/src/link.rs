@@ -26,7 +26,7 @@ pub struct Linker {
     /// Root of the project, used to determine whether artifact/library path can be stripped.
     pub root: PathBuf,
     /// Compilation artifacts.
-    contracts: ArtifactContracts,
+    pub contracts: ArtifactContracts,
 }
 
 /// Output of the `link_with_nonce_or_address`

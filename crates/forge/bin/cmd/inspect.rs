@@ -184,7 +184,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
-            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            storage_type.map_or("?", |t| &t.number_of_bytes),
             &slot.contract,
         ]);
     }
