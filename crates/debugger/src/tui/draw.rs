@@ -1,6 +1,6 @@
 //! TUI draw implementation.
 
-use super::context::{ActiveBuffer, BufferReadAccess, DebuggerContext};
+use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::sourcemap::SourceElement;
@@ -503,9 +503,9 @@ impl DebuggerContext<'_> {
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
         let buf = match self.active_buffer {
-            ActiveBuffer::Memory => &step.memory,
-            ActiveBuffer::Calldata => &step.calldata,
-            ActiveBuffer::Returndata => &step.returndata,
+            BufferKind::Memory => &step.memory,
+            BufferKind::Calldata => &step.calldata,
+            BufferKind::Returndata => &step.returndata,
         };
 
         let min_len = hex_digits(buf.len());
@@ -519,11 +519,16 @@ impl DebuggerContext<'_> {
             if stack_len > 0 {
                 let (read_buffer_accessed, read_offset, read_size, write_offset, write_size) =
                     get_buffer_access(op, &step.stack);
-                if read_offset.is_some() && self.active_buffer.compare(&read_buffer_accessed) {
+
+                // if (let Some(buffer) = read_buffer_accessed) == self.active_buffer &&
+                // read_offset.is_some() {
+                if read_offset.is_some() &&
+                    read_buffer_accessed.is_some_and(|b| b == self.active_buffer)
+                {
                     offset = read_offset;
                     size = read_size;
                     color = Some(Color::Cyan);
-                } else if write_offset.is_some() && self.active_buffer == ActiveBuffer::Memory {
+                } else if write_offset.is_some() && self.active_buffer == BufferKind::Memory {
                     // memory is the only volatile buffer, so hardcode memory check
                     offset = write_offset;
                     size = write_size;
@@ -538,7 +543,7 @@ impl DebuggerContext<'_> {
             let prev_step = &self.debug_steps()[prev_step];
             if let Instruction::OpCode(op) = prev_step.instruction {
                 let (_, _, _, write_offset, write_size) = get_buffer_access(op, &prev_step.stack);
-                if write_offset.is_some() && self.active_buffer == ActiveBuffer::Memory {
+                if write_offset.is_some() && self.active_buffer == BufferKind::Memory {
                     // memory is the only volatile buffer, so hardcode memory check
                     offset = write_offset;
                     size = write_size;
@@ -646,25 +651,25 @@ impl<'a> SourceLines<'a> {
 fn get_buffer_access(
     op: u8,
     stack: &[U256],
-) -> (BufferReadAccess, Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+) -> (Option<BufferKind>, Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
-            (BufferReadAccess::Memory, 1, 2, 0, 0)
+            (Some(BufferKind::Memory), 1, 2, 0, 0)
         }
-        opcode::CALLDATACOPY => (BufferReadAccess::Calldata, 2, 3, 1, 3),
-        opcode::RETURNDATACOPY => (BufferReadAccess::Returndata, 2, 3, 1, 3),
-        opcode::CALLDATALOAD => (BufferReadAccess::Calldata, 1, -1, 0, 0),
-        opcode::CODECOPY => (BufferReadAccess::Memory, 0, 0, 1, 3),
-        opcode::EXTCODECOPY => (BufferReadAccess::Memory, 0, 0, 2, 4),
-        opcode::MLOAD => (BufferReadAccess::Memory, 1, -1, 0, 0),
-        opcode::MSTORE => (BufferReadAccess::Memory, 0, 0, 1, -1),
-        opcode::MSTORE8 => (BufferReadAccess::Memory, 0, 0, 1, -2),
+        opcode::CALLDATACOPY => (Some(BufferKind::Calldata), 2, 3, 1, 3),
+        opcode::RETURNDATACOPY => (Some(BufferKind::Returndata), 2, 3, 1, 3),
+        opcode::CALLDATALOAD => (Some(BufferKind::Calldata), 1, -1, 0, 0),
+        opcode::CODECOPY => (Some(BufferKind::Memory), 0, 0, 1, 3),
+        opcode::EXTCODECOPY => (Some(BufferKind::Memory), 0, 0, 2, 4),
+        opcode::MLOAD => (Some(BufferKind::Memory), 1, -1, 0, 0),
+        opcode::MSTORE => (Some(BufferKind::Memory), 0, 0, 1, -1),
+        opcode::MSTORE8 => (Some(BufferKind::Memory), 0, 0, 1, -2),
         opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-            (BufferReadAccess::Memory, 1, 2, 0, 0)
+            (Some(BufferKind::Memory), 1, 2, 0, 0)
         }
-        opcode::CREATE | opcode::CREATE2 => (BufferReadAccess::Memory, 2, 3, 0, 0),
-        opcode::CALL | opcode::CALLCODE => (BufferReadAccess::Memory, 4, 5, 0, 0),
-        opcode::DELEGATECALL | opcode::STATICCALL => (BufferReadAccess::Memory, 3, 4, 0, 0),
+        opcode::CREATE | opcode::CREATE2 => (Some(BufferKind::Memory), 2, 3, 0, 0),
+        opcode::CALL | opcode::CALLCODE => (Some(BufferKind::Memory), 4, 5, 0, 0),
+        opcode::DELEGATECALL | opcode::STATICCALL => (Some(BufferKind::Memory), 3, 4, 0, 0),
         _ => Default::default(),
     };
 

@@ -18,49 +18,29 @@ pub(crate) struct DrawMemory {
 }
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
-#[derive(Debug, PartialEq, Default)]
-pub(crate) enum ActiveBuffer {
-    #[default]
+#[derive(Debug, PartialEq)]
+pub(crate) enum BufferKind {
     Memory,
     Calldata,
     Returndata,
 }
 
-/// Used to note which buffer is being read from by an opcode, if any.
-#[derive(Debug, Default)]
-pub(crate) enum BufferReadAccess {
-    #[default]
-    None,
-    Memory,
-    Calldata,
-    Returndata,
-}
-
-impl ActiveBuffer {
+impl BufferKind {
     /// Helper to cycle through the active buffers.
     pub(crate) fn next(&self) -> Self {
         match self {
-            ActiveBuffer::Memory => ActiveBuffer::Calldata,
-            ActiveBuffer::Calldata => ActiveBuffer::Returndata,
-            ActiveBuffer::Returndata => ActiveBuffer::Memory,
-        }
-    }
-
-    /// Helper to compare the active buffer with a buffer read access.
-    pub(crate) fn compare(&self, other: &BufferReadAccess) -> bool {
-        match self {
-            ActiveBuffer::Memory => matches!(other, BufferReadAccess::Memory),
-            ActiveBuffer::Calldata => matches!(other, BufferReadAccess::Calldata),
-            ActiveBuffer::Returndata => matches!(other, BufferReadAccess::Returndata),
+            BufferKind::Memory => BufferKind::Calldata,
+            BufferKind::Calldata => BufferKind::Returndata,
+            BufferKind::Returndata => BufferKind::Memory,
         }
     }
 
     /// Helper to format the title of the active buffer pane
     pub(crate) fn title(&self, size: usize) -> String {
         match self {
-            ActiveBuffer::Memory => format!("Memory (max expansion: {} bytes)", size),
-            ActiveBuffer::Calldata => format!("Calldata (size: {} bytes)", size),
-            ActiveBuffer::Returndata => format!("Returndata (size: {} bytes)", size),
+            BufferKind::Memory => format!("Memory (max expansion: {} bytes)", size),
+            BufferKind::Calldata => format!("Calldata (size: {} bytes)", size),
+            BufferKind::Returndata => format!("Returndata (size: {} bytes)", size),
         }
     }
 }
@@ -81,7 +61,7 @@ pub(crate) struct DebuggerContext<'a> {
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
-    pub(crate) active_buffer: ActiveBuffer,
+    pub(crate) active_buffer: BufferKind,
 }
 
 impl<'a> DebuggerContext<'a> {
@@ -98,7 +78,7 @@ impl<'a> DebuggerContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
-            active_buffer: ActiveBuffer::Memory,
+            active_buffer: BufferKind::Memory,
         }
     }
 
@@ -144,9 +124,9 @@ impl<'a> DebuggerContext<'a> {
 
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
-            ActiveBuffer::Memory => &self.current_step().memory,
-            ActiveBuffer::Calldata => &self.current_step().calldata,
-            ActiveBuffer::Returndata => &self.current_step().returndata,
+            BufferKind::Memory => &self.current_step().memory,
+            BufferKind::Calldata => &self.current_step().calldata,
+            BufferKind::Returndata => &self.current_step().returndata,
         }
     }
 }
