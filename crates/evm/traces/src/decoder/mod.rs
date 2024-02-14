@@ -145,7 +145,6 @@ impl CallTraceDecoder {
 
         Self {
             contracts: Default::default(),
-
             labels: [
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
@@ -154,6 +153,7 @@ impl CallTraceDecoder {
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
             ]
             .into(),
+            receive_contracts: Default::default(),
 
             functions: hh_funcs()
                 .chain(
@@ -164,16 +164,14 @@ impl CallTraceDecoder {
                 )
                 .map(|(selector, func)| (selector, vec![func]))
                 .collect(),
-
             events: Console::abi::events()
                 .into_values()
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
-
             errors: Default::default(),
+
             signature_identifier: None,
-            receive_contracts: Default::default(),
             verbosity: 0,
         }
     }
@@ -181,7 +179,12 @@ impl CallTraceDecoder {
     /// Clears all known addresses.
     pub fn clear_addresses(&mut self) {
         self.contracts.clear();
-        self.labels.clear();
+
+        let default_labels = &Self::new().labels;
+        if self.labels.len() > default_labels.len() {
+            self.labels = default_labels.clone();
+        }
+
         self.receive_contracts.clear();
     }
 

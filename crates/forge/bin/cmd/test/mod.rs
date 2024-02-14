@@ -375,7 +375,9 @@ impl TestArgs {
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
-                decoder.labels = result.labeled_addresses.clone();
+                decoder
+                    .labels
+                    .extend(result.labeled_addresses.iter().map(|(k, v)| (*k, v.clone())));
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
