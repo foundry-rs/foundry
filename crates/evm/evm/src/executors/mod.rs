@@ -720,7 +720,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
 
 impl Default for RawCallResult {

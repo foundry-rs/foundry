@@ -63,7 +63,7 @@ use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::decode_revert,
-    inspectors::AccessListTracer,
+    inspectors::AccessListInspector,
     revm::{
         self,
         db::CacheDB,
@@ -1195,7 +1195,7 @@ impl Backend {
             from.create(nonce)
         };
 
-        let mut tracer = AccessListTracer::new(
+        let mut tracer = AccessListInspector::new(
             request.access_list.clone().unwrap_or_default(),
             from,
             to,

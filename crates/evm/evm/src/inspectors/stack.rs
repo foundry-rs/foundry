@@ -1,20 +1,21 @@
+use std::{collections::HashMap, ops::Range, sync::Arc};
+
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Log, U256};
 use alloy_signer::LocalWallet;
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Stack,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, InstructionResult, Interpreter,
     },
     primitives::{BlockEnv, Env},
-    EVMData, Inspector,
+    EvmContext, Inspector,
 };
-use std::{collections::HashMap, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -190,7 +191,7 @@ pub struct InspectorData {
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -326,46 +327,10 @@ impl InspectorStack {
             chisel_state: self.chisel_state.and_then(|state| state.state),
         }
     }
-
-    fn do_call_end<DB: DatabaseExt>(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!(
-            [
-                &mut self.fuzzer,
-                &mut self.debugger,
-                &mut self.tracer,
-                &mut self.coverage,
-                &mut self.log_collector,
-                &mut self.cheatcodes,
-                &mut self.printer
-            ],
-            |inspector| {
-                let (new_status, new_gas, new_retdata) =
-                    inspector.call_end(data, call, remaining_gas, status, retdata.clone());
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                if new_status != status ||
-                    (new_status == InstructionResult::Revert && new_retdata != retdata)
-                {
-                    return (new_status, new_gas, new_retdata);
-                }
-            }
-        );
-
-        (status, remaining_gas, retdata)
-    }
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
+    fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -376,19 +341,12 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.initialize_interp(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
-                }
+                inspector.initialize_interp(interp, context);
             }
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
+    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -400,34 +358,12 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.step(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
-                }
+                inspector.step(interp, context);
             }
         );
     }
 
-    fn log(
-        &mut self,
-        evm_data: &mut EVMData<'_, DB>,
-        address: &Address,
-        topics: &[B256],
-        data: &Bytes,
-    ) {
-        call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| {
-                inspector.log(evm_data, address, topics, data);
-            }
-        );
-    }
-
-    fn step_end(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
+    fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -438,22 +374,26 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                inspector.step_end(interpreter, data);
+                inspector.step_end(interp, context);
+            }
+        );
+    }
 
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
-                }
+    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+        call_inspectors!(
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                inspector.log(context, log);
             }
         );
     }
 
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+        context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+        return_memory_offset: Range<usize>,
+    ) -> Option<CallOutcome> {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -465,46 +405,52 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (status, gas, retdata) = inspector.call(data, call);
-
-                // Allow inspectors to exit early
-                #[allow(clippy::needless_return)]
-                if status != InstructionResult::Continue {
-                    return (status, gas, retdata);
+                if let Some(outcome) = inspector.call(context, inputs, return_memory_offset) {
+                    return Some(outcome);
                 }
             }
         );
 
-        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
+    #[inline]
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
-        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
+        context: &mut EvmContext<DB>,
+        inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
+        call_inspectors!(
+            [
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.log_collector,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
+            |inspector| {
+                let new_ret = inspector.call_end(context, inputs, outcome.clone());
 
-        if matches!(res.0, return_revert!()) {
-            // Encountered a revert, since cheatcodes may have altered the evm state in such a way
-            // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
-            // before revm reverts the state itself
-            if let Some(cheats) = self.cheatcodes.as_mut() {
-                cheats.on_revert(data);
+                // If the inspector returns a different ret or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_ret != outcome {
+                    return new_ret;
+                }
             }
-        }
+        );
 
-        res
+        outcome
     }
 
+    #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        context: &mut EvmContext<DB>,
+        inputs: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -515,27 +461,22 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (status, addr, gas, retdata) = inspector.create(data, call);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return (status, addr, gas, retdata);
+                if let Some(out) = inspector.create(context, inputs) {
+                    return Some(out);
                 }
             }
         );
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
+    #[inline]
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CreateInputs,
-        status: InstructionResult,
-        address: Option<Address>,
-        remaining_gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        context: &mut EvmContext<DB>,
+        inputs: &CreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -546,22 +487,17 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
-                    data,
-                    call,
-                    status,
-                    address,
-                    remaining_gas,
-                    retdata.clone(),
-                );
+                let new_ret = inspector.create_end(context, inputs, outcome.clone());
 
-                if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata);
+                // If the inspector returns a different ret or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_ret != outcome {
+                    return new_ret;
                 }
             }
         );
 
-        (status, address, remaining_gas, retdata)
+        outcome
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {

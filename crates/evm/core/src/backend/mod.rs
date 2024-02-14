@@ -13,12 +13,12 @@ use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
-    precompile::{Precompiles, SpecId},
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        StorageSlot, TransactTo, KECCAK_EMPTY,
+        SpecId, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
-    Database, DatabaseCommit, Inspector, JournaledState, EVM,
+    Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -549,7 +549,7 @@ impl Backend {
     }
 
     /// Sets the current spec id
-    pub fn set_spec_id(&mut self, spec_id: SpecId) -> &mut Self {
+    pub fn set_spec_id(&mut self, spec_id: PrecompileSpecId) -> &mut Self {
         trace!("setting precompile id");
         self.inner.precompile_id = spec_id;
         self
@@ -749,7 +749,7 @@ impl Backend {
     /// We need to track these mainly to prevent issues when switching between different evms
     pub(crate) fn initialize(&mut self, env: &Env) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(SpecId::from_spec_id(env.cfg.spec_id));
+        self.set_spec_id(PrecompileSpecId::from_spec_id(env.cfg.spec_id));
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
@@ -1557,7 +1557,7 @@ pub struct BackendInner {
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
     /// The configured precompile spec id
-    pub precompile_id: revm::precompile::SpecId,
+    pub precompile_id: revm::precompile::PrecompileSpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
 }
@@ -1728,15 +1728,17 @@ impl BackendInner {
         /// Helper function to convert from a `revm::precompile::SpecId` into a
         /// `revm::primitives::SpecId` This only matters if the spec is Cancun or later, or
         /// pre-Spurious Dragon.
-        fn precompiles_spec_id_to_primitives_spec_id(spec: SpecId) -> revm::primitives::SpecId {
+        fn precompiles_spec_id_to_primitives_spec_id(
+            spec: PrecompileSpecId,
+        ) -> revm::primitives::SpecId {
             match spec {
-                SpecId::HOMESTEAD => revm::primitives::SpecId::HOMESTEAD,
-                SpecId::BYZANTIUM => revm::primitives::SpecId::BYZANTIUM,
-                SpecId::ISTANBUL => revm::primitives::ISTANBUL,
-                SpecId::BERLIN => revm::primitives::BERLIN,
-                SpecId::CANCUN => revm::primitives::CANCUN,
+                PrecompileSpecId::HOMESTEAD => revm::primitives::SpecId::HOMESTEAD,
+                PrecompileSpecId::BYZANTIUM => revm::primitives::SpecId::BYZANTIUM,
+                PrecompileSpecId::ISTANBUL => revm::primitives::ISTANBUL,
+                PrecompileSpecId::BERLIN => revm::primitives::BERLIN,
+                PrecompileSpecId::CANCUN => revm::primitives::CANCUN,
                 // Point latest to berlin for now, as we don't wanna accidentally point to Cancun.
-                SpecId::LATEST => revm::primitives::BERLIN,
+                PrecompileSpecId::LATEST => revm::primitives::BERLIN,
             }
         }
         JournaledState::new(

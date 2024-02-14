@@ -49,7 +49,7 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(revm::interpreter::Stack, Vec<u8>, InstructionResult)>,
+    pub state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
 
 /// ChiselRunner implementation
@@ -151,9 +151,7 @@ impl ChiselRunner {
                 self.executor.env.tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
                 match res.exit_reason {
-                    InstructionResult::Revert |
-                    InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFund => {
+                    InstructionResult::Revert | InstructionResult::OutOfGas => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {

@@ -5,48 +5,49 @@ use eyre::ContextCompat;
 use foundry_config::NamedChain;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{Eval, Halt, SpecId, TransactTo},
+    primitives::{SpecId, TransactTo},
 };
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
+use revm::primitives::{HaltReason, SuccessReason};
 
 pub use crate::ic::*;
 
 /// Small helper function to convert an Eval into an InstructionResult
 #[inline]
-pub fn eval_to_instruction_result(eval: Eval) -> InstructionResult {
-    match eval {
-        Eval::Return => InstructionResult::Return,
-        Eval::Stop => InstructionResult::Stop,
-        Eval::SelfDestruct => InstructionResult::SelfDestruct,
+pub fn eval_to_instruction_result(reason: SuccessReason) -> InstructionResult {
+    match reason {
+        SuccessReason::Return => InstructionResult::Return,
+        SuccessReason::Stop => InstructionResult::Stop,
+        SuccessReason::SelfDestruct => InstructionResult::SelfDestruct,
     }
 }
 
 /// Small helper function to convert a Halt into an InstructionResult
 #[inline]
-pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
+pub fn halt_to_instruction_result(halt: HaltReason) -> InstructionResult {
     match halt {
-        Halt::OutOfGas(_) => InstructionResult::OutOfGas,
-        Halt::OpcodeNotFound => InstructionResult::OpcodeNotFound,
-        Halt::InvalidFEOpcode => InstructionResult::InvalidFEOpcode,
-        Halt::InvalidJump => InstructionResult::InvalidJump,
-        Halt::NotActivated => InstructionResult::NotActivated,
-        Halt::StackOverflow => InstructionResult::StackOverflow,
-        Halt::StackUnderflow => InstructionResult::StackUnderflow,
-        Halt::OutOfOffset => InstructionResult::OutOfOffset,
-        Halt::CreateCollision => InstructionResult::CreateCollision,
-        Halt::PrecompileError => InstructionResult::PrecompileError,
-        Halt::NonceOverflow => InstructionResult::NonceOverflow,
-        Halt::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
-        Halt::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
-        Halt::CreateInitcodeSizeLimit => InstructionResult::CreateInitcodeSizeLimit,
-        Halt::OverflowPayment => InstructionResult::OverflowPayment,
-        Halt::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
-        Halt::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
-        Halt::OutOfFund => InstructionResult::OutOfFund,
-        Halt::CallTooDeep => InstructionResult::CallTooDeep,
-        Halt::FailedDeposit => InstructionResult::Return,
+        HaltReason::OutOfGas(_) => InstructionResult::OutOfGas,
+        HaltReason::OpcodeNotFound => InstructionResult::OpcodeNotFound,
+        HaltReason::InvalidFEOpcode => InstructionResult::InvalidFEOpcode,
+        HaltReason::InvalidJump => InstructionResult::InvalidJump,
+        HaltReason::NotActivated => InstructionResult::NotActivated,
+        HaltReason::StackOverflow => InstructionResult::StackOverflow,
+        HaltReason::StackUnderflow => InstructionResult::StackUnderflow,
+        HaltReason::OutOfOffset => InstructionResult::OutOfOffset,
+        HaltReason::CreateCollision => InstructionResult::CreateCollision,
+        HaltReason::PrecompileError => InstructionResult::PrecompileError,
+        HaltReason::NonceOverflow => InstructionResult::NonceOverflow,
+        HaltReason::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
+        HaltReason::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
+        HaltReason::OverflowPayment => InstructionResult::OverflowPayment,
+        HaltReason::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
+        HaltReason::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
+        HaltReason::CallTooDeep => InstructionResult::CallTooDeep,
+        HaltReason::FailedDeposit => InstructionResult::Return,
+        HaltReason::CreateInitCodeSizeLimit => InstructionResult::CreateInitCodeSizeLimit,
+        HaltReason::OutOfFunds => InstructionResult::OutOfFunds,
     }
 }
 
