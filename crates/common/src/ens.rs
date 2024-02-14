@@ -1,10 +1,9 @@
 //! ENS Name resolving utilities.
 #![allow(missing_docs)]
-use std::str::FromStr;
-
 use alloy_primitives::{address, keccak256, Address, B256};
 use alloy_providers::provider::TempProvider;
 use alloy_sol_types::sol;
+use std::str::FromStr;
 
 // ENS Registry and Resolver contracts.
 sol! {
