@@ -39,17 +39,15 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
-        let len = code.len();
-        let (Ok(mut start) | Err(mut start)) =
-            self.ordered_ids.binary_search_by(|(_, probe)| probe.cmp(&len));
+        // Check `[len * 0.9, ..., len * 1.1]`.
+        let min_len = (code.len() * 9) / 10;
+        let max_len = (code.len() * 11) / 10;
 
-        // In case of multiple artifacts with the same code length, we need to find the first one.
-        while start > 0 && self.ordered_ids[start - 1].1 == len {
-            start -= 1;
-        }
-
-        for &(id, _) in &self.ordered_ids[start..] {
+        for &(id, _) in self.artifact_ids(min_len) {
             let (abi, known_code) = self.known_contracts.get(id)?;
+            if known_code.len() > max_len {
+                break;
+            }
             let score = bytecode_diff_score(known_code, code);
             if score <= 0.1 {
                 trace!(%score, "found close-enough match");
@@ -63,6 +61,17 @@ impl<'a> LocalTraceIdentifier<'a> {
 
         trace!(%min_score, "no close-enough match found");
         min_score_id
+    }
+
+    /// Returns the IDs of the artifacts with code length greater than or equal to the given length.
+    fn artifact_ids(&self, len: usize) -> &[(&'a ArtifactId, usize)] {
+        let (Ok(mut start) | Err(mut start)) =
+            self.ordered_ids.binary_search_by(|(_, probe)| probe.cmp(&len));
+        // In case of multiple artifacts with the same code length, we need to find the first one.
+        while start > 0 && self.ordered_ids[start - 1].1 == len {
+            start -= 1;
+        }
+        &self.ordered_ids[start..]
     }
 }
 
