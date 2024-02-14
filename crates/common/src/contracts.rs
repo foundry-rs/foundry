@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
     collections::BTreeMap,
+    fmt,
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
@@ -19,6 +20,12 @@ type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a (JsonAbi, Vec<u8>));
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
 #[derive(Clone, Default)]
 pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, (JsonAbi, Vec<u8>)>);
+
+impl fmt::Debug for ContractsByArtifact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter().map(|(k, (v1, v2))| (k, (v1, hex::encode(v2))))).finish()
+    }
+}
 
 impl ContractsByArtifact {
     /// Finds a contract which has a similar bytecode as `code`.
