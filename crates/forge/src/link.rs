@@ -160,6 +160,7 @@ impl Linker {
         Ok(LinkOutput { libraries, libs_to_deploy })
     }
 
+    /// Links given artifact with given libraries.
     pub fn link(
         &self,
         target: &ArtifactId,
