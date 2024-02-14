@@ -36,6 +36,8 @@ impl<'a> LocalTraceIdentifier<'a> {
     /// considered that after compilation code can only be extended by additional parameters
     /// (immutables) and cannot be shortened.
     pub fn identify_code(&self, code: &[u8]) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
+        let len = code.len();
+
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
@@ -54,12 +56,11 @@ impl<'a> LocalTraceIdentifier<'a> {
         };
 
         // Check `[len * 0.9, ..., len * 1.1]`.
-        let max_len = (code.len() * 11) / 10;
+        let max_len = (len * 11) / 10;
 
         // Start at artifacts with the same code length: `len..len*1.1`.
-        let same_length_idx = self.find_index(code.len());
-        let mut idx = same_length_idx;
-        loop {
+        let same_length_idx = self.find_index(len);
+        for idx in same_length_idx..self.ordered_ids.len() {
             let (id, len) = self.ordered_ids[idx];
             if len > max_len {
                 break;
@@ -67,11 +68,10 @@ impl<'a> LocalTraceIdentifier<'a> {
             if let found @ Some(_) = check(id) {
                 return found;
             }
-            idx += 1;
         }
 
         // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
-        let min_len = (code.len() * 9) / 10;
+        let min_len = (len * 9) / 10;
         let idx = self.find_index(min_len);
         for i in idx..same_length_idx {
             let (id, _) = self.ordered_ids[i];
