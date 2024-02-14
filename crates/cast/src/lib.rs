@@ -6,7 +6,7 @@ use alloy_primitives::{
 };
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockHashOrNumber, BlockNumberOrTag};
+use alloy_rpc_types::{BlockHashOrNumber, BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -22,6 +22,7 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
+    ens::NameOrAddress as ENSNameOrAddress,
     fmt::*,
     types::{ToAlloy, ToEthers},
     TransactionReceiptWithRevertReason,
@@ -33,7 +34,10 @@ use std::{
     io,
     path::PathBuf,
     str::FromStr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::signal::ctrl_c;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
@@ -57,7 +61,7 @@ use rlp_converter::Item;
 
 pub struct Cast<M, P> {
     provider: M,
-    alloy_provider: P,
+    alloy_provider: Arc<P>,
 }
 
 impl<M: Middleware, P: TempProvider> Cast<M, P>
@@ -79,7 +83,7 @@ where
     /// # }
     /// ```
     pub fn new(provider: M, alloy_provider: P) -> Self {
-        Self { provider, alloy_provider }
+        Self { provider, alloy_provider: Arc::new(alloy_provider) }
     }
 
     /// Makes a read-only call to the specified address
@@ -789,13 +793,15 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
+    pub async fn storage<T: Into<ENSNameOrAddress> + Send + Sync>(
         &self,
         from: T,
-        slot: H256,
-        block: Option<BlockId>,
+        slot: B256,
+        block: Option<AlloyBlockId>,
     ) -> Result<String> {
-        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
+        let from: ENSNameOrAddress = from.into();
+        let from = from.resolve(&self.alloy_provider).await?;
+        Ok(format!("{:?}", self.alloy_provider.get_storage_at(from, slot.into(), block).await?))
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
