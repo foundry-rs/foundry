@@ -268,7 +268,7 @@ impl ClientFork {
 
         let block_id = BlockId::Number(blocknumber.into());
 
-        let code = self.provider().get_code_at(address, block_id).await?;
+        let code = self.provider().get_code_at(address, Some(block_id)).await?;
 
         let mut storage = self.storage_write();
         storage.code_at.insert((address, blocknumber), code.clone().0.into());

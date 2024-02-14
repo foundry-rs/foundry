@@ -33,6 +33,7 @@ alloy-transport-ipc.workspace = true
 alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 alloy-sol-types.workspace = true
+alloy-contract.workspace = true
 
 tower.workspace = true
 
