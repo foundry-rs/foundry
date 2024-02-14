@@ -518,12 +518,11 @@ impl DebuggerContext<'_> {
             let stack_len = step.stack.len();
             if stack_len > 0 {
                 if let Some(accesses) = get_buffer_accesses(op, &step.stack) {
-                    if let Some(read_access) = accesses.read {
-                        if read_access.0 == self.active_buffer {
-                            offset = Some(read_access.1.offset);
-                            size = Some(read_access.1.size);
-                            color = Some(Color::Cyan);
-                        }
+                    if accesses.read.as_ref().is_some_and(|a| a.0 == self.active_buffer) {
+                        let read_access = accesses.read.unwrap();
+                        offset = Some(read_access.1.offset);
+                        size = Some(read_access.1.size);
+                        color = Some(Color::Cyan);
                     } else if let Some(write_access) = accesses.write {
                         // TODO: with MCOPY, it will be possible to both read from and write to the
                         // memory buffer with the same opcode
