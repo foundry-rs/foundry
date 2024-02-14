@@ -1,7 +1,9 @@
 #[macro_use]
 extern crate tracing;
 
+use alloy_consensus::{TxEnvelope, TxType};
 use alloy_primitives::{keccak256, Address, B256};
+use alloy_rpc_types::Transaction;
 use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -209,6 +211,7 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
+            let account_addr = who.resolve(&alloy_provider).await?;
 
             match erc20 {
                 Some(token) => {
@@ -222,11 +225,6 @@ async fn main() -> Result<()> {
                     )
                     .await?;
 
-                    let account_addr = match who {
-                        NameOrAddress::Name(ens_name) => provider.resolve_name(&ens_name).await?,
-                        NameOrAddress::Address(addr) => addr,
-                    };
-
                     builder
                         .set_args(
                             "balanceOf(address) returns (uint256)",
@@ -236,11 +234,14 @@ async fn main() -> Result<()> {
                     let builder_output = builder.build();
                     println!(
                         "{}",
-                        Cast::new(provider, alloy_provider).call(builder_output, block).await?
+                        Cast::new(provider, alloy_provider)
+                            .call(builder_output, block.map(ToEthers::to_ethers))
+                            .await?
                     );
                 }
                 None => {
-                    let value = Cast::new(provider, alloy_provider).balance(who, block).await?;
+                    let value =
+                        Cast::new(provider, alloy_provider).balance(account_addr, block).await?;
                     if ether {
                         println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
                     } else {
@@ -298,6 +299,7 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
+            let who = who.resolve(&alloy_provider).await?;
             println!(
                 "{}",
                 Cast::new(provider, alloy_provider).code(who, block, disassemble).await?
@@ -307,6 +309,7 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
+            let who = who.resolve(&alloy_provider).await?;
             println!("{}", Cast::new(provider, alloy_provider).codesize(who, block).await?);
         }
         CastSubcommand::ComputeAddress { address, nonce, rpc } => {
@@ -359,18 +362,21 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
+            let who = who.resolve(&alloy_provider).await?;
             println!("{}", Cast::new(provider, alloy_provider).implementation(who, block).await?);
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
+            let who = who.resolve(&alloy_provider).await?;
             println!("{}", Cast::new(provider, alloy_provider).admin(who, block).await?);
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let alloy_provider = utils::get_alloy_provider(&config)?;
+            let who = who.resolve(&alloy_provider).await?;
             println!("{}", Cast::new(provider, alloy_provider).nonce(who, block).await?);
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
@@ -576,8 +582,9 @@ async fn main() -> Result<()> {
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
-            let (tx, sig) = SimpleCast::decode_raw_transaction(&tx)?;
+            let tx_envelope = SimpleCast::decode_raw_transaction(&tx)?;
 
+            // TODO: Conversion from TxEnvelope to RPC Transaction
             // Serialize tx, sig and constructed a merged json string
             let mut tx = serde_json::to_value(&tx)?;
             let tx_map = tx.as_object_mut().unwrap();

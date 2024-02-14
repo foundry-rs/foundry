@@ -107,8 +107,7 @@ impl StorageArgs {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address.clone(), block, artifact, true)
-                    .await;
+                return fetch_and_print_storage(provider, address, block, artifact, true).await;
             }
         }
 
@@ -230,7 +229,7 @@ async fn fetch_storage_slots<P: TempProvider>(
 ) -> Result<Vec<StorageValue>> {
     let requests = layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
-        let raw_slot_value = provider.get_storage_at(address.clone(), slot.into(), block).await?;
+        let raw_slot_value = provider.get_storage_at(address, slot.into(), block).await?;
 
         let value = StorageValue { slot, raw_slot_value: raw_slot_value.into() };
 
@@ -261,7 +260,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
-            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            (storage_type.map_or("?", |t| &t.number_of_bytes)),
             &converted_value.to_string(),
             &value.to_string(),
             &slot.contract,

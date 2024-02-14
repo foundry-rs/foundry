@@ -1,3 +1,4 @@
+use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{
@@ -6,13 +7,12 @@ use alloy_primitives::{
 };
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockHashOrNumber, BlockId as AlloyBlockId, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
     types::{
-        transaction::eip2718::TypedTransaction, BlockId, Filter, NameOrAddress, Signature, H160,
-        H256,
+        transaction::eip2718::TypedTransaction, BlockId, Filter, NameOrAddress, Signature, H256,
     },
     utils::rlp,
 };
@@ -22,9 +22,8 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    ens::NameOrAddress as ENSNameOrAddress,
     fmt::*,
-    types::{ToAlloy, ToEthers},
+    types::ToAlloy,
     TransactionReceiptWithRevertReason,
 };
 use foundry_config::Chain;
@@ -206,12 +205,8 @@ where
         Ok(res)
     }
 
-    pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block).await?.to_alloy())
+    pub async fn balance(&self, who: Address, block: Option<AlloyBlockId>) -> Result<U256> {
+        Ok(self.alloy_provider.get_balance(who, block).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -498,12 +493,8 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<u64> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy().to())
+    pub async fn nonce(&self, who: Address, block: Option<AlloyBlockId>) -> Result<u64> {
+        Ok(self.alloy_provider.get_transaction_count(who, block).await?.to())
     }
 
     /// # Example
@@ -523,15 +514,16 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn implementation<T: Into<NameOrAddress> + Send + Sync>(
+    pub async fn implementation(
         &self,
-        who: T,
-        block: Option<BlockId>,
+        who: Address,
+        block: Option<AlloyBlockId>,
     ) -> Result<String> {
         let slot =
-            H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
-        let value = self.provider.get_storage_at(who, slot, block).await?;
-        let addr: H160 = value.into();
+            B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let value =
+            TempProvider::get_storage_at(&self.alloy_provider, who, slot.into(), block).await?;
+        let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
 
@@ -552,15 +544,12 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn admin<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<String> {
+    pub async fn admin(&self, who: Address, block: Option<AlloyBlockId>) -> Result<String> {
         let slot =
-            H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
-        let value = self.provider.get_storage_at(who, slot, block).await?;
-        let addr: H160 = value.into();
+            B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let value =
+            TempProvider::get_storage_at(&self.alloy_provider, who, slot.into(), block).await?;
+        let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
 
@@ -582,8 +571,7 @@ where
     /// # }
     /// ```
     pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
-        let unpacked =
-            if let Some(n) = nonce { n } else { self.nonce(address.to_ethers(), None).await? };
+        let unpacked = if let Some(n) = nonce { n } else { self.nonce(address, None).await? };
         Ok(address.create(unpacked))
     }
 
@@ -604,17 +592,17 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn code<T: Into<NameOrAddress> + Send + Sync>(
+    pub async fn code(
         &self,
-        who: T,
-        block: Option<BlockId>,
+        who: Address,
+        block: Option<AlloyBlockId>,
         disassemble: bool,
     ) -> Result<String> {
         if disassemble {
-            let code = self.provider.get_code(who, block).await?.to_vec();
+            let code = self.alloy_provider.get_code_at(who, block).await?.to_vec();
             Ok(format_operations(disassemble_bytes(code)?)?)
         } else {
-            Ok(format!("{}", self.provider.get_code(who, block).await?))
+            Ok(format!("{}", self.alloy_provider.get_code_at(who, block).await?))
         }
     }
 
@@ -635,12 +623,8 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn codesize<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        let code = self.provider.get_code(who, block).await?.to_vec();
+    pub async fn codesize(&self, who: Address, block: Option<AlloyBlockId>) -> Result<String> {
+        let code = self.alloy_provider.get_code_at(who, block).await?.to_vec();
         Ok(format!("{}", code.len()))
     }
 
@@ -793,14 +777,12 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn storage<T: Into<ENSNameOrAddress> + Send + Sync>(
+    pub async fn storage(
         &self,
-        from: T,
+        from: Address,
         slot: B256,
         block: Option<AlloyBlockId>,
     ) -> Result<String> {
-        let from: ENSNameOrAddress = from.into();
-        let from = from.resolve(&self.alloy_provider).await?;
         Ok(format!("{:?}", self.alloy_provider.get_storage_at(from, slot.into(), block).await?))
     }
 
@@ -856,15 +838,14 @@ where
     /// ```
     pub async fn convert_block_number(
         &self,
-        block: Option<BlockHashOrNumber>,
+        block: Option<AlloyBlockId>,
     ) -> Result<Option<BlockNumberOrTag>, eyre::Error> {
         match block {
             Some(block) => match block {
-                BlockHashOrNumber::Number(block_number) => {
-                    Ok(Some(BlockNumberOrTag::Number(block_number)))
-                }
-                BlockHashOrNumber::Hash(hash) => {
-                    let block = self.alloy_provider.get_block_by_hash(hash, false).await?;
+                AlloyBlockId::Number(block_number) => Ok(Some(block_number)),
+                AlloyBlockId::Hash(hash) => {
+                    let block =
+                        self.alloy_provider.get_block_by_hash(hash.block_hash, false).await?;
                     Ok(block
                         .map(|block| block.header.number.unwrap().to::<u64>())
                         .map(BlockNumberOrTag::from))
@@ -1964,10 +1945,10 @@ impl SimpleCast {
     ///     let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
     ///     let (tx, sig) = Cast::decode_raw_transaction(&tx)?;
     /// # Ok::<(), eyre::Report>(())
-    pub fn decode_raw_transaction(tx: &str) -> Result<(TypedTransaction, Signature)> {
+    pub fn decode_raw_transaction(tx: &str) -> Result<TxEnvelope> {
         let tx_hex = hex::decode(strip_0x(tx))?;
-        let tx_rlp = rlp::Rlp::new(tx_hex.as_slice());
-        Ok(TypedTransaction::decode_signed(&tx_rlp)?)
+        let envelope = TxEnvelope::decode(&mut tx_hex.as_slice())?;
+        Ok(envelope)
     }
 }
 

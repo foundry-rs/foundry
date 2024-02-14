@@ -1,4 +1,4 @@
-use alloy_rpc_types::BlockHashOrNumber;
+use alloy_rpc_types::BlockId;
 use cast::Cast;
 use clap::Parser;
 use ethers_core::{
@@ -23,13 +23,13 @@ pub struct LogsArgs {
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
     #[clap(long)]
-    from_block: Option<BlockHashOrNumber>,
+    from_block: Option<BlockId>,
 
     /// The block height to stop query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
     #[clap(long)]
-    to_block: Option<BlockHashOrNumber>,
+    to_block: Option<BlockId>,
 
     /// The contract address to filter on.
     #[clap(
