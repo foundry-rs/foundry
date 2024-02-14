@@ -40,7 +40,7 @@ impl NameOrAddress {
     pub async fn resolve<P: TempProvider>(
         &self,
         provider: Arc<P>,
-    ) -> Result<Address, ResolveError> {
+    ) -> Result<Address, EnsResolutionError> {
         let name = match self {
             NameOrAddress::Name(name) => name.clone(),
             NameOrAddress::Address(addr) => return Ok(*addr),
@@ -51,14 +51,14 @@ impl NameOrAddress {
             .resolver(node)
             .call()
             .await
-            .map_err(|err| ResolveError::EnsResolutionFailed(err.to_string()))?
+            .map_err(|err| EnsResolutionError::EnsRegistryResolutionFailed(err.to_string()))?
             ._0;
         let resolver = EnsResolver::new(resolver, provider.clone());
         let addr = resolver
             .addr(node)
             .call()
             .await
-            .map_err(|err| ResolveError::EnsResolutionFailed(err.to_string()))?
+            .map_err(|err| EnsResolutionError::EnsResolutionFailed(err.to_string()))?
             ._0;
         Ok(addr)
     }
@@ -102,9 +102,12 @@ impl FromStr for NameOrAddress {
 
 /// Error type for ENS resolution.
 #[derive(Debug, thiserror::Error)]
-pub enum ResolveError {
-    /// ENS resolution failed.
-    #[error("ENS resolution failed: {0}")]
+pub enum EnsResolutionError {
+    /// Failed to resolve ENS registry.
+    #[error("Failed to get resolver from ENS registry: {0}")]
+    EnsRegistryResolutionFailed(String),
+    /// Failed to resolve ENS name to an address.
+    #[error("Failed to resolve ENS name to an address: {0}")]
     EnsResolutionFailed(String),
 }
 
