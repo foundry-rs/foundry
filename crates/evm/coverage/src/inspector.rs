@@ -12,9 +12,9 @@ impl<DB: Database> Inspector<DB> for CoverageCollector {
     #[inline]
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         let hash = interp.contract.hash;
-        self.maps.entry(hash).or_insert_with(|| {
-            HitMap::new(Bytes::copy_from_slice(interp.contract.bytecode.original_bytecode_slice()))
-        });
+        self.maps
+            .entry(hash)
+            .or_insert_with(|| HitMap::new(interp.contract.bytecode.original_bytecode()));
     }
 
     #[inline]
