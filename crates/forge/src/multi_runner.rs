@@ -10,7 +10,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::{OptionExt, Result};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
-    artifacts::CompactContractBytecode, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
+    contracts::ArtifactContracts, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
 };
 use foundry_evm::{
     backend::Backend,
@@ -267,13 +267,12 @@ impl MultiContractRunnerBuilder {
     {
         let output = output.with_stripped_file_prefixes(&root);
         // This is just the contracts compiled, but we need to merge this with the read cached
-        // artifacts
+        // artifacts.
         let contracts = output
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
-            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
+            .collect::<ArtifactContracts>();
 
-        let mut known_contracts = ContractsByArtifact::default();
         let source_paths = contracts
             .iter()
             .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
@@ -281,17 +280,16 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        let artifact_contracts = contracts.iter().cloned().collect();
+        let linker = Linker::new(root.as_ref(), contracts);
 
-        let linker = Linker::new(root.as_ref(), artifact_contracts);
-
-        for (id, contract) in contracts {
+        let mut known_contracts = ContractsByArtifact::default();
+        for (id, contract) in &linker.contracts.0 {
             let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
 
             let LinkOutput { libs_to_deploy, libraries } =
-                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, &id)?;
+                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, id)?;
 
-            let linked_contract = linker.link(&id, &libraries)?;
+            let linked_contract = linker.link(id, &libraries)?;
 
             // get bytes if deployable, else add to known contracts and continue.
             // interfaces and abstract contracts should be known to enable fuzzing of their ABI

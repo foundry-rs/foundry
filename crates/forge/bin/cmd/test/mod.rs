@@ -742,7 +742,7 @@ mod tests {
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
-    fn issue_5913() {
+    fn fuzz_seed_exists() {
         let args: TestArgs =
             TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
