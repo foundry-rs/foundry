@@ -299,7 +299,6 @@ impl DebuggerContext<'_> {
             // dump memory+calldata+returndata to timestamped file
             KeyCode::Char('w') => {
                 use std::time::SystemTime;
-                let address_str = self.address().to_string();
                 // create a json file with the current memory, calldata, and returndata
                 // and write it to the current directory
                 // the file should be named with the current timestamp
@@ -328,17 +327,17 @@ impl DebuggerContext<'_> {
                         .map(|byte| format!("{:02x}", byte))
                         .collect::<String>()
                 );
-                let filename: PathBuf = format!(
-                    "debug/debug_dump_{}_{}.json",
-                    address_str,
-                    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
-                )
-                .into();
                 let mapping: HashMap<&str, &String> = [
                     ("memory", &memory_ascii),
                     ("calldata", &calldata_ascii),
                     ("returndata", &returndata_ascii),
                 ]
+                .into();
+                let filename: PathBuf = format!(
+                    "debug/debug_dump_{}_{}.json",
+                    self.address().to_string(),
+                    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+                )
                 .into();
                 create_dir("debug").err();
                 write_json_file(&filename, &mapping).unwrap();
