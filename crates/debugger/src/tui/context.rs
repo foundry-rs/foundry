@@ -141,6 +141,14 @@ impl<'a> DebuggerContext<'a> {
     fn opcode_list(&self) -> Vec<String> {
         self.debug_steps().iter().map(DebugStep::pretty_opcode).collect()
     }
+
+    fn active_buffer(&self) -> &[u8] {
+        match self.active_buffer {
+            ActiveBuffer::Memory => &self.current_step().memory,
+            ActiveBuffer::Calldata => &self.current_step().calldata,
+            ActiveBuffer::Returndata => &self.current_step().returndata,
+        }
+    }
 }
 
 impl DebuggerContext<'_> {
@@ -173,8 +181,8 @@ impl DebuggerContext<'_> {
                 // Grab number of times to do it
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        let max_mem = (self.current_step().memory.len() / 32).saturating_sub(1);
-                        if self.draw_memory.current_buf_startline < max_mem {
+                        let max_buf = (self.active_buffer().len() / 32).saturating_sub(1);
+                        if self.draw_memory.current_buf_startline < max_buf {
                             self.draw_memory.current_buf_startline += 1;
                         }
                     } else if self.current_step < self.opcode_list.len() - 1 {
