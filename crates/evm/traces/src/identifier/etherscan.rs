@@ -99,7 +99,7 @@ impl TraceIdentifier for EtherscanIdentifier {
     where
         A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
     {
-        trace!(target: "etherscanidentifier", "identify {:?} addresses", addresses.size_hint().1);
+        trace!("identify {:?} addresses", addresses.size_hint().1);
 
         let Some(client) = self.client.clone() else {
             // no client was configured

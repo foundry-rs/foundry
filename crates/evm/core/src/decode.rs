@@ -41,6 +41,9 @@ pub fn decode_revert(
     })
 }
 
+/// Tries to decode an error message from the given revert bytes.
+///
+/// See [`decode_revert`] for more information.
 pub fn maybe_decode_revert(
     err: &[u8],
     maybe_abi: Option<&JsonAbi>,

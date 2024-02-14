@@ -2,7 +2,7 @@ Compiling 1 files with 0.8.23
 Solc 0.8.23 finished in 798.51ms
 Compiler run successful!
 
-Running 2 tests for test/Contract.t.sol:CustomTypesTest
+Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL. Reason: PoolNotInitialized()] testErr() (gas: 231)
 Traces:
   [231] CustomTypesTest::testErr()
@@ -15,8 +15,8 @@ Traces:
     └─ ← ()
 
 Test result: FAILED. 1 passed; 1 failed; 0 skipped; finished in 3.88ms
- 
-Ran 1 test suites: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Ran 1 test suite: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest

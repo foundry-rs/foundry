@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.74" # Remember to update clippy.toml as well
+rust-version = "1.75" # Remember to update clippy.toml as well
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -49,7 +49,10 @@ solang-parser.opt-level = 3
 serde_json.opt-level = 3
 
 # EVM
+alloy-dyn-abi.opt-level = 3
+alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
+alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
 keccak.opt-level = 3
@@ -62,11 +65,15 @@ sha2.opt-level = 3
 sha3.opt-level = 3
 tiny-keccak.opt-level = 3
 
-# keystores
-scrypt.opt-level = 3
+# fuzzing
+proptest.opt-level = 3
+foundry-evm-fuzz.opt-level = 3
 
 # forking
 axum.opt-level = 3
+
+# keystores
+scrypt.opt-level = 3
 
 # Local "release" mode, more optimized than dev but much faster to compile than release.
 [profile.local]

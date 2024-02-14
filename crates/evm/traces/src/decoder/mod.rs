@@ -99,12 +99,14 @@ pub struct CallTraceDecoder {
     pub labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: Vec<Address>,
+
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// All known errors.
     pub errors: JsonAbi,
+
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
@@ -143,7 +145,6 @@ impl CallTraceDecoder {
 
         Self {
             contracts: Default::default(),
-
             labels: [
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
@@ -152,6 +153,7 @@ impl CallTraceDecoder {
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
             ]
             .into(),
+            receive_contracts: Default::default(),
 
             functions: hh_funcs()
                 .chain(
@@ -162,18 +164,28 @@ impl CallTraceDecoder {
                 )
                 .map(|(selector, func)| (selector, vec![func]))
                 .collect(),
-
             events: Console::abi::events()
                 .into_values()
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
-
             errors: Default::default(),
+
             signature_identifier: None,
-            receive_contracts: Default::default(),
             verbosity: 0,
         }
+    }
+
+    /// Clears all known addresses.
+    pub fn clear_addresses(&mut self) {
+        self.contracts.clear();
+
+        let default_labels = &Self::new().labels;
+        if self.labels.len() > default_labels.len() {
+            self.labels = default_labels.clone();
+        }
+
+        self.receive_contracts.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
