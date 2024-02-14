@@ -520,8 +520,6 @@ impl DebuggerContext<'_> {
                 let (read_buffer_accessed, read_offset, read_size, write_offset, write_size) =
                     get_buffer_access(op, &step.stack);
 
-                // if (let Some(buffer) = read_buffer_accessed) == self.active_buffer &&
-                // read_offset.is_some() {
                 if read_offset.is_some() &&
                     read_buffer_accessed.is_some_and(|b| b == self.active_buffer)
                 {
