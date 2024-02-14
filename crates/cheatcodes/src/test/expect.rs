@@ -398,12 +398,7 @@ fn expect_emit(
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_emit(
-    state: &mut Cheatcodes,
-    address: &Address,
-    topics: &[B256],
-    data: &Bytes,
-) {
+pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives::Log) {
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -431,20 +426,22 @@ pub(crate) fn handle_expect_emit(
 
     let Some(expected) = &event_to_fill_or_check.log else {
         // Fill the event.
-        event_to_fill_or_check.log = Some(RawLog::new_unchecked(topics.to_vec(), data.clone()));
+        event_to_fill_or_check.log =
+            Some(RawLog::new_unchecked(log.topics().to_vec(), log.data.clone().into()));
         state.expected_emits.push_back(event_to_fill_or_check);
         return
     };
 
     let expected_topic_0 = expected.topics().first();
-    let log_topic_0 = topics.first();
+    let log_topic_0 = log.topics().first();
 
     if expected_topic_0
         .zip(log_topic_0)
-        .map_or(false, |(a, b)| a == b && expected.topics().len() == topics.len())
+        .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len())
     {
         // Match topics
-        event_to_fill_or_check.found = topics
+        event_to_fill_or_check.found = log
+            .topics()
             .iter()
             .skip(1)
             .enumerate()
@@ -453,12 +450,12 @@ pub(crate) fn handle_expect_emit(
 
         // Maybe match source address
         if let Some(addr) = event_to_fill_or_check.address {
-            event_to_fill_or_check.found &= addr == *address;
+            event_to_fill_or_check.found &= addr == log.address;
         }
 
         // Maybe match data
         if event_to_fill_or_check.checks[3] {
-            event_to_fill_or_check.found &= expected.data == *data;
+            event_to_fill_or_check.found &= expected.data.as_ref() == log.data.as_slice();
         }
     }
 
