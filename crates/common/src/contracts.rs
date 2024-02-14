@@ -96,6 +96,7 @@ pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 ///
 /// Returns a value between `0.0` (identical) and `1.0` (completely different).
 pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
+    // Make sure `a` is the longer one.
     if a.len() < b.len() {
         std::mem::swap(&mut a, &mut b);
     }
@@ -112,9 +113,34 @@ pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
     }
 
     // Count different bytes.
-    n_different_bytes += std::iter::zip(a, b).filter(|(a, b)| a != b).count();
+    // SAFETY: `a` is longer than `b`.
+    n_different_bytes += unsafe { count_different_bytes(a, b) };
 
     n_different_bytes as f64 / a.len() as f64
+}
+
+/// Returns the amount of different bytes between two slices.
+///
+/// # Safety
+///
+/// `a` must be at least as long as `b`.
+unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
+    // This could've been written as `std::iter::zip(a, b).filter(|(x, y)| x != y).count()`,
+    // however this function is very hot, and has been written to be as primitive as
+    // possible for lower optimization levels.
+
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
+    let len = b.len();
+
+    let mut sum = 0;
+    let mut i = 0;
+    while i < len {
+        // SAFETY: `a` is at least as long as `b`, and `i` is in bound of `b`.
+        sum += unsafe { *a_ptr.add(i) != *b_ptr.add(i) } as usize;
+        i += 1;
+    }
+    sum
 }
 
 /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
