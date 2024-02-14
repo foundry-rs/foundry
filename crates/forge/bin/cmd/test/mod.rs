@@ -186,29 +186,28 @@ impl TestArgs {
         // Prepare the test builder
         let should_debug = self.debug.is_some();
 
-        let runner_builder = MultiContractRunnerBuilder::default()
+        // Clone the output only if we actually need it later for the debugger.
+        let output_clone = should_debug.then(|| output.clone());
+
+        let runner = MultiContractRunnerBuilder::default()
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
-            .with_test_options(test_options.clone());
+            .with_test_options(test_options.clone())
+            .build(project_root, output, env, evm_opts)?;
 
-        // Clone the output only if we actually need it later for the debugger.
-        let output_clone = should_debug.then(|| output.clone());
-
-        let runner = runner_builder.build(project_root, output, env, evm_opts)?;
-
-        if should_debug {
-            filter.args_mut().test_pattern = self.debug.clone();
-            let num_filtered = runner.matching_test_function_count(&filter);
-            if num_filtered != 1 {
+        if let Some(debug_test_pattern) = &self.debug {
+            let test_pattern = &mut filter.args_mut().test_pattern;
+            if test_pattern.is_some() {
                 eyre::bail!(
-                    "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
-                     Use --match-contract and --match-path to further limit the search."
+                    "Cannot specify both --debug and --match-test. \
+                     Use --match-contract and --match-path to further limit the search instead."
                 );
             }
+            *test_pattern = Some(debug_test_pattern.clone());
         }
 
         let outcome = self.run_tests(runner, config, verbosity, &filter, test_options).await?;
@@ -232,7 +231,9 @@ impl TestArgs {
             }
 
             // There is only one test.
-            let test = outcome.into_tests_cloned().next().unwrap();
+            let Some(test) = outcome.into_tests_cloned().next() else {
+                return Err(eyre::eyre!("no tests were executed"));
+            };
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -262,16 +263,10 @@ impl TestArgs {
             return list(runner, filter, self.json);
         }
 
-        if let Some(debug_regex) = self.debug.as_ref() {
-            let mut filter = filter.clone();
-            filter.args_mut().test_pattern = Some(debug_regex.clone());
-            let results = runner.test_collect(&filter, test_options).await;
-            return Ok(TestOutcome::new(results, self.allow_failure));
-        }
-
         trace!(target: "forge::test", "running all tests");
 
-        if runner.matching_test_function_count(filter) == 0 {
+        let num_filtered = runner.matching_test_function_count(filter);
+        if num_filtered == 0 {
             println!();
             if filter.is_empty() {
                 println!(
@@ -291,6 +286,13 @@ impl TestArgs {
                     }
                 }
             }
+        }
+        if self.debug.is_some() && num_filtered != 1 {
+            eyre::bail!(
+                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                 Use --match-contract and --match-path to further limit the search.\n\
+                 Filter used:\n{filter}"
+            );
         }
 
         if self.json {

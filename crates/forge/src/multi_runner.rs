@@ -9,9 +9,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::{OptionExt, Result};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{
-    contracts::ArtifactContracts, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
-};
+use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_evm::{
     backend::Backend,
     executors::{Executor, ExecutorBuilder},
@@ -232,6 +230,7 @@ impl MultiContractRunner {
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Clone, Debug, Default)]
+#[must_use = "builders do nothing unless you call `build` on them"]
 pub struct MultiContractRunnerBuilder {
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions
@@ -253,36 +252,75 @@ pub struct MultiContractRunnerBuilder {
 }
 
 impl MultiContractRunnerBuilder {
+    pub fn sender(mut self, sender: Address) -> Self {
+        self.sender = Some(sender);
+        self
+    }
+
+    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+        self.initial_balance = initial_balance;
+        self
+    }
+
+    pub fn evm_spec(mut self, spec: SpecId) -> Self {
+        self.evm_spec = Some(spec);
+        self
+    }
+
+    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
+        self.fork = fork;
+        self
+    }
+
+    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
+        self.cheats_config = Some(cheats_config);
+        self
+    }
+
+    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
+        self.test_options = Some(test_options);
+        self
+    }
+
+    pub fn set_coverage(mut self, enable: bool) -> Self {
+        self.coverage = enable;
+        self
+    }
+
+    pub fn set_debug(mut self, enable: bool) -> Self {
+        self.debug = enable;
+        self
+    }
+
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<A>(
+    pub fn build(
         self,
-        root: impl AsRef<Path>,
-        output: ProjectCompileOutput<A>,
+        root: &Path,
+        output: ProjectCompileOutput,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
-    ) -> Result<MultiContractRunner>
-    where
-        A: ArtifactOutput + Debug,
-    {
-        let output = output.with_stripped_file_prefixes(&root);
+    ) -> Result<MultiContractRunner> {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts.
         let contracts = output
+            .with_stripped_file_prefixes(root)
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<ArtifactContracts>();
 
         let source_paths = contracts
             .iter()
-            .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
+            .map(|(i, _)| (i.identifier(), root.join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
-        // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
+
+        let linker = Linker::new(root, contracts);
+
+        // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        let linker = Linker::new(root.as_ref(), contracts);
-
         let mut known_contracts = ContractsByArtifact::default();
+
         for (id, contract) in &linker.contracts.0 {
             let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
 
@@ -332,53 +370,5 @@ impl MultiContractRunnerBuilder {
             debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),
         })
-    }
-
-    #[must_use]
-    pub fn sender(mut self, sender: Address) -> Self {
-        self.sender = Some(sender);
-        self
-    }
-
-    #[must_use]
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
-        self.initial_balance = initial_balance;
-        self
-    }
-
-    #[must_use]
-    pub fn evm_spec(mut self, spec: SpecId) -> Self {
-        self.evm_spec = Some(spec);
-        self
-    }
-
-    #[must_use]
-    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
-        self.fork = fork;
-        self
-    }
-
-    #[must_use]
-    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
-        self.cheats_config = Some(cheats_config);
-        self
-    }
-
-    #[must_use]
-    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
-        self.test_options = Some(test_options);
-        self
-    }
-
-    #[must_use]
-    pub fn set_coverage(mut self, enable: bool) -> Self {
-        self.coverage = enable;
-        self
-    }
-
-    #[must_use]
-    pub fn set_debug(mut self, enable: bool) -> Self {
-        self.debug = enable;
-        self
     }
 }
