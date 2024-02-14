@@ -1,9 +1,8 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_consensus::{TxEnvelope, TxType};
 use alloy_primitives::{keccak256, Address, B256};
-use alloy_rpc_types::Transaction;
+
 use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -586,13 +585,13 @@ async fn main() -> Result<()> {
 
             // TODO: Conversion from TxEnvelope to RPC Transaction
             // Serialize tx, sig and constructed a merged json string
-            let mut tx = serde_json::to_value(&tx)?;
-            let tx_map = tx.as_object_mut().unwrap();
-            serde_json::to_value(sig)?.as_object().unwrap().iter().for_each(|(k, v)| {
-                tx_map.entry(k).or_insert(v.clone());
-            });
+            // let mut tx = serde_json::to_value(&tx)?;
+            // let tx_map = tx.as_object_mut().unwrap();
+            // serde_json::to_value(sig)?.as_object().unwrap().iter().for_each(|(k, v)| {
+            //     tx_map.entry(k).or_insert(v.clone());
+            // });
 
-            println!("{}", serde_json::to_string_pretty(&tx)?);
+            // println!("{}", serde_json::to_string_pretty(&tx)?);
         }
     };
     Ok(())

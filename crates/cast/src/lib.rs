@@ -10,12 +10,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
-use ethers_core::{
-    types::{
-        transaction::eip2718::TypedTransaction, BlockId, Filter, NameOrAddress, Signature, H256,
-    },
-    utils::rlp,
-};
+use ethers_core::types::{BlockId, Filter, NameOrAddress, H256};
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
@@ -33,10 +28,7 @@ use std::{
     io,
     path::PathBuf,
     str::FromStr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
@@ -60,7 +52,7 @@ use rlp_converter::Item;
 
 pub struct Cast<M, P> {
     provider: M,
-    alloy_provider: Arc<P>,
+    alloy_provider: P,
 }
 
 impl<M: Middleware, P: TempProvider> Cast<M, P>
@@ -82,7 +74,7 @@ where
     /// # }
     /// ```
     pub fn new(provider: M, alloy_provider: P) -> Self {
-        Self { provider, alloy_provider: Arc::new(alloy_provider) }
+        Self { provider, alloy_provider }
     }
 
     /// Makes a read-only call to the specified address
