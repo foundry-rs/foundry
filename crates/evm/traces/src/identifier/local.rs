@@ -39,15 +39,8 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
-        // Check `[len * 0.9, ..., len * 1.1]`.
-        let min_len = (code.len() * 9) / 10;
-        let max_len = (code.len() * 11) / 10;
-
-        for &(id, _) in self.artifact_ids(min_len) {
+        let mut check = |id| {
             let (abi, known_code) = self.known_contracts.get(id)?;
-            if known_code.len() > max_len {
-                break;
-            }
             let score = bytecode_diff_score(known_code, code);
             if score <= 0.1 {
                 trace!(%score, "found close-enough match");
@@ -57,21 +50,52 @@ impl<'a> LocalTraceIdentifier<'a> {
                 min_score = score;
                 min_score_id = Some((id, abi));
             }
+            None
+        };
+
+        // Check `[len * 0.9, ..., len * 1.1]`.
+        let max_len = (code.len() * 11) / 10;
+
+        // Start at artifacts with the same code length: `len..len*1.1`.
+        let same_length_idx = self.find_index(code.len());
+        let mut idx = same_length_idx;
+        loop {
+            let (id, len) = self.ordered_ids[idx];
+            if len > max_len {
+                break;
+            }
+            if let found @ Some(_) = check(id) {
+                return found;
+            }
+            idx += 1;
+        }
+
+        // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
+        let min_len = (code.len() * 9) / 10;
+        let idx = self.find_index(min_len);
+        for i in idx..same_length_idx {
+            let (id, _) = self.ordered_ids[i];
+            if let found @ Some(_) = check(id) {
+                return found;
+            }
         }
 
         trace!(%min_score, "no close-enough match found");
         min_score_id
     }
 
-    /// Returns the IDs of the artifacts with code length greater than or equal to the given length.
-    fn artifact_ids(&self, len: usize) -> &[(&'a ArtifactId, usize)] {
-        let (Ok(mut start) | Err(mut start)) =
+    /// Returns the index of the artifact with the given code length, or the index of the first
+    /// artifact with a greater code length if the exact code length is not found.
+    fn find_index(&self, len: usize) -> usize {
+        let (Ok(mut idx) | Err(mut idx)) =
             self.ordered_ids.binary_search_by(|(_, probe)| probe.cmp(&len));
+
         // In case of multiple artifacts with the same code length, we need to find the first one.
-        while start > 0 && self.ordered_ids[start - 1].1 == len {
-            start -= 1;
+        while idx > 0 && self.ordered_ids[idx - 1].1 == len {
+            idx -= 1;
         }
-        &self.ordered_ids[start..]
+
+        idx
     }
 }
 
