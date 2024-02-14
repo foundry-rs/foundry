@@ -77,6 +77,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             pc,
             stack: interp.stack().data().clone(),
             memory: interp.shared_memory.context_memory().to_vec(),
+            calldata: interp.contract().input.to_vec(),
+            returndata: interp.return_data_buffer.to_vec(),
             instruction: Instruction::OpCode(op),
             push_bytes,
             total_gas_used,
