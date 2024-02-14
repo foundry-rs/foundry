@@ -1,6 +1,6 @@
 //! ENS Name resolving utilities.
 #![allow(missing_docs)]
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 use alloy_primitives::{address, keccak256, Address, B256};
 use alloy_providers::provider::TempProvider;
@@ -39,21 +39,21 @@ impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
     pub async fn resolve<P: TempProvider>(
         &self,
-        provider: Arc<P>,
+        provider: &P,
     ) -> Result<Address, EnsResolutionError> {
         let name = match self {
             NameOrAddress::Name(name) => name.clone(),
             NameOrAddress::Address(addr) => return Ok(*addr),
         };
         let node = namehash(&name);
-        let registry = EnsRegistry::new(ENS_ADDRESS, provider.clone());
+        let registry = EnsRegistry::new(ENS_ADDRESS, provider);
         let resolver = registry
             .resolver(node)
             .call()
             .await
             .map_err(|err| EnsResolutionError::EnsRegistryResolutionFailed(err.to_string()))?
             ._0;
-        let resolver = EnsResolver::new(resolver, provider.clone());
+        let resolver = EnsResolver::new(resolver, provider);
         let addr = resolver
             .addr(node)
             .call()
@@ -79,12 +79,6 @@ impl From<&String> for NameOrAddress {
 impl From<Address> for NameOrAddress {
     fn from(addr: Address) -> Self {
         NameOrAddress::Address(addr)
-    }
-}
-
-impl From<&str> for NameOrAddress {
-    fn from(name: &str) -> Self {
-        Self::from_str(name).unwrap()
     }
 }
 
