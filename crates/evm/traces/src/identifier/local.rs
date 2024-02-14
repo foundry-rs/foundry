@@ -4,19 +4,18 @@ use alloy_primitives::Address;
 use foundry_common::contracts::{bytecode_diff_score, ContractsByArtifact};
 use foundry_compilers::ArtifactId;
 use ordered_float::OrderedFloat;
-use std::{borrow::Cow, collections::HashSet};
+use std::borrow::Cow;
 
 /// A trace identifier that tries to identify addresses using local contracts.
 pub struct LocalTraceIdentifier<'a> {
     known_contracts: &'a ContractsByArtifact,
-    already_found: HashSet<Address>,
 }
 
 impl<'a> LocalTraceIdentifier<'a> {
     /// Creates a new local trace identifier.
     #[inline]
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
-        Self { known_contracts, already_found: HashSet::new() }
+        Self { known_contracts }
     }
 
     /// Returns the known contracts.
@@ -26,22 +25,6 @@ impl<'a> LocalTraceIdentifier<'a> {
     }
 
     fn find_contract_from_bytecode(
-        &mut self,
-        address: &Address,
-        code: Option<&[u8]>,
-    ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
-        // Only provide the contract for the first time we see it.
-        let code = code?;
-        if self.already_found.contains(address) {
-            return None;
-        }
-
-        let (id, abi) = self.find_contract_from_bytecode_uncached(code)?;
-        self.already_found.insert(*address);
-        Some((id, abi))
-    }
-
-    fn find_contract_from_bytecode_uncached(
         &mut self,
         code: &[u8],
     ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
@@ -66,7 +49,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
     {
         addresses
             .filter_map(|(address, code)| {
-                let (id, abi) = self.find_contract_from_bytecode(address, code)?;
+                let (id, abi) = self.find_contract_from_bytecode(code?)?;
                 Some(AddressIdentity {
                     address: *address,
                     contract: Some(id.identifier()),
