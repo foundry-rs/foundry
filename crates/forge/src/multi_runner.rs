@@ -288,10 +288,10 @@ impl MultiContractRunnerBuilder {
         for (id, contract) in contracts {
             let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
 
-            let LinkOutput { contracts, libs_to_deploy, .. } =
+            let LinkOutput { libs_to_deploy, libraries } =
                 linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, &id)?;
 
-            let linked_contract = contracts.get(&id).unwrap().clone();
+            let linked_contract = linker.link(&id, &libraries)?;
 
             // get bytes if deployable, else add to known contracts and continue.
             // interfaces and abstract contracts should be known to enable fuzzing of their ABI

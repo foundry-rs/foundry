@@ -143,11 +143,12 @@ impl ScriptArgs {
         nonce: u64,
         target: ArtifactId,
     ) -> Result<(ArtifactContracts<ContractBytecodeSome>, Libraries, Vec<Bytes>)> {
-        let LinkOutput { libs_to_deploy, contracts, libraries } =
+        let LinkOutput { libs_to_deploy, libraries } =
             linker.link_with_nonce_or_address(libraries, sender, nonce, &target)?;
 
         // Collect all linked contracts with non-empty bytecode
-        let highlevel_known_contracts = contracts
+        let highlevel_known_contracts = linker
+            .get_linked_artifacts(&libraries)?
             .iter()
             .filter_map(|(id, contract)| {
                 ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
