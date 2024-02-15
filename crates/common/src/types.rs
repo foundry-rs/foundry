@@ -276,19 +276,3 @@ impl ToEthers for BlockNumberOrTag {
         }
     }
 }
-
-impl ToEthers for alloy_rpc_types::BlockId {
-    type To = ethers_core::types::BlockId;
-
-    #[inline(always)]
-    fn to_ethers(self) -> Self::To {
-        match self {
-            alloy_rpc_types::BlockId::Hash(h) => {
-                ethers_core::types::BlockId::Hash(h.block_hash.to_ethers())
-            }
-            alloy_rpc_types::BlockId::Number(n) => {
-                ethers_core::types::BlockId::Number(n.to_ethers())
-            }
-        }
-    }
-}
