@@ -73,9 +73,12 @@ pub struct Broadcast {
     pub single_call: bool,
 }
 
+/// Contains context for wallet management.
 #[derive(Debug)]
 pub struct ScriptWalletsData {
+    /// All signers in scope of the script.
     pub multi_wallet: MultiWallet,
+    /// Optional signer provided as `--sender` flag.
     pub provided_sender: Option<Address>,
 }
 
@@ -98,10 +101,14 @@ fn broadcast<DB: DatabaseExt>(
     if new_origin.is_none() {
         if let Some(script_wallets) = &ccx.state.script_wallets {
             let mut script_wallets = script_wallets.lock().unwrap();
-            let signers = script_wallets.multi_wallet.signers()?;
-            if signers.len() == 1 {
-                let address = signers.keys().next().unwrap();
-                new_origin = Some(address.clone());
+            if let Some(provided_sender) = script_wallets.provided_sender {
+                new_origin = Some(provided_sender);
+            } else {
+                let signers = script_wallets.multi_wallet.signers()?;
+                if signers.len() == 1 {
+                    let address = signers.keys().next().unwrap();
+                    new_origin = Some(address.clone());
+                }
             }
         }
     }
