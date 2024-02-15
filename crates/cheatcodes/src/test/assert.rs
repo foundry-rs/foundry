@@ -1166,7 +1166,7 @@ fn int_assert_approx_eq_rel(
     let delta = get_delta_int(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
         .ok_or(EqRelAssertionError::Overflow)? /
-        right;
+        abs_right;
 
     if delta <= max_delta {
         Ok(Default::default())
