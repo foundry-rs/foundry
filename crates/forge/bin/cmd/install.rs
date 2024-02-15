@@ -348,6 +348,10 @@ impl Installer<'_> {
             return Err(e)
         }
 
+        // We might have additional submodules after checkout, load them.
+        trace!("updating dependency submodules recursively");
+        self.git.root(path).submodule_update(false, false, false, true, None::<PathBuf>)?;
+
         if is_branch {
             Ok(tag)
         } else {
