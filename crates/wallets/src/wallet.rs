@@ -1,12 +1,9 @@
 use crate::{raw_wallet::RawWallet, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
-
 use clap::Parser;
-
 use ethers_signers::Signer;
 use eyre::Result;
 use foundry_common::types::ToAlloy;
-
 use serde::Serialize;
 
 /// The wallet options can either be:

@@ -16,7 +16,6 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
-
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
 use foundry_evm_core::{

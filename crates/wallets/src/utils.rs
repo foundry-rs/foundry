@@ -1,14 +1,12 @@
+use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
 use ethers_signers::{HDPath as LedgerHDPath, LocalWallet, TrezorHDPath, WalletError};
+use eyre::{Context, Result};
 use foundry_config::Config;
 use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
-
-use eyre::{Context, Result};
-
-use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
 
 pub fn create_private_key_signer(private_key: &str) -> Result<WalletSigner> {
     let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);

@@ -1,8 +1,7 @@
+use crate::{utils, PendingSigner, WalletSigner};
 use clap::Parser;
 use eyre::Result;
 use serde::Serialize;
-
-use crate::{utils, PendingSigner, WalletSigner};
 
 /// A wrapper for the raw data options for `Wallet`, extracted to also be used standalone.
 /// The raw wallet options can either be:

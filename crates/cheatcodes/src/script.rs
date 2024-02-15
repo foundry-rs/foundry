@@ -1,8 +1,7 @@
 //! Implementations of [`Scripting`](crate::Group::Scripting) cheatcodes.
 
-use std::sync::Arc;
-
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use std::sync::Arc;
 use alloy_primitives::{Address, U256};
 use alloy_signer::{LocalWallet, Signer};
 use foundry_config::Config;

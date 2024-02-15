@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use ethers_core::types::{
     transaction::{eip2718::TypedTransaction, eip712::Eip712},
@@ -14,7 +12,7 @@ use rusoto_core::{
     request::HttpClient as AwsHttpClient, Client as AwsClient,
 };
 use rusoto_kms::KmsClient;
-
+use std::path::PathBuf;
 use crate::error::WalletSignerError;
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;

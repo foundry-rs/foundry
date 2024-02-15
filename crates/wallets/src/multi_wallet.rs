@@ -4,13 +4,10 @@ use crate::{
 };
 use alloy_primitives::Address;
 use clap::Parser;
-
 use ethers_signers::Signer;
 use eyre::Result;
-
 use foundry_common::types::ToAlloy;
 use foundry_config::Config;
-
 use serde::Serialize;
 use std::{collections::HashMap, iter::repeat, path::PathBuf};
 
