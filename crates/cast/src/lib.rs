@@ -518,8 +518,7 @@ where
     ) -> Result<String> {
         let slot =
             B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
-        let value =
-            TempProvider::get_storage_at(&self.alloy_provider, who, slot.into(), block).await?;
+        let value = self.alloy_provider.get_storage_at(who, slot.into(), block).await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
@@ -544,8 +543,7 @@ where
     pub async fn admin(&self, who: Address, block: Option<AlloyBlockId>) -> Result<String> {
         let slot =
             B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
-        let value =
-            TempProvider::get_storage_at(&self.alloy_provider, who, slot.into(), block).await?;
+        let value = self.alloy_provider.get_storage_at(who, slot.into(), block).await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
