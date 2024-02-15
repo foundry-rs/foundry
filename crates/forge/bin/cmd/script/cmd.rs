@@ -6,7 +6,9 @@ use ethers_signers::Signer;
 use eyre::{OptionExt, Result};
 use forge::link::Linker;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy};
+use foundry_common::{
+    contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
+};
 use foundry_debugger::Debugger;
 use foundry_wallets::WalletSigner;
 use std::sync::Arc;
