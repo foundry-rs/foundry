@@ -9,7 +9,7 @@ use ethers_signers::Signer;
 use eyre::{Context, Result};
 use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
-use foundry_wallets::{RawWallet, Wallet, WalletSigner};
+use foundry_wallets::{RawWallet, WalletOpts, WalletSigner};
 use rand::thread_rng;
 use serde_json::json;
 use std::{path::Path, str::FromStr};
@@ -72,7 +72,7 @@ pub enum WalletSubcommands {
         private_key_override: Option<String>,
 
         #[clap(flatten)]
-        wallet: Wallet,
+        wallet: WalletOpts,
     },
 
     /// Sign a message or typed data.
@@ -102,7 +102,7 @@ pub enum WalletSubcommands {
         from_file: bool,
 
         #[clap(flatten)]
-        wallet: Wallet,
+        wallet: WalletOpts,
     },
 
     /// Verify the signature of a message.
@@ -237,7 +237,7 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
-                    .map(|pk| Wallet {
+                    .map(|pk| WalletOpts {
                         raw: RawWallet { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
                     })

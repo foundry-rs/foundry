@@ -9,7 +9,7 @@ use foundry_config::{
     },
     impl_figment_convert_cast, Chain, Config,
 };
-use foundry_wallets::Wallet;
+use foundry_wallets::WalletOpts;
 use serde::Serialize;
 use std::borrow::Cow;
 
@@ -150,7 +150,7 @@ pub struct EthereumOpts {
     pub etherscan: EtherscanOpts,
 
     #[clap(flatten)]
-    pub wallet: Wallet,
+    pub wallet: WalletOpts,
 }
 
 impl_figment_convert_cast!(EthereumOpts);

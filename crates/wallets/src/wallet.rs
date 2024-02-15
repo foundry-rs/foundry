@@ -17,7 +17,7 @@ use serde::Serialize;
 /// 5. AWS KMS
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
-pub struct Wallet {
+pub struct WalletOpts {
     /// The sender account.
     #[clap(
         long,
@@ -86,7 +86,7 @@ pub struct Wallet {
     pub aws: bool,
 }
 
-impl Wallet {
+impl WalletOpts {
     pub async fn signer(&self) -> Result<WalletSigner> {
         trace!("start finding signer");
 
@@ -143,7 +143,7 @@ of the unlocked account you want to use, or provide the --from flag with the add
     }
 }
 
-impl From<RawWallet> for Wallet {
+impl From<RawWallet> for WalletOpts {
     fn from(options: RawWallet) -> Self {
         Self { raw: options, ..Default::default() }
     }
@@ -162,7 +162,7 @@ mod tests {
         let keystore_file = keystore
             .join("UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
         let password_file = keystore.join("password-ec554");
-        let wallet: Wallet = Wallet::parse_from([
+        let wallet: WalletOpts = WalletOpts::parse_from([
             "foundry-cli",
             "--from",
             "560d246fcddc9ea98a8b032c9a2f474efb493c28",
@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn illformed_private_key_generates_user_friendly_error() {
-        let wallet = Wallet {
+        let wallet = WalletOpts {
             raw: RawWallet {
                 interactive: false,
                 private_key: Some("123".to_string()),

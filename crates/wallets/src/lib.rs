@@ -10,5 +10,5 @@ pub mod wallet_signer;
 
 pub use multi_wallet::MultiWalletOpts;
 pub use raw_wallet::RawWallet;
-pub use wallet::Wallet;
+pub use wallet::WalletOpts;
 pub use wallet_signer::{PendingSigner, WalletSigner};
