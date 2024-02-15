@@ -62,7 +62,7 @@ use foundry_common::types::ToAlloy;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    decode::decode_revert,
+    decode::RevertDecoder,
     inspectors::AccessListTracer,
     revm::{
         self,
@@ -956,9 +956,8 @@ impl Backend {
                 }
                 node_info!("    Gas used: {}", receipt.gas_used());
                 if !info.exit.is_ok() {
-                    let r = decode_revert(
-                        info.out.clone().unwrap_or_default().as_ref(),
-                        None,
+                    let r = RevertDecoder::new().decode(
+                        info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
                         Some(info.exit),
                     );
                     node_info!("    Error: reverted with: {r}");
