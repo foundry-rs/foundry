@@ -775,7 +775,7 @@ where
         slot: B256,
         block: Option<AlloyBlockId>,
     ) -> Result<String> {
-        Ok(format!("{:?}", self.alloy_provider.get_storage_at(from, slot.into(), block).await?))
+        Ok(format!("{:?}", B256::from(self.alloy_provider.get_storage_at(from, slot.into(), block).await?)))
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
