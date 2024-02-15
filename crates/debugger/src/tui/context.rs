@@ -298,44 +298,39 @@ impl DebuggerContext<'_> {
             KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
             // dump memory+calldata+returndata to timestamped file
             KeyCode::Char('w') => {
-                use std::time::SystemTime;
+                use std::{fmt::Write, time::SystemTime};
                 // create a json file with the current memory, calldata, and returndata
                 // and write it to the current directory
                 // the file should be named with the current timestamp
                 let debug_step = self.current_step();
-                let memory_ascii = format!(
-                    "0x{}",
-                    debug_step
-                        .memory
-                        .iter()
-                        .map(|byte| format!("{:02x}", byte))
-                        .collect::<String>()
-                );
-                let calldata_ascii = format!(
-                    "0x{}",
-                    debug_step
-                        .calldata
-                        .iter()
-                        .map(|byte| format!("{:02x}", byte))
-                        .collect::<String>()
-                );
-                let returndata_ascii = format!(
-                    "0x{}",
-                    debug_step
-                        .returndata
-                        .iter()
-                        .map(|byte| format!("{:02x}", byte))
-                        .collect::<String>()
-                );
+
+                let mut memory_ascii = "0x".to_string();
+                debug_step.memory.iter().for_each(|x| {
+                    write!(&mut memory_ascii, "{:02x}", x).unwrap();
+                });
+                let mut calldata_ascii = "0x".to_string();
+                debug_step.calldata.iter().for_each(|x| {
+                    write!(&mut calldata_ascii, "{:02x}", x).unwrap();
+                });
+                let mut returndata_ascii = "0x".to_string();
+                debug_step.returndata.iter().for_each(|x| {
+                    write!(&mut returndata_ascii, "{:02x}", x).unwrap();
+                });
+
                 let mapping: HashMap<&str, &String> = [
                     ("memory", &memory_ascii),
                     ("calldata", &calldata_ascii),
                     ("returndata", &returndata_ascii),
                 ]
                 .into();
+                let address = self.address();
+                let unknown = "Unknown".to_string();
+                let contract_name =
+                    self.debugger.identified_contracts.get(address).unwrap_or(&unknown);
                 let filename: PathBuf = format!(
-                    "debug/debug_dump_{}_{}.json",
-                    self.address().to_string(),
+                    "debug/debug_dump_{}_{}_{}.json",
+                    contract_name,
+                    address,
                     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
                 )
                 .into();
