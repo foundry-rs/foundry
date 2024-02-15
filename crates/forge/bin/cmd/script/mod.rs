@@ -43,7 +43,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    decode,
+    decode::RevertDecoder,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
 use foundry_wallets::MultiWallet;
@@ -349,7 +349,7 @@ impl ScriptArgs {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                decode::decode_revert(&result.returned[..], None, None)
+                RevertDecoder::new().decode(&result.returned[..], None)
             ));
         }
 
@@ -367,7 +367,7 @@ impl ScriptArgs {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                decode::decode_revert(&result.returned[..], None, None)
+                RevertDecoder::new().decode(&result.returned[..], None)
             ));
         }
 

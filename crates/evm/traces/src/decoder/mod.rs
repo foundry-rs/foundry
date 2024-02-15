@@ -14,7 +14,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
     },
-    decode,
+    decode::RevertDecoder,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -104,8 +104,8 @@ pub struct CallTraceDecoder {
     pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
-    /// All known errors.
-    pub errors: JsonAbi,
+    /// Revert decoder. Contains all known custom errors.
+    pub revert_decoder: RevertDecoder,
 
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
@@ -169,7 +169,7 @@ impl CallTraceDecoder {
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
-            errors: Default::default(),
+            revert_decoder: Default::default(),
 
             signature_identifier: None,
             verbosity: 0,
@@ -208,7 +208,7 @@ impl CallTraceDecoder {
                 if entry.get().contains(&function) {
                     return;
                 }
-                debug!(target: "evm::traces", selector=%entry.key(), new=%function.signature(), "duplicate selector");
+                debug!(target: "evm::traces", selector=%entry.key(), new=%function.signature(), "duplicate function selector");
                 entry.into_mut().push(function);
             }
             Entry::Vacant(entry) => {
@@ -219,7 +219,7 @@ impl CallTraceDecoder {
 
     /// Adds a single error to the decoder.
     pub fn push_error(&mut self, error: Error) {
-        self.errors.errors.entry(error.name.clone()).or_default().push(error);
+        self.revert_decoder.push_error(error);
     }
 
     fn addresses<'a>(
@@ -338,11 +338,7 @@ impl CallTraceDecoder {
             DecodedCallTrace {
                 label,
                 return_data: if !trace.success {
-                    Some(decode::decode_revert(
-                        &trace.output,
-                        Some(&self.errors),
-                        Some(trace.status),
-                    ))
+                    Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
                 } else {
                     None
                 },
@@ -376,7 +372,7 @@ impl CallTraceDecoder {
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
-            "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
+            "expectRevert" => Some(vec![self.revert_decoder.decode(data, None)]),
             "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
@@ -482,7 +478,7 @@ impl CallTraceDecoder {
 
             None
         } else {
-            Some(decode::decode_revert(data, Some(&self.errors), Some(trace.status)))
+            Some(self.revert_decoder.decode(data, Some(trace.status)))
         }
     }
 

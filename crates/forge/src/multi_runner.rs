@@ -12,6 +12,7 @@ use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_evm::{
     backend::Backend,
+    decode::RevertDecoder,
     executors::{Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
@@ -44,8 +45,8 @@ pub struct MultiContractRunner {
     pub env: revm::primitives::Env,
     /// The EVM spec
     pub evm_spec: SpecId,
-    /// All known errors, used for decoding reverts
-    pub errors: Option<JsonAbi>,
+    /// Revert decoder. Contains all known errors and their selectors.
+    pub revert_decoder: RevertDecoder,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Option<Address>,
     /// A map of contract names to absolute source file paths
@@ -220,7 +221,7 @@ impl MultiContractRunner {
             deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
-            self.errors.as_ref(),
+            &self.revert_decoder,
             libs,
             self.debug,
         );
@@ -354,7 +355,8 @@ impl MultiContractRunnerBuilder {
             }
         }
 
-        let errors = known_contracts.flatten_errors();
+        let revert_decoder =
+            RevertDecoder::new().with_abis(known_contracts.values().map(|(abi, _)| abi));
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
@@ -362,7 +364,7 @@ impl MultiContractRunnerBuilder {
             env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
             sender: self.sender,
-            errors: Some(errors),
+            revert_decoder,
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default().into(),

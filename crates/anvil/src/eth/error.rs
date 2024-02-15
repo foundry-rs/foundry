@@ -10,7 +10,7 @@ use anvil_rpc::{
 };
 use foundry_evm::{
     backend::DatabaseError,
-    decode::maybe_decode_revert,
+    decode::RevertDecoder,
     revm::{
         self,
         interpreter::InstructionResult,
@@ -302,8 +302,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
-                        if let Some(reason) =
-                            data.as_ref().and_then(|data| maybe_decode_revert(data, None, None))
+                        if let Some(reason) = data
+                            .as_ref()
+                            .and_then(|data| RevertDecoder::new().maybe_decode(data, None))
                         {
                             msg = format!("{msg}: {reason}");
                         }

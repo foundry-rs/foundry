@@ -69,17 +69,6 @@ impl ContractsByArtifact {
         }
         (funcs, events, errors_abi)
     }
-
-    /// Flattens the errors into a single JsonAbi.
-    pub fn flatten_errors(&self) -> JsonAbi {
-        let mut errors_abi = JsonAbi::new();
-        for (_name, (abi, _code)) in self.iter() {
-            for error in abi.errors() {
-                errors_abi.errors.entry(error.name.clone()).or_default().push(error.clone());
-            }
-        }
-        errors_abi
-    }
 }
 
 impl Deref for ContractsByArtifact {
