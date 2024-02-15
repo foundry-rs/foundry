@@ -36,6 +36,7 @@ pub type TxBuilderPeekAlloyOutput<'a> = (&'a AlloyTransactionRequest, &'a Option
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Debug)]
 pub struct TxBuilder<'a, M: Middleware> {
     to: Option<Address>,
     chain: Chain,
@@ -240,7 +241,8 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         args: Vec<String>,
     ) -> Result<&mut TxBuilder<'a, M>> {
         let (data, func) = self.create_args(sig, args).await?;
-        self.tx.set_data(data.into());
+        self.tx.set_data(data.clone().into());
+        self.alloy_tx.input = TransactionInput::new(Bytes::from(data));
         self.func = Some(func);
         Ok(self)
     }
