@@ -67,10 +67,12 @@ where
     /// ```
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
+    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
+    /// let alloy_provider = get_http_provider("http://localhost:8545");
+    /// let cast = Cast::new(provider, alloy_provider);
     /// # Ok(())
     /// # }
     /// ```
@@ -86,10 +88,12 @@ where
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
+    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let alloy_provider = get_http_provider("http://localhost:8545");
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
@@ -97,7 +101,7 @@ where
     ///     TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder.set_args(sig, args).await?;
     /// let builder_output = builder.build();
-    /// let cast = Cast::new(provider);
+    /// let cast = Cast::new(provider, alloy_provider);
     /// let data = cast.call(builder_output, None).await?;
     /// println!("{}", data);
     /// # Ok(())
