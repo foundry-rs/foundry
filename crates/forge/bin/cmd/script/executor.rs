@@ -14,6 +14,7 @@ use forge::{
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{provider::ethers::RpcUrl, shell};
+use foundry_evm::inspectors::cheatcodes::ScriptWallets;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -27,7 +28,7 @@ impl ScriptArgs {
         contract: ContractBytecodeSome,
         sender: Address,
         predeploy_libraries: &[Bytes],
-        script_wallets: Arc<Mutex<ScriptWalletsData>>,
+        script_wallets: ScriptWallets,
     ) -> Result<ScriptResult> {
         trace!(target: "script", "start executing script");
 
@@ -265,7 +266,7 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         sender: Address,
         stage: SimulationStage,
-        script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
+        script_wallets: Option<ScriptWallets>,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await?;

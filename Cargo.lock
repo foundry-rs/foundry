@@ -2984,6 +2984,7 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "p256",
+ "parking_lot",
  "revm",
  "serde_json",
  "thiserror",

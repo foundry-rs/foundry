@@ -43,18 +43,13 @@ use foundry_config::{
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     decode::RevertDecoder,
-    inspectors::cheatcodes::{
-        BroadcastableTransaction, BroadcastableTransactions, ScriptWalletsData,
-    },
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
 use foundry_wallets::MultiWalletOpts;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    sync::Mutex,
-};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use yansi::Paint;
 
 mod artifacts;

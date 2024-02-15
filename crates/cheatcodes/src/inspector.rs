@@ -7,7 +7,7 @@ use crate::{
         prank::Prank,
         DealRecord, RecordAccess,
     },
-    script::{Broadcast, ScriptWalletsData},
+    script::{Broadcast, ScriptWallets},
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
         ExpectedRevert, ExpectedRevertKind,
@@ -38,7 +38,7 @@ use std::{
     io::BufReader,
     ops::Range,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 macro_rules! try_or_continue {
@@ -127,7 +127,7 @@ pub struct Cheatcodes {
     pub labels: HashMap<Address, String>,
 
     /// Remembered private keys
-    pub script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
+    pub script_wallets: Option<ScriptWallets>,
 
     /// Prank information
     pub prank: Option<Prank>,

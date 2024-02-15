@@ -10,6 +10,7 @@ use foundry_common::{
     contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
 };
 use foundry_debugger::Debugger;
+use foundry_evm::inspectors::cheatcodes::ScriptWallets;
 use foundry_wallets::WalletSigner;
 use std::sync::Arc;
 
@@ -68,9 +69,7 @@ impl ScriptArgs {
         let sender = script_config.evm_opts.sender;
 
         let multi_wallet = self.wallets.get_multi_wallet().await?;
-        let script_wallets =
-            ScriptWalletsData { multi_wallet, provided_sender: self.evm_opts.sender };
-        let script_wallets = Arc::new(Mutex::new(script_wallets));
+        let script_wallets = ScriptWallets::new(multi_wallet, self.evm_opts.sender);
 
         // We need to execute the script even if just resuming, in case we need to collect private
         // keys from the execution.
@@ -85,12 +84,7 @@ impl ScriptArgs {
             .await?;
 
         if self.resume || (self.verify && !self.broadcast) {
-            let signers = Arc::try_unwrap(script_wallets)
-                .unwrap()
-                .into_inner()
-                .unwrap()
-                .multi_wallet
-                .into_signers()?;
+            let signers = script_wallets.into_multi_wallet().into_signers()?;
             return self.resume_deployment(script_config, linker, libraries, verify, signers).await;
         }
 
@@ -131,12 +125,7 @@ impl ScriptArgs {
         verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
         self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
-        let signers = Arc::try_unwrap(script_wallets)
-            .unwrap()
-            .into_inner()
-            .unwrap()
-            .multi_wallet
-            .into_signers()?;
+        let signers = script_wallets.into_multi_wallet().into_signers()?;
 
         self.handle_broadcastable_transactions(
             result,
@@ -157,7 +146,7 @@ impl ScriptArgs {
         linker: Linker,
         predeploy_libraries: Vec<Bytes>,
         result: &mut ScriptResult,
-        script_wallets: Arc<Mutex<ScriptWalletsData>>,
+        script_wallets: ScriptWallets,
     ) -> Result<Option<NewSenderChanges>> {
         if let Some(new_sender) = self.maybe_new_sender(
             &script_config.evm_opts,
@@ -321,7 +310,7 @@ impl ScriptArgs {
         new_sender: Address,
         first_run_result: &mut ScriptResult,
         linker: Linker,
-        script_wallets: Arc<Mutex<ScriptWalletsData>>,
+        script_wallets: ScriptWallets,
     ) -> Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs

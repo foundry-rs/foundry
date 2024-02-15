@@ -1,5 +1,5 @@
 use super::Result;
-use crate::{ScriptWalletsData, Vm::Rpc};
+use crate::{script::ScriptWallets, Vm::Rpc};
 use alloy_primitives::Address;
 use foundry_common::fs::normalize_path;
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -11,7 +11,6 @@ use foundry_evm_core::opts::EvmOpts;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
 };
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
@@ -38,16 +37,12 @@ pub struct CheatsConfig {
     /// Address labels from config
     pub labels: HashMap<Address, String>,
     /// Script wallets
-    pub script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
+    pub script_wallets: Option<ScriptWallets>,
 }
 
 impl CheatsConfig {
     /// Extracts the necessary settings from the Config
-    pub fn new(
-        config: &Config,
-        evm_opts: EvmOpts,
-        script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
-    ) -> Self {
+    pub fn new(config: &Config, evm_opts: EvmOpts, script_wallets: Option<ScriptWallets>) -> Self {
         let mut allowed_paths = vec![config.__root.0.clone()];
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());

@@ -92,7 +92,7 @@ impl Cheatcode for rememberKeyCall {
         let address = LocalWallet::from(key.clone()).address();
         let signer = WalletSigner::from_private_key(key.to_bytes())?;
         if let Some(script_wallets) = &ccx.state.script_wallets {
-            script_wallets.lock().unwrap().multi_wallet.add_signer(signer);
+            script_wallets.inner.lock().multi_wallet.add_signer(signer);
         }
         Ok(address.abi_encode())
     }
