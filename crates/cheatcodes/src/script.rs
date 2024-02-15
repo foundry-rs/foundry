@@ -4,6 +4,7 @@ use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_signer::Signer;
 use foundry_config::Config;
+use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -72,6 +73,12 @@ pub struct Broadcast {
     pub single_call: bool,
 }
 
+#[derive(Debug)]
+pub struct ScriptWalletsData {
+    pub multi_wallet: MultiWallet,
+    pub provided_sender: Option<Address>,
+}
+
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
@@ -86,8 +93,21 @@ fn broadcast<DB: DatabaseExt>(
 
     correct_sender_nonce(ccx)?;
 
+    let mut new_origin = new_origin.cloned();
+
+    if new_origin.is_none() {
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            let mut script_wallets = script_wallets.lock().unwrap();
+            let signers = script_wallets.multi_wallet.signers()?;
+            if signers.len() == 1 {
+                let address = signers.keys().next().unwrap();
+                new_origin = Some(address.clone());
+            }
+        }
+    }
+
     let broadcast = Broadcast {
-        new_origin: *new_origin.unwrap_or(&ccx.data.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.data.env.tx.caller),
         original_caller: ccx.caller,
         original_origin: ccx.data.env.tx.caller,
         depth: ccx.data.journaled_state.depth(),
@@ -112,7 +132,10 @@ fn broadcast_key<DB: DatabaseExt>(
 
     let result = broadcast(ccx, Some(new_origin), single_call);
     if result.is_ok() {
-        ccx.state.script_wallets.push(wallet);
+        let signer = WalletSigner::from_private_key(&private_key.to_string())?;
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            script_wallets.lock().unwrap().multi_wallet.add_signer(signer);
+        }
     }
     result
 }

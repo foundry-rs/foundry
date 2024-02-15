@@ -15,7 +15,7 @@ use serde::Serialize;
 use std::{collections::HashMap, iter::repeat, path::PathBuf};
 
 /// Container for multiple wallets.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MultiWallet {
     /// Vector of wallets that require an action to be unlocked.
     /// Those are lazily unlocked on the first access of the signers.
@@ -49,10 +49,8 @@ impl MultiWallet {
         Ok(self.signers)
     }
 
-    pub fn add_signers(&mut self, signers: impl IntoIterator<Item = WalletSigner>) {
-        for signer in signers {
-            self.signers.insert(signer.address().to_alloy(), signer);
-        }
+    pub fn add_signer(&mut self, signer: WalletSigner) {
+        self.signers.insert(signer.address().to_alloy(), signer);
     }
 }
 

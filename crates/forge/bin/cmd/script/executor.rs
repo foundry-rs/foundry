@@ -27,6 +27,7 @@ impl ScriptArgs {
         contract: ContractBytecodeSome,
         sender: Address,
         predeploy_libraries: &[Bytes],
+        script_wallets: Arc<Mutex<ScriptWalletsData>>,
     ) -> Result<ScriptResult> {
         trace!(target: "script", "start executing script");
 
@@ -38,7 +39,9 @@ impl ScriptArgs {
 
         ensure_clean_constructor(&abi)?;
 
-        let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await?;
+        let mut runner = self
+            .prepare_runner(script_config, sender, SimulationStage::Local, Some(script_wallets))
+            .await?;
         let (address, mut result) = runner.setup(
             predeploy_libraries,
             bytecode,
@@ -62,7 +65,6 @@ impl ScriptArgs {
             result.debug = script_result.debug;
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
-            result.script_wallets.extend(script_result.script_wallets);
             result.breakpoints = script_result.breakpoints;
 
             match (&mut result.transactions, script_result.transactions) {
@@ -248,7 +250,7 @@ impl ScriptArgs {
                 let mut script_config = script_config.clone();
                 script_config.evm_opts.fork_url = Some(rpc.clone());
                 let runner = self
-                    .prepare_runner(&mut script_config, sender, SimulationStage::OnChain)
+                    .prepare_runner(&mut script_config, sender, SimulationStage::OnChain, None)
                     .await?;
                 Ok((rpc.clone(), runner))
             })
@@ -263,6 +265,7 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         sender: Address,
         stage: SimulationStage,
+        script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await?;
@@ -296,7 +299,12 @@ impl ScriptArgs {
         if let SimulationStage::Local = stage {
             builder = builder.inspectors(|stack| {
                 stack.debug(self.debug).cheatcodes(
-                    CheatsConfig::new(&script_config.config, script_config.evm_opts.clone()).into(),
+                    CheatsConfig::new(
+                        &script_config.config,
+                        script_config.evm_opts.clone(),
+                        script_wallets,
+                    )
+                    .into(),
                 )
             });
         }

@@ -26,7 +26,7 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
-        script_wallets: &[LocalWallet],
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
@@ -54,11 +54,6 @@ impl ScriptArgs {
                 );
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
-                let mut multi_wallet = self.wallets.get_multi_wallet().await?;
-                multi_wallet.add_signers(script_wallets.iter().cloned().map(WalletSigner::Local));
-
-                let signers = multi_wallet.into_signers()?;
-
                 let mut missing_addresses = Vec::new();
 
                 println!("\n###\nFinding wallets for all the necessary addresses...");
@@ -297,6 +292,7 @@ impl ScriptArgs {
         decoder: &CallTraceDecoder,
         mut script_config: ScriptConfig,
         verify: VerifyBundle,
+        signers: HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
@@ -332,8 +328,8 @@ impl ScriptArgs {
                             multi,
                             libraries,
                             &script_config.config,
-                            result.script_wallets,
                             verify,
+                            signers,
                         )
                         .await?;
                     }
@@ -342,8 +338,8 @@ impl ScriptArgs {
                         deployments.first_mut().expect("to be set."),
                         script_config,
                         libraries,
-                        result,
                         verify,
+                        signers,
                     )
                     .await?;
                 }
@@ -364,8 +360,8 @@ impl ScriptArgs {
         deployment_sequence: &mut ScriptSequence,
         script_config: ScriptConfig,
         libraries: Libraries,
-        result: ScriptResult,
         verify: VerifyBundle,
+        signers: HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
 
@@ -377,7 +373,7 @@ impl ScriptArgs {
 
         deployment_sequence.add_libraries(libraries);
 
-        self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
+        self.send_transactions(deployment_sequence, &rpc, &signers).await?;
 
         if self.verify {
             return deployment_sequence.verify_contracts(&script_config.config, verify).await;
@@ -656,14 +652,14 @@ enum SendTransactionKind<'a> {
 }
 
 /// Represents how to send _all_ transactions
-enum SendTransactionsKind {
+enum SendTransactionsKind<'a> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, WalletSigner>),
+    Raw(&'a HashMap<Address, WalletSigner>),
 }
 
-impl SendTransactionsKind {
+impl SendTransactionsKind<'_> {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked

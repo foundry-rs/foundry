@@ -12,7 +12,8 @@ use crate::inspectors::{
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
-use alloy_signer::LocalWallet;
+
+
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use foundry_evm_core::{
     backend::{Backend, DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
@@ -32,7 +33,9 @@ use revm::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -204,7 +207,6 @@ impl Executor {
                         labels: res.labels,
                         state_changeset: None,
                         transactions: None,
-                        script_wallets: res.script_wallets,
                     })))
                 }
             }
@@ -372,7 +374,6 @@ impl Executor {
             labels,
             traces,
             debug,
-            script_wallets,
             env,
             coverage,
             ..
@@ -400,7 +401,6 @@ impl Executor {
                         labels,
                         state_changeset: None,
                         transactions: None,
-                        script_wallets
                     })));
                 }
             }
@@ -418,7 +418,6 @@ impl Executor {
                     labels,
                     state_changeset: None,
                     transactions: None,
-                    script_wallets,
                 })))
             }
         };
@@ -595,7 +594,6 @@ pub struct ExecutionErr {
     pub labels: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
     pub state_changeset: Option<StateChangeset>,
-    pub script_wallets: Vec<LocalWallet>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -666,8 +664,6 @@ pub struct CallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
-    /// The wallets added during the call using the `rememberKey` cheatcode
-    pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
     /// breakpoints
@@ -711,8 +707,6 @@ pub struct RawCallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
-    /// The wallets added during the call using the `rememberKey` cheatcode
-    pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
     /// The cheatcode states after execution
@@ -740,7 +734,6 @@ impl Default for RawCallResult {
             debug: None,
             transactions: None,
             state_changeset: None,
-            script_wallets: Vec::new(),
             env: Default::default(),
             cheatcodes: Default::default(),
             out: None,
@@ -782,16 +775,8 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData {
-        logs,
-        labels,
-        traces,
-        coverage,
-        debug,
-        cheatcodes,
-        script_wallets,
-        chisel_state,
-    } = inspector.collect();
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+        inspector.collect();
 
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
@@ -815,7 +800,6 @@ fn convert_executed_result(
         debug,
         transactions,
         state_changeset: Some(state_changeset),
-        script_wallets,
         env,
         cheatcodes,
         out,
@@ -842,7 +826,6 @@ fn convert_call_result(
         debug,
         transactions,
         state_changeset,
-        script_wallets,
         env,
         ..
     } = call_result;
@@ -875,7 +858,6 @@ fn convert_call_result(
                 debug,
                 transactions,
                 state_changeset,
-                script_wallets,
                 env,
                 breakpoints,
                 skipped: false,
@@ -898,7 +880,6 @@ fn convert_call_result(
                 labels,
                 transactions,
                 state_changeset,
-                script_wallets,
             })))
         }
     }

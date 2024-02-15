@@ -1,5 +1,5 @@
 use super::Result;
-use crate::Vm::Rpc;
+use crate::{ScriptWalletsData, Vm::Rpc};
 use alloy_primitives::Address;
 use foundry_common::fs::normalize_path;
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -11,6 +11,7 @@ use foundry_evm_core::opts::EvmOpts;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
@@ -36,11 +37,17 @@ pub struct CheatsConfig {
     pub evm_opts: EvmOpts,
     /// Address labels from config
     pub labels: HashMap<Address, String>,
+    /// Script wallets
+    pub script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
 }
 
 impl CheatsConfig {
     /// Extracts the necessary settings from the Config
-    pub fn new(config: &Config, evm_opts: EvmOpts) -> Self {
+    pub fn new(
+        config: &Config,
+        evm_opts: EvmOpts,
+        script_wallets: Option<Arc<Mutex<ScriptWalletsData>>>,
+    ) -> Self {
         let mut allowed_paths = vec![config.__root.0.clone()];
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
@@ -58,6 +65,7 @@ impl CheatsConfig {
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
+            script_wallets,
         }
     }
 
@@ -172,6 +180,7 @@ impl Default for CheatsConfig {
             allowed_paths: vec![],
             evm_opts: Default::default(),
             labels: Default::default(),
+            script_wallets: None,
         }
     }
 }
@@ -185,6 +194,7 @@ mod tests {
         CheatsConfig::new(
             &Config { __root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             Default::default(),
+            None,
         )
     }
 

@@ -4,18 +4,19 @@ use super::{
     verify::VerifyBundle,
     ScriptArgs,
 };
-use ethers_signers::LocalWallet;
+use alloy_primitives::Address;
 use eyre::{ContextCompat, Report, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, provider::ethers::get_http_provider};
 use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
+use foundry_wallets::WalletSigner;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     io::{BufWriter, Write},
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::{Path, PathBuf}, sync::Arc,
 };
 
 /// Holds the sequences of multiple chain deployments.
@@ -179,8 +180,8 @@ impl ScriptArgs {
         mut deployments: MultiChainSequence,
         libraries: Libraries,
         config: &Config,
-        script_wallets: Vec<LocalWallet>,
         verify: VerifyBundle,
+        signers: HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if !libraries.is_empty() {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
@@ -223,7 +224,7 @@ impl ScriptArgs {
                 .send_transactions(
                     sequence,
                     &sequence.typed_transactions().first().unwrap().0.clone(),
-                    &script_wallets,
+                    &signers,
                 )
                 .await
             {

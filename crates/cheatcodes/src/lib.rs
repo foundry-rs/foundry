@@ -36,6 +36,7 @@ mod string;
 mod test;
 mod utils;
 
+pub use script::ScriptWalletsData;
 pub use test::expect::ExpectedCallTracker;
 
 /// Cheatcode implementation.
