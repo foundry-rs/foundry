@@ -118,7 +118,7 @@ impl EstimateArgs {
             }
         };
 
-        let builder_output = builder.peek_alloy();
+        let builder_output = builder.peek();
         let gas = Cast::new(&provider, alloy_provider).estimate(builder_output).await?;
         println!("{gas}");
         Ok(())

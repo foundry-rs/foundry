@@ -32,7 +32,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-use tx::{TxBuilderAlloyOutput, TxBuilderOutput, TxBuilderPeekAlloyOutput};
+use tx::{TxBuilderAlloyOutput, TxBuilderOutput, TxBuilderPeekOutput};
 
 pub use foundry_evm::*;
 pub use rusoto_core::{
@@ -294,7 +294,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate(&self, builder_output: TxBuilderPeekAlloyOutput<'_>) -> Result<U256> {
+    pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
         let res = self.alloy_provider.estimate_gas(tx.clone(), None).await?;

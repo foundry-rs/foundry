@@ -126,7 +126,7 @@ where
         builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
     }
 
-    let builder_output = builder.peek_alloy();
+    let builder_output = builder.peek();
 
     let cast = Cast::new(&provider, alloy_provider);
 

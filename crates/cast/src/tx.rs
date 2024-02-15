@@ -16,8 +16,7 @@ use futures::future::join_all;
 
 pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
 pub type TxBuilderAlloyOutput = (AlloyTransactionRequest, Option<Function>);
-pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
-pub type TxBuilderPeekAlloyOutput<'a> = (&'a AlloyTransactionRequest, &'a Option<Function>);
+pub type TxBuilderPeekOutput<'a> = (&'a AlloyTransactionRequest, &'a Option<Function>);
 
 /// Transaction builder
 ///
@@ -268,12 +267,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         (self.alloy_tx, self.func)
     }
 
-    /// Non-consuming build: peek into the tx content
     pub fn peek(&self) -> TxBuilderPeekOutput {
-        (&self.tx, &self.func)
-    }
-
-    pub fn peek_alloy(&self) -> TxBuilderPeekAlloyOutput {
         (&self.alloy_tx, &self.func)
     }
 }
