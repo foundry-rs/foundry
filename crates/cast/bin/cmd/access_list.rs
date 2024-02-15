@@ -130,7 +130,7 @@ where
 
     let cast = Cast::new(&provider, alloy_provider);
 
-    let access_list: String = cast.access_list(builder_output.0.clone(), block, to_json).await?;
+    let access_list: String = cast.access_list(builder_output, block, to_json).await?;
 
     println!("{}", access_list);
 

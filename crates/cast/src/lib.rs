@@ -6,7 +6,7 @@ use alloy_primitives::{
 };
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{request::TransactionRequest, BlockId as AlloyBlockId, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -172,12 +172,12 @@ where
     /// ```
     pub async fn access_list(
         &self,
-        tx_request: TransactionRequest,
+        builder_output: TxBuilderPeekOutput<'_>,
         block: Option<AlloyBlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let tx = tx_request;
-        let access_list = self.alloy_provider.create_access_list(tx, block).await?;
+        let (tx, _) = builder_output;
+        let access_list = self.alloy_provider.create_access_list(tx.clone(), block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
