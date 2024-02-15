@@ -53,7 +53,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    sync::{Mutex},
+    sync::Mutex,
 };
 use yansi::Paint;
 

@@ -107,7 +107,7 @@ fn broadcast<DB: DatabaseExt>(
                 let signers = script_wallets.multi_wallet.signers()?;
                 if signers.len() == 1 {
                     let address = signers.keys().next().unwrap();
-                    new_origin = Some(address.clone());
+                    new_origin = Some(*address);
                 }
             }
         }

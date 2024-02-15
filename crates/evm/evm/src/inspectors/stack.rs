@@ -4,7 +4,6 @@ use super::{
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 
-
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;

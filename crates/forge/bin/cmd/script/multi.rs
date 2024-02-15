@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{BufWriter, Write},
-    path::{Path, PathBuf}, sync::Arc,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// Holds the sequences of multiple chain deployments.
