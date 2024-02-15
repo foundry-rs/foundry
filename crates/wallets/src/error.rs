@@ -21,4 +21,6 @@ pub enum WalletSignerError {
     Aws(#[from] AwsSignerError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    InvalidHex(#[from] FromHexError),
 }

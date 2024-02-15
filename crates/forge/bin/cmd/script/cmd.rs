@@ -31,6 +31,10 @@ impl ScriptArgs {
             ..Default::default()
         };
 
+        if let Some(sender) = self.maybe_load_private_key()? {
+            script_config.evm_opts.sender = sender;
+        }
+
         if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value
             script_config.sender_nonce =
@@ -59,10 +63,6 @@ impl ScriptArgs {
             mut libraries,
             ..
         } = build_output;
-
-        if let Some(sender) = self.maybe_load_private_key()? {
-            script_config.evm_opts.sender = sender;
-        }
 
         // Execute once with default sender.
         let sender = script_config.evm_opts.sender;

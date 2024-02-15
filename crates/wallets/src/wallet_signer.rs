@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use ethers_core::types::{
@@ -48,8 +48,8 @@ impl WalletSigner {
         Ok(Self::Aws(AwsSigner::new(kms, key_id, 1).await?))
     }
 
-    pub fn from_private_key(private_key: &str) -> Result<Self> {
-        let wallet = LocalWallet::from_str(private_key)?;
+    pub fn from_private_key(private_key: impl AsRef<[u8]>) -> Result<Self> {
+        let wallet = LocalWallet::from_bytes(private_key.as_ref())?;
         Ok(Self::Local(wallet))
     }
 
@@ -166,8 +166,7 @@ impl PendingSigner {
             }
             Self::Interactive => {
                 let private_key = rpassword::prompt_password("Enter private key:")?;
-                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
-                Ok(WalletSigner::from_private_key(private_key)?)
+                Ok(WalletSigner::from_private_key(&hex::decode(private_key)?)?)
             }
         }
     }

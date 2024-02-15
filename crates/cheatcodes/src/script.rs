@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use alloy_signer::Signer;
+use alloy_signer::{LocalWallet, Signer};
 use foundry_config::Config;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 
@@ -133,13 +133,13 @@ fn broadcast_key<DB: DatabaseExt>(
     private_key: &U256,
     single_call: bool,
 ) -> Result {
-    let mut wallet = super::utils::parse_wallet(private_key)?;
-    wallet.set_chain_id(Some(ccx.data.env.cfg.chain_id));
-    let new_origin = &wallet.address();
+    let key = super::utils::parse_private_key(private_key)?;
+    let new_origin = LocalWallet::from(key.clone()).address();
 
-    let result = broadcast(ccx, Some(new_origin), single_call);
+    let result = broadcast(ccx, Some(&new_origin), single_call);
+
     if result.is_ok() {
-        let signer = WalletSigner::from_private_key(&private_key.to_string())?;
+        let signer = WalletSigner::from_private_key(key.to_bytes())?;
         if let Some(script_wallets) = &ccx.state.script_wallets {
             script_wallets.lock().unwrap().multi_wallet.add_signer(signer);
         }
