@@ -237,7 +237,13 @@ impl Installer<'_> {
         self.git_checkout(&dep, path, false)?;
 
         trace!("updating dependency submodules recursively");
-        self.git.root(path).submodule_update(false, false, false, true, None::<PathBuf>)?;
+        self.git.root(path).submodule_update(
+            false,
+            false,
+            false,
+            true,
+            std::iter::empty::<PathBuf>(),
+        )?;
 
         // remove git artifacts
         fs::remove_dir_all(path.join(".git"))?;
@@ -263,7 +269,13 @@ impl Installer<'_> {
         self.git_checkout(&dep, path, true)?;
 
         trace!("updating dependency submodules recursively");
-        self.git.root(path).submodule_update(false, false, false, true, None::<PathBuf>)?;
+        self.git.root(path).submodule_update(
+            false,
+            false,
+            false,
+            true,
+            std::iter::empty::<PathBuf>(),
+        )?;
 
         if !self.no_commit {
             self.git.add(Some(path))?;
