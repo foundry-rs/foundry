@@ -126,9 +126,10 @@ impl TestOutcome {
         let total_skipped = self.skipped();
         let total_tests = total_passed + total_failed + total_skipped;
         format!(
-            "\nRan {} test {}: {} tests passed, {} failed, {} skipped ({} total tests)",
+            "\nRan {} test {} in {:.2?}: {} tests passed, {} failed, {} skipped ({} total tests)",
             num_test_suites,
             suites,
+            self.duration(),
             Paint::green(total_passed),
             Paint::red(total_failed),
             Paint::yellow(total_skipped),
