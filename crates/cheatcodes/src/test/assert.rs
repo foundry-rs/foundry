@@ -99,17 +99,32 @@ fn format_delta_percent(delta: &U256) -> String {
     format!("{}%", format_units_uint(delta, &(EQ_REL_DELTA_RESOLUTION - U256::from(2))))
 }
 
+#[derive(Debug)]
+enum EqRelDelta {
+    Defined(U256),
+    Undefined,
+}
+
+impl Display for EqRelDelta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Defined(delta) => write!(f, "{}", format_delta_percent(delta)),
+            Self::Undefined => write!(f, "undefined"),
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 #[error(
     "{left} !~= {right} (max delta: {}, real delta: {})",
     format_delta_percent(max_delta),
-    format_delta_percent(real_delta)
+    real_delta
 )]
 struct EqRelAssertionFailure<T> {
     left: T,
     right: T,
     max_delta: U256,
-    real_delta: U256,
+    real_delta: EqRelDelta,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -128,7 +143,7 @@ impl EqRelAssertionError<U256> {
                 format_units_uint(&f.left, decimals),
                 format_units_uint(&f.right, decimals),
                 format_delta_percent(&f.max_delta),
-                format_delta_percent(&f.real_delta),
+                &f.real_delta,
             ),
             Self::Overflow => self.to_string(),
         }
@@ -143,7 +158,7 @@ impl EqRelAssertionError<I256> {
                 format_units_int(&f.left, decimals),
                 format_units_int(&f.right, decimals),
                 format_delta_percent(&f.max_delta),
-                format_delta_percent(&f.real_delta),
+                &f.real_delta,
             ),
             Self::Overflow => self.to_string(),
         }
@@ -1107,11 +1122,19 @@ fn uint_assert_approx_eq_rel(
     right: U256,
     max_delta: U256,
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
+    if right.is_zero() && !left.is_zero() {
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })))
+    }
+
     let delta = get_delta_uint(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)?
-        .checked_div(right)
-        .ok_or(EqRelAssertionError::Overflow)?;
+        .ok_or(EqRelAssertionError::Overflow)? /
+        right;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -1120,7 +1143,7 @@ fn uint_assert_approx_eq_rel(
             left,
             right,
             max_delta,
-            real_delta: delta,
+            real_delta: EqRelDelta::Defined(delta),
         })))
     }
 }
@@ -1130,12 +1153,20 @@ fn int_assert_approx_eq_rel(
     right: I256,
     max_delta: U256,
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
+    if right.is_zero() && !left.is_zero() {
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })))
+    }
+
     let (_, abs_right) = right.into_sign_and_abs();
     let delta = get_delta_int(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)?
-        .checked_div(abs_right)
-        .ok_or(EqRelAssertionError::Overflow)?;
+        .ok_or(EqRelAssertionError::Overflow)? /
+        right;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -1144,7 +1175,7 @@ fn int_assert_approx_eq_rel(
             left,
             right,
             max_delta,
-            real_delta: delta,
+            real_delta: EqRelDelta::Defined(delta),
         })))
     }
 }
