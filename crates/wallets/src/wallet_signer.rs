@@ -166,7 +166,7 @@ impl PendingSigner {
             }
             Self::Interactive => {
                 let private_key = rpassword::prompt_password("Enter private key:")?;
-                Ok(WalletSigner::from_private_key(&hex::decode(private_key)?)?)
+                Ok(WalletSigner::from_private_key(hex::decode(private_key)?)?)
             }
         }
     }
