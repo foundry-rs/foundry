@@ -1,16 +1,13 @@
 use alloy_primitives::U256;
+use alloy_rpc_types::BlockId;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{
-    runtime_client::RuntimeClient,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{ens::NameOrAddress, runtime_client::RuntimeClient, types::ToAlloy};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
@@ -120,8 +117,16 @@ impl CallArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
+        let to = match to {
+            Some(NameOrAddress::Name(name)) => {
+                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+            }
+            Some(NameOrAddress::Address(addr)) => Some(addr),
+            None => None,
+        };
+
         let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender.to_ethers(), to, chain, tx.legacy).await?;
+            TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
@@ -196,7 +201,7 @@ impl CallArgs {
             }
         };
 
-        let builder_output = builder.build();
+        let builder_output = builder.build_alloy();
         println!("{}", Cast::new(provider, alloy_provider).call(builder_output, block).await?);
 
         Ok(())

@@ -6,7 +6,7 @@ use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers_core::types::{BlockId, BlockNumber::Latest, NameOrAddress};
+use ethers_core::types::{BlockId, BlockNumber::Latest};
 use ethers_providers::{Middleware, Provider};
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
@@ -215,14 +215,8 @@ async fn main() -> Result<()> {
             match erc20 {
                 Some(token) => {
                     let chain = utils::get_chain(config.chain, &provider).await?;
-                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> = TxBuilder::new(
-                        &provider,
-                        NameOrAddress::Address(Address::ZERO.to_ethers()),
-                        Some(NameOrAddress::Address(token.to_ethers())),
-                        chain,
-                        true,
-                    )
-                    .await?;
+                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> =
+                        TxBuilder::new(&provider, Address::ZERO, Some(token), chain, true).await?;
 
                     builder
                         .set_args(
@@ -230,12 +224,10 @@ async fn main() -> Result<()> {
                             vec![format!("{account_addr:#x}")],
                         )
                         .await?;
-                    let builder_output = builder.build();
+                    let builder_output = builder.build_alloy();
                     println!(
                         "{}",
-                        Cast::new(provider, alloy_provider)
-                            .call(builder_output, block.map(ToEthers::to_ethers))
-                            .await?
+                        Cast::new(provider, alloy_provider).call(builder_output, block).await?
                     );
                 }
                 None => {

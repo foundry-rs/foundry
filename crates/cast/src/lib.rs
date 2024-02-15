@@ -6,10 +6,13 @@ use alloy_primitives::{
 };
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId as AlloyBlockId, BlockNumberOrTag};
+use alloy_rpc_types::{request::TransactionRequest, BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
-use ethers_core::{types::{transaction::eip2718::TypedTransaction, BlockId, Filter, NameOrAddress, Signature, H256}, utils::rlp};
+use ethers_core::{
+    types::{transaction::eip2718::TypedTransaction, BlockId, Filter, Signature, H256},
+    utils::rlp,
+};
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
@@ -17,7 +20,6 @@ use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     fmt::*,
-    types::ToAlloy,
     TransactionReceiptWithRevertReason,
 };
 use foundry_config::Chain;
@@ -30,7 +32,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-use tx::{TxBuilderOutput, TxBuilderPeekOutput};
+use tx::{TxBuilderAlloyOutput, TxBuilderOutput, TxBuilderPeekAlloyOutput};
 
 pub use foundry_evm::*;
 pub use rusoto_core::{
@@ -103,11 +105,11 @@ where
     /// ```
     pub async fn call<'a>(
         &self,
-        builder_output: TxBuilderOutput,
-        block: Option<BlockId>,
+        builder_output: TxBuilderAlloyOutput,
+        block: Option<AlloyBlockId>,
     ) -> Result<String> {
         let (tx, func) = builder_output;
-        let res = self.provider.call(&tx, block).await?;
+        let res = self.alloy_provider.call(tx.clone(), block).await?;
 
         let mut decoded = vec![];
 
@@ -119,8 +121,8 @@ where
                     // ensure the address is a contract
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
-                        if let Some(NameOrAddress::Address(addr)) = tx.to() {
-                            if let Ok(code) = self.provider.get_code(*addr, block).await {
+                        if let Some(addr) = tx.to {
+                            if let Ok(code) = self.alloy_provider.get_code_at(addr, block).await {
                                 if code.is_empty() {
                                     eyre::bail!("contract {addr:?} does not have any code")
                                 }
@@ -170,19 +172,19 @@ where
     /// ```
     pub async fn access_list(
         &self,
-        builder_output: TxBuilderPeekOutput<'_>,
-        block: Option<BlockId>,
+        tx_request: TransactionRequest,
+        block: Option<AlloyBlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let (tx, _) = builder_output;
-        let access_list = self.provider.create_access_list(tx, block).await?;
+        let tx = tx_request;
+        let access_list = self.alloy_provider.create_access_list(tx, block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_alloy().to_checksum(None)));
+                s.push(format!("- address: {}", &al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -292,12 +294,12 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
+    pub async fn estimate(&self, builder_output: TxBuilderPeekAlloyOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(tx, None).await?;
+        let res = self.alloy_provider.estimate_gas(tx.clone(), None).await?;
 
-        Ok::<_, eyre::Error>(res.to_alloy())
+        Ok::<_, eyre::Error>(res)
     }
 
     /// # Example
@@ -774,7 +776,10 @@ where
         slot: B256,
         block: Option<AlloyBlockId>,
     ) -> Result<String> {
-        Ok(format!("{:?}", B256::from(self.alloy_provider.get_storage_at(from, slot.into(), block).await?)))
+        Ok(format!(
+            "{:?}",
+            B256::from(self.alloy_provider.get_storage_at(from, slot.into(), block).await?)
+        ))
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {

@@ -1,7 +1,7 @@
+use alloy_primitives::Address;
 use alloy_providers::provider::TempProvider;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_core::types::NameOrAddress;
 use ethers_middleware::MiddlewareBuilder;
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
@@ -12,6 +12,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     cli_warn,
+    ens::NameOrAddress,
     types::{ToAlloy, ToEthers},
 };
 use foundry_config::{Chain, Config};
@@ -119,6 +120,14 @@ impl SendTxArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
+        let to = match to {
+            Some(NameOrAddress::Name(name)) => {
+                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+            }
+            Some(NameOrAddress::Address(addr)) => Some(addr),
+            None => None,
+        };
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
@@ -155,7 +164,7 @@ impl SendTxArgs {
             cast_send(
                 provider,
                 alloy_provider,
-                config.sender.to_ethers(),
+                config.sender,
                 to,
                 code,
                 (sig, args),
@@ -199,7 +208,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
             cast_send(
                 provider,
                 alloy_provider,
-                from,
+                from.to_alloy(),
                 to,
                 code,
                 (sig, args),
@@ -216,11 +225,11 @@ corresponds to the sender, or let foundry automatically detect it by not specify
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cast_send<M: Middleware, P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn cast_send<M: Middleware, P: TempProvider>(
     provider: M,
     alloy_provider: P,
-    from: F,
-    to: Option<T>,
+    from: Address,
+    to: Option<Address>,
     code: Option<String>,
     args: (String, Vec<String>),
     tx: TransactionOpts,
