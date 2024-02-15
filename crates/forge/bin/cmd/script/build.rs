@@ -104,7 +104,7 @@ impl ScriptArgs {
             true
         };
 
-        let mut target = None;
+        let mut target: Option<&ArtifactId> = None;
 
         for (id, contract) in contracts.iter() {
             if no_target_name {
@@ -112,8 +112,15 @@ impl ScriptArgs {
                 if id.source == std::path::Path::new(&target_fname) &&
                     contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0)
                 {
-                    if target.is_some() {
-                        eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
+                    if let Some(target) = target {
+                        // We might have multiple artifacts for the same contract but with different
+                        // solc versions. Their names will have form of {name}.0.X.Y, so we are
+                        // stripping versions off before comparing them.
+                        let target_name = target.name.split('.').next().unwrap();
+                        let id_name = id.name.split('.').next().unwrap();
+                        if target_name != id_name {
+                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
+                        }
                     }
                     target = Some(id);
                 }
@@ -143,11 +150,12 @@ impl ScriptArgs {
         nonce: u64,
         target: ArtifactId,
     ) -> Result<(ArtifactContracts<ContractBytecodeSome>, Libraries, Vec<Bytes>)> {
-        let LinkOutput { libs_to_deploy, contracts, libraries } =
+        let LinkOutput { libs_to_deploy, libraries } =
             linker.link_with_nonce_or_address(libraries, sender, nonce, &target)?;
 
         // Collect all linked contracts with non-empty bytecode
-        let highlevel_known_contracts = contracts
+        let highlevel_known_contracts = linker
+            .get_linked_artifacts(&libraries)?
             .iter()
             .filter_map(|(id, contract)| {
                 ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))

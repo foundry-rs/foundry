@@ -9,11 +9,10 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::{OptionExt, Result};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{
-    artifacts::CompactContractBytecode, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
-};
+use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_evm::{
     backend::Backend,
+    decode::RevertDecoder,
     executors::{Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
@@ -46,8 +45,8 @@ pub struct MultiContractRunner {
     pub env: revm::primitives::Env,
     /// The EVM spec
     pub evm_spec: SpecId,
-    /// All known errors, used for decoding reverts
-    pub errors: Option<JsonAbi>,
+    /// Revert decoder. Contains all known errors and their selectors.
+    pub revert_decoder: RevertDecoder,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Option<Address>,
     /// A map of contract names to absolute source file paths
@@ -222,7 +221,7 @@ impl MultiContractRunner {
             deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
-            self.errors.as_ref(),
+            &self.revert_decoder,
             libs,
             self.debug,
         );
@@ -232,6 +231,7 @@ impl MultiContractRunner {
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Clone, Debug, Default)]
+#[must_use = "builders do nothing unless you call `build` on them"]
 pub struct MultiContractRunnerBuilder {
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions
@@ -253,45 +253,82 @@ pub struct MultiContractRunnerBuilder {
 }
 
 impl MultiContractRunnerBuilder {
+    pub fn sender(mut self, sender: Address) -> Self {
+        self.sender = Some(sender);
+        self
+    }
+
+    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+        self.initial_balance = initial_balance;
+        self
+    }
+
+    pub fn evm_spec(mut self, spec: SpecId) -> Self {
+        self.evm_spec = Some(spec);
+        self
+    }
+
+    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
+        self.fork = fork;
+        self
+    }
+
+    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
+        self.cheats_config = Some(cheats_config);
+        self
+    }
+
+    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
+        self.test_options = Some(test_options);
+        self
+    }
+
+    pub fn set_coverage(mut self, enable: bool) -> Self {
+        self.coverage = enable;
+        self
+    }
+
+    pub fn set_debug(mut self, enable: bool) -> Self {
+        self.debug = enable;
+        self
+    }
+
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<A>(
+    pub fn build(
         self,
-        root: impl AsRef<Path>,
-        output: ProjectCompileOutput<A>,
+        root: &Path,
+        output: ProjectCompileOutput,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
-    ) -> Result<MultiContractRunner>
-    where
-        A: ArtifactOutput + Debug,
-    {
-        let output = output.with_stripped_file_prefixes(&root);
+    ) -> Result<MultiContractRunner> {
         // This is just the contracts compiled, but we need to merge this with the read cached
-        // artifacts
+        // artifacts.
         let contracts = output
+            .with_stripped_file_prefixes(root)
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
-            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
+            .collect::<ArtifactContracts>();
 
-        let mut known_contracts = ContractsByArtifact::default();
         let source_paths = contracts
             .iter()
-            .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
+            .map(|(i, _)| (i.identifier(), root.join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
-        // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
+
+        let linker = Linker::new(root, contracts);
+
+        // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        let artifact_contracts = contracts.iter().cloned().collect();
+        let mut known_contracts = ContractsByArtifact::default();
 
-        let linker = Linker::new(root.as_ref(), artifact_contracts);
-
-        for (id, contract) in contracts {
+        for (id, contract) in &linker.contracts.0 {
             let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
 
-            let LinkOutput { contracts, libs_to_deploy, .. } =
-                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, &id)?;
+            let LinkOutput { libs_to_deploy, libraries } =
+                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, id)?;
 
-            let linked_contract = contracts.get(&id).unwrap().clone();
+            let linked_contract = linker.link(id, &libraries)?;
 
             // get bytes if deployable, else add to known contracts and continue.
             // interfaces and abstract contracts should be known to enable fuzzing of their ABI
@@ -313,12 +350,13 @@ impl MultiContractRunnerBuilder {
                 deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
             }
 
-            linked_contract.get_deployed_bytecode_bytes().map(|b| b.into_owned()).and_then(
-                |bytes| known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec())),
-            );
+            if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
+                known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec()));
+            }
         }
 
-        let execution_info = known_contracts.flatten();
+        let revert_decoder =
+            RevertDecoder::new().with_abis(known_contracts.values().map(|(abi, _)| abi));
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
@@ -326,7 +364,7 @@ impl MultiContractRunnerBuilder {
             env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
             sender: self.sender,
-            errors: Some(execution_info.2),
+            revert_decoder,
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default().into(),
@@ -334,53 +372,5 @@ impl MultiContractRunnerBuilder {
             debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),
         })
-    }
-
-    #[must_use]
-    pub fn sender(mut self, sender: Address) -> Self {
-        self.sender = Some(sender);
-        self
-    }
-
-    #[must_use]
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
-        self.initial_balance = initial_balance;
-        self
-    }
-
-    #[must_use]
-    pub fn evm_spec(mut self, spec: SpecId) -> Self {
-        self.evm_spec = Some(spec);
-        self
-    }
-
-    #[must_use]
-    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
-        self.fork = fork;
-        self
-    }
-
-    #[must_use]
-    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
-        self.cheats_config = Some(cheats_config);
-        self
-    }
-
-    #[must_use]
-    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
-        self.test_options = Some(test_options);
-        self
-    }
-
-    #[must_use]
-    pub fn set_coverage(mut self, enable: bool) -> Self {
-        self.coverage = enable;
-        self
-    }
-
-    #[must_use]
-    pub fn set_debug(mut self, enable: bool) -> Self {
-        self.debug = enable;
-        self
     }
 }

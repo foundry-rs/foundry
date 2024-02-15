@@ -4,7 +4,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::{constants::CALLER, decode::decode_revert};
+use foundry_evm_core::{constants::CALLER, decode::RevertDecoder};
 use foundry_evm_fuzz::{BaseCounterExample, CounterExample, FuzzedCases, Reason};
 use foundry_evm_traces::{load_contracts, CallTraceArena, TraceKind, Traces};
 use itertools::Itertools;
@@ -15,8 +15,8 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm::primitives::U256;
 use std::sync::Arc;
 
-#[derive(Clone, Default)]
 /// Stores information about failures and reverts of the invariant tests.
+#[derive(Clone, Default)]
 pub struct InvariantFailures {
     /// Total number of reverts.
     pub reverts: usize,
@@ -89,11 +89,9 @@ impl InvariantFuzzError {
         } else {
             (None, "Revert")
         };
-        let revert_reason = decode_revert(
-            call_result.result.as_ref(),
-            Some(invariant_contract.abi),
-            Some(call_result.exit_reason),
-        );
+        let revert_reason = RevertDecoder::new()
+            .with_abi(invariant_contract.abi)
+            .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
         InvariantFuzzError {
             logs: call_result.logs,

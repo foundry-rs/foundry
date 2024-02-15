@@ -5,7 +5,6 @@ use crate::{
     hashbrown::HashSet,
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData, TraceKind},
 };
-use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
 use serde::{Deserialize, Serialize};
@@ -37,10 +36,23 @@ impl GasReport {
     }
 
     /// Whether the given contract should be reported.
+    #[instrument(level = "trace", skip(self), ret)]
     fn should_report(&self, contract_name: &str) -> bool {
         if self.ignore.contains(contract_name) {
-            // could be specified in both ignore and report_for
-            return self.report_for.contains(contract_name)
+            let contains_anyway = self.report_for.contains(contract_name);
+            if contains_anyway {
+                // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
+                // report for the contract is generated even if it's listed in the ignore
+                // list. This is addressed this way because getting a report you don't expect is
+                // preferable than not getting one you expect. A warning is printed to stderr
+                // indicating the "double listing".
+                eprintln!(
+                    "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
+                    yansi::Paint::yellow("warning").bold(),
+                    contract_name
+                );
+            }
+            return contains_anyway;
         }
         self.report_any || self.report_for.contains(contract_name)
     }
@@ -58,48 +70,38 @@ impl GasReport {
 
     async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
         let trace = &node.trace;
-        let decoded = decoder.decode_function(&node.trace).await;
 
         if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
-            return
+            return;
         }
 
-        if let Some(name) = &decoded.contract {
-            let contract_name = name.rsplit(':').next().unwrap_or(name.as_str());
-            // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
-            // report for the contract is generated even if it's listed in the ignore
-            // list. This is addressed this way because getting a report you don't expect is
-            // preferable than not getting one you expect. A warning is printed to stderr
-            // indicating the "double listing".
-            if self.report_for.contains(contract_name) && self.ignore.contains(contract_name) {
-                eprintln!(
-                    "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
-                    yansi::Paint::yellow("warning").bold(),
-                    contract_name
-                );
-            }
+        let decoded = decoder.decode_function(&node.trace).await;
 
-            if self.should_report(contract_name) {
-                let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let Some(name) = &decoded.contract else { return };
+        let contract_name = name.rsplit(':').next().unwrap_or(name);
 
-                if trace.kind.is_any_create() {
-                    contract_info.gas = U256::from(trace.gas_used);
-                    contract_info.size = U256::from(trace.data.len());
-                } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
-                    let name = signature.split('(').next().unwrap();
-                    // ignore any test/setup functions
-                    let should_include =
-                        !(name.is_test() || name.is_invariant_test() || name.is_setup());
-                    if should_include {
-                        let gas_info = contract_info
-                            .functions
-                            .entry(name.to_string())
-                            .or_default()
-                            .entry(signature.clone())
-                            .or_default();
-                        gas_info.calls.push(U256::from(trace.gas_used));
-                    }
-                }
+        if !self.should_report(contract_name) {
+            return;
+        }
+
+        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        if trace.kind.is_any_create() {
+            trace!(contract_name, "adding create gas info");
+            contract_info.gas = trace.gas_used;
+            contract_info.size = trace.data.len();
+        } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
+            let name = signature.split('(').next().unwrap();
+            // ignore any test/setup functions
+            let should_include = !(name.is_test() || name.is_invariant_test() || name.is_setup());
+            if should_include {
+                trace!(contract_name, signature, "adding gas info");
+                let gas_info = contract_info
+                    .functions
+                    .entry(name.to_string())
+                    .or_default()
+                    .entry(signature.clone())
+                    .or_default();
+                gas_info.calls.push(trace.gas_used);
             }
         }
     }
@@ -114,7 +116,7 @@ impl GasReport {
                     func.min = func.calls.first().copied().unwrap_or_default();
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
-                    func.median = U256::from(calc::median_sorted(func.calls.as_slice()));
+                    func.median = calc::median_sorted(func.calls.as_slice());
                 });
             });
         });
@@ -173,16 +175,17 @@ impl Display for GasReport {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ContractInfo {
-    pub gas: U256,
-    pub size: U256,
+    pub gas: u64,
+    pub size: usize,
+    /// Function name -> Function signature -> GasInfo
     pub functions: BTreeMap<String, BTreeMap<String, GasInfo>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GasInfo {
-    pub calls: Vec<U256>,
-    pub min: U256,
-    pub mean: U256,
-    pub median: U256,
-    pub max: U256,
+    pub calls: Vec<u64>,
+    pub min: u64,
+    pub mean: u64,
+    pub median: u64,
+    pub max: u64,
 }

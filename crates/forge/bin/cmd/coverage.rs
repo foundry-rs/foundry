@@ -310,7 +310,7 @@ impl CoverageArgs {
                 ..Default::default()
             })
             .set_coverage(true)
-            .build(root.clone(), output, env, evm_opts)?;
+            .build(&root, output, env, evm_opts)?;
 
         // Run tests
         let known_contracts = runner.known_contracts.clone();

@@ -15,7 +15,7 @@ use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     coverage::HitMaps,
-    decode::decode_console_logs,
+    decode::{decode_console_logs, RevertDecoder},
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
@@ -43,8 +43,8 @@ pub struct ContractRunner<'a> {
     pub code: Bytes,
     /// The test contract's ABI
     pub contract: &'a JsonAbi,
-    /// All known errors, used to decode reverts
-    pub errors: Option<&'a JsonAbi>,
+    /// Revert decoder. Contains all known errors.
+    pub revert_decoder: &'a RevertDecoder,
     /// The initial balance of the test contract
     pub initial_balance: U256,
     /// The address which will be used as the `from` field in all EVM calls
@@ -62,7 +62,7 @@ impl<'a> ContractRunner<'a> {
         code: Bytes,
         initial_balance: U256,
         sender: Option<Address>,
-        errors: Option<&'a JsonAbi>,
+        revert_decoder: &'a RevertDecoder,
         predeploy_libs: &'a [Bytes],
         debug: bool,
     ) -> Self {
@@ -73,7 +73,7 @@ impl<'a> ContractRunner<'a> {
             code,
             initial_balance,
             sender: sender.unwrap_or_default(),
-            errors,
+            revert_decoder,
             predeploy_libs,
             debug,
         }
@@ -104,7 +104,12 @@ impl<'a> ContractRunner<'a> {
         let mut logs = Vec::new();
         let mut traces = Vec::with_capacity(self.predeploy_libs.len());
         for code in self.predeploy_libs.iter() {
-            match self.executor.deploy(self.sender, code.clone(), U256::ZERO, self.errors) {
+            match self.executor.deploy(
+                self.sender,
+                code.clone(),
+                U256::ZERO,
+                Some(self.revert_decoder),
+            ) {
                 Ok(d) => {
                     logs.extend(d.logs);
                     traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
@@ -122,7 +127,12 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_balance(address, self.initial_balance)?;
 
         // Deploy the test contract
-        match self.executor.deploy(self.sender, self.code.clone(), U256::ZERO, self.errors) {
+        match self.executor.deploy(
+            self.sender,
+            self.code.clone(),
+            U256::ZERO,
+            Some(self.revert_decoder),
+        ) {
             Ok(d) => {
                 logs.extend(d.logs);
                 traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
@@ -320,7 +330,7 @@ impl<'a> ContractRunner<'a> {
                 func.clone(),
                 vec![],
                 U256::ZERO,
-                self.errors,
+                Some(self.revert_decoder),
             ) {
                 Ok(CallResult {
                     reverted,
@@ -438,7 +448,7 @@ impl<'a> ContractRunner<'a> {
             func.clone(),
             vec![],
             U256::ZERO,
-            self.errors,
+            Some(self.revert_decoder),
         ) {
             return TestResult {
                 status: TestStatus::Skipped,
@@ -563,7 +573,7 @@ impl<'a> ContractRunner<'a> {
         let fuzzed_executor =
             FuzzedExecutor::new(self.executor.clone(), runner.clone(), self.sender, fuzz_config);
         let state = fuzzed_executor.build_fuzz_state();
-        let result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
+        let result = fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();

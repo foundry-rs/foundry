@@ -1127,3 +1127,46 @@ forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
         .await
         .resume(ScriptOutcome::OkBroadcast);
 });
+
+forgetest_async!(can_detect_contract_when_multiple_versions, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    prj.add_script(
+        "A.sol",
+        r#"pragma solidity 0.8.20;
+import "./B.sol";
+
+contract ScriptA {}
+"#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "B.sol",
+        r#"pragma solidity >=0.8.5 <=0.8.20;
+import 'forge-std/Script.sol';
+
+contract ScriptB is Script {
+    function run() external {
+        vm.broadcast();
+        address(0).call("");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "C.sol",
+        r#"pragma solidity 0.8.5;
+import "./B.sol";
+
+contract ScriptC {}
+"#,
+    )
+    .unwrap();
+
+    let mut tester = ScriptTester::new(cmd, None, prj.root(), "script/B.sol");
+    tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
+    tester.simulate(ScriptOutcome::OkNoEndpoint);
+});
