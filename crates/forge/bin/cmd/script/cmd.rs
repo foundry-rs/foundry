@@ -2,10 +2,11 @@ use super::{multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyB
 use alloy_primitives::Bytes;
 
 use ethers_providers::Middleware;
+use ethers_signers::Signer;
 use eyre::{OptionExt, Result};
 use forge::link::Linker;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{contracts::flatten_contracts, provider::ethers::try_get_http_provider};
+use foundry_common::{contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy};
 use foundry_debugger::Debugger;
 use foundry_wallets::WalletSigner;
 use std::sync::Arc;
@@ -56,6 +57,10 @@ impl ScriptArgs {
             mut libraries,
             ..
         } = build_output;
+
+        if let Some(sender) = self.maybe_load_private_key()? {
+            script_config.evm_opts.sender = sender;
+        }
 
         // Execute once with default sender.
         let sender = script_config.evm_opts.sender;
@@ -363,5 +368,16 @@ impl ScriptArgs {
         first_run_result.transactions = Some(txs);
 
         Ok((libraries, highlevel_known_contracts))
+    }
+
+    /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
+    /// `--sender`
+    fn maybe_load_private_key(&mut self) -> Result<Option<Address>> {
+        let maybe_sender = self
+            .wallets
+            .private_keys()?
+            .filter(|pks| pks.len() == 1)
+            .map(|pks| pks.first().unwrap().address().to_alloy());
+        Ok(maybe_sender)
     }
 }
