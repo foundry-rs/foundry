@@ -2,7 +2,6 @@
 extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
-
 use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
