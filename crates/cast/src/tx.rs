@@ -29,7 +29,7 @@ pub type TxBuilderPeekOutput<'a> = (&'a AlloyTransactionRequest, &'a Option<Func
 /// # use cast::TxBuilder;
 /// # use foundry_config::NamedChain;
 /// # use std::str::FromStr;
-/// let provider = ethers_providers::test_provider::MAINNET.provider();
+/// let provider = foundry_common::provider::alloy::get_http_provider("http://localhost:8545");
 /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap();
 /// let to = Address::from_str("0xb8c2c29ee19d8307cb7255e1cd9cbde883a267d5").unwrap();
 /// let mut builder = TxBuilder::new(&provider, from, Some(to), NamedChain::Mainnet, false).await?;
