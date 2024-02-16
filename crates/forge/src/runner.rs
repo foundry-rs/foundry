@@ -318,7 +318,7 @@ impl<'a> ContractRunner<'a> {
         if !span.is_disabled() {
             let sig = &func.signature()[..];
             if enabled!(tracing::Level::TRACE) {
-                span.record("sig", &sig);
+                span.record("sig", sig);
             } else {
                 span.record("sig", sig.split('(').next().unwrap());
             }
@@ -578,7 +578,7 @@ impl<'a> ContractRunner<'a> {
         if !span.is_disabled() {
             let sig = &func.signature()[..];
             if enabled!(tracing::Level::TRACE) {
-                span.record("test", &sig);
+                span.record("test", sig);
             } else {
                 span.record("test", sig.split('(').next().unwrap());
             }
