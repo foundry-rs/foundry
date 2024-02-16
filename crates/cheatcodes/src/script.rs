@@ -106,7 +106,7 @@ impl ScriptWallets {
             .unwrap_or_else(|| panic!("not all instances were dropped"))
     }
 
-    /// Locks [MultiWallet] Mutex and 
+    /// Locks inner Mutex and adds a signer to the [MultiWallet].
     pub fn add_signer(&self, private_key: impl AsRef<[u8]>) -> Result {
         self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
         Ok(Default::default())
