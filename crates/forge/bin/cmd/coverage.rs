@@ -149,7 +149,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[instrument(name = "prepare coverage", skip_all)]
+    #[instrument(name = "prepare", skip_all)]
     fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = config.project_paths();
 
