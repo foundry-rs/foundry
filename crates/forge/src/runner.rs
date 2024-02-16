@@ -313,8 +313,18 @@ impl<'a> ContractRunner<'a> {
     ///
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
-    #[instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
+        let span = info_span!("test", %should_fail);
+        if !span.is_disabled() {
+            let sig = &func.signature()[..];
+            if enabled!(tracing::Level::TRACE) {
+                span.record("sig", &sig);
+            } else {
+                span.record("sig", sig.split('(').next().unwrap());
+            }
+        }
+        let _guard = span.enter();
+
         let TestSetup {
             address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
         } = setup;
@@ -426,7 +436,7 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[instrument(name = "invariant-test", skip_all)]
+    #[instrument(name = "invariant_test", skip_all)]
     pub fn run_invariant_test(
         &self,
         runner: TestRunner,
@@ -555,7 +565,7 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
+    #[instrument(name = "fuzz_test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
@@ -564,6 +574,17 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         fuzz_config: FuzzConfig,
     ) -> TestResult {
+        let span = info_span!("fuzz_test", %should_fail);
+        if !span.is_disabled() {
+            let sig = &func.signature()[..];
+            if enabled!(tracing::Level::TRACE) {
+                span.record("test", &sig);
+            } else {
+                span.record("test", sig.split('(').next().unwrap());
+            }
+        }
+        let _guard = span.enter();
+
         let TestSetup {
             address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
         } = setup;

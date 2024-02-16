@@ -204,11 +204,11 @@ impl CallTraceDecoder {
     pub fn push_function(&mut self, function: Function) {
         match self.functions.entry(function.selector()) {
             Entry::Occupied(entry) => {
-                // This shouldn't happen that often
+                // This shouldn't happen that often.
                 if entry.get().contains(&function) {
                     return;
                 }
-                debug!(target: "evm::traces", selector=%entry.key(), new=%function.signature(), "duplicate function selector");
+                trace!(target: "evm::traces", selector=%entry.key(), new=%function.signature(), "duplicate function selector");
                 entry.into_mut().push(function);
             }
             Entry::Vacant(entry) => {
@@ -241,6 +241,11 @@ impl CallTraceDecoder {
     }
 
     fn collect_identities(&mut self, identities: Vec<AddressIdentity<'_>>) {
+        // Skip logging if there are no identities.
+        if identities.is_empty() {
+            return;
+        }
+
         trace!(target: "evm::traces", len=identities.len(), "collecting address identities");
         for AddressIdentity { address, label, contract, abi, artifact_id: _ } in identities {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
