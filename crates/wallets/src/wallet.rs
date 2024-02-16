@@ -1,4 +1,4 @@
-use crate::{raw_wallet::RawWallet, utils, wallet_signer::WalletSigner};
+use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
 use clap::Parser;
 use ethers_signers::Signer;
@@ -26,7 +26,7 @@ pub struct WalletOpts {
     pub from: Option<Address>,
 
     #[clap(flatten)]
-    pub raw: RawWallet,
+    pub raw: RawWalletOpts,
 
     /// Use the keystore in the given folder or file.
     #[clap(
@@ -140,8 +140,8 @@ of the unlocked account you want to use, or provide the --from flag with the add
     }
 }
 
-impl From<RawWallet> for WalletOpts {
-    fn from(options: RawWallet) -> Self {
+impl From<RawWalletOpts> for WalletOpts {
+    fn from(options: RawWalletOpts) -> Self {
         Self { raw: options, ..Default::default() }
     }
 }
@@ -178,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn illformed_private_key_generates_user_friendly_error() {
         let wallet = WalletOpts {
-            raw: RawWallet {
+            raw: RawWalletOpts {
                 interactive: false,
                 private_key: Some("123".to_string()),
                 mnemonic: None,

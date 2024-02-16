@@ -10,7 +10,7 @@ use serde::Serialize;
 /// 3. Mnemonic (via file path)
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options - raw", about = None, long_about = None)]
-pub struct RawWallet {
+pub struct RawWalletOpts {
     /// Open an interactive prompt to enter your private key.
     #[clap(long, short)]
     pub interactive: bool,
@@ -40,7 +40,8 @@ pub struct RawWallet {
     pub mnemonic_index: u32,
 }
 
-impl RawWallet {
+impl RawWalletOpts {
+    /// Returns signer configured by provided parameters.
     pub fn signer(&self) -> Result<Option<WalletSigner>> {
         if self.interactive {
             return Ok(Some(PendingSigner::Interactive.unlock()?));

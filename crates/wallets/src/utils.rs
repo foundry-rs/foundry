@@ -8,6 +8,7 @@ use std::{
     str::FromStr,
 };
 
+/// Validates and sanitizes user inputs, returning configured [WalletSigner].
 pub fn create_private_key_signer(private_key: &str) -> Result<WalletSigner> {
     let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
     match LocalWallet::from_str(privk) {
@@ -38,6 +39,9 @@ pub fn create_private_key_signer(private_key: &str) -> Result<WalletSigner> {
     }
 }
 
+/// Creates [WalletSigner] instance from given mnemonic parameters.
+///
+/// Mnemonic can be either a file path or a mnemonic phrase.
 pub fn create_mnemonic_signer(
     mnemonic: &str,
     passphrase: Option<&str>,
@@ -53,6 +57,7 @@ pub fn create_mnemonic_signer(
     Ok(WalletSigner::from_mnemonic(&mnemonic, passphrase, hd_path, index)?)
 }
 
+/// Creates [WalletSigner] instance from given Ledger parameters.
 pub async fn create_ledger_signer(
     hd_path: Option<&str>,
     mnemonic_index: u32,
@@ -70,6 +75,7 @@ Make sure it's connected and unlocked, with no other desktop wallet apps open."
     })
 }
 
+/// Creates [WalletSigner] instance from given Trezor parameters.
 pub async fn create_trezor_signer(
     hd_path: Option<&str>,
     mnemonic_index: u32,
@@ -98,6 +104,13 @@ pub fn maybe_get_keystore_path(
         .or_else(|| maybe_name.map(|name| default_keystore_dir.join(name))))
 }
 
+/// Creates keystore signer from given parameters.
+///
+/// If correct password or password file is provided, the keystore is decrypted and a [WalletSigner]
+/// is returned.
+///
+/// Otherwise, a [PendingSigner] is returned, which can be used to unlock the keystore later,
+/// prompting user for password.
 pub fn create_keystore_signer(
     path: &PathBuf,
     maybe_password: Option<&str>,

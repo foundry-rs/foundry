@@ -9,7 +9,7 @@ use ethers_signers::Signer;
 use eyre::{Context, Result};
 use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
-use foundry_wallets::{RawWallet, WalletOpts, WalletSigner};
+use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
 use serde_json::json;
 use std::{path::Path, str::FromStr};
@@ -129,7 +129,7 @@ pub enum WalletSubcommands {
         #[clap(long, short)]
         keystore_dir: Option<String>,
         #[clap(flatten)]
-        raw_wallet_options: RawWallet,
+        raw_wallet_options: RawWalletOpts,
     },
     /// List all the accounts in the keystore default directory
     #[clap(visible_alias = "ls")]
@@ -238,7 +238,7 @@ impl WalletSubcommands {
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
                     .map(|pk| WalletOpts {
-                        raw: RawWallet { private_key: Some(pk), ..Default::default() },
+                        raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
                     })
                     .unwrap_or(wallet)

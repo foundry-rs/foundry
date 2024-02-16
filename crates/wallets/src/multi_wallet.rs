@@ -215,6 +215,7 @@ pub struct MultiWalletOpts {
 }
 
 impl MultiWalletOpts {
+    /// Returns [MultiWallet] container configured with provided options.
     pub async fn get_multi_wallet(&self) -> Result<MultiWallet> {
         let mut pending = Vec::new();
         let mut signers: Vec<WalletSigner> = Vec::new();
