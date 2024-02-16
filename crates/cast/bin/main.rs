@@ -2,19 +2,17 @@
 extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
-use alloy_providers::provider::TempProvider;
 use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers_core::types::{BlockId, BlockNumber::Latest};
-use ethers_providers::{Middleware, Provider};
+use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     fmt::format_tokens,
     fs,
-    runtime_client::RuntimeClient,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,

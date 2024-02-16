@@ -8,13 +8,11 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{ens::NameOrAddress, runtime_client::RuntimeClient, types::ToAlloy};
+use foundry_common::{ens::NameOrAddress, types::ToAlloy};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
-
-type Provider = ethers_providers::Provider<RuntimeClient>;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
