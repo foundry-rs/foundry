@@ -1,12 +1,12 @@
 //! Implementations of [`Scripting`](crate::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use std::sync::Arc;
 use alloy_primitives::{Address, U256};
 use alloy_signer::{LocalWallet, Signer};
 use foundry_config::Config;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
+use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -105,6 +105,12 @@ impl ScriptWallets {
             .map(|m| m.into_inner().multi_wallet)
             .unwrap_or_else(|| panic!("not all instances were dropped"))
     }
+
+    /// Locks [MultiWallet] Mutex and 
+    pub fn add_signer(&self, private_key: impl AsRef<[u8]>) -> Result {
+        self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
+        Ok(Default::default())
+    }
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
@@ -164,9 +170,8 @@ fn broadcast_key<DB: DatabaseExt>(
     let result = broadcast(ccx, Some(&new_origin), single_call);
 
     if result.is_ok() {
-        let signer = WalletSigner::from_private_key(key.to_bytes())?;
         if let Some(script_wallets) = &ccx.state.script_wallets {
-            script_wallets.inner.lock().multi_wallet.add_signer(signer);
+            script_wallets.add_signer(key.to_bytes())?;
         }
     }
     result

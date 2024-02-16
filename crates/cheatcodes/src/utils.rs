@@ -11,7 +11,6 @@ use alloy_signer::{
 };
 use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use foundry_wallets::WalletSigner;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, Curve},
@@ -90,9 +89,8 @@ impl Cheatcode for rememberKeyCall {
         let Self { privateKey } = self;
         let key = parse_private_key(privateKey)?;
         let address = LocalWallet::from(key.clone()).address();
-        let signer = WalletSigner::from_private_key(key.to_bytes())?;
         if let Some(script_wallets) = &ccx.state.script_wallets {
-            script_wallets.inner.lock().multi_wallet.add_signer(signer);
+            script_wallets.add_signer(key.to_bytes())?;
         }
         Ok(address.abi_encode())
     }

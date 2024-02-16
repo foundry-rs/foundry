@@ -1,3 +1,4 @@
+use crate::error::WalletSignerError;
 use async_trait::async_trait;
 use ethers_core::types::{
     transaction::{eip2718::TypedTransaction, eip712::Eip712},
@@ -13,15 +14,19 @@ use rusoto_core::{
 };
 use rusoto_kms::KmsClient;
 use std::path::PathBuf;
-use crate::error::WalletSignerError;
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
+/// Wrapper enum around different signers.
 #[derive(Debug)]
 pub enum WalletSigner {
+    /// Wrapper around local wallet. e.g. private key, mnemonic
     Local(LocalWallet),
+    /// Wrapper around Ledger signer.
     Ledger(Ledger),
+    /// Wrapper around Trezor signer.
     Trezor(Trezor),
+    /// Wrapper around AWS KMS signer.
     Aws(AwsSigner),
 }
 
