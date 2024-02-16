@@ -1,14 +1,15 @@
 use crate::errors::FunctionSignatureError;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256, U64};
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest as AlloyTransactionRequest};
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, TransactionRequest,
 };
-use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_common::{
     abi::{encode_function_args, get_func, get_func_etherscan},
+    ens::NameOrAddress,
     types::ToEthers,
 };
 use foundry_config::Chain;
@@ -38,17 +39,17 @@ pub type TxBuilderPeekOutput<'a> = (&'a AlloyTransactionRequest, &'a Option<Func
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct TxBuilder<'a, M: Middleware> {
+pub struct TxBuilder<'a, P: TempProvider> {
     to: Option<Address>,
     chain: Chain,
     tx: TypedTransaction,
     alloy_tx: AlloyTransactionRequest,
     func: Option<Function>,
     etherscan_api_key: Option<String>,
-    provider: &'a M,
+    provider: &'a P,
 }
 
-impl<'a, M: Middleware> TxBuilder<'a, M> {
+impl<'a, P: TempProvider> TxBuilder<'a, P> {
     /// Create a new TxBuilder
     /// `provider` - provider to use
     /// `from` - 'from' field. Could be an ENS name
@@ -56,12 +57,12 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// `chain` - chain to construct the tx for
     /// `legacy` - use type 1 transaction
     pub async fn new(
-        provider: &'a M,
+        provider: &'a P,
         from: Address,
         to: Option<Address>,
         chain: impl Into<Chain>,
         legacy: bool,
-    ) -> Result<TxBuilder<'a, M>> {
+    ) -> Result<TxBuilder<'a, P>> {
         let chain = chain.into();
 
         let (mut tx, mut alloy_tx): (TypedTransaction, AlloyTransactionRequest) = if chain
@@ -240,7 +241,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         &mut self,
         sig: &str,
         args: Vec<String>,
-    ) -> Result<&mut TxBuilder<'a, M>> {
+    ) -> Result<&mut TxBuilder<'a, P>> {
         let (data, func) = self.create_args(sig, args).await?;
         self.tx.set_data(data.clone().into());
         self.alloy_tx.input = TransactionInput::new(Bytes::from(data));
@@ -252,7 +253,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     pub async fn args(
         &mut self,
         value: Option<(&str, Vec<String>)>,
-    ) -> Result<&mut TxBuilder<'a, M>> {
+    ) -> Result<&mut TxBuilder<'a, P>> {
         if let Some((sig, args)) = value {
             return self.set_args(sig, args).await
         }
@@ -274,12 +275,12 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 }
 
-async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
+async fn resolve_name_args<P: TempProvider>(args: &[String], provider: &P) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
-            let addr = provider.resolve_name(arg).await;
+            let addr = NameOrAddress::Name(arg.to_string()).resolve(provider).await;
             match addr {
-                Ok(addr) => format!("{addr:?}"),
+                Ok(addr) => addr.to_string(),
                 Err(_) => arg.to_string(),
             }
         } else {
@@ -293,47 +294,17 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 mod tests {
     use crate::TxBuilder;
     use alloy_primitives::{Address, U256};
-    use async_trait::async_trait;
     use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
-    use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
     use foundry_common::types::ToEthers;
     use foundry_config::NamedChain;
-    use serde::{de::DeserializeOwned, Serialize};
 
     const ADDR_1: Address = Address::with_last_byte(1);
     const ADDR_2: Address = Address::with_last_byte(2);
 
-    #[derive(Debug)]
-    struct MyProvider {}
-
-    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-    impl JsonRpcClient for MyProvider {
-        type Error = ProviderError;
-
-        async fn request<T: Serialize + Send + Sync, R: DeserializeOwned>(
-            &self,
-            _method: &str,
-            _params: T,
-        ) -> Result<R, Self::Error> {
-            Err(ProviderError::CustomError("There is no request".to_string()))
-        }
-    }
-    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-    impl Middleware for MyProvider {
-        type Error = ProviderError;
-        type Provider = MyProvider;
-        type Inner = MyProvider;
-
-        fn inner(&self) -> &Self::Inner {
-            self
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn builder_new_non_legacy() -> eyre::Result<()> {
-        let provider = MyProvider {};
+        // Instanciate a local provider although it'll do nothing.
+        let provider = foundry_common::provider::alloy::get_http_provider("http://localhost:8545");
         let builder =
             TxBuilder::new(&provider, ADDR_1, Some(ADDR_2), NamedChain::Mainnet, false).await?;
         let (tx, args) = builder.build();
@@ -352,7 +323,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn builder_new_legacy() -> eyre::Result<()> {
-        let provider = MyProvider {};
+        let provider = foundry_common::provider::alloy::get_http_provider("http://localhost:8545");
         let builder =
             TxBuilder::new(&provider, ADDR_1, Some(ADDR_2), NamedChain::Mainnet, true).await?;
         // don't check anything other than the tx type - the rest is covered in the non-legacy case
@@ -368,7 +339,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn builder_fields() -> eyre::Result<()> {
-        let provider = MyProvider {};
+        let provider = foundry_common::provider::alloy::get_http_provider("http://localhost:8545");
         let mut builder =
             TxBuilder::new(&provider, ADDR_1, Some(ADDR_2), NamedChain::Mainnet, false)
                 .await
@@ -392,7 +363,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn builder_args() -> eyre::Result<()> {
-        let provider = MyProvider {};
+        let provider = foundry_common::provider::alloy::get_http_provider("http://localhost:8545");
         let mut builder =
             TxBuilder::new(&provider, ADDR_1, Some(ADDR_2), NamedChain::Mainnet, false)
                 .await

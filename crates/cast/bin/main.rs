@@ -2,6 +2,7 @@
 extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
+use alloy_providers::provider::TempProvider;
 use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -214,8 +215,9 @@ async fn main() -> Result<()> {
             match erc20 {
                 Some(token) => {
                     let chain = utils::get_chain(config.chain, &provider).await?;
-                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> =
-                        TxBuilder::new(&provider, Address::ZERO, Some(token), chain, true).await?;
+                    let mut builder =
+                        TxBuilder::new(&alloy_provider, Address::ZERO, Some(token), chain, true)
+                            .await?;
 
                     builder
                         .set_args(
@@ -226,12 +228,12 @@ async fn main() -> Result<()> {
                     let builder_output = builder.build_alloy();
                     println!(
                         "{}",
-                        Cast::new(provider, alloy_provider).call(builder_output, block).await?
+                        Cast::new(&provider, &alloy_provider).call(builder_output, block).await?
                     );
                 }
                 None => {
                     let value =
-                        Cast::new(provider, alloy_provider).balance(account_addr, block).await?;
+                        Cast::new(&provider, &alloy_provider).balance(account_addr, block).await?;
                     if ether {
                         println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
                     } else {

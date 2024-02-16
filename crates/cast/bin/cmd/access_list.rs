@@ -109,7 +109,7 @@ async fn access_list<M: Middleware, P: TempProvider>(
 where
     M::Error: 'static,
 {
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+    let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, tx.legacy).await?;
     builder
         .gas(tx.gas_limit)
         .gas_price(tx.gas_price)
@@ -128,7 +128,7 @@ where
 
     let builder_output = builder.peek();
 
-    let cast = Cast::new(&provider, alloy_provider);
+    let cast = Cast::new(&provider, &alloy_provider);
 
     let access_list: String = cast.access_list(builder_output, block, to_json).await?;
 

@@ -244,7 +244,7 @@ where
 {
     let (sig, params) = args;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+    let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, tx.legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)
         .gas(tx.gas_limit)

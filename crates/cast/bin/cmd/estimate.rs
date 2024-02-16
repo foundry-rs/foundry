@@ -96,7 +96,7 @@ impl EstimateArgs {
             None => None,
         };
 
-        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
+        let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, false).await?;
         builder.etherscan_api_key(api_key);
 
         match command {
@@ -119,7 +119,7 @@ impl EstimateArgs {
         };
 
         let builder_output = builder.peek();
-        let gas = Cast::new(&provider, alloy_provider).estimate(builder_output).await?;
+        let gas = Cast::new(&provider, &alloy_provider).estimate(builder_output).await?;
         println!("{gas}");
         Ok(())
     }

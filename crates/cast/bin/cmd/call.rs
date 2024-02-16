@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockId;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
@@ -125,8 +126,7 @@ impl CallArgs {
             None => None,
         };
 
-        let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
+        let mut builder = TxBuilder::new(&alloy_provider, sender, to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
@@ -209,8 +209,8 @@ impl CallArgs {
 }
 
 /// fills the builder from create arg
-async fn fill_create(
-    builder: &mut TxBuilder<'_, Provider>,
+async fn fill_create<P: TempProvider>(
+    builder: &mut TxBuilder<'_, P>,
     value: Option<U256>,
     code: String,
     sig: Option<String>,
@@ -231,8 +231,8 @@ async fn fill_create(
 }
 
 /// fills the builder from args
-async fn fill_tx(
-    builder: &mut TxBuilder<'_, Provider>,
+async fn fill_tx<P: TempProvider>(
+    builder: &mut TxBuilder<'_, P>,
     value: Option<U256>,
     sig: Option<String>,
     args: Vec<String>,
