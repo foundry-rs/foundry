@@ -33,6 +33,8 @@ alloy-rlp.workspace = true
 alloy-providers.workspace = true
 alloy-rpc-types.workspace = true
 alloy-signer.workspace = true
+alloy-contract.workspace = true
+alloy-consensus.workspace = true
 
 ethers-core.workspace = true
 ethers-providers.workspace = true

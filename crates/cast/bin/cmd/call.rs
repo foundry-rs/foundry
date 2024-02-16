@@ -1,22 +1,18 @@
 use alloy_primitives::U256;
+use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::BlockId;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{
-    runtime_client::RuntimeClient,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{ens::NameOrAddress, types::ToAlloy};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
-
-type Provider = ethers_providers::Provider<RuntimeClient>;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
@@ -120,8 +116,15 @@ impl CallArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender.to_ethers(), to, chain, tx.legacy).await?;
+        let to = match to {
+            Some(NameOrAddress::Name(name)) => {
+                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+            }
+            Some(NameOrAddress::Address(addr)) => Some(addr),
+            None => None,
+        };
+
+        let mut builder = TxBuilder::new(&alloy_provider, sender, to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
@@ -196,7 +199,7 @@ impl CallArgs {
             }
         };
 
-        let builder_output = builder.build();
+        let builder_output = builder.build_alloy();
         println!("{}", Cast::new(provider, alloy_provider).call(builder_output, block).await?);
 
         Ok(())
@@ -204,8 +207,8 @@ impl CallArgs {
 }
 
 /// fills the builder from create arg
-async fn fill_create(
-    builder: &mut TxBuilder<'_, Provider>,
+async fn fill_create<P: TempProvider>(
+    builder: &mut TxBuilder<'_, P>,
     value: Option<U256>,
     code: String,
     sig: Option<String>,
@@ -226,8 +229,8 @@ async fn fill_create(
 }
 
 /// fills the builder from args
-async fn fill_tx(
-    builder: &mut TxBuilder<'_, Provider>,
+async fn fill_tx<P: TempProvider>(
+    builder: &mut TxBuilder<'_, P>,
     value: Option<U256>,
     sig: Option<String>,
     args: Vec<String>,

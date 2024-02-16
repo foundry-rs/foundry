@@ -4,10 +4,12 @@ use crate::cmd::{
     rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::BlockId as AlloyBlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_common::ens::NameOrAddress as EnsNameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -516,11 +518,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -533,11 +535,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -613,11 +615,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
 
         /// The account to query.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         /// Format the balance in ether.
         #[clap(long, short)]
@@ -651,11 +653,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
 
         /// The contract address.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         /// Disassemble bytecodes into individual opcodes.
         #[clap(long, short)]
@@ -672,11 +674,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
 
         /// The contract address.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -763,11 +765,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,

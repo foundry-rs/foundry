@@ -6,14 +6,11 @@ use alloy_primitives::{
 };
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockHashOrNumber, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    types::{
-        transaction::eip2718::TypedTransaction, BlockId, Filter, NameOrAddress, Signature, H160,
-        H256,
-    },
+    types::{transaction::eip2718::TypedTransaction, BlockId, Filter, Signature, H256},
     utils::rlp,
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
@@ -23,7 +20,6 @@ use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     fmt::*,
-    types::{ToAlloy, ToEthers},
     TransactionReceiptWithRevertReason,
 };
 use foundry_config::Chain;
@@ -36,7 +32,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-use tx::{TxBuilderOutput, TxBuilderPeekOutput};
+use tx::{TxBuilderAlloyOutput, TxBuilderOutput, TxBuilderPeekOutput};
 
 pub use foundry_evm::*;
 pub use rusoto_core::{
@@ -71,10 +67,12 @@ where
     /// ```
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
+    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
+    /// let alloy_provider = get_http_provider("http://localhost:8545");
+    /// let cast = Cast::new(provider, alloy_provider);
     /// # Ok(())
     /// # }
     /// ```
@@ -90,10 +88,12 @@ where
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
+    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let alloy_provider = get_http_provider("http://localhost:8545");
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
@@ -101,7 +101,7 @@ where
     ///     TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder.set_args(sig, args).await?;
     /// let builder_output = builder.build();
-    /// let cast = Cast::new(provider);
+    /// let cast = Cast::new(provider, alloy_provider);
     /// let data = cast.call(builder_output, None).await?;
     /// println!("{}", data);
     /// # Ok(())
@@ -109,11 +109,11 @@ where
     /// ```
     pub async fn call<'a>(
         &self,
-        builder_output: TxBuilderOutput,
-        block: Option<BlockId>,
+        builder_output: TxBuilderAlloyOutput,
+        block: Option<AlloyBlockId>,
     ) -> Result<String> {
         let (tx, func) = builder_output;
-        let res = self.provider.call(&tx, block).await?;
+        let res = self.alloy_provider.call(tx.clone(), block).await?;
 
         let mut decoded = vec![];
 
@@ -125,8 +125,8 @@ where
                     // ensure the address is a contract
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
-                        if let Some(NameOrAddress::Address(addr)) = tx.to() {
-                            if let Ok(code) = self.provider.get_code(*addr, block).await {
+                        if let Some(addr) = tx.to {
+                            if let Ok(code) = self.alloy_provider.get_code_at(addr, block).await {
                                 if code.is_empty() {
                                     eyre::bail!("contract {addr:?} does not have any code")
                                 }
@@ -177,18 +177,18 @@ where
     pub async fn access_list(
         &self,
         builder_output: TxBuilderPeekOutput<'_>,
-        block: Option<BlockId>,
+        block: Option<AlloyBlockId>,
         to_json: bool,
     ) -> Result<String> {
         let (tx, _) = builder_output;
-        let access_list = self.provider.create_access_list(tx, block).await?;
+        let access_list = self.alloy_provider.create_access_list(tx.clone(), block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_alloy().to_checksum(None)));
+                s.push(format!("- address: {}", &al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -202,12 +202,8 @@ where
         Ok(res)
     }
 
-    pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block).await?.to_alloy())
+    pub async fn balance(&self, who: Address, block: Option<AlloyBlockId>) -> Result<U256> {
+        Ok(self.alloy_provider.get_balance(who, block).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -305,9 +301,9 @@ where
     pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(tx, None).await?;
+        let res = self.alloy_provider.estimate_gas(tx.clone(), None).await?;
 
-        Ok::<_, eyre::Error>(res.to_alloy())
+        Ok::<_, eyre::Error>(res)
     }
 
     /// # Example
@@ -494,12 +490,8 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<u64> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy().to())
+    pub async fn nonce(&self, who: Address, block: Option<AlloyBlockId>) -> Result<u64> {
+        Ok(self.alloy_provider.get_transaction_count(who, block).await?.to())
     }
 
     /// # Example
@@ -519,15 +511,15 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn implementation<T: Into<NameOrAddress> + Send + Sync>(
+    pub async fn implementation(
         &self,
-        who: T,
-        block: Option<BlockId>,
+        who: Address,
+        block: Option<AlloyBlockId>,
     ) -> Result<String> {
         let slot =
-            H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
-        let value = self.provider.get_storage_at(who, slot, block).await?;
-        let addr: H160 = value.into();
+            B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let value = self.alloy_provider.get_storage_at(who, slot.into(), block).await?;
+        let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
 
@@ -548,15 +540,11 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn admin<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<String> {
+    pub async fn admin(&self, who: Address, block: Option<AlloyBlockId>) -> Result<String> {
         let slot =
-            H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
-        let value = self.provider.get_storage_at(who, slot, block).await?;
-        let addr: H160 = value.into();
+            B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let value = self.alloy_provider.get_storage_at(who, slot.into(), block).await?;
+        let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
 
@@ -578,8 +566,7 @@ where
     /// # }
     /// ```
     pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
-        let unpacked =
-            if let Some(n) = nonce { n } else { self.nonce(address.to_ethers(), None).await? };
+        let unpacked = if let Some(n) = nonce { n } else { self.nonce(address, None).await? };
         Ok(address.create(unpacked))
     }
 
@@ -600,17 +587,17 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn code<T: Into<NameOrAddress> + Send + Sync>(
+    pub async fn code(
         &self,
-        who: T,
-        block: Option<BlockId>,
+        who: Address,
+        block: Option<AlloyBlockId>,
         disassemble: bool,
     ) -> Result<String> {
         if disassemble {
-            let code = self.provider.get_code(who, block).await?.to_vec();
+            let code = self.alloy_provider.get_code_at(who, block).await?.to_vec();
             Ok(format_operations(disassemble_bytes(code)?)?)
         } else {
-            Ok(format!("{}", self.provider.get_code(who, block).await?))
+            Ok(format!("{}", self.alloy_provider.get_code_at(who, block).await?))
         }
     }
 
@@ -631,12 +618,8 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn codesize<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        let code = self.provider.get_code(who, block).await?.to_vec();
+    pub async fn codesize(&self, who: Address, block: Option<AlloyBlockId>) -> Result<String> {
+        let code = self.alloy_provider.get_code_at(who, block).await?.to_vec();
         Ok(format!("{}", code.len()))
     }
 
@@ -789,13 +772,16 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
+    pub async fn storage(
         &self,
-        from: T,
-        slot: H256,
-        block: Option<BlockId>,
+        from: Address,
+        slot: B256,
+        block: Option<AlloyBlockId>,
     ) -> Result<String> {
-        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
+        Ok(format!(
+            "{:?}",
+            B256::from(self.alloy_provider.get_storage_at(from, slot.into(), block).await?)
+        ))
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
@@ -850,15 +836,14 @@ where
     /// ```
     pub async fn convert_block_number(
         &self,
-        block: Option<BlockHashOrNumber>,
+        block: Option<AlloyBlockId>,
     ) -> Result<Option<BlockNumberOrTag>, eyre::Error> {
         match block {
             Some(block) => match block {
-                BlockHashOrNumber::Number(block_number) => {
-                    Ok(Some(BlockNumberOrTag::Number(block_number)))
-                }
-                BlockHashOrNumber::Hash(hash) => {
-                    let block = self.alloy_provider.get_block_by_hash(hash, false).await?;
+                AlloyBlockId::Number(block_number) => Ok(Some(block_number)),
+                AlloyBlockId::Hash(hash) => {
+                    let block =
+                        self.alloy_provider.get_block_by_hash(hash.block_hash, false).await?;
                     Ok(block
                         .map(|block| block.header.number.unwrap().to::<u64>())
                         .map(BlockNumberOrTag::from))

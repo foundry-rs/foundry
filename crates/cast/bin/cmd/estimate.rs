@@ -1,12 +1,12 @@
 use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, parse_ether_value},
 };
+use foundry_common::ens::NameOrAddress;
 use foundry_config::{figment::Figment, Config};
 use std::str::FromStr;
 
@@ -87,7 +87,16 @@ impl EstimateArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
-        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
+        let from = from.resolve(&alloy_provider).await?;
+        let to = match to {
+            Some(NameOrAddress::Name(name)) => {
+                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+            }
+            Some(NameOrAddress::Address(addr)) => Some(addr),
+            None => None,
+        };
+
+        let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, false).await?;
         builder.etherscan_api_key(api_key);
 
         match command {
@@ -110,7 +119,7 @@ impl EstimateArgs {
         };
 
         let builder_output = builder.peek();
-        let gas = Cast::new(&provider, alloy_provider).estimate(builder_output).await?;
+        let gas = Cast::new(&provider, &alloy_provider).estimate(builder_output).await?;
         println!("{gas}");
         Ok(())
     }
