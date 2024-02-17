@@ -215,7 +215,7 @@ impl RuntimeTransport {
                 let mut inner = this.inner.write().await;
                 *inner = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
             }
-            
+
             // SAFETY: We just checked that the inner transport exists.
             match this.inner.read().await.as_ref().unwrap().clone() {
                 InnerTransport::Http(mut http) => http.call(req),
