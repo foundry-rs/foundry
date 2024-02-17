@@ -182,7 +182,7 @@ impl ScriptArgs {
         libraries: Libraries,
         config: &Config,
         verify: VerifyBundle,
-        signers: HashMap<Address, WalletSigner>,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if !libraries.is_empty() {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
@@ -225,7 +225,7 @@ impl ScriptArgs {
                 .send_transactions(
                     sequence,
                     &sequence.typed_transactions().first().unwrap().0.clone(),
-                    &signers,
+                    signers,
                 )
                 .await
             {

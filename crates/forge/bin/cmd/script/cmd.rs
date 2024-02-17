@@ -85,7 +85,7 @@ impl ScriptArgs {
 
         if self.resume || (self.verify && !self.broadcast) {
             let signers = script_wallets.into_multi_wallet().into_signers()?;
-            return self.resume_deployment(script_config, linker, libraries, verify, signers).await;
+            return self.resume_deployment(script_config, linker, libraries, verify, &signers).await;
         }
 
         let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
@@ -133,7 +133,7 @@ impl ScriptArgs {
             &decoder,
             script_config,
             verify,
-            signers,
+            &signers,
         )
         .await
     }
@@ -196,7 +196,7 @@ impl ScriptArgs {
         linker: Linker,
         libraries: Libraries,
         verify: VerifyBundle,
-        signers: HashMap<Address, WalletSigner>,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if self.multi {
             return self
@@ -231,7 +231,7 @@ impl ScriptArgs {
         script_config: ScriptConfig,
         linker: Linker,
         mut verify: VerifyBundle,
-        signers: HashMap<Address, WalletSigner>,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "resuming single deployment");
 

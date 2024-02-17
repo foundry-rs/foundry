@@ -292,7 +292,7 @@ impl ScriptArgs {
         decoder: &CallTraceDecoder,
         mut script_config: ScriptConfig,
         verify: VerifyBundle,
-        signers: HashMap<Address, WalletSigner>,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
@@ -361,7 +361,7 @@ impl ScriptArgs {
         script_config: ScriptConfig,
         libraries: Libraries,
         verify: VerifyBundle,
-        signers: HashMap<Address, WalletSigner>,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
 
