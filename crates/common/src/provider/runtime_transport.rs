@@ -217,7 +217,8 @@ impl RuntimeTransport {
                 {
                     let mut inner_mut = this.inner.write().await;
                     if inner_mut.is_none() {
-                        *inner_mut = Some(this.connect().await.map_err(TransportErrorKind::custom)?);
+                        *inner_mut =
+                            Some(this.connect().await.map_err(TransportErrorKind::custom)?);
                     }
                 }
                 inner = this.inner.read().await;
