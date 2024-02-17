@@ -215,15 +215,12 @@ impl RuntimeTransport {
                 let mut inner = this.inner.write().await;
                 *inner = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
             }
-
-            let mut inner = this.inner.write().await;
+            
             // SAFETY: We just checked that the inner transport exists.
-            let inner_mut = inner.as_mut().expect("We should have an inner transport.");
-
-            match inner_mut {
-                InnerTransport::Http(http) => http.call(req),
-                InnerTransport::Ws(ws) => ws.call(req),
-                InnerTransport::Ipc(ipc) => ipc.call(req),
+            match this.inner.read().await.as_ref().unwrap().clone() {
+                InnerTransport::Http(mut http) => http.call(req),
+                InnerTransport::Ws(mut ws) => ws.call(req),
+                InnerTransport::Ipc(mut ipc) => ipc.call(req),
             }
             .await
         })
