@@ -77,7 +77,7 @@ impl ClientFork {
         let block_hash = block.header.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.header.timestamp.to::<u64>();
         let base_fee = block.header.base_fee_per_gas;
-        let total_difficulty = block.total_difficulty.unwrap_or_default();
+        let total_difficulty = block.header.total_difficulty.unwrap_or_default();
 
         self.config.write().update_block(
             block.header.number.ok_or(BlockchainError::BlockNotFound)?.to::<u64>(),
