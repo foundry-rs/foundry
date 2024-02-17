@@ -214,16 +214,17 @@ impl RuntimeTransport {
             let mut inner = this.inner.read().await;
             if inner.is_none() {
                 drop(inner);
-                let mut inner_mut = this.inner.write().await;
-                if inner_mut.is_none() {
-                    *inner_mut = Some(this.connect().await.map_err(TransportErrorKind::custom)?);
+                {
+                    let mut inner_mut = this.inner.write().await;
+                    if inner_mut.is_none() {
+                        *inner_mut = Some(this.connect().await.map_err(TransportErrorKind::custom)?);
+                    }
                 }
-                drop(inner_mut);
                 inner = this.inner.read().await;
             }
 
             // SAFETY: We just checked that the inner transport exists.
-            match inner.as_ref().unwrap() {
+            match inner.as_ref().expect("must've been initialized") {
                 InnerTransport::Http(http) => {
                     let mut http = http;
                     http.call(req)
