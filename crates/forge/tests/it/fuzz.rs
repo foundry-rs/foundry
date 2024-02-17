@@ -64,9 +64,9 @@ async fn test_successful_fuzz_cases() {
     for (_, SuiteResult { test_results, .. }) in suite_result {
         for (test_name, result) in test_results {
             match test_name.as_str() {
-                "testSuccessfulFuzz1(uint256)" |
-                "testSuccessfulFuzz2(int256)" |
-                "testSuccessfulFuzz3(uint32)" => assert!(
+                "testSuccessChecker1(uint256)" |
+                "testSuccessChecker2(int256)" |
+                "testSuccessChecker3(uint32)" => assert!(
                     result.status == TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
