@@ -373,7 +373,7 @@ impl ScriptArgs {
 
         deployment_sequence.add_libraries(libraries);
 
-        self.send_transactions(deployment_sequence, &rpc, &signers).await?;
+        self.send_transactions(deployment_sequence, &rpc, signers).await?;
 
         if self.verify {
             return deployment_sequence.verify_contracts(&script_config.config, verify).await;
