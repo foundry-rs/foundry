@@ -46,6 +46,39 @@ async fn test_fuzz() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_successful_fuzz_cases() {
+    let mut runner = runner().await;
+
+    let suite_result = runner
+        .test_collect(
+            &Filter::new(".*", ".*", ".*fuzz/")
+                .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
+                .exclude_paths("invariant"),
+            test_opts(),
+        )
+        .await;
+
+    assert!(!suite_result.is_empty());
+
+    for (_, SuiteResult { test_results, .. }) in suite_result {
+        for (test_name, result) in test_results {
+            match test_name.as_str() {
+                "testSuccessfulFuzz1(uint256)" |
+                "testSuccessfulFuzz2(int256)" |
+                "testSuccessfulFuzz3(uint32)" => assert!(
+                    result.status == TestStatus::Success,
+                    "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                    test_name,
+                    result.reason,
+                    result.decoded_logs.join("\n")
+                ),
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Test that showcases PUSH collection on normal fuzzing. Ignored until we collect them in a
 /// smarter way.
 #[tokio::test(flavor = "multi_thread")]
