@@ -29,6 +29,7 @@ use regex::Regex;
 use revm_primitives::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use toml::Table;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -376,6 +377,9 @@ pub struct Config {
     /// Address labels
     pub labels: HashMap<Address, String>,
 
+    /// Soldeer dependencies
+    pub sdependencies: Table,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -419,7 +423,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels", "sdependencies"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1890,6 +1894,7 @@ impl Default for Config {
             fmt: Default::default(),
             doc: Default::default(),
             labels: Default::default(),
+            sdependencies: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
