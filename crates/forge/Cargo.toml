@@ -83,6 +83,9 @@ hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
 
+# soldeer
+soldeer = "0.2.4"
+
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true

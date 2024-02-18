@@ -16,7 +16,7 @@ use crate::cmd::{
     remove::RemoveArgs,
     script::ScriptArgs,
     selectors::SelectorsSubcommands,
-    snapshot, test, tree, update,
+    snapshot, soldeer, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -167,6 +167,9 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Soldeer dependency manager.
+    Soldeer(soldeer::SoldeerArgs),
 }
 
 #[cfg(test)]

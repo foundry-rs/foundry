@@ -60,6 +60,7 @@ pub mod retry;
 pub mod script;
 pub mod selectors;
 pub mod snapshot;
+pub mod soldeer;
 pub mod test;
 pub mod tree;
 pub mod update;
