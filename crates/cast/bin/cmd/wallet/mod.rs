@@ -84,7 +84,7 @@ pub enum WalletSubcommands {
         /// being signed.
         ///
         /// The message will be prefixed with the Ethereum Signed Message header and hashed before
-        /// signing.
+        /// signing, unless `--no-hash` is provided.
         ///
         /// Typed data can be provided as a json string or a file name.
         /// Use --data flag to denote the message is a string of typed data.
