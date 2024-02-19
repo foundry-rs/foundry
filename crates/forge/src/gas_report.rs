@@ -109,25 +109,27 @@ impl GasReport {
     /// Finalizes the gas report by calculating the min, max, mean, and median for each function.
     #[must_use]
     pub fn finalize(mut self) -> Self {
-        self.contracts.iter_mut().for_each(|(_, contract)| {
-            contract.functions.iter_mut().for_each(|(_, sigs)| {
-                sigs.iter_mut().for_each(|(_, func)| {
+        trace!("finalizing gas report");
+        for contract in self.contracts.values_mut() {
+            for sigs in contract.functions.values_mut() {
+                for func in sigs.values_mut() {
                     func.calls.sort_unstable();
                     func.min = func.calls.first().copied().unwrap_or_default();
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
-                    func.median = calc::median_sorted(func.calls.as_slice());
-                });
-            });
-        });
+                    func.median = calc::median_sorted(&func.calls);
+                }
+            }
+        }
         self
     }
 }
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for (name, contract) in self.contracts.iter() {
+        for (name, contract) in &self.contracts {
             if contract.functions.is_empty() {
+                trace!(name, "gas report contract without functions");
                 continue
             }
 
