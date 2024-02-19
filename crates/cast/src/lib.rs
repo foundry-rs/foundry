@@ -36,6 +36,7 @@ use std::{
 use tokio::signal::ctrl_c;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
+use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -1548,6 +1549,37 @@ impl SimpleCast {
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
         };
         let encoded = &calldata[8..];
+        Ok(format!("0x{encoded}"))
+    }
+
+    /// Performs packed ABI encoding based off of the function signature or tuple.
+    ///
+    /// # Examplez
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000012c00000000000000c8",
+    ///     Cast::abi_encode_packed("(uint128[] a, uint64 b)", &["[100, 300]", "200"]).unwrap().as_str()
+    /// );
+    ///
+    /// assert_eq!(
+    ///     "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e68656c6c6f20776f726c64",
+    ///     Cast::abi_encode_packed("foo(address a, string b)", &["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "hello world"]).unwrap().as_str()
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn abi_encode_packed(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        // If the signature is a tuple, we need to prefix it to make it a function
+        let sig =
+            if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig.to_string() };
+
+        let func = get_func(sig.as_str())?;
+        let encoded = match encode_function_args_packed(&func, args) {
+            Ok(res) => hex::encode(res),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+        };
         Ok(format!("0x{encoded}"))
     }
 

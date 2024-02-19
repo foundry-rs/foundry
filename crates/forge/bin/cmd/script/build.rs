@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScriptArgs, ScriptConfig};
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, ContextCompat, Result};
 use forge::link::{LinkOutput, Linker};

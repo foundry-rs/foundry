@@ -236,6 +236,15 @@ impl Installer<'_> {
         // checkout the tag if necessary
         self.git_checkout(&dep, path, false)?;
 
+        trace!("updating dependency submodules recursively");
+        self.git.root(path).submodule_update(
+            false,
+            false,
+            false,
+            true,
+            std::iter::empty::<PathBuf>(),
+        )?;
+
         // remove git artifacts
         fs::remove_dir_all(path.join(".git"))?;
 
@@ -258,6 +267,15 @@ impl Installer<'_> {
 
         // checkout the tag if necessary
         self.git_checkout(&dep, path, true)?;
+
+        trace!("updating dependency submodules recursively");
+        self.git.root(path).submodule_update(
+            false,
+            false,
+            false,
+            true,
+            std::iter::empty::<PathBuf>(),
+        )?;
 
         if !self.no_commit {
             self.git.add(Some(path))?;
@@ -315,10 +333,7 @@ impl Installer<'_> {
         let path = path.strip_prefix(self.git.root).unwrap();
 
         trace!(?dep, url, ?path, "installing git submodule");
-        self.git.submodule_add(true, url, path)?;
-
-        trace!("initializing submodule recursively");
-        self.git.submodule_update(false, false, false, true, Some(path))
+        self.git.submodule_add(true, url, path)
     }
 
     fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<String> {

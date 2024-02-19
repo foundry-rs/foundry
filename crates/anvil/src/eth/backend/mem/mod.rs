@@ -1566,7 +1566,6 @@ impl Backend {
         } = header;
 
         AlloyBlock {
-            total_difficulty: Some(self.total_difficulty()),
             header: AlloyHeader {
                 hash: Some(hash),
                 parent_hash,
@@ -1581,6 +1580,7 @@ impl Backend {
                 extra_data: extra_data.0.into(),
                 logs_bloom,
                 timestamp: U256::from(timestamp),
+                total_difficulty: Some(self.total_difficulty()),
                 difficulty,
                 mix_hash: Some(mix_hash),
                 nonce: Some(B64::from(nonce)),
@@ -2072,7 +2072,7 @@ impl Backend {
         };
 
         inner.other.insert(
-            "deposit_nonce".to_string(),
+            "depositNonce".to_string(),
             serde_json::to_value(deposit_nonce).expect("Infallible"),
         );
 

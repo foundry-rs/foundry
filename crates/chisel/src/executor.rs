@@ -865,10 +865,7 @@ impl Type {
                             "name" => Some(DynSolType::String),
                             "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
                             "interfaceId" => Some(DynSolType::FixedBytes(4)),
-                            "min" | "max" => {
-                                let arg = args.unwrap().pop().flatten().unwrap();
-                                Some(arg.into_builtin().unwrap())
-                            }
+                            "min" | "max" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "string" => match access {
@@ -1574,6 +1571,8 @@ mod tests {
 
     #[test]
     fn test_global_vars() {
+        init_tracing();
+
         // https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables
         let global_variables = {
             use DynSolType::*;
@@ -1653,9 +1652,11 @@ mod tests {
                 ("type(C).runtimeCode", Bytes),
                 ("type(I).interfaceId", FixedBytes(4)),
                 ("type(uint256).min", Uint(256)),
-                ("type(int256).min", Int(256)),
+                ("type(int256).min", Uint(256)),
                 ("type(uint256).max", Uint(256)),
-                ("type(int256).max", Int(256)),
+                ("type(int256).max", Uint(256)),
+                ("type(Enum1).min", Uint(256)),
+                ("type(Enum1).max", Uint(256)),
                 // function
                 ("this.run.address", Address),
                 ("this.run.selector", FixedBytes(4)),
@@ -1716,14 +1717,16 @@ mod tests {
             s.drain_global_code();
         }
 
-        let input = input.trim_end().trim_end_matches(';').to_string() + ";";
+        *s = s.clone_with_new_line("enum Enum1 { A }".into()).unwrap().0;
+
+        let input = format!("{};", input.trim_end().trim_end_matches(';'));
         let (mut _s, _) = s.clone_with_new_line(input).unwrap();
         *s = _s.clone();
         let s = &mut _s;
 
         if let Err(e) = s.parse() {
             for err in e {
-                eprintln!("{} @ {}:{}", err.message, err.loc.start(), err.loc.end());
+                eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
             }
             let source = s.to_repl_source();
             panic!("could not parse input:\n{source}")
@@ -1754,7 +1757,6 @@ mod tests {
         ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
     }
 
-    #[track_caller]
     fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)
     where
         T: AsRef<str> + std::fmt::Display + 'a,
@@ -1765,5 +1767,14 @@ mod tests {
             let ty = get_type_ethabi(s, input, true);
             assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
         }
+    }
+
+    fn init_tracing() {
+        if std::env::var_os("RUST_LOG").is_none() {
+            std::env::set_var("RUST_LOG", "debug");
+        }
+        let _ = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
     }
 }

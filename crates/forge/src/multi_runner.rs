@@ -8,7 +8,7 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::{OptionExt, Result};
-use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_evm::{
     backend::Backend,
@@ -24,7 +24,6 @@ use revm::primitives::SpecId;
 use std::{
     collections::BTreeMap,
     fmt::Debug,
-    iter::Iterator,
     path::Path,
     sync::{mpsc, Arc},
 };
@@ -202,7 +201,6 @@ impl MultiContractRunner {
             })
     }
 
-    #[instrument(skip_all, fields(name = %name))]
     #[allow(clippy::too_many_arguments)]
     fn run_tests(
         &self,
@@ -214,6 +212,16 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
+        let span = info_span!("run_tests");
+        if !span.is_disabled() {
+            if enabled!(tracing::Level::TRACE) {
+                span.record("contract", name);
+            } else {
+                span.record("contract", get_contract_name(name));
+            }
+        }
+        let _guard = span.enter();
+
         let runner = ContractRunner::new(
             name,
             executor,

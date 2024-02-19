@@ -1,24 +1,36 @@
 use super::{
     multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
-    sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
+    sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle,
+    NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
 };
-use alloy_primitives::{utils::format_units, TxHash};
+use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
-use ethers_signers::Signer;
-use eyre::{bail, ContextCompat, Result, WrapErr};
+use ethers_signers::{LocalWallet, Signer};
+use eyre::{bail, Context, ContextCompat, Result};
+use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::CallTraceDecoder};
 use foundry_cli::{
     init_progress, update_progress,
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
-    provider::ethers::{estimate_eip1559_fees, try_get_http_provider, RetryProvider},
+    provider::{
+        alloy::RpcUrl,
+        ethers::{estimate_eip1559_fees, try_get_http_provider, RetryProvider},
+    },
     shell,
     types::{ToAlloy, ToEthers},
+    ContractsByArtifact,
 };
+use foundry_compilers::{artifacts::Libraries, ArtifactId};
+use foundry_config::Config;
 use foundry_wallets::WalletSigner;
 use futures::StreamExt;
-use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
+use std::{
+    cmp::min,
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -220,7 +232,7 @@ impl ScriptArgs {
             |acc, receipt| {
                 let gas_used = receipt.gas_used.unwrap_or_default().to_alloy();
                 let gas_price = receipt.effective_gas_price.unwrap_or_default().to_alloy();
-                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
+                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
             },
         );
         let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());

@@ -29,12 +29,7 @@ impl<'a> LocalTraceIdentifier<'a> {
         self.known_contracts
     }
 
-    /// Iterates over artifacts with code length less than or equal to the given code and tries to
-    /// find a match.
-    ///
-    /// We do not consider artifacts with code length greater than the given code length as it is
-    /// considered that after compilation code can only be extended by additional parameters
-    /// (immutables) and cannot be shortened.
+    /// Tries to the bytecode most similar to the given one.
     pub fn identify_code(&self, code: &[u8]) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
         let len = code.len();
 
@@ -44,8 +39,8 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut check = |id| {
             let (abi, known_code) = self.known_contracts.get(id)?;
             let score = bytecode_diff_score(known_code, code);
-            if score <= 0.1 {
-                trace!(%score, "found close-enough match");
+            if score == 0.0 {
+                trace!(target: "evm::traces", "found exact match");
                 return Some((id, abi));
             }
             if score < min_score {
@@ -80,8 +75,15 @@ impl<'a> LocalTraceIdentifier<'a> {
             }
         }
 
-        trace!(%min_score, "no close-enough match found");
-        min_score_id
+        trace!(target: "evm::traces", %min_score, "no exact match found");
+
+        // Note: the diff score can be inaccurate for small contracts so we're using a relatively
+        // high threshold here to avoid filtering out too many contracts.
+        if min_score < 0.85 {
+            min_score_id
+        } else {
+            None
+        }
     }
 
     /// Returns the index of the artifact with the given code length, or the index of the first
@@ -104,15 +106,15 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
     where
         A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
     {
-        trace!("identify {:?} addresses", addresses.size_hint().1);
+        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         addresses
             .filter_map(|(address, code)| {
-                let _span = trace_span!("identify", %address).entered();
+                let _span = trace_span!(target: "evm::traces", "identify", %address).entered();
 
-                trace!("identifying");
+                trace!(target: "evm::traces", "identifying");
                 let (id, abi) = self.identify_code(code?)?;
-                trace!(id=%id.identifier(), "identified");
+                trace!(target: "evm::traces", id=%id.identifier(), "identified");
 
                 Some(AddressIdentity {
                     address: *address,

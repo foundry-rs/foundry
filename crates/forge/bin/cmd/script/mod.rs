@@ -1,4 +1,3 @@
-use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
@@ -20,7 +19,6 @@ use forge::{
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
@@ -29,7 +27,6 @@ use foundry_common::{
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
-    contracts::ArtifactContracts,
     ArtifactId,
 };
 use foundry_config::{
@@ -49,7 +46,7 @@ use foundry_wallets::MultiWalletOpts;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use yansi::Paint;
 
 mod artifacts;
@@ -703,7 +700,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_config::{NamedChain, UnresolvedEnvVarError};
+    use foundry_config::UnresolvedEnvVarError;
     use std::fs;
     use tempfile::tempdir;
 
