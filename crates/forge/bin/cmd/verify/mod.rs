@@ -3,7 +3,7 @@ use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
-use foundry_compilers::info::ContractInfo;
+use foundry_compilers::{info::ContractInfo, EvmVersion};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
 use reqwest::Url;
@@ -103,6 +103,12 @@ pub struct VerifyArgs {
     #[clap(long)]
     pub via_ir: bool,
 
+    /// The EVM version to use.
+    ///
+    /// Overrides the version specified in the config.
+    #[clap(long)]
+    pub evm_version: Option<EvmVersion>,
+
     #[clap(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -133,6 +139,9 @@ impl figment::Provider for VerifyArgs {
                 "optimizer_runs".to_string(),
                 figment::value::Value::serialize(optimizer_runs)?,
             );
+        }
+        if let Some(evm_version) = self.evm_version {
+            dict.insert("evm_version".to_string(), figment::value::Value::serialize(evm_version)?);
         }
         if self.via_ir {
             dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);

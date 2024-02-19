@@ -51,11 +51,12 @@ pub struct RunArgs {
     #[clap(flatten)]
     rpc: RpcOpts,
 
-    /// The evm version to use.
+    /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
     #[clap(long, short)]
     evm_version: Option<EvmVersion>,
+
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
