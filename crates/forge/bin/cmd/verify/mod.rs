@@ -99,6 +99,10 @@ pub struct VerifyArgs {
     #[clap(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
 
+    /// Use the Yul intermediate representation compilation pipeline.
+    #[clap(long)]
+    pub via_ir: bool,
+
     #[clap(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -107,10 +111,6 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
-
-    /// Use the Yul intermediate representation compilation pipeline.
-    #[clap(long)]
-    pub via_ir: bool,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -119,6 +119,7 @@ impl figment::Provider for VerifyArgs {
     fn metadata(&self) -> figment::Metadata {
         figment::Metadata::named("Verify Provider")
     }
+
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
