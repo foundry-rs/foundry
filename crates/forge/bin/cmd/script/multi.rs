@@ -199,9 +199,8 @@ impl ScriptArgs {
                 .deployments
                 .iter_mut()
                 .map(|sequence| async move {
-                    let provider = Arc::new(get_http_provider(
-                        sequence.typed_transactions().first().unwrap().0.clone(),
-                    ));
+                    let rpc_url = sequence.rpc_url().unwrap();
+                    let provider = Arc::new(get_http_provider(rpc_url));
                     receipts::wait_for_pending(provider, sequence).await
                 })
                 .collect::<Vec<_>>();
@@ -219,14 +218,8 @@ impl ScriptArgs {
         let mut results: Vec<Result<(), Report>> = Vec::new();
 
         for sequence in deployments.deployments.iter_mut() {
-            let result = match self
-                .send_transactions(
-                    sequence,
-                    &sequence.typed_transactions().first().unwrap().0.clone(),
-                    &script_wallets,
-                )
-                .await
-            {
+            let rpc_url = sequence.rpc_url().unwrap().to_string();
+            let result = match self.send_transactions(sequence, &rpc_url, &script_wallets).await {
                 Ok(_) if self.verify => sequence.verify_contracts(config, verify.clone()).await,
                 Ok(_) => Ok(()),
                 Err(err) => Err(err),
