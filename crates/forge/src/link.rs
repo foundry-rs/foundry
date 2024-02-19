@@ -1,5 +1,9 @@
 use alloy_primitives::{Address, Bytes};
-use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId};
+use foundry_compilers::{
+    artifacts::{CompactContractBytecode, Libraries},
+    contracts::ArtifactContracts,
+    Artifact, ArtifactId,
+};
 use semver::Version;
 use std::{
     collections::BTreeSet,
@@ -22,15 +26,11 @@ pub struct Linker {
     /// Root of the project, used to determine whether artifact/library path can be stripped.
     pub root: PathBuf,
     /// Compilation artifacts.
-    contracts: ArtifactContracts,
+    pub contracts: ArtifactContracts,
 }
 
 /// Output of the `link_with_nonce_or_address`
 pub struct LinkOutput {
-    /// [ArtifactContracts] object containing all artifacts linked with known libraries
-    /// It is guaranteed to contain `target` and all it's dependencies fully linked, and any other
-    /// contract may still be partially unlinked.
-    pub contracts: ArtifactContracts,
     /// Resolved library addresses. Contains both user-provided and newly deployed libraries.
     /// It will always contain library paths with stripped path prefixes.
     pub libraries: Libraries,
@@ -149,45 +149,46 @@ impl Linker {
             });
         }
 
-        // Link contracts
-        let contracts = self.link(&libraries)?;
-
-        // Collect bytecodes for `libs_to_deploy`, as we have them linked now.
+        // Link and collect bytecodes for `libs_to_deploy`.
         let libs_to_deploy = libs_to_deploy
             .into_iter()
-            .map(|(id, _)| contracts.get(id).unwrap().get_bytecode_bytes().unwrap().into_owned())
-            .collect();
+            .map(|(id, _)| {
+                Ok(self.link(id, &libraries)?.get_bytecode_bytes().unwrap().into_owned())
+            })
+            .collect::<Result<Vec<_>, LinkerError>>()?;
 
-        Ok(LinkOutput { contracts, libraries, libs_to_deploy })
+        Ok(LinkOutput { libraries, libs_to_deploy })
     }
 
-    /// Links given artifacts with given library addresses.
-    ///
-    /// Artifacts returned by this function may still be partially unlinked if some of their
-    /// dependencies weren't present in `libraries`.
-    pub fn link(&self, libraries: &Libraries) -> Result<ArtifactContracts, LinkerError> {
-        self.contracts
-            .iter()
-            .map(|(id, contract)| {
-                let mut contract = contract.clone();
-
-                for (file, libs) in &libraries.libs {
-                    for (name, address) in libs {
-                        let address =
-                            Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
-                        if let Some(bytecode) = contract.bytecode.as_mut() {
-                            bytecode.link(file.to_string_lossy(), name, address);
-                        }
-                        if let Some(deployed_bytecode) =
-                            contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
-                        {
-                            deployed_bytecode.link(file.to_string_lossy(), name, address);
-                        }
-                    }
+    /// Links given artifact with given libraries.
+    pub fn link(
+        &self,
+        target: &ArtifactId,
+        libraries: &Libraries,
+    ) -> Result<CompactContractBytecode, LinkerError> {
+        let mut contract =
+            self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
+        for (file, libs) in &libraries.libs {
+            for (name, address) in libs {
+                let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
+                if let Some(bytecode) = contract.bytecode.as_mut() {
+                    bytecode.link(file.to_string_lossy(), name, address);
                 }
-                Ok((id.clone(), contract))
-            })
-            .collect()
+                if let Some(deployed_bytecode) =
+                    contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
+                {
+                    deployed_bytecode.link(file.to_string_lossy(), name, address);
+                }
+            }
+        }
+        Ok(contract)
+    }
+
+    pub fn get_linked_artifacts(
+        &self,
+        libraries: &Libraries,
+    ) -> Result<ArtifactContracts, LinkerError> {
+        self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
     }
 }
 

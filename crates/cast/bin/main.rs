@@ -159,8 +159,12 @@ async fn main() -> Result<()> {
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
-        CastSubcommand::AbiEncode { sig, args } => {
-            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        CastSubcommand::AbiEncode { sig, packed, args } => {
+            if !packed {
+                println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+            } else {
+                println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?);
+            }
         }
         CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;

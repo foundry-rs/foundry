@@ -62,7 +62,7 @@ use foundry_common::types::ToAlloy;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    decode::decode_revert,
+    decode::RevertDecoder,
     inspectors::AccessListTracer,
     revm::{
         self,
@@ -956,9 +956,8 @@ impl Backend {
                 }
                 node_info!("    Gas used: {}", receipt.gas_used());
                 if !info.exit.is_ok() {
-                    let r = decode_revert(
-                        info.out.clone().unwrap_or_default().as_ref(),
-                        None,
+                    let r = RevertDecoder::new().decode(
+                        info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
                         Some(info.exit),
                     );
                     node_info!("    Error: reverted with: {r}");
@@ -1567,7 +1566,6 @@ impl Backend {
         } = header;
 
         AlloyBlock {
-            total_difficulty: Some(self.total_difficulty()),
             header: AlloyHeader {
                 hash: Some(hash),
                 parent_hash,
@@ -1582,6 +1580,7 @@ impl Backend {
                 extra_data: extra_data.0.into(),
                 logs_bloom,
                 timestamp: U256::from(timestamp),
+                total_difficulty: Some(self.total_difficulty()),
                 difficulty,
                 mix_hash: Some(mix_hash),
                 nonce: Some(B64::from(nonce)),
@@ -2073,7 +2072,7 @@ impl Backend {
         };
 
         inner.other.insert(
-            "deposit_nonce".to_string(),
+            "depositNonce".to_string(),
             serde_json::to_value(deposit_nonce).expect("Infallible"),
         );
 

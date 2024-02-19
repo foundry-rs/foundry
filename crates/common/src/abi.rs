@@ -21,6 +21,23 @@ where
     func.abi_encode_input(params.as_slice()).map_err(Into::into)
 }
 
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and encode them using the packed encoding.
+pub fn encode_function_args_packed<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
+        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(|v| v.abi_encode_packed())
+        .collect();
+
+    Ok(params.concat())
+}
+
 /// Decodes the calldata of the function
 pub fn abi_decode_calldata(
     sig: &str,

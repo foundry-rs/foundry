@@ -211,19 +211,33 @@ impl RuntimeTransport {
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();
         Box::pin(async move {
-            if this.inner.read().await.is_none() {
-                let mut inner = this.inner.write().await;
-                *inner = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
+            let mut inner = this.inner.read().await;
+            if inner.is_none() {
+                drop(inner);
+                {
+                    let mut inner_mut = this.inner.write().await;
+                    if inner_mut.is_none() {
+                        *inner_mut =
+                            Some(this.connect().await.map_err(TransportErrorKind::custom)?);
+                    }
+                }
+                inner = this.inner.read().await;
             }
 
-            let mut inner = this.inner.write().await;
             // SAFETY: We just checked that the inner transport exists.
-            let inner_mut = inner.as_mut().expect("We should have an inner transport.");
-
-            match inner_mut {
-                InnerTransport::Http(http) => http.call(req),
-                InnerTransport::Ws(ws) => ws.call(req),
-                InnerTransport::Ipc(ipc) => ipc.call(req),
+            match inner.as_ref().expect("must've been initialized") {
+                InnerTransport::Http(http) => {
+                    let mut http = http;
+                    http.call(req)
+                }
+                InnerTransport::Ws(ws) => {
+                    let mut ws = ws;
+                    ws.call(req)
+                }
+                InnerTransport::Ipc(ipc) => {
+                    let mut ipc = ipc;
+                    ipc.call(req)
+                }
             }
             .await
         })
