@@ -6,7 +6,7 @@ use super::{
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
-use ethers_signers::{LocalWallet, Signer};
+use ethers_signers::Signer;
 use eyre::{bail, Context, ContextCompat, Result};
 use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::CallTraceDecoder};
 use foundry_cli::{

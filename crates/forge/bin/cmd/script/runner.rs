@@ -7,7 +7,6 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
-use foundry_common::types::ToEthers;
 use foundry_config::Config;
 use yansi::Paint;
 

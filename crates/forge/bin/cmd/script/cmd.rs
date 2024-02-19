@@ -19,7 +19,7 @@ use foundry_compilers::{
 use foundry_debugger::Debugger;
 use foundry_evm::inspectors::cheatcodes::{BroadcastableTransaction, ScriptWallets};
 use foundry_wallets::WalletSigner;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// Helper alias type for the collection of data changed due to the new sender.
 type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<ContractBytecodeSome>);
