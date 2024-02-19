@@ -97,8 +97,7 @@ pub enum WalletSubcommands {
         #[clap(long)]
         data: bool,
 
-        /// If provided, the message will be treated as a file name containing typed data. Requires
-        /// --data.
+        /// Treat the message as a file containing JSON typed data. Requires `--data`.
         #[clap(long, requires = "data")]
         from_file: bool,
 
