@@ -11,6 +11,7 @@ contract Issue6616Test is DSTest {
     function testCreateForkRollLatestBlock() public {
         vm.createSelectFork("rpcAlias");
         uint256 startBlock = block.number;
+        // this will create new forks and exit once a new latest block is found
         for (uint256 i; i < 10; i++) {
             vm.sleep(5000);
             vm.createSelectFork("rpcAlias");
