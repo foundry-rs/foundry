@@ -44,8 +44,8 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut check = |id| {
             let (abi, known_code) = self.known_contracts.get(id)?;
             let score = bytecode_diff_score(known_code, code);
-            if score <= 0.1 {
-                trace!(%score, "found close-enough match");
+            if score == 0.0 {
+                trace!("found exact match");
                 return Some((id, abi));
             }
             if score < min_score {
@@ -80,7 +80,7 @@ impl<'a> LocalTraceIdentifier<'a> {
             }
         }
 
-        trace!(%min_score, "no close-enough match found");
+        trace!(%min_score, "no exact match found");
         min_score_id
     }
 
