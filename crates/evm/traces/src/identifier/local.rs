@@ -29,12 +29,7 @@ impl<'a> LocalTraceIdentifier<'a> {
         self.known_contracts
     }
 
-    /// Iterates over artifacts with code length less than or equal to the given code and tries to
-    /// find a match.
-    ///
-    /// We do not consider artifacts with code length greater than the given code length as it is
-    /// considered that after compilation code can only be extended by additional parameters
-    /// (immutables) and cannot be shortened.
+    /// Tries to the bytecode most similar to the given one.
     pub fn identify_code(&self, code: &[u8]) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
         let len = code.len();
 
@@ -81,7 +76,14 @@ impl<'a> LocalTraceIdentifier<'a> {
         }
 
         trace!(%min_score, "no exact match found");
-        min_score_id
+
+        // Note: the diff score can be inaccurate for small contracts so we're using a relatively
+        // high threshold here to avoid filtering out too many contracts.
+        if min_score < 0.85 {
+            min_score_id
+        } else {
+            None
+        }
     }
 
     /// Returns the index of the artifact with the given code length, or the index of the first
