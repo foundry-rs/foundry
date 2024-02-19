@@ -13,7 +13,7 @@ BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p "$FOUNDRY_BIN_DIR"
-curl -# -L $BIN_URL -o "$BIN_PATH"
+curl -sSf -L "$BIN_URL" -o "$BIN_PATH"
 chmod +x "$BIN_PATH"
 
 # Create the man directory for future man files if it doesn't exist.
@@ -53,5 +53,7 @@ if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.
     echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
 fi
 
-echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
+echo
+echo "Detected your preferred shell is $PREF_SHELL and added foundryup to PATH."
+echo "Run 'source $PROFILE' or start a new terminal session to use foundryup."
 echo "Then, simply run 'foundryup' to install Foundry."
