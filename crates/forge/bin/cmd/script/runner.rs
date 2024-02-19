@@ -1,4 +1,4 @@
-use super::*;
+use super::ScriptResult;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use forge::{
@@ -8,6 +8,8 @@ use forge::{
     traces::{TraceKind, Traces},
 };
 use foundry_common::types::ToEthers;
+use foundry_config::Config;
+use yansi::Paint;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {

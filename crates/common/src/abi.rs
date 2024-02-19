@@ -203,7 +203,7 @@ fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
-    use alloy_primitives::{LogData, B256, U256};
+    use alloy_primitives::{B256, U256};
 
     #[test]
     fn test_get_func() {

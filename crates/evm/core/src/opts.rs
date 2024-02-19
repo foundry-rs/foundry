@@ -5,7 +5,6 @@ use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::Block;
 use eyre::WrapErr;
 use foundry_common::{
-    self,
     provider::alloy::{ProviderBuilder, RpcUrl},
     ALCHEMY_FREE_TIER_CUPS,
 };

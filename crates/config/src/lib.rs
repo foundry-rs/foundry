@@ -35,7 +35,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    string::ToString,
 };
 
 // Macros useful for creating a figment.
@@ -2574,15 +2573,13 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::{RpcEndpoint, RpcEndpointConfig, RpcEndpointType},
+        endpoints::{RpcEndpointConfig, RpcEndpointType},
         etherscan::ResolvedEtherscanConfigs,
-        fs_permissions::PathPermission,
     };
-    use alloy_primitives::Address;
-    use figment::{error::Kind::InvalidType, value::Value, Figment};
+    use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
     use pretty_assertions::assert_eq;
-    use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
+    use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
 

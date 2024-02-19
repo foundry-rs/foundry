@@ -241,7 +241,7 @@ mod tests {
     use crate::CheatsConfig;
     use alloy_primitives::FixedBytes;
     use hex::FromHex;
-    use p256::ecdsa::{signature::hazmat::PrehashVerifier, Signature};
+    use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {
