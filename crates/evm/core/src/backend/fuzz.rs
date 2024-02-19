@@ -231,11 +231,11 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().allow_cheatcode_access(account)
     }
 
-    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
         self.backend.to_mut().revoke_cheatcode_access(account)
     }
 
-    fn has_cheatcode_access(&self, account: Address) -> bool {
+    fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
     }
 }

@@ -192,7 +192,7 @@ impl Cheatcode for serializeBytes32_0Call {
 impl Cheatcode for serializeString_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &value.to_string())
+        serialize_json(state, objectKey, Some(valueKey), value)
     }
 }
 
