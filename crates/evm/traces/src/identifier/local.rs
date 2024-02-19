@@ -40,7 +40,7 @@ impl<'a> LocalTraceIdentifier<'a> {
             let (abi, known_code) = self.known_contracts.get(id)?;
             let score = bytecode_diff_score(known_code, code);
             if score == 0.0 {
-                trace!("found exact match");
+                trace!(target: "evm::traces", "found exact match");
                 return Some((id, abi));
             }
             if score < min_score {
@@ -75,7 +75,7 @@ impl<'a> LocalTraceIdentifier<'a> {
             }
         }
 
-        trace!(%min_score, "no exact match found");
+        trace!(target: "evm::traces", %min_score, "no exact match found");
 
         // Note: the diff score can be inaccurate for small contracts so we're using a relatively
         // high threshold here to avoid filtering out too many contracts.
@@ -106,15 +106,15 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
     where
         A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
     {
-        trace!("identify {:?} addresses", addresses.size_hint().1);
+        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         addresses
             .filter_map(|(address, code)| {
-                let _span = trace_span!("identify", %address).entered();
+                let _span = trace_span!(target: "evm::traces", "identify", %address).entered();
 
-                trace!("identifying");
+                trace!(target: "evm::traces", "identifying");
                 let (id, abi) = self.identify_code(code?)?;
-                trace!(id=%id.identifier(), "identified");
+                trace!(target: "evm::traces", id=%id.identifier(), "identified");
 
                 Some(AddressIdentity {
                     address: *address,
