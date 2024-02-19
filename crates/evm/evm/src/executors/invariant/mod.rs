@@ -666,14 +666,9 @@ impl<'a> InvariantExecutor<'a> {
         f: fn(DynSolValue) -> Vec<T>,
     ) -> Vec<T> {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-            if let Ok(call_result) = self.executor.call::<_, _>(
-                CALLER,
-                address,
-                func.clone(),
-                vec![],
-                U256::ZERO,
-                Some(abi),
-            ) {
+            if let Ok(call_result) =
+                self.executor.call::<_, _>(CALLER, address, func.clone(), vec![], U256::ZERO, None)
+            {
                 return f(call_result.result)
             } else {
                 warn!(

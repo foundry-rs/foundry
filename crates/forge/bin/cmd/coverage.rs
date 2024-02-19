@@ -149,7 +149,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[instrument(name = "prepare coverage", skip_all)]
+    #[instrument(name = "prepare", skip_all)]
     fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = config.project_paths();
 
@@ -310,7 +310,7 @@ impl CoverageArgs {
                 ..Default::default()
             })
             .set_coverage(true)
-            .build(root.clone(), output, env, evm_opts)?;
+            .build(&root, output, env, evm_opts)?;
 
         // Run tests
         let known_contracts = runner.known_contracts.clone();

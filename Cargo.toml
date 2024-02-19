@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.74" # Remember to update clippy.toml as well
+rust-version = "1.75" # Remember to update clippy.toml as well
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -49,7 +49,10 @@ solang-parser.opt-level = 3
 serde_json.opt-level = 3
 
 # EVM
+alloy-dyn-abi.opt-level = 3
+alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
+alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
 keccak.opt-level = 3
@@ -62,11 +65,15 @@ sha2.opt-level = 3
 sha3.opt-level = 3
 tiny-keccak.opt-level = 3
 
-# keystores
-scrypt.opt-level = 3
+# fuzzing
+proptest.opt-level = 3
+foundry-evm-fuzz.opt-level = 3
 
 # forking
 axum.opt-level = 3
+
+# keystores
+scrypt.opt-level = 3
 
 # Local "release" mode, more optimized than dev but much faster to compile than release.
 [profile.local]
@@ -124,10 +131,11 @@ foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
+foundry-wallets = { path = "crates/wallets" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.4", default-features = false }
+foundry-compilers = { version = "0.3.6", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -163,18 +171,21 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy" }
-alloy-primitives = "0.6"
-alloy-dyn-abi = "0.6"
-alloy-json-abi = "0.6"
-alloy-sol-types = "0.6"
-syn-solidity = "0.6.0"
+alloy-primitives = { version = "0.6.3", features = ["getrandom"] }
+alloy-dyn-abi = "0.6.3"
+alloy-json-abi = "0.6.3"
+alloy-sol-types = "0.6.3"
+syn-solidity = "0.6.3"
 alloy-chains = "0.1"
 
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 eyre = "0.6"
@@ -192,6 +203,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 evm-disassembler = "0.4"
+vergen = { version = "8", default-features = false }
 # TODO: bumping to >=0.13.2 breaks ecrecover: https://github.com/foundry-rs/foundry/pull/6969
 # TODO: unpin on next revm release: https://github.com/bluealloy/revm/pull/870
 k256 = "=0.13.1"
@@ -222,11 +234,6 @@ ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b1
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "f0e5b194f09c533feb10d1a686ddb9e5946ec107" }
-
-alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "18b0509950c90d9ec38f25913b692ae4cdd6f227" }
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "18b0509950c90d9ec38f25913b692ae4cdd6f227" }
-alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "18b0509950c90d9ec38f25913b692ae4cdd6f227" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "18b0509950c90d9ec38f25913b692ae4cdd6f227" }
 
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

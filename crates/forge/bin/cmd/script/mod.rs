@@ -19,7 +19,6 @@ use forge::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
-use foundry_cli::opts::MultiWallet;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     contracts::get_contract_name,
@@ -32,7 +31,7 @@ use foundry_common::{
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
     contracts::ArtifactContracts,
-    ArtifactId, Project,
+    ArtifactId,
 };
 use foundry_config::{
     figment,
@@ -44,9 +43,10 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    decode,
+    decode::RevertDecoder,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
+use foundry_wallets::MultiWallet;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -349,7 +349,7 @@ impl ScriptArgs {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                decode::decode_revert(&result.returned[..], None, None)
+                RevertDecoder::new().decode(&result.returned[..], None)
             ));
         }
 
@@ -363,6 +363,13 @@ impl ScriptArgs {
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
         shell::println(j)?;
+
+        if !result.success {
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                RevertDecoder::new().decode(&result.returned[..], None)
+            ));
+        }
 
         Ok(())
     }

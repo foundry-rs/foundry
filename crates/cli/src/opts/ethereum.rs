@@ -1,4 +1,4 @@
-use super::{ChainValueParser, Wallet, WalletSigner};
+use crate::opts::ChainValueParser;
 use clap::Parser;
 use eyre::Result;
 use foundry_config::{
@@ -9,6 +9,7 @@ use foundry_config::{
     },
     impl_figment_convert_cast, Chain, Config,
 };
+use foundry_wallets::{Wallet, WalletSigner};
 use serde::Serialize;
 use std::borrow::Cow;
 

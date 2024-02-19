@@ -8,9 +8,7 @@ use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
 use eyre::{bail, ContextCompat, Result, WrapErr};
 use foundry_cli::{
-    init_progress,
-    opts::WalletSigner,
-    update_progress,
+    init_progress, update_progress,
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
@@ -18,6 +16,7 @@ use foundry_common::{
     shell,
     types::{ToAlloy, ToEthers},
 };
+use foundry_wallets::WalletSigner;
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
 

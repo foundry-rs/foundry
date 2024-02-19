@@ -96,10 +96,9 @@ impl FeeManager {
 
     /// Returns the suggested fee cap
     ///
-    /// This mirrors geth's auto values for `SuggestGasTipCap` which is: `priority fee + 2x current
-    /// basefee`.
+    /// Note: This currently returns a constant value: [Self::suggested_priority_fee]
     pub fn max_priority_fee_per_gas(&self) -> U256 {
-        self.suggested_priority_fee() + *self.base_fee.read() * U256::from(2)
+        self.suggested_priority_fee()
     }
 
     /// Returns the current gas price

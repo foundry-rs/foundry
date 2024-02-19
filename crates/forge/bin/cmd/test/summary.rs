@@ -48,64 +48,46 @@ impl TestSummaryReporter {
         Self { table, is_detailed }
     }
 
-    pub(crate) fn print_summary(&mut self, mut test_results: Vec<TestOutcome>) {
-        // Sort by suite name first
-
-        // Using `sort_by_cached_key` so that the key extraction logic runs only once
-        test_results.sort_by_cached_key(|test_outcome| {
-            test_outcome
-                .results
-                .keys()
-                .next()
-                .and_then(|suite| suite.split(':').nth(1))
-                .unwrap()
-                .to_string()
-        });
-
+    pub(crate) fn print_summary(&mut self, outcome: &TestOutcome) {
         // Traverse the test_results vector and build the table
-        for suite in &test_results {
-            for contract in suite.results.keys() {
-                let mut row = Row::new();
-                let suite_name = contract.split(':').nth(1).unwrap();
-                let suite_path = contract.split(':').nth(0).unwrap();
+        for (contract, suite) in &outcome.results {
+            let mut row = Row::new();
+            let (suite_path, suite_name) = contract.split_once(':').unwrap();
 
-                let passed = suite.successes().count();
-                let mut passed_cell = Cell::new(passed).set_alignment(CellAlignment::Center);
+            let passed = suite.successes().count();
+            let mut passed_cell = Cell::new(passed).set_alignment(CellAlignment::Center);
 
-                let failed = suite.failures().count();
-                let mut failed_cell = Cell::new(failed).set_alignment(CellAlignment::Center);
+            let failed = suite.failures().count();
+            let mut failed_cell = Cell::new(failed).set_alignment(CellAlignment::Center);
 
-                let skipped = suite.skips().count();
-                let mut skipped_cell = Cell::new(skipped).set_alignment(CellAlignment::Center);
+            let skipped = suite.skips().count();
+            let mut skipped_cell = Cell::new(skipped).set_alignment(CellAlignment::Center);
 
-                let duration = suite.duration();
+            row.add_cell(Cell::new(suite_name));
 
-                row.add_cell(Cell::new(suite_name));
-
-                if passed > 0 {
-                    passed_cell = passed_cell.fg(Color::Green);
-                }
-                row.add_cell(passed_cell);
-
-                if failed > 0 {
-                    failed_cell = failed_cell.fg(Color::Red);
-                }
-                row.add_cell(failed_cell);
-
-                if skipped > 0 {
-                    skipped_cell = skipped_cell.fg(Color::Yellow);
-                }
-                row.add_cell(skipped_cell);
-
-                if self.is_detailed {
-                    row.add_cell(Cell::new(suite_path));
-                    row.add_cell(Cell::new(format!("{:.2?}", duration).to_string()));
-                }
-
-                self.table.add_row(row);
+            if passed > 0 {
+                passed_cell = passed_cell.fg(Color::Green);
             }
+            row.add_cell(passed_cell);
+
+            if failed > 0 {
+                failed_cell = failed_cell.fg(Color::Red);
+            }
+            row.add_cell(failed_cell);
+
+            if skipped > 0 {
+                skipped_cell = skipped_cell.fg(Color::Yellow);
+            }
+            row.add_cell(skipped_cell);
+
+            if self.is_detailed {
+                row.add_cell(Cell::new(suite_path));
+                row.add_cell(Cell::new(format!("{:.2?}", suite.duration).to_string()));
+            }
+
+            self.table.add_row(row);
         }
-        // Print the summary table
+
         println!("\n{}", self.table);
     }
 }

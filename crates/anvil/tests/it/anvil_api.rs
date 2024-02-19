@@ -202,12 +202,12 @@ async fn can_impersonate_gnosis_safe() {
     // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
     let safe: rAddress = "0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6".parse().unwrap();
 
-    let code = provider.get_code_at(safe, BlockNumberOrTag::Latest.into()).await.unwrap();
+    let code = provider.get_code_at(safe, None).await.unwrap();
     assert!(!code.is_empty());
 
     api.anvil_impersonate_account(safe).await.unwrap();
 
-    let code = provider.get_code_at(safe, BlockNumberOrTag::Latest.into()).await.unwrap();
+    let code = provider.get_code_at(safe, None).await.unwrap();
     assert!(!code.is_empty());
 
     let balance = rU256::from(1e18 as u64);
@@ -219,7 +219,7 @@ async fn can_impersonate_gnosis_safe() {
 
     api.anvil_stop_impersonating_account(safe).await.unwrap();
 
-    let code = provider.get_code_at(safe, BlockNumberOrTag::Latest.into()).await.unwrap();
+    let code = provider.get_code_at(safe, None).await.unwrap();
     // code is added back after stop impersonating
     assert!(!code.is_empty());
 }

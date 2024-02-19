@@ -491,6 +491,10 @@ pub enum CastSubcommand {
         /// The function signature.
         sig: String,
 
+        /// Whether to use packed encoding.
+        #[clap(long)]
+        packed: bool,
+
         /// The arguments of the function.
         #[clap(allow_hyphen_values = true)]
         args: Vec<String>,

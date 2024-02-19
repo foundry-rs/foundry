@@ -2,13 +2,16 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
-    Address, I256, U256,
+    Address, Bytes, B256, I256, U256,
 };
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    types::{transaction::eip2718::TypedTransaction, *},
+    types::{
+        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, NameOrAddress,
+        Signature, H160, H256, U64,
+    },
     utils::rlp,
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
@@ -33,6 +36,7 @@ use std::{
 use tokio::signal::ctrl_c;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
+use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -264,7 +268,7 @@ where
             None => raw_tx,
         };
         let tx = Bytes::from(hex::decode(raw_tx)?);
-        let res = self.provider.send_raw_transaction(tx).await?;
+        let res = self.provider.send_raw_transaction(tx.0.into()).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -1397,8 +1401,7 @@ impl SimpleCast {
         }
 
         let padded = format!("{s:0<64}");
-        // need to use the Debug implementation
-        Ok(format!("{:?}", H256::from_str(&padded)?))
+        Ok(padded.parse::<B256>()?.to_string())
     }
 
     /// Encodes string into bytes32 value
@@ -1546,6 +1549,37 @@ impl SimpleCast {
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
         };
         let encoded = &calldata[8..];
+        Ok(format!("0x{encoded}"))
+    }
+
+    /// Performs packed ABI encoding based off of the function signature or tuple.
+    ///
+    /// # Examplez
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000012c00000000000000c8",
+    ///     Cast::abi_encode_packed("(uint128[] a, uint64 b)", &["[100, 300]", "200"]).unwrap().as_str()
+    /// );
+    ///
+    /// assert_eq!(
+    ///     "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e68656c6c6f20776f726c64",
+    ///     Cast::abi_encode_packed("foo(address a, string b)", &["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "hello world"]).unwrap().as_str()
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn abi_encode_packed(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        // If the signature is a tuple, we need to prefix it to make it a function
+        let sig =
+            if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig.to_string() };
+
+        let func = get_func(sig.as_str())?;
+        let encoded = match encode_function_args_packed(&func, args) {
+            Ok(res) => hex::encode(res),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+        };
         Ok(format!("0x{encoded}"))
     }
 

@@ -66,18 +66,15 @@ impl Debugger {
         breakpoints: Breakpoints,
     ) -> Self {
         let pc_ic_maps = contracts_sources
-            .0
-            .iter()
-            .flat_map(|(contract_name, files_sources)| {
-                files_sources.iter().filter_map(|(_, (_, contract))| {
-                    Some((
-                        contract_name.clone(),
-                        (
-                            PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
-                            PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
-                        ),
-                    ))
-                })
+            .entries()
+            .filter_map(|(contract_name, (_, contract))| {
+                Some((
+                    contract_name.clone(),
+                    (
+                        PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
+                        PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
+                    ),
+                ))
             })
             .collect();
         Self { debug_arena, identified_contracts, contracts_sources, pc_ic_maps, breakpoints }

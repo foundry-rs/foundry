@@ -15,7 +15,7 @@ name = "forge"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # lib
@@ -24,6 +24,7 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-wallets.workspace = true
 
 ethers-contract.workspace = true
 ethers-core.workspace = true
@@ -98,8 +99,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [features]
 default = ["rustls"]
-rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
-openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
+rustls = ["foundry-cli/rustls", "foundry-wallets/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
+openssl = ["foundry-cli/openssl", "reqwest/default-tls", "foundry-wallets/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 
 [[bench]]

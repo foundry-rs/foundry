@@ -377,9 +377,7 @@ pub async fn handle_traces(
     labels: Vec<String>,
     debug: bool,
 ) -> Result<()> {
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-
-    let labeled_addresses = labels.iter().filter_map(|label_str| {
+    let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
         if let Some(addr) = iter.next() {
@@ -389,19 +387,16 @@ pub async fn handle_traces(
         }
         None
     });
-
-    let labeled_addresses_in_config = config.labels.clone().into_iter();
-
-    let concatenated_addresses = labeled_addresses.chain(labeled_addresses_in_config);
-
+    let config_labels = config.labels.clone().into_iter();
     let mut decoder = CallTraceDecoderBuilder::new()
-        .with_labels(concatenated_addresses)
+        .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,
         )?)
         .build();
 
+    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
     for (_, trace) in &mut result.traces {
         decoder.identify(trace, &mut etherscan_identifier);
     }

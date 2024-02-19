@@ -10,7 +10,7 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_signer::LocalWallet;
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
@@ -20,7 +20,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
     },
     debug::DebugArena,
-    decode,
+    decode::RevertDecoder,
     utils::{eval_to_instruction_result, halt_to_instruction_result, StateChangeset},
 };
 use foundry_evm_coverage::HitMaps;
@@ -222,12 +222,12 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?);
         let result = self.call_raw_committing(from, to, calldata, value)?;
-        convert_call_result(abi, &func, result)
+        convert_call_result(rd, &func, result)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -254,7 +254,7 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
@@ -262,7 +262,7 @@ impl Executor {
         // execute the call
         let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
-        convert_call_result(abi, &func, call_result)
+        convert_call_result(rd, &func, call_result)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -275,12 +275,12 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
         let call_result = self.call_raw(from, to, calldata, value)?;
-        convert_call_result(abi, &func, call_result)
+        convert_call_result(rd, &func, call_result)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -352,7 +352,7 @@ impl Executor {
     pub fn deploy_with_env(
         &mut self,
         env: Env,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         debug_assert!(
             matches!(env.tx.transact_to, TransactTo::Create(_)),
@@ -405,7 +405,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason));
+                let reason = rd.unwrap_or_default().decode(&result, Some(exit_reason));
                 return Err(EvmError::Execution(Box::new(ExecutionErr {
                     reverted: true,
                     reason,
@@ -441,10 +441,10 @@ impl Executor {
         from: Address,
         code: Bytes,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         let env = self.build_test_env(from, TransactTo::Create(CreateScheme::Create), code, value);
-        self.deploy_with_env(env, abi)
+        self.deploy_with_env(env, rd)
     }
 
     /// Check if a call to a test contract was successful.
@@ -824,7 +824,7 @@ fn convert_executed_result(
 }
 
 fn convert_call_result(
-    abi: Option<&JsonAbi>,
+    rd: Option<&RevertDecoder>,
     func: &Function,
     call_result: RawCallResult,
 ) -> Result<CallResult, EvmError> {
@@ -885,7 +885,7 @@ fn convert_call_result(
             if &result == crate::constants::MAGIC_SKIP {
                 return Err(EvmError::SkipError)
             }
-            let reason = decode::decode_revert(&result, abi, Some(status));
+            let reason = rd.unwrap_or_default().decode(&result, Some(status));
             Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,

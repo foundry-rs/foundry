@@ -8,23 +8,34 @@ fn solmate() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
-    ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60").run();
+    ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60")
+        .install_command(&["bun", "install", "--prefer-offline"])
+        // Try npm if bun fails / is not installed.
+        .install_command(&["npm", "install", "--prefer-offline"])
+        .run();
 }
 
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_proxy() {
-    ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06").run();
+    ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06")
+        .install_command(&["bun", "install", "--prefer-offline"])
+        // Try npm if bun fails / is not installed.
+        .install_command(&["npm", "install", "--prefer-offline"])
+        .run();
 }
 
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2() {
     ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
-        // skip fork tests
+        // Skip fork tests.
         .args(["--nmc", "Fork"])
-        // run tests without optimizations
+        // Run tests without optimizations.
         .env("FOUNDRY_PROFILE", "lite")
+        .install_command(&["bun", "install", "--prefer-offline"])
+        // Try npm if bun fails / is not installed.
+        .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
@@ -49,7 +60,9 @@ fn stringutils() {
 
 #[test]
 fn lootloose() {
-    ExtTester::new("gakonst", "lootloose", "7b639efe97836155a6a6fc626bf1018d4f8b2495").run();
+    ExtTester::new("gakonst", "lootloose", "7b639efe97836155a6a6fc626bf1018d4f8b2495")
+        .install_command(&["make", "install"])
+        .run();
 }
 
 #[test]
@@ -60,14 +73,16 @@ fn lil_web3() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "ed49a0454393673cdf9a4250dd7051c28e6ac35f").run();
+    ExtTester::new("pcaversaccio", "snekmate", "ed49a0454393673cdf9a4250dd7051c28e6ac35f")
+        .install_command(&["pnpm", "install", "--prefer-offline"])
+        // Try npm if pnpm fails / is not installed.
+        .install_command(&["npm", "install", "--prefer-offline"])
+        .run();
 }
 
 #[test]
 fn makerdao_multicall() {
-    ExtTester::new("makerdao", "multicall", "103a8a28e4e372d582d6539b30031bda4cd48e21")
-        .args(["--block-number", "1"])
-        .run();
+    ExtTester::new("makerdao", "multicall", "103a8a28e4e372d582d6539b30031bda4cd48e21").run();
 }
 
 #[test]
@@ -93,7 +108,7 @@ fn gunilev() {
 }
 
 #[test]
-fn convex() {
+fn convex_shutdown_simulation() {
     ExtTester::new(
         "mds1",
         "convex-shutdown-simulation",

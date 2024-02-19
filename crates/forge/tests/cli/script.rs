@@ -107,6 +107,47 @@ contract Demo {
     );
 });
 
+static FAILING_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract FailingScript is Script {
+    function run() external {
+        revert("failed");
+    }
+}
+"#;
+
+// Tests that execution throws upon encountering a revert in the script.
+forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+
+    // set up command
+    cmd.arg("script").arg(script);
+
+    // run command and assert error exit code
+    cmd.assert_err();
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("script failed: revert: failed"));
+});
+
+// Tests that execution throws upon encountering a revert in the script with --json option.
+// <https://github.com/foundry-rs/foundry/issues/2508>
+forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+
+    // set up command
+    cmd.arg("script").arg(script).arg("--json");
+
+    // run command and assert error exit code
+    cmd.assert_err();
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("script failed: revert: failed"));
+});
+
 // Tests that the manually specified gas limit is used when using the --unlocked option
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -1085,4 +1126,47 @@ forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
         .load_private_keys(&[0])
         .await
         .resume(ScriptOutcome::OkBroadcast);
+});
+
+forgetest_async!(can_detect_contract_when_multiple_versions, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    prj.add_script(
+        "A.sol",
+        r#"pragma solidity 0.8.20;
+import "./B.sol";
+
+contract ScriptA {}
+"#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "B.sol",
+        r#"pragma solidity >=0.8.5 <=0.8.20;
+import 'forge-std/Script.sol';
+
+contract ScriptB is Script {
+    function run() external {
+        vm.broadcast();
+        address(0).call("");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "C.sol",
+        r#"pragma solidity 0.8.5;
+import "./B.sol";
+
+contract ScriptC {}
+"#,
+    )
+    .unwrap();
+
+    let mut tester = ScriptTester::new(cmd, None, prj.root(), "script/B.sol");
+    tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
+    tester.simulate(ScriptOutcome::OkNoEndpoint);
 });
