@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_evm::{
@@ -331,7 +331,9 @@ impl MultiContractRunnerBuilder {
         let mut known_contracts = ContractsByArtifact::default();
 
         for (id, contract) in &linker.contracts.0 {
-            let abi = contract.abi.as_ref().ok_or_eyre("we should have an abi by now")?;
+            let Some(abi) = contract.abi.as_ref() else {
+                continue;
+            };
 
             let LinkOutput { libs_to_deploy, libraries } =
                 linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, id)?;
