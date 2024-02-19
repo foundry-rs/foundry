@@ -682,7 +682,7 @@ mod tests {
     };
     use foundry_common::provider::alloy::get_http_provider;
     use foundry_config::{Config, NamedChain};
-    use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeSet, path::PathBuf};
 
     const ENDPOINT: Option<&str> = option_env!("ETH_RPC_URL");
 

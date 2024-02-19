@@ -133,15 +133,8 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        eth::backend::db::{Db, SerializableAccountRecord, SerializableState},
-        revm::primitives::AccountInfo,
-    };
-    use alloy_primitives::{Address, Bytes, U256};
-    use foundry_evm::{
-        backend::MemDb,
-        revm::primitives::{Bytecode, KECCAK_EMPTY},
-    };
+    use alloy_primitives::Bytes;
+    use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
     use std::{collections::BTreeMap, str::FromStr};
 
     // verifies that all substantial aspects of a loaded account remain the state after an account

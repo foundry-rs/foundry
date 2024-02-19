@@ -24,7 +24,6 @@ use revm::primitives::SpecId;
 use std::{
     collections::BTreeMap,
     fmt::Debug,
-    iter::Iterator,
     path::Path,
     sync::{mpsc, Arc},
 };

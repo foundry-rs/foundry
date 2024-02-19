@@ -16,7 +16,6 @@ use crate::{
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
-use solang_parser::pt::ImportPath;
 use std::{fmt::Write, str::FromStr};
 use thiserror::Error;
 

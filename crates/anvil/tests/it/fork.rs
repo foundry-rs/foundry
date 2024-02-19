@@ -11,7 +11,6 @@ use alloy_signer::Signer as AlloySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
-    core::rand,
     prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
     providers::{Http, Provider},
     signers::Signer,

@@ -1,22 +1,26 @@
 use super::{
     artifacts::ArtifactInfo,
-    runner::SimulationStage,
+    runner::{ScriptRunner, SimulationStage},
     transaction::{AdditionalContract, TransactionWithMetadata},
-    *,
+    ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_primitives::{Address, Bytes, U256};
-use eyre::Result;
+use eyre::{Context, Result};
 use forge::{
     backend::Backend,
     executors::ExecutorBuilder,
     inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
-    traces::CallTraceDecoder,
+    traces::{render_trace_arena, CallTraceDecoder},
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{provider::ethers::RpcUrl, shell};
+use foundry_common::{get_contract_name, provider::ethers::RpcUrl, shell, ContractsByArtifact};
+use foundry_compilers::artifacts::ContractBytecodeSome;
 use futures::future::join_all;
 use parking_lot::RwLock;
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    sync::Arc,
+};
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
