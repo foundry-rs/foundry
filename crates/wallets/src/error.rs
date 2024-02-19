@@ -19,4 +19,6 @@ pub enum WalletSignerError {
     Trezor(#[from] TrezorError),
     #[error(transparent)]
     Aws(#[from] AwsSignerError),
+    #[error("{0} cannot sign raw hashes")]
+    CannotSignRawHash(&'static str),
 }

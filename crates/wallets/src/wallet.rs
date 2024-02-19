@@ -2,7 +2,7 @@ use crate::{
     error::{PrivateKeyError, WalletSignerError},
     raw_wallet::RawWallet,
 };
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use clap::Parser;
 use ethers_core::types::{
@@ -457,39 +457,16 @@ impl Signer for WalletSigner {
     }
 }
 
-#[async_trait]
-impl Signer for &WalletSigner {
-    type Error = WalletSignerError;
-
-    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(
-        &self,
-        message: S,
-    ) -> Result<Signature, Self::Error> {
-        (*self).sign_message(message).await
-    }
-
-    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature, Self::Error> {
-        (*self).sign_transaction(message).await
-    }
-
-    async fn sign_typed_data<T: Eip712 + Send + Sync>(
-        &self,
-        payload: &T,
-    ) -> Result<Signature, Self::Error> {
-        (*self).sign_typed_data(payload).await
-    }
-
-    fn address(&self) -> ethers_core::types::Address {
-        (*self).address()
-    }
-
-    fn chain_id(&self) -> u64 {
-        (*self).chain_id()
-    }
-
-    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
-        let _ = chain_id;
-        self
+impl WalletSigner {
+    pub async fn sign_hash(&self, hash: &B256) -> Result<Signature, WalletSignerError> {
+        match self {
+            // TODO: AWS can sign hashes but utilities aren't exposed in ethers-signers.
+            // TODO: Implement with alloy-signer.
+            Self::Aws(_aws) => Err(WalletSignerError::CannotSignRawHash("AWS")),
+            Self::Ledger(_) => Err(WalletSignerError::CannotSignRawHash("Ledger")),
+            Self::Local(wallet) => wallet.sign_hash(hash.0.into()).map_err(Into::into),
+            Self::Trezor(_) => Err(WalletSignerError::CannotSignRawHash("Trezor")),
+        }
     }
 }
 
