@@ -153,8 +153,7 @@ impl<'a> InvariantExecutor<'a> {
             let mut created_contracts = vec![];
 
             for current_run in 0..self.config.depth {
-                let (sender, (address, calldata)) =
-                    inputs.last().expect("to have the next randomly generated input.");
+                let (sender, (address, calldata)) = inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor

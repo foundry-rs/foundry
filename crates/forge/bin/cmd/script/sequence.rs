@@ -353,14 +353,14 @@ impl ScriptSequence {
         }
     }
 
+    /// Returns the first RPC URL of this sequence.
+    pub fn rpc_url(&self) -> Option<&str> {
+        self.transactions.front().and_then(|tx| tx.rpc.as_deref())
+    }
+
     /// Returns the list of the transactions without the metadata.
-    pub fn typed_transactions(&self) -> Vec<(String, &TypedTransaction)> {
-        self.transactions
-            .iter()
-            .map(|tx| {
-                (tx.rpc.clone().expect("to have been filled with a proper rpc"), tx.typed_tx())
-            })
-            .collect()
+    pub fn typed_transactions(&self) -> impl Iterator<Item = &TypedTransaction> {
+        self.transactions.iter().map(|tx| tx.typed_tx())
     }
 
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
