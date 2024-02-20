@@ -264,6 +264,8 @@ fn watch_command(mut args: Vec<String>) -> Command {
 fn cmd_args(num: usize) -> Vec<String> {
     clean_cmd_args(num, std::env::args().collect())
 }
+
+#[instrument(level = "debug", ret)]
 fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
     if let Some(pos) = cmd_args.iter().position(|arg| arg == "--watch" || arg == "-w") {
         cmd_args.drain(pos..=(pos + num));
@@ -274,11 +276,12 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
     // this removes any `w` from concatenated short flags
     if let Some(pos) = cmd_args.iter().position(|arg| {
         fn contains_w_in_short(arg: &str) -> Option<bool> {
-            let mut iter = arg.chars();
-            if iter.next()? != '-' {
+            let mut iter = arg.chars().peekable();
+            if *iter.peek()? != '-' {
                 return None
             }
-            if iter.next()? == '-' {
+            iter.next();
+            if *iter.peek()? == '-' {
                 return None
             }
             Some(iter.any(|c| c == 'w'))
