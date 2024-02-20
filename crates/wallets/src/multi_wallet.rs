@@ -4,6 +4,7 @@ use crate::{
 };
 use alloy_primitives::Address;
 use clap::Parser;
+use derive_builder::Builder;
 use ethers_signers::Signer;
 use eyre::Result;
 use foundry_common::types::ToAlloy;
@@ -87,7 +88,7 @@ macro_rules! create_hw_wallets {
 /// 5. Private Keys (cleartext in CLI)
 /// 6. Private Keys (interactively via secure prompt)
 /// 7. AWS KMS
-#[derive(Clone, Debug, Default, Serialize, Parser)]
+#[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
     /// The sender accounts.

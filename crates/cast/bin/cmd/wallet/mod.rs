@@ -18,6 +18,9 @@ use yansi::Paint;
 pub mod vanity;
 use vanity::VanityArgs;
 
+pub mod list;
+use list::ListArgs;
+
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
@@ -137,7 +140,7 @@ pub enum WalletSubcommands {
     },
     /// List all the accounts in the keystore default directory
     #[clap(visible_alias = "ls")]
-    List,
+    List(ListArgs),
 
     /// Derives private key from mnemonic
     #[clap(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
@@ -331,41 +334,8 @@ flag to set your key via:
                 );
                 println!("{}", Paint::green(success_message));
             }
-            WalletSubcommands::List => {
-                let default_keystore_dir = Config::foundry_keystores_dir()
-                    .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
-                // Create the keystore directory if it doesn't exist
-                fs::create_dir_all(&default_keystore_dir)?;
-                // List all files in keystore directory
-                let keystore_files: Result<Vec<_>, eyre::Report> =
-                    std::fs::read_dir(&default_keystore_dir)
-                        .wrap_err("Failed to read the directory")?
-                        .filter_map(|entry| match entry {
-                            Ok(entry) => {
-                                let path = entry.path();
-                                if path.is_file() && path.extension().is_none() {
-                                    Some(Ok(path))
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(e) => Some(Err(e.into())),
-                        })
-                        .collect::<Result<Vec<_>, eyre::Report>>();
-                // Print the names of the keystore files
-                match keystore_files {
-                    Ok(files) => {
-                        // Print the names of the keystore files
-                        for file in files {
-                            if let Some(file_name) = file.file_name() {
-                                if let Some(name) = file_name.to_str() {
-                                    println!("{}", name);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => return Err(e),
-                }
+            WalletSubcommands::List(cmd) => {
+                cmd.run().await?;
             }
             WalletSubcommands::DerivePrivateKey { mnemonic, mnemonic_index } => {
                 let phrase = Mnemonic::<English>::new_from_phrase(mnemonic.as_str())?.to_phrase();

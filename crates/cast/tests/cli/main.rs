@@ -2,7 +2,7 @@
 
 use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
 use foundry_test_utils::{casttest, util::OutputExt};
-use std::{io::Write, path::Path};
+use std::{fs, io::Write, path::Path};
 
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
@@ -129,6 +129,27 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
     ]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+});
+
+// tests that `cast wallet list` outputs the local accounts
+casttest!(wallet_list_local_accounts, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(keystore_path).unwrap();
+    cmd.set_current_dir(prj.root());
+
+    // empty results
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
+    let list_output = cmd.stdout_lossy();
+    assert!(list_output.is_empty());
+
+    // create 10 wallets
+    cmd.cast_fuse().args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"]);
+    cmd.stdout_lossy();
+
+    // test list new wallet
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
+    let list_output = cmd.stdout_lossy();
+    assert_eq!(list_output.matches('\n').count(), 10);
 });
 
 // tests that `cast estimate` is working correctly.

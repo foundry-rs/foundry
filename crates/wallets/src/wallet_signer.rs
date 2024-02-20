@@ -57,6 +57,37 @@ impl WalletSigner {
         Ok(Self::Local(wallet))
     }
 
+    pub async fn available_senders(&self, max: usize) -> Result<Vec<ethers_core::types::Address>> {
+        let mut senders = Vec::new();
+        match self {
+            WalletSigner::Ledger(ledger) => {
+                for i in 0..max {
+                    if let Ok(address) =
+                        ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await
+                    {
+                        senders.push(address);
+                    }
+                }
+                Ok(senders)
+            }
+            WalletSigner::Trezor(trezor) => {
+                for i in 0..max {
+                    if let Ok(address) =
+                        trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await
+                    {
+                        senders.push(address);
+                    }
+                }
+                Ok(senders)
+            }
+            WalletSigner::Aws(aws) => {
+                senders.push(aws.address());
+                Ok(senders)
+            }
+            _ => Ok(senders),
+        }
+    }
+
     pub fn from_mnemonic(
         mnemonic: &str,
         passphrase: Option<&str>,
