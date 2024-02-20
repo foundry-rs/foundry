@@ -123,7 +123,7 @@ contract BroadcastTest is DSTest {
 
         vm.broadcast(ACCOUNT_B);
         // will trigger a transaction from B
-        payable(ACCOUNT_A).transfer(2);
+        payable(ACCOUNT_A).call{value: 2}("");
 
         vm.broadcast(ACCOUNT_B);
         // will trigger a transaction

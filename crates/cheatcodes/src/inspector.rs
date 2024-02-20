@@ -849,7 +849,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     let prev = account.info.nonce;
-                    account.info.nonce += 1;
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -1447,7 +1446,6 @@ fn process_create<DB: DatabaseExt>(
             let prev = account.info.nonce;
             account.info.nonce += 1;
             debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
-
             // Proxy deployer requires the data to be `salt ++ init_code`
             let calldata = [&salt.to_be_bytes::<32>()[..], &bytecode[..]].concat();
             Ok((calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev))

@@ -4,15 +4,20 @@ use super::{
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_signer::LocalWallet;
-use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
+use foundry_evm_core::{
+    backend::DatabaseExt,
+    debug::DebugArena,
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
+    evm_inner,
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Stack,
     },
-    primitives::{BlockEnv, Env},
-    EVMData, Inspector,
+    primitives::{BlockEnv, Env, ExecutionResult, Output, State, TxEnv},
+    DatabaseCommit, EVMData, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -176,9 +181,40 @@ impl InspectorStackBuilder {
 macro_rules! call_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{$(
         if let Some($id) = $inspector {
-            $call
+            if let Some(result) = $call {
+                return result;
+            }
         }
-    )+}}
+    )+}};
+    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr, $self:ident, $data:ident $(,)?) => {
+        if $self.in_inner_context {
+            $data.journaled_state.depth += 1;
+        }
+        call_inspectors!([$($inspector),+], |$id| {
+            $call.map(|result| {
+                if $self.in_inner_context {
+                    $data.journaled_state.depth -= 1;
+                }
+                result
+            })
+        });
+        if $self.in_inner_context {
+            $data.journaled_state.depth -= 1;
+        }
+    }
+}
+
+fn merge_states(main_state: &mut State, new_state: State) {
+    for (addr, acc) in new_state {
+        if main_state.contains_key(&addr) {
+            let acc_mut = main_state.get_mut(&addr).unwrap();
+            acc_mut.status |= acc.status;
+            acc_mut.info = acc.info;
+            acc_mut.storage.extend(acc.storage);
+        } else {
+            main_state.insert(addr, acc);
+        }
+    }
 }
 
 /// The collected results of [`InspectorStack`].
@@ -207,6 +243,8 @@ pub struct InspectorStack {
     pub log_collector: Option<LogCollector>,
     pub printer: Option<TracePrinter>,
     pub tracer: Option<TracingInspector>,
+    /// Flag marking if we are in the inner EVM context.
+    pub in_inner_context: bool,
 }
 
 impl InspectorStack {
@@ -354,16 +392,19 @@ impl InspectorStack {
                 if new_status != status ||
                     (new_status == InstructionResult::Revert && new_retdata != retdata)
                 {
-                    return (new_status, new_gas, new_retdata);
+                    Some((new_status, new_gas, new_retdata))
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            data
         );
-
         (status, remaining_gas, retdata)
     }
 }
 
-impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
+impl<DB: DatabaseExt + DatabaseCommit + Clone> Inspector<DB> for InspectorStack {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let res = interpreter.instruction_result;
         call_inspectors!(
@@ -380,10 +421,13 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
+                    Some(())
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            data
         );
     }
 
@@ -404,10 +448,13 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
+                    Some(())
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            data
         );
     }
 
@@ -422,7 +469,10 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 inspector.log(evm_data, address, topics, data);
-            }
+                None
+            },
+            self,
+            evm_data
         );
     }
 
@@ -442,10 +492,13 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
+                    Some(())
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            data
         );
     }
 
@@ -454,6 +507,11 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && data.journaled_state.depth == 0 {
+            return (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new());
+        }
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -468,12 +526,67 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 let (status, gas, retdata) = inspector.call(data, call);
 
                 // Allow inspectors to exit early
-                #[allow(clippy::needless_return)]
                 if status != InstructionResult::Continue {
-                    return (status, gas, retdata);
+                    Some((status, gas, retdata))
+                } else {
+                    None
+                }
+            },
+            self,
+            data
+        );
+        if !call.is_static && !self.in_inner_context && data.journaled_state.depth == 1 {
+            data.db.commit(data.journaled_state.state.clone());
+            let nonce = data
+                .journaled_state
+                .load_account(call.context.caller, data.db)
+                .expect("failed to load caller")
+                .0
+                .info
+                .nonce;
+            let mut env = Env {
+                cfg: data.env.cfg.clone(),
+                block: BlockEnv {
+                    basefee: U256::ZERO,
+                    gas_limit: U256::MAX,
+                    ..data.env.block.clone()
+                },
+                tx: TxEnv {
+                    caller: call.context.caller,
+                    transact_to: revm::primitives::TransactTo::Call(call.contract),
+                    data: call.input.clone(),
+                    value: call.transfer.value,
+                    gas_limit: call.gas_limit,
+                    nonce: Some(nonce),
+                    gas_price: U256::ZERO,
+                    ..data.env.tx.clone()
+                },
+            };
+            self.in_inner_context = true;
+            let res = evm_inner(&mut env, data.db, Some(self))
+                .transact()
+                .expect("error while transacting");
+            self.in_inner_context = false;
+            let mut gas = Gas::new(call.gas_limit);
+
+            merge_states(&mut data.journaled_state.state, res.state);
+
+            match res.result {
+                ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
+                    gas.set_refund(gas_refunded as i64);
+                    gas.record_cost(gas_used);
+                    return (eval_to_instruction_result(reason), gas, output.into_data());
+                }
+                ExecutionResult::Halt { reason, gas_used } => {
+                    gas.record_cost(gas_used);
+                    return (halt_to_instruction_result(reason), gas, Bytes::new());
+                }
+                ExecutionResult::Revert { gas_used, output } => {
+                    gas.record_cost(gas_used);
+                    return (InstructionResult::Revert, gas, output);
                 }
             }
-        );
+        }
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -486,8 +599,13 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         status: InstructionResult,
         retdata: Bytes,
     ) -> (InstructionResult, Gas, Bytes) {
-        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && data.journaled_state.depth == 0 {
+            return (status, remaining_gas, retdata);
+        }
 
+        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
         if matches!(res.0, return_revert!()) {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
             // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
@@ -505,6 +623,11 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && data.journaled_state.depth == 0 {
+            return (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new());
+        }
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -519,10 +642,71 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return (status, addr, gas, retdata);
+                    Some((status, addr, gas, retdata))
+                } else {
+                    None
+                }
+            },
+            self,
+            data
+        );
+        if !self.in_inner_context && data.journaled_state.depth == 1 {
+            data.db.commit(data.journaled_state.state.clone());
+            let nonce = data
+                .journaled_state
+                .load_account(call.caller, data.db)
+                .expect("failed to load caller")
+                .0
+                .info
+                .nonce;
+            let mut env = Env {
+                cfg: data.env.cfg.clone(),
+                block: BlockEnv {
+                    basefee: U256::ZERO,
+                    gas_limit: U256::MAX,
+                    ..data.env.block.clone()
+                },
+                tx: TxEnv {
+                    caller: call.caller,
+                    transact_to: revm::primitives::TransactTo::Create(call.scheme),
+                    data: call.init_code.clone(),
+                    value: call.value,
+                    gas_limit: call.gas_limit,
+                    nonce: Some(nonce),
+                    gas_price: U256::ZERO,
+                    ..data.env.tx.clone()
+                },
+            };
+
+            self.in_inner_context = true;
+            let res = evm_inner(&mut env, data.db, Some(self))
+                .transact()
+                .expect("error while transacting");
+            self.in_inner_context = false;
+            let mut gas = Gas::new(call.gas_limit);
+
+            merge_states(&mut data.journaled_state.state, res.state);
+
+            match res.result {
+                ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
+                    gas.set_refund(gas_refunded as i64);
+                    gas.record_cost(gas_used);
+                    let address = match output {
+                        Output::Create(_, address) => address,
+                        _ => unreachable!(),
+                    };
+                    return (eval_to_instruction_result(reason), address, gas, output.into_data());
+                }
+                ExecutionResult::Halt { reason, gas_used } => {
+                    gas.record_cost(gas_used);
+                    return (halt_to_instruction_result(reason), None, gas, Bytes::new());
+                }
+                ExecutionResult::Revert { gas_used, output } => {
+                    gas.record_cost(gas_used);
+                    return (InstructionResult::Revert, None, gas, output);
                 }
             }
-        );
+        }
 
         (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -536,6 +720,11 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         remaining_gas: Gas,
         retdata: Bytes,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && data.journaled_state.depth == 0 {
+            return (status, address, remaining_gas, retdata);
+        }
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -556,9 +745,13 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 );
 
                 if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata);
+                    Some((new_status, new_address, new_gas, new_retdata))
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            data
         );
 
         (status, address, remaining_gas, retdata)
@@ -576,6 +769,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             ],
             |inspector| {
                 Inspector::<DB>::selfdestruct(inspector, contract, target, value);
+                None
             }
         );
     }
