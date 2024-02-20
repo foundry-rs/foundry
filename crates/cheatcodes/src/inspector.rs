@@ -7,7 +7,7 @@ use crate::{
         prank::Prank,
         DealRecord, RecordAccess,
     },
-    script::Broadcast,
+    script::{Broadcast, ScriptWallets},
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
         ExpectedRevert, ExpectedRevertKind,
@@ -16,7 +16,6 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
-use alloy_signer::LocalWallet;
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
 use foundry_evm_core::{
@@ -127,7 +126,7 @@ pub struct Cheatcodes {
     pub labels: HashMap<Address, String>,
 
     /// Remembered private keys
-    pub script_wallets: Vec<LocalWallet>,
+    pub script_wallets: Option<ScriptWallets>,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -218,7 +217,8 @@ impl Cheatcodes {
     #[inline]
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         let labels = config.labels.clone();
-        Self { config, fs_commit: true, labels, ..Default::default() }
+        let script_wallets = config.script_wallets.clone();
+        Self { config, fs_commit: true, labels, script_wallets, ..Default::default() }
     }
 
     fn apply_cheatcode<DB: DatabaseExt>(

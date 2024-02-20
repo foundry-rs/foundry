@@ -6,7 +6,7 @@ use super::{
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
-use ethers_signers::{LocalWallet, Signer};
+use ethers_signers::Signer;
 use eyre::{bail, Context, ContextCompat, Result};
 use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::CallTraceDecoder};
 use foundry_cli::{
@@ -38,7 +38,7 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
-        script_wallets: &[LocalWallet],
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
@@ -64,12 +64,34 @@ impl ScriptArgs {
                 );
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
-                let local_wallets = self
-                    .wallets
-                    .find_all(provider.clone(), required_addresses, script_wallets)
-                    .await?;
-                let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
-                (SendTransactionsKind::Raw(local_wallets), chain)
+                let mut missing_addresses = Vec::new();
+
+                println!("\n###\nFinding wallets for all the necessary addresses...");
+                for addr in &required_addresses {
+                    if !signers.contains_key(addr) {
+                        missing_addresses.push(addr);
+                    }
+                }
+
+                if !missing_addresses.is_empty() {
+                    let mut error_msg = String::new();
+
+                    // This is an actual used address
+                    if required_addresses.contains(&Config::DEFAULT_SENDER) {
+                        error_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.\n";
+                    }
+
+                    eyre::bail!(
+                        "{}No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
+                        error_msg,
+                        missing_addresses,
+                        signers.keys().collect::<Vec<_>>()
+                    );
+                }
+
+                let chain = provider.get_chainid().await?.as_u64();
+
+                (SendTransactionsKind::Raw(signers), chain)
             };
 
             // We only wait for a transaction receipt before sending the next transaction, if there
@@ -280,6 +302,7 @@ impl ScriptArgs {
         decoder: &CallTraceDecoder,
         mut script_config: ScriptConfig,
         verify: VerifyBundle,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
@@ -315,8 +338,8 @@ impl ScriptArgs {
                             multi,
                             libraries,
                             &script_config.config,
-                            result.script_wallets,
                             verify,
+                            signers,
                         )
                         .await?;
                     }
@@ -325,8 +348,8 @@ impl ScriptArgs {
                         deployments.first_mut().expect("missing deployment"),
                         script_config,
                         libraries,
-                        result,
                         verify,
+                        signers,
                     )
                     .await?;
                 }
@@ -347,8 +370,8 @@ impl ScriptArgs {
         deployment_sequence: &mut ScriptSequence,
         script_config: ScriptConfig,
         libraries: Libraries,
-        result: ScriptResult,
         verify: VerifyBundle,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
 
@@ -360,7 +383,7 @@ impl ScriptArgs {
 
         deployment_sequence.add_libraries(libraries);
 
-        self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
+        self.send_transactions(deployment_sequence, &rpc, signers).await?;
 
         if self.verify {
             return deployment_sequence.verify_contracts(&script_config.config, verify).await;
@@ -639,14 +662,14 @@ enum SendTransactionKind<'a> {
 }
 
 /// Represents how to send _all_ transactions
-enum SendTransactionsKind {
+enum SendTransactionsKind<'a> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, WalletSigner>),
+    Raw(&'a HashMap<Address, WalletSigner>),
 }
 
-impl SendTransactionsKind {
+impl SendTransactionsKind<'_> {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked

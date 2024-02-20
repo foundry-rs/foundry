@@ -305,8 +305,12 @@ impl SessionSource {
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace(true).cheatcodes(
-                    CheatsConfig::new(&self.config.foundry_config, self.config.evm_opts.clone())
-                        .into(),
+                    CheatsConfig::new(
+                        &self.config.foundry_config,
+                        self.config.evm_opts.clone(),
+                        None,
+                    )
+                    .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())

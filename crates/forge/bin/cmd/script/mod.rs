@@ -6,7 +6,6 @@ use alloy_rpc_types::request::TransactionRequest;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_providers::{Http, Middleware};
-use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     backend::Backend,
@@ -43,7 +42,7 @@ use foundry_evm::{
     decode::RevertDecoder,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
-use foundry_wallets::MultiWallet;
+use foundry_wallets::MultiWalletOpts;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -177,7 +176,7 @@ pub struct ScriptArgs {
     pub opts: BuildArgs,
 
     #[clap(flatten)]
-    pub wallets: MultiWallet,
+    pub wallets: MultiWalletOpts,
 
     #[clap(flatten)]
     pub evm_opts: EvmArgs,
@@ -593,7 +592,6 @@ pub struct ScriptResult {
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
-    pub script_wallets: Vec<LocalWallet>,
     pub breakpoints: Breakpoints,
 }
 

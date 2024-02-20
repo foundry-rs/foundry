@@ -9,7 +9,7 @@ use ethers_signers::Signer;
 use eyre::{Context, Result};
 use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
-use foundry_wallets::{RawWallet, Wallet};
+use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
 use serde_json::json;
 use std::{path::Path, str::FromStr};
@@ -72,7 +72,7 @@ pub enum WalletSubcommands {
         private_key_override: Option<String>,
 
         #[clap(flatten)]
-        wallet: Wallet,
+        wallet: WalletOpts,
     },
 
     /// Sign a message or typed data.
@@ -106,7 +106,7 @@ pub enum WalletSubcommands {
         no_hash: bool,
 
         #[clap(flatten)]
-        wallet: Wallet,
+        wallet: WalletOpts,
     },
 
     /// Verify the signature of a message.
@@ -133,7 +133,7 @@ pub enum WalletSubcommands {
         #[clap(long, short)]
         keystore_dir: Option<String>,
         #[clap(flatten)]
-        raw_wallet_options: RawWallet,
+        raw_wallet_options: RawWalletOpts,
     },
     /// List all the accounts in the keystore default directory
     #[clap(visible_alias = "ls")]
@@ -241,18 +241,18 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
-                    .map(|pk| Wallet {
-                        raw: RawWallet { private_key: Some(pk), ..Default::default() },
+                    .map(|pk| WalletOpts {
+                        raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
                     })
                     .unwrap_or(wallet)
-                    .signer(0)
+                    .signer()
                     .await?;
                 let addr = wallet.address();
                 println!("{}", addr.to_alloy().to_checksum(None));
             }
             WalletSubcommands::Sign { message, data, from_file, no_hash, wallet } => {
-                let wallet = wallet.signer(0).await?;
+                let wallet = wallet.signer().await?;
                 let sig = if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
@@ -297,16 +297,21 @@ impl WalletSubcommands {
                 }
 
                 // get wallet
-                let wallet: Wallet = raw_wallet_options.into();
-                let wallet = wallet.try_resolve_local_wallet()?.ok_or_else(|| {
-                    eyre::eyre!(
-                        "\
+                let wallet = raw_wallet_options
+                    .signer()?
+                    .and_then(|s| match s {
+                        WalletSigner::Local(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "\
 Did you set a private key or mnemonic?
 Run `cast wallet import --help` and use the corresponding CLI
 flag to set your key via:
 --private-key, --mnemonic-path or --interactive."
-                    )
-                })?;
+                        )
+                    })?;
 
                 let private_key = wallet.signer().to_bytes();
                 let password = rpassword::prompt_password("Enter password: ")?;
