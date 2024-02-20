@@ -1237,7 +1237,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply the Create2 deployer
         if self.broadcast.is_some() || self.config.always_use_create_2_factory {
-            match apply_create2_deployer(data, call, &self.prank, &self.broadcast) {
+            match apply_create2_deployer(data, call, self.prank.as_ref(), self.broadcast.as_ref()) {
                 Ok(_) => {}
                 Err(err) => return (InstructionResult::Revert, None, gas, Error::encode(err)),
             };
@@ -1430,8 +1430,8 @@ fn mstore_revert_string(interpreter: &mut Interpreter<'_>, bytes: &[u8]) {
 fn apply_create2_deployer<DB: DatabaseExt>(
     data: &mut EVMData<'_, DB>,
     call: &mut CreateInputs,
-    prank: &Option<Prank>,
-    broadcast: &Option<Broadcast>,
+    prank: Option<&Prank>,
+    broadcast: Option<&Broadcast>,
 ) -> Result<(), DB::Error> {
     if let CreateScheme::Create2 { salt: _ } = call.scheme {
         let mut base_depth = 1;
