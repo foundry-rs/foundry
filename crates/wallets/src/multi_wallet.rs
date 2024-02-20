@@ -387,8 +387,6 @@ impl MultiWalletOpts {
 
 #[cfg(test)]
 mod tests {
-    use ethers_signers::Signer;
-
     use super::*;
     use std::path::Path;
 

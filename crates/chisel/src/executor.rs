@@ -769,6 +769,8 @@ impl Type {
     }
 
     /// Handle special expressions like [global variables](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
+    ///
+    /// See: <https://github.com/ethereum/solidity/blob/81268e336573721819e39fbb3fefbc9344ad176c/libsolidity/ast/Types.cpp#L4106>
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
             return self
@@ -818,20 +820,21 @@ impl Type {
                     match name {
                         "block" => match access {
                             "coinbase" => Some(DynSolType::Address),
-                            "basefee" | "chainid" | "difficulty" | "gaslimit" | "number" |
-                            "timestamp" => Some(DynSolType::Uint(256)),
+                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" |
+                            "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "msg" => match access {
-                            "data" => Some(DynSolType::Bytes),
                             "sender" => Some(DynSolType::Address),
-                            "sig" => Some(DynSolType::FixedBytes(4)),
+                            "gas" => Some(DynSolType::Uint(256)),
                             "value" => Some(DynSolType::Uint(256)),
+                            "data" => Some(DynSolType::Bytes),
+                            "sig" => Some(DynSolType::FixedBytes(4)),
                             _ => None,
                         },
                         "tx" => match access {
-                            "gasprice" => Some(DynSolType::Uint(256)),
                             "origin" => Some(DynSolType::Address),
+                            "gasprice" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "abi" => match access {
@@ -865,7 +868,11 @@ impl Type {
                             "name" => Some(DynSolType::String),
                             "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
                             "interfaceId" => Some(DynSolType::FixedBytes(4)),
-                            "min" | "max" => Some(DynSolType::Uint(256)),
+                            "min" | "max" => Some(
+                                // Either a builtin or an enum
+                                (|| args?.pop()??.into_builtin())()
+                                    .unwrap_or(DynSolType::Uint(256)),
+                            ),
                             _ => None,
                         },
                         "string" => match access {
@@ -1656,9 +1663,11 @@ mod tests {
                 ("type(C).runtimeCode", Bytes),
                 ("type(I).interfaceId", FixedBytes(4)),
                 ("type(uint256).min", Uint(256)),
-                ("type(int256).min", Uint(256)),
+                ("type(int128).min", Int(128)),
+                ("type(int256).min", Int(256)),
                 ("type(uint256).max", Uint(256)),
-                ("type(int256).max", Uint(256)),
+                ("type(int128).max", Int(128)),
+                ("type(int256).max", Int(256)),
                 ("type(Enum1).min", Uint(256)),
                 ("type(Enum1).max", Uint(256)),
                 // function
