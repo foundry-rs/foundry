@@ -181,6 +181,7 @@ impl InspectorStackBuilder {
 macro_rules! call_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{$(
         if let Some($id) = $inspector {
+            // Allow inspector to exit early
             if let Some(result) = $call {
                 return result;
             }
@@ -404,7 +405,7 @@ impl InspectorStack {
     }
 }
 
-impl<DB: DatabaseExt + DatabaseCommit + Clone> Inspector<DB> for InspectorStack {
+impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let res = interpreter.instruction_result;
         call_inspectors!(
