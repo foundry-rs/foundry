@@ -145,6 +145,12 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         fees,
         StorageInfo::new(Arc::clone(&backend)),
     );
+    // create an entry for the best block
+    if let Some(best_block) =
+        backend.get_block(backend.best_number()).map(|block| block.header.hash_slow())
+    {
+        fee_history_service.insert_cache_entry_for_block(best_block);
+    }
 
     let filters = Filters::default();
 
