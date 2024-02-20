@@ -1238,7 +1238,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Apply the Create2 deployer
         if self.broadcast.is_some() || self.config.always_use_create_2_factory {
             match apply_create2_deployer(data, call, &self.prank, &self.broadcast) {
-                Ok(_val) => {}
+                Ok(_) => {}
                 Err(err) => return (InstructionResult::Revert, None, gas, Error::encode(err)),
             };
         }
