@@ -91,6 +91,31 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
         run: cargo nextest run ${{ matrix.flags }}
 
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo doc --workspace --all-features --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS:
+            --cfg docsrs --show-type-layout --generate-link-to-definition --enable-index-page
+            -Zunstable-options
+      - name: Deploy documentation
+        uses: peaceiris/actions-gh-pages@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc
+          force_orphan: true
+
   doctest:
     runs-on: ubuntu-latest
     timeout-minutes: 30

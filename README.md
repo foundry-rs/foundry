@@ -10,6 +10,11 @@
 [tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
 [tg-support-url]: https://t.me/foundry_support
 
+**[Install](https://book.getfoundry.sh/getting-started/installation)**
+| [User Book](https://book.getfoundry.sh)
+| [Developer Docs](./docs)
+| [Crate Docs](https://foundry-rs.github.io/foundry/docs)
+
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
 Foundry consists of:
