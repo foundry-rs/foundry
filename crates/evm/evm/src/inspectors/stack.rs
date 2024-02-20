@@ -17,7 +17,7 @@ use revm::{
         return_revert, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter,
         Stack,
     },
-    primitives::{BlockEnv, Env, ExecutionResult, Output, State, TxEnv},
+    primitives::{BlockEnv, Env, ExecutionResult, Output, State, TransactTo},
     DatabaseCommit, EVMData, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -404,6 +404,76 @@ impl InspectorStack {
         );
         (status, remaining_gas, retdata)
     }
+
+    fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        transact_to: TransactTo,
+        caller: Address,
+        input: Bytes,
+        gas_limit: u64,
+        value: U256,
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        data.db.commit(data.journaled_state.state.clone());
+
+        let nonce = data
+            .journaled_state
+            .load_account(caller, data.db)
+            .expect("failed to load caller")
+            .0
+            .info
+            .nonce;
+
+        let cached_env = data.env.clone();
+
+        data.env.block.basefee = U256::ZERO;
+        data.env.block.gas_limit = U256::MAX;
+        data.env.tx.caller = caller;
+        data.env.tx.transact_to = transact_to;
+        data.env.tx.data = input;
+        data.env.tx.value = value;
+        data.env.tx.nonce = Some(nonce);
+        // Add 21000 to the gas limit to account for the base cost of transaction.
+        data.env.tx.gas_limit = gas_limit + 21000;
+        data.env.tx.gas_price = U256::ZERO;
+
+        self.in_inner_context = true;
+        let res = evm_inner(data.env, data.db, Some(self)).transact();
+        self.in_inner_context = false;
+
+        data.env.tx = cached_env.tx;
+        data.env.block.basefee = cached_env.block.basefee;
+        data.env.block.gas_limit = cached_env.block.gas_limit;
+
+        let mut gas = Gas::new(gas_limit);
+
+        let Ok(res) = res else {
+            // Should we match, encode and propagate error as a revert reason?
+            return (InstructionResult::Revert, None, gas, Bytes::new());
+        };
+
+        merge_states(&mut data.journaled_state.state, res.state);
+
+        match res.result {
+            ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
+                gas.set_refund(gas_refunded as i64);
+                gas.record_cost(gas_used);
+                let address = match output {
+                    Output::Create(_, address) => address,
+                    Output::Call(_) => None,
+                };
+                (eval_to_instruction_result(reason), address, gas, output.into_data())
+            }
+            ExecutionResult::Halt { reason, gas_used } => {
+                gas.record_cost(gas_used);
+                (halt_to_instruction_result(reason), None, gas, Bytes::new())
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                gas.record_cost(gas_used);
+                (InstructionResult::Revert, None, gas, output)
+            }
+        }
+    }
 }
 
 impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
@@ -541,59 +611,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             !self.in_inner_context &&
             data.journaled_state.depth == 1
         {
-            data.db.commit(data.journaled_state.state.clone());
-            let nonce = data
-                .journaled_state
-                .load_account(call.context.caller, data.db)
-                .expect("failed to load caller")
-                .0
-                .info
-                .nonce;
-            let mut env = Env {
-                cfg: data.env.cfg.clone(),
-                block: BlockEnv {
-                    basefee: U256::ZERO,
-                    gas_limit: U256::MAX,
-                    ..data.env.block.clone()
-                },
-                tx: TxEnv {
-                    caller: call.context.caller,
-                    transact_to: revm::primitives::TransactTo::Call(call.contract),
-                    data: call.input.clone(),
-                    value: call.transfer.value,
-                    gas_limit: call.gas_limit,
-                    nonce: Some(nonce),
-                    gas_price: U256::ZERO,
-                    ..data.env.tx.clone()
-                },
-            };
-            self.in_inner_context = true;
-
-            let Ok(res) = evm_inner(&mut env, data.db, Some(self)).transact() else {
-                self.in_inner_context = false;
-                return (InstructionResult::Revert, Gas::new(call.gas_limit), Bytes::new());
-            };
-
-            self.in_inner_context = false;
-            let mut gas = Gas::new(call.gas_limit);
-
-            merge_states(&mut data.journaled_state.state, res.state);
-
-            match res.result {
-                ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
-                    gas.set_refund(gas_refunded as i64);
-                    gas.record_cost(gas_used);
-                    return (eval_to_instruction_result(reason), gas, output.into_data());
-                }
-                ExecutionResult::Halt { reason, gas_used } => {
-                    gas.record_cost(gas_used);
-                    return (halt_to_instruction_result(reason), gas, Bytes::new());
-                }
-                ExecutionResult::Revert { gas_used, output } => {
-                    gas.record_cost(gas_used);
-                    return (InstructionResult::Revert, gas, output);
-                }
-            }
+            let (res, _, gas, output) = self.transact_inner(
+                data,
+                TransactTo::Call(call.contract),
+                call.context.caller,
+                call.input.clone(),
+                call.gas_limit,
+                call.transfer.value,
+            );
+            return (res, gas, output);
         }
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
@@ -659,62 +685,14 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             data
         );
         if !self.in_inner_context && data.journaled_state.depth == 1 {
-            data.db.commit(data.journaled_state.state.clone());
-            let nonce = data
-                .journaled_state
-                .load_account(call.caller, data.db)
-                .expect("failed to load caller")
-                .0
-                .info
-                .nonce;
-            let mut env = Env {
-                cfg: data.env.cfg.clone(),
-                block: BlockEnv {
-                    basefee: U256::ZERO,
-                    gas_limit: U256::MAX,
-                    ..data.env.block.clone()
-                },
-                tx: TxEnv {
-                    caller: call.caller,
-                    transact_to: revm::primitives::TransactTo::Create(call.scheme),
-                    data: call.init_code.clone(),
-                    value: call.value,
-                    gas_limit: call.gas_limit,
-                    nonce: Some(nonce),
-                    gas_price: U256::ZERO,
-                    ..data.env.tx.clone()
-                },
-            };
-
-            self.in_inner_context = true;
-            let Ok(res) = evm_inner(&mut env, data.db, Some(self)).transact() else {
-                self.in_inner_context = false;
-                return (InstructionResult::Revert, None, Gas::new(call.gas_limit), Bytes::new());
-            };
-            self.in_inner_context = false;
-            let mut gas = Gas::new(call.gas_limit);
-
-            merge_states(&mut data.journaled_state.state, res.state);
-
-            match res.result {
-                ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
-                    gas.set_refund(gas_refunded as i64);
-                    gas.record_cost(gas_used);
-                    let address = match output {
-                        Output::Create(_, address) => address,
-                        _ => unreachable!(),
-                    };
-                    return (eval_to_instruction_result(reason), address, gas, output.into_data());
-                }
-                ExecutionResult::Halt { reason, gas_used } => {
-                    gas.record_cost(gas_used);
-                    return (halt_to_instruction_result(reason), None, gas, Bytes::new());
-                }
-                ExecutionResult::Revert { gas_used, output } => {
-                    gas.record_cost(gas_used);
-                    return (InstructionResult::Revert, None, gas, output);
-                }
-            }
+            return self.transact_inner(
+                data,
+                TransactTo::Create(call.scheme),
+                call.caller,
+                call.init_code.clone(),
+                call.gas_limit,
+                call.value,
+            );
         }
 
         (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
