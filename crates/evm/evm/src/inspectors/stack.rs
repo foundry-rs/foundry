@@ -564,9 +564,12 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 },
             };
             self.in_inner_context = true;
-            let res = evm_inner(&mut env, data.db, Some(self))
-                .transact()
-                .expect("error while transacting");
+
+            let Ok(res) = evm_inner(&mut env, data.db, Some(self)).transact() else {
+                self.in_inner_context = false;
+                return (InstructionResult::Revert, Gas::new(call.gas_limit), Bytes::new());
+            };
+
             self.in_inner_context = false;
             let mut gas = Gas::new(call.gas_limit);
 
@@ -680,9 +683,10 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             };
 
             self.in_inner_context = true;
-            let res = evm_inner(&mut env, data.db, Some(self))
-                .transact()
-                .expect("error while transacting");
+            let Ok(res) = evm_inner(&mut env, data.db, Some(self)).transact() else {
+                self.in_inner_context = false;
+                return (InstructionResult::Revert, None, Gas::new(call.gas_limit), Bytes::new());
+            };
             self.in_inner_context = false;
             let mut gas = Gas::new(call.gas_limit);
 
