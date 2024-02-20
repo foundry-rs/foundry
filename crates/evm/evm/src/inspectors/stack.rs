@@ -14,7 +14,8 @@ use foundry_evm_traces::CallTraceArena;
 use revm::{
     evm_inner,
     interpreter::{
-        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Stack,
+        return_revert, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter,
+        Stack,
     },
     primitives::{BlockEnv, Env, ExecutionResult, Output, State, TxEnv},
     DatabaseCommit, EVMData, Inspector,
@@ -536,7 +537,10 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             self,
             data
         );
-        if !call.is_static && !self.in_inner_context && data.journaled_state.depth == 1 {
+        if call.context.scheme == CallScheme::Call &&
+            !self.in_inner_context &&
+            data.journaled_state.depth == 1
+        {
             data.db.commit(data.journaled_state.state.clone());
             let nonce = data
                 .journaled_state
