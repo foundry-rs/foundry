@@ -552,7 +552,7 @@ forgetest_init!(
         pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
         let config = cmd.config();
-        let remappings = config.get_all_remappings();
+        let remappings = config.get_all_remappings().collect::<Vec<_>>();
         pretty_assertions::assert_eq!(
             remappings,
             vec![

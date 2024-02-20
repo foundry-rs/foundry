@@ -138,6 +138,9 @@ impl CoverageArgs {
                 project.solc_config.settings.via_ir = None;
             }
 
+            // Coverage analysis requires the Solc AST output.
+            project.solc_config.settings = project.solc_config.settings.with_ast();
+
             project
         };
 

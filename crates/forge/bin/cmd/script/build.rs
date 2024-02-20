@@ -59,7 +59,7 @@ impl ScriptArgs {
         let target = self.find_target(&project, &contracts)?.clone();
         script_config.target_contract = Some(target.clone());
 
-        let libraries = script_config.config.solc_settings()?.libraries;
+        let libraries = script_config.config.libraries_with_remappings()?;
         let linker = Linker::new(project.root(), contracts);
 
         let (highlevel_known_contracts, libraries, predeploy_libraries) = self.link_script_target(
