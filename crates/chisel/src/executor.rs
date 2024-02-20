@@ -787,7 +787,7 @@ impl Type {
                     // Array / bytes members
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
-                        "length" if ty.is_dynamic() || ty.is_array() => {
+                        "length" if ty.is_dynamic() || ty.is_array() || ty.is_fixed_bytes() => {
                             return Self::Builtin(DynSolType::Uint(256))
                         }
                         "pop" if ty.is_dynamic_array() => return ty,
@@ -1187,9 +1187,9 @@ impl Type {
                     Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes) | Some(DynSolType::String) => {
-                        Some(DynSolType::FixedBytes(1))
-                    }
+                    Some(DynSolType::Bytes) |
+                    Some(DynSolType::String) |
+                    Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
                     ty => ty,
                 }
             }
@@ -1228,6 +1228,10 @@ impl Type {
     #[inline]
     fn is_dynamic_array(&self) -> bool {
         matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
+    }
+
+    fn is_fixed_bytes(&self) -> bool {
+        matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
     }
 }
 
