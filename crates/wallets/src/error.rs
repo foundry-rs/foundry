@@ -23,4 +23,6 @@ pub enum WalletSignerError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     InvalidHex(#[from] FromHexError),
+    #[error("{0} cannot sign raw hashes")]
+    CannotSignRawHash(&'static str),
 }

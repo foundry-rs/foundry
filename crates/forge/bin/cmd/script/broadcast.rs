@@ -46,9 +46,8 @@ impl ScriptArgs {
         if already_broadcasted < deployment_sequence.transactions.len() {
             let required_addresses: HashSet<Address> = deployment_sequence
                 .typed_transactions()
-                .into_iter()
                 .skip(already_broadcasted)
-                .map(|(_, tx)| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
+                .map(|tx| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
                 .collect();
 
             let (send_kind, chain) = if self.unlocked {
@@ -61,8 +60,7 @@ impl ScriptArgs {
                 senders.extend(
                     deployment_sequence
                         .typed_transactions()
-                        .iter()
-                        .filter_map(|(_, tx)| tx.from().copied().map(|addr| addr.to_alloy())),
+                        .filter_map(|tx| tx.from().copied().map(|addr| addr.to_alloy())),
                 );
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
@@ -347,7 +345,7 @@ impl ScriptArgs {
                     }
                 } else if self.broadcast {
                     self.single_deployment(
-                        deployments.first_mut().expect("to be set."),
+                        deployments.first_mut().expect("missing deployment"),
                         script_config,
                         libraries,
                         verify,

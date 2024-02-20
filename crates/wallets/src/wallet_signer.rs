@@ -1,4 +1,5 @@
 use crate::error::WalletSignerError;
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use ethers_core::types::{
     transaction::{eip2718::TypedTransaction, eip712::Eip712},
@@ -150,6 +151,19 @@ impl Signer for &WalletSigner {
     fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
         let _ = chain_id;
         self
+    }
+}
+
+impl WalletSigner {
+    pub async fn sign_hash(&self, hash: &B256) -> Result<Signature> {
+        match self {
+            // TODO: AWS can sign hashes but utilities aren't exposed in ethers-signers.
+            // TODO: Implement with alloy-signer.
+            Self::Aws(_aws) => Err(WalletSignerError::CannotSignRawHash("AWS")),
+            Self::Ledger(_) => Err(WalletSignerError::CannotSignRawHash("Ledger")),
+            Self::Local(wallet) => wallet.sign_hash(hash.0.into()).map_err(Into::into),
+            Self::Trezor(_) => Err(WalletSignerError::CannotSignRawHash("Trezor")),
+        }
     }
 }
 

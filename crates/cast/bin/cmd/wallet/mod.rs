@@ -78,12 +78,13 @@ pub enum WalletSubcommands {
     /// Sign a message or typed data.
     #[clap(visible_alias = "s")]
     Sign {
-        /// The message or typed data to sign.
+        /// The message, typed data, or hash to sign.
         ///
-        /// Messages starting with 0x are expected to be hex encoded,
-        /// which get decoded before being signed.
+        /// Messages starting with 0x are expected to be hex encoded, which get decoded before
+        /// being signed.
+        ///
         /// The message will be prefixed with the Ethereum Signed Message header and hashed before
-        /// signing.
+        /// signing, unless `--no-hash` is provided.
         ///
         /// Typed data can be provided as a json string or a file name.
         /// Use --data flag to denote the message is a string of typed data.
@@ -92,14 +93,17 @@ pub enum WalletSubcommands {
         /// The data should be formatted as JSON.
         message: String,
 
-        /// If provided, the message will be treated as typed data.
+        /// Treat the message as JSON typed data.
         #[clap(long)]
         data: bool,
 
-        /// If provided, the message will be treated as a file name containing typed data. Requires
-        /// --data.
+        /// Treat the message as a file containing JSON typed data. Requires `--data`.
         #[clap(long, requires = "data")]
         from_file: bool,
+
+        /// Treat the message as a raw 32-byte hash and sign it directly without hashing it again.
+        #[clap(long, conflicts_with = "data")]
+        no_hash: bool,
 
         #[clap(flatten)]
         wallet: WalletOpts,
@@ -247,7 +251,7 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 println!("{}", addr.to_alloy().to_checksum(None));
             }
-            WalletSubcommands::Sign { message, data, from_file, wallet } => {
+            WalletSubcommands::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
                 let sig = if data {
                     let typed_data: TypedData = if from_file {
@@ -258,6 +262,8 @@ impl WalletSubcommands {
                         serde_json::from_str(&message)?
                     };
                     wallet.sign_typed_data(&typed_data).await?
+                } else if no_hash {
+                    wallet.sign_hash(&message.parse()?).await?
                 } else {
                     wallet.sign_message(Self::hex_str_to_bytes(&message)?).await?
                 };
