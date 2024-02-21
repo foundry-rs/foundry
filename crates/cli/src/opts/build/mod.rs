@@ -17,6 +17,7 @@ pub use self::paths::ProjectPathsArgs;
 pub struct CompilerArgs {
     /// Includes the AST as JSON in the compiler output.
     #[clap(long, help_heading = "Compiler options")]
+    #[serde(skip)]
     pub ast: bool,
 
     /// The target EVM version.
