@@ -50,41 +50,32 @@ impl ListArgs {
         // max number of senders to be shown for ledger and trezor signers
         let max_senders = 3;
 
-        // List ledger accounts
-        match list_opts.ledgers().await {
-            Ok(signers) => {
-                self.list_senders(signers.unwrap_or_default(), max_senders, "Ledger").await?
-            }
-            Err(e) => {
-                if !self.all {
-                    println!("{}", e)
+        macro_rules! list_signers {
+            ($signers:ident, $label: ident) => {
+                match $signers.await {
+                    Ok(signers) => {
+                        self.list_senders(signers.unwrap_or_default(), max_senders, $label).await?
+                    }
+                    Err(e) => {
+                        if !self.all {
+                            println!("{}", e)
+                        }
+                    }
                 }
-            }
+            };
         }
 
-        // List Trezor accounts
-        match list_opts.trezors().await {
-            Ok(signers) => {
-                self.list_senders(signers.unwrap_or_default(), max_senders, "Trezor").await?
-            }
-            Err(e) => {
-                if !self.all {
-                    println!("{}", e)
-                }
-            }
-        }
+        let label = "Ledger";
+        let signers = list_opts.ledgers();
+        list_signers!(signers, label);
 
-        // List AWS accounts
-        match list_opts.aws_signers().await {
-            Ok(signers) => {
-                self.list_senders(signers.unwrap_or_default(), max_senders, "AWS").await?
-            }
-            Err(e) => {
-                if !self.all {
-                    println!("{}", e)
-                }
-            }
-        }
+        let label = "Trezor";
+        let signers = list_opts.trezors();
+        list_signers!(signers, label);
+
+        let label = "AWS";
+        let signers = list_opts.aws_signers();
+        list_signers!(signers, label);
 
         Ok(())
     }
