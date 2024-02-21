@@ -116,15 +116,14 @@ impl CoverageArgs {
             }
 
             // print warning message
-            p_println!(!self.opts.silent => "{}",
-            Paint::yellow(
-            concat!(
-            "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, which can result in inaccurate source mappings.\n",
-            "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-            "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
-            "See more:\n",
-            "https://github.com/foundry-rs/foundry/issues/3357\n"
-            )));
+            let msg = Paint::yellow(concat!(
+                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
+                 which can result in inaccurate source mappings.\n",
+                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                "See more: https://github.com/foundry-rs/foundry/issues/3357",
+            ));
+            p_println!(!self.opts.silent => "{msg}");
 
             // Enable viaIR with minimum optimization
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
