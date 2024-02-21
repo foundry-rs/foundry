@@ -14,7 +14,8 @@ use foundry_evm_traces::CallTraceArena;
 use revm::{
     evm_inner,
     interpreter::{
-        return_revert, CallContext, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter, Stack, Transfer
+        return_revert, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter,
+        Stack,
     },
     primitives::{BlockEnv, Env, ExecutionResult, Output, State, TransactTo},
     DatabaseCommit, EVMData, Inspector,
@@ -229,6 +230,14 @@ pub struct InspectorData {
     pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct InnerContextData {
+    sender: Address,
+    original_origin: Address,
+    origin_sender_nonce: u64,
+    is_create: bool,
+}
+
 /// An inspector that calls multiple inspectors in sequence.
 ///
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
@@ -245,9 +254,7 @@ pub struct InspectorStack {
     pub tracer: Option<TracingInspector>,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
-    pub sender: Option<Address>,
-    pub needed_sender_nonce: Option<u64>,
-    pub original_origin: Option<Address>,
+    pub inner_context_data: Option<InnerContextData>,
 }
 
 impl InspectorStack {
@@ -433,19 +440,17 @@ impl InspectorStack {
         data.env.tx.gas_limit = std::cmp::min(gas_limit + 21000, data.env.block.gas_limit.to());
         data.env.tx.gas_price = U256::ZERO;
 
-        self.sender = Some(caller);
-        self.original_origin = Some(cached_env.tx.caller);
-
-        if matches!(transact_to, TransactTo::Call(_)) {
-            self.needed_sender_nonce = Some(nonce);
-        }
+        self.inner_context_data = Some(InnerContextData {
+            sender: data.env.tx.caller,
+            original_origin: cached_env.tx.caller,
+            origin_sender_nonce: nonce,
+            is_create: matches!(transact_to, TransactTo::Create(_)),
+        });
 
         self.in_inner_context = true;
         let res = evm_inner(data.env, data.db, Some(self)).transact();
         self.in_inner_context = false;
-        self.needed_sender_nonce = None;
-        self.sender = None;
-        self.original_origin = None;
+        self.inner_context_data = None;
 
         data.env.tx = cached_env.tx;
         data.env.block.basefee = cached_env.block.basefee;
@@ -478,6 +483,24 @@ impl InspectorStack {
                 (InstructionResult::Revert, None, gas, output)
             }
         }
+    }
+
+    /// Adjusts the EVM data for the inner EVM context.
+    /// Should be called on the top-level call of inner context (depth == 0 &&
+    /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
+    /// Updates tx.origin to the value before entering inner context
+    fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+        let inner_context_data =
+            self.inner_context_data.as_ref().expect("should be called in inner context");
+        let sender_acc = data
+            .journaled_state
+            .state
+            .get_mut(&inner_context_data.sender)
+            .expect("failed to load sender");
+        if !inner_context_data.is_create {
+            sender_acc.info.nonce = inner_context_data.origin_sender_nonce;
+        }
+        data.env.tx.caller = inner_context_data.original_origin;
     }
 }
 
@@ -586,7 +609,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
     ) -> (InstructionResult, Gas, Bytes) {
         if !(self.in_inner_context && data.journaled_state.depth == 0) {
             call_inspectors!(
-                [&mut self.tracer,],
+                [
+                    &mut self.fuzzer,
+                    &mut self.debugger,
+                    &mut self.tracer,
+                    &mut self.coverage,
+                    &mut self.log_collector,
+                    &mut self.cheatcodes,
+                    &mut self.printer
+                ],
                 |inspector| {
                     let (status, gas, retdata) = inspector.call(data, call);
 
@@ -601,19 +632,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 data
             );
         } else {
-            if let (Some(sender), Some(needed_nonce)) = (self.sender, self.needed_sender_nonce) {
-                let account = data
-                    .journaled_state
-                    .state
-                    .get_mut(&sender)
-                    .expect("failed to load sender");
-                account.info.nonce = needed_nonce;
-                self.needed_sender_nonce = None;
-            }
-            if let Some(original_origin) = self.original_origin {
-                data.env.tx.caller = original_origin;
-                self.original_origin = None;
-            }
+            self.adjust_evm_data_for_inner_context(data);
         }
 
         // We don't want to execute calls to cheatcodes as separate transactions because we may
@@ -633,28 +652,6 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             );
             return (res, gas, output);
         }
-        call_inspectors!(
-            [
-                &mut self.fuzzer,
-                &mut self.debugger,
-                &mut self.coverage,
-                &mut self.log_collector,
-                &mut self.cheatcodes,
-                &mut self.printer
-            ],
-            |inspector| {
-                let (status, gas, retdata) = inspector.call(data, call);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    Some((status, gas, retdata))
-                } else {
-                    None
-                }
-            },
-            self,
-            data
-        );
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -693,7 +690,14 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         if !(self.in_inner_context && data.journaled_state.depth == 0) {
             call_inspectors!(
-                [&mut self.tracer,],
+                [
+                    &mut self.debugger,
+                    &mut self.tracer,
+                    &mut self.coverage,
+                    &mut self.log_collector,
+                    &mut self.cheatcodes,
+                    &mut self.printer
+                ],
                 |inspector| {
                     let (status, addr, gas, retdata) = inspector.create(data, call);
 
@@ -708,19 +712,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 data
             );
         } else {
-            if let (Some(sender), Some(needed_nonce)) = (self.sender, self.needed_sender_nonce) {
-                let account = data
-                    .journaled_state
-                    .state
-                    .get_mut(&sender)
-                    .expect("failed to load sender");
-                account.info.nonce = needed_nonce;
-                self.needed_sender_nonce = None;
-            }
-            if let Some(original_origin) = self.original_origin {
-                data.env.tx.caller = original_origin;
-                self.original_origin = None;
-            }
+            self.adjust_evm_data_for_inner_context(data);
         }
 
         if !self.in_inner_context && data.journaled_state.depth == 1 {
@@ -733,27 +725,6 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 call.value,
             );
         }
-        call_inspectors!(
-            [
-                &mut self.debugger,
-                &mut self.coverage,
-                &mut self.log_collector,
-                &mut self.cheatcodes,
-                &mut self.printer
-            ],
-            |inspector| {
-                let (status, addr, gas, retdata) = inspector.create(data, call);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    Some((status, addr, gas, retdata))
-                } else {
-                    None
-                }
-            },
-            self,
-            data
-        );
 
         (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
