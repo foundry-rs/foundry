@@ -40,7 +40,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         max_fee_per_gas,
         max_priority_fee_per_gas,
         max_fee_per_blob_gas,
-        blob_versioned_hashes,
+        mut blob_versioned_hashes,
         gas,
         value,
         input,
@@ -73,7 +73,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         max_priority_fee_per_gas,
         access_list.take(),
         max_fee_per_blob_gas,
-        blob_versioned_hashes,
+        blob_versioned_hashes.take(),
     ) {
         // legacy transaction
         (Some(0), _, None, None, None, None, None) |
@@ -129,12 +129,12 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, Some(max_fee_per_blob_gas), Some(blob_versioned_hashes)) => {
+        (Some(3), None, _, _, _, Some(_), Some(_)) => {
             Some(TypedTransactionRequest::EIP4844(TxEip4844 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default().to::<u128>(),
                 max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
-                max_fee_per_blob_gas: max_fee_per_blob_gas.to::<u128>(),
+                max_fee_per_blob_gas: max_fee_per_blob_gas.unwrap_or_default().to::<u128>(),
                 gas_limit: gas.unwrap_or_default().to::<u64>(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
@@ -144,7 +144,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 },
                 chain_id: 0,
                 access_list: to_eip_access_list(access_list.unwrap_or_default()),
-                blob_versioned_hashes,
+                blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
             }))
         }
         _ => None,
@@ -763,6 +763,16 @@ impl TypedTransaction {
         matches!(self, TypedTransaction::EIP1559(_))
     }
 
+    /// Returns true whether this tx is a EIP2930 transaction
+    pub fn is_eip2930(&self) -> bool {
+        matches!(self, TypedTransaction::EIP2930(_))
+    }
+
+    /// Returns true whether this tx is a EIP4844 transaction
+    pub fn is_eip4844(&self) -> bool {
+        matches!(self, TypedTransaction::EIP4844(_))
+    }
+
     /// Returns the hash of the transaction.
     ///
     /// Note: If this transaction has the Impersonated signature then this returns a modified unique
@@ -883,6 +893,9 @@ impl Decodable for TypedTransaction {
                 } else if tx_type == 0x02 {
                     buf.advance(1);
                     <Signed<TxEip1559> as Decodable>::decode(buf).map(TypedTransaction::EIP1559)
+                } else if tx_type == 0x03 {
+                    buf.advance(1);
+                    <Signed<TxEip4844> as Decodable>::decode(buf).map(TypedTransaction::EIP4844)
                 } else if tx_type == 0x7E {
                     buf.advance(1);
                     <DepositTransaction as Decodable>::decode(buf).map(TypedTransaction::Deposit)
@@ -1158,6 +1171,39 @@ mod tests {
             tx.recover_signer().unwrap(),
             "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse::<Address>().unwrap()
         );
+    }
+
+    // Test vector from https://sepolia.etherscan.io/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+    // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+    #[test]
+    fn test_decode_live_4844_tx() {
+        use alloy_primitives::{address, b256};
+
+        // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+        let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
+        let res = TypedTransaction::decode(&mut raw_tx.as_slice()).unwrap();
+        assert_eq!(res.r#type(), Some(3));
+
+        let tx = match res {
+            TypedTransaction::EIP4844(tx) => tx,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(tx.tx().to, TxKind::Call(address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064")));
+
+        assert_eq!(
+            tx.tx().blob_versioned_hashes,
+            vec![
+                b256!("012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
+                b256!("0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
+                b256!("013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
+                b256!("01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
+                b256!("011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
+            ]
+        );
+
+        let from = tx.recover_signer().unwrap();
+        assert_eq!(from, address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
     }
 
     #[test]
