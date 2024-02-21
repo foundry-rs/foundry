@@ -14,7 +14,7 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt;
+use solang_parser::{diagnostics::Diagnostic, pt};
 use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
@@ -665,16 +665,26 @@ pub fn parse_fragment(
 
     match base.clone().with_run_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Function),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
     match base.clone().with_top_level_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Contract),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
     match base.with_global_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Source),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
 
     None
+}
+
+fn debug_errors(errors: &[Diagnostic]) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
+    for error in errors {
+        tracing::debug!("error: {}", error.message);
+    }
 }

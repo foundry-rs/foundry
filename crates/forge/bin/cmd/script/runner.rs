@@ -1,4 +1,4 @@
-use super::*;
+use super::ScriptResult;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use forge::{
@@ -7,7 +7,8 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
-use foundry_common::types::ToEthers;
+use foundry_config::Config;
+use yansi::Paint;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -91,17 +92,9 @@ impl ScriptRunner {
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
-        {
+        let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
             self.executor.backend.set_test_contract(address);
-            (
-                true,
-                0,
-                Default::default(),
-                None,
-                vec![constructor_debug].into_iter().collect(),
-                vec![],
-            )
+            (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
             match self.executor.setup(Some(self.sender), address) {
                 Ok(CallResult {
@@ -112,7 +105,6 @@ impl ScriptRunner {
                     debug,
                     gas_used,
                     transactions,
-                    script_wallets,
                     ..
                 }) => {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
@@ -126,7 +118,6 @@ impl ScriptRunner {
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
-                        script_wallets,
                     )
                 }
                 Err(EvmError::Execution(err)) => {
@@ -138,7 +129,6 @@ impl ScriptRunner {
                         debug,
                         gas_used,
                         transactions,
-                        script_wallets,
                         ..
                     } = *err;
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
@@ -152,7 +142,6 @@ impl ScriptRunner {
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
-                        script_wallets,
                     )
                 }
                 Err(e) => return Err(e.into()),
@@ -171,7 +160,6 @@ impl ScriptRunner {
                 traces,
                 debug,
                 address: None,
-                script_wallets: script_wallets.to_ethers(),
                 ..Default::default()
             },
         ))
@@ -277,17 +265,7 @@ impl ScriptRunner {
             res = self.executor.call_raw_committing(from, to, calldata, value)?;
         }
 
-        let RawCallResult {
-            result,
-            reverted,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            script_wallets,
-            ..
-        } = res;
+        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
@@ -306,7 +284,6 @@ impl ScriptRunner {
             labeled_addresses: labels,
             transactions,
             address: None,
-            script_wallets: script_wallets.to_ethers(),
             breakpoints,
         })
     }

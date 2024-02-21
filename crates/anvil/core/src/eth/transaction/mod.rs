@@ -975,7 +975,7 @@ pub fn to_eip_access_list(
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Receipt;
-    use alloy_primitives::{b256, hex, LogData, Signature};
+    use alloy_primitives::{b256, hex, LogData};
     use std::str::FromStr;
 
     use super::*;

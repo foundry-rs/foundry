@@ -1304,8 +1304,6 @@ impl EthApi {
             return Err(FeeHistoryError::InvalidBlockRange.into());
         }
 
-        let fee_history = self.fee_history_cache.lock();
-
         let mut response = FeeHistory {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
@@ -1314,30 +1312,34 @@ impl EthApi {
             base_fee_per_blob_gas: Default::default(),
             blob_gas_used_ratio: Default::default(),
         };
-
         let mut rewards = Vec::new();
-        // iter over the requested block range
-        for n in lowest..=highest {
-            // <https://eips.ethereum.org/EIPS/eip-1559>
-            if let Some(block) = fee_history.get(&n) {
-                response.base_fee_per_gas.push(U256::from(block.base_fee));
-                response.gas_used_ratio.push(block.gas_used_ratio);
 
-                // requested percentiles
-                if !reward_percentiles.is_empty() {
-                    let mut block_rewards = Vec::new();
-                    let resolution_per_percentile: f64 = 2.0;
-                    for p in &reward_percentiles {
-                        let p = p.clamp(0.0, 100.0);
-                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                        let reward = if let Some(r) = block.rewards.get(index as usize) {
-                            U256::from(*r)
-                        } else {
-                            U256::ZERO
-                        };
-                        block_rewards.push(reward);
+        {
+            let fee_history = self.fee_history_cache.lock();
+
+            // iter over the requested block range
+            for n in lowest..=highest {
+                // <https://eips.ethereum.org/EIPS/eip-1559>
+                if let Some(block) = fee_history.get(&n) {
+                    response.base_fee_per_gas.push(U256::from(block.base_fee));
+                    response.gas_used_ratio.push(block.gas_used_ratio);
+
+                    // requested percentiles
+                    if !reward_percentiles.is_empty() {
+                        let mut block_rewards = Vec::new();
+                        let resolution_per_percentile: f64 = 2.0;
+                        for p in &reward_percentiles {
+                            let p = p.clamp(0.0, 100.0);
+                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                            let reward = if let Some(r) = block.rewards.get(index as usize) {
+                                U256::from(*r)
+                            } else {
+                                U256::ZERO
+                            };
+                            block_rewards.push(reward);
+                        }
+                        rewards.push(block_rewards);
                     }
-                    rewards.push(block_rewards);
                 }
             }
         }
@@ -1345,6 +1347,9 @@ impl EthApi {
         response.reward = Some(rewards);
 
         // calculate next base fee
+        // The spec states that `base_fee_per_gas` "[..] includes the next block after the
+        // newest of the returned range, because this value can be derived from the
+        // newest block"
         if let (Some(last_gas_used), Some(last_fee_per_gas)) =
             (response.gas_used_ratio.last(), response.base_fee_per_gas.last())
         {

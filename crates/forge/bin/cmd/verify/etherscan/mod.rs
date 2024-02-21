@@ -486,7 +486,6 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 mod tests {
     use super::*;
     use clap::Parser;
-    use foundry_cli::utils::LoadConfig;
     use foundry_common::fs;
     use foundry_test_utils::forgetest_async;
     use tempfile::tempdir;

@@ -1,11 +1,10 @@
 //! IPC tests
 
+use crate::utils::ethers_ipc_provider;
 use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
-use ethers::{core::rand, prelude::Middleware};
+use ethers::prelude::Middleware;
 use futures::StreamExt;
-
-use crate::utils::ethers_ipc_provider;
 
 pub fn rand_ipc_endpoint() -> String {
     let num: u64 = rand::Rng::gen(&mut rand::thread_rng());

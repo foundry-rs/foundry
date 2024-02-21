@@ -17,6 +17,7 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
+foundry-wallets.workspace = true
 
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
@@ -26,6 +27,7 @@ alloy-sol-types.workspace = true
 alloy-providers.workspace = true
 alloy-rpc-types.workspace = true
 alloy-signer = { workspace = true, features = ["mnemonic", "keystore"] }
+parking_lot = "0.12"
 
 
 eyre.workspace = true
