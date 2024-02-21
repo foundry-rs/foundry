@@ -583,6 +583,50 @@ casttest!(storage, |_prj, cmd| {
     assert_eq!(cmd.stdout_lossy().trim(), issued);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/6319>
+casttest!(storage_layout, |_prj, cmd| {
+    cmd.cast_fuse().args([
+        "storage",
+        "--rpc-url",
+        "https://mainnet.optimism.io",
+        "--block",
+        "110000000",
+        "--etherscan-api-key",
+        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
+        "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
+    ]);
+    let output = r#"| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
+|-------------------------------|-----------------------------------------------------------------|------|--------|-------|---------------------------------------------------|--------------------------------------------------------------------|----------------------------------------------------|
+| gov                           | address                                                         | 0    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
+| _status                       | uint256                                                         | 1    | 0      | 32    | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| admin                         | address                                                         | 2    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
+| feeCalculator                 | address                                                         | 3    | 0      | 20    | 1297482016264593221714872710065075000476194625473 | 0x000000000000000000000000e3451b170806aab3e24b5cd03a331c1ccdb4d7c1 | contracts/perp/PositionManager.sol:PositionManager |
+| oracle                        | address                                                         | 4    | 0      | 20    | 241116142622541106669066767052022920958068430970  | 0x0000000000000000000000002a3c0592dcb58accd346ccee2bb46e3fb744987a | contracts/perp/PositionManager.sol:PositionManager |
+| referralStorage               | address                                                         | 5    | 0      | 20    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| minExecutionFee               | uint256                                                         | 6    | 0      | 32    | 20000                                             | 0x0000000000000000000000000000000000000000000000000000000000004e20 | contracts/perp/PositionManager.sol:PositionManager |
+| minBlockDelayKeeper           | uint256                                                         | 7    | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| minTimeExecuteDelayPublic     | uint256                                                         | 8    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
+| minTimeCancelDelayPublic      | uint256                                                         | 9    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
+| maxTimeDelay                  | uint256                                                         | 10   | 0      | 32    | 1800                                              | 0x0000000000000000000000000000000000000000000000000000000000000708 | contracts/perp/PositionManager.sol:PositionManager |
+| isUserExecuteEnabled          | bool                                                            | 11   | 0      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| isUserCancelEnabled           | bool                                                            | 11   | 1      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| allowPublicKeeper             | bool                                                            | 11   | 2      | 1     | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| allowUserCloseOnly            | bool                                                            | 11   | 3      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequestKeys       | bytes32[]                                                       | 12   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequestKeys      | bytes32[]                                                       | 13   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequestKeysStart  | uint256                                                         | 14   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequestKeysStart | uint256                                                         | 15   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
+| isPositionKeeper              | mapping(address => bool)                                        | 16   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionsIndex            | mapping(address => uint256)                                     | 17   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequests          | mapping(bytes32 => struct PositionManager.OpenPositionRequest)  | 18   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionsIndex           | mapping(address => uint256)                                     | 19   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequests         | mapping(bytes32 => struct PositionManager.ClosePositionRequest) | 20   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| managers                      | mapping(address => bool)                                        | 21   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| approvedManagers              | mapping(address => mapping(address => bool))                    | 22   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+"#;
+    assert_eq!(cmd.stdout_lossy(), output);
+});
+
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
