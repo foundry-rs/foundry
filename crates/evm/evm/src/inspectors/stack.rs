@@ -14,8 +14,7 @@ use foundry_evm_traces::CallTraceArena;
 use revm::{
     evm_inner,
     interpreter::{
-        return_revert, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter,
-        Stack,
+        return_revert, CallContext, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter, Stack, Transfer
     },
     primitives::{BlockEnv, Env, ExecutionResult, Output, State, TransactTo},
     DatabaseCommit, EVMData, Inspector,
@@ -246,6 +245,9 @@ pub struct InspectorStack {
     pub tracer: Option<TracingInspector>,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
+    pub sender: Option<Address>,
+    pub needed_sender_nonce: Option<u64>,
+    pub original_origin: Option<Address>,
 }
 
 impl InspectorStack {
@@ -421,7 +423,7 @@ impl InspectorStack {
 
         data.env.block.basefee = U256::ZERO;
         data.env.tx.caller = caller;
-        data.env.tx.transact_to = transact_to;
+        data.env.tx.transact_to = transact_to.clone();
         data.env.tx.data = input;
         data.env.tx.value = value;
         data.env.tx.nonce = Some(nonce);
@@ -431,9 +433,19 @@ impl InspectorStack {
         data.env.tx.gas_limit = std::cmp::min(gas_limit + 21000, data.env.block.gas_limit.to());
         data.env.tx.gas_price = U256::ZERO;
 
+        self.sender = Some(caller);
+        self.original_origin = Some(cached_env.tx.caller);
+
+        if matches!(transact_to, TransactTo::Call(_)) {
+            self.needed_sender_nonce = Some(nonce);
+        }
+
         self.in_inner_context = true;
         let res = evm_inner(data.env, data.db, Some(self)).transact();
         self.in_inner_context = false;
+        self.needed_sender_nonce = None;
+        self.sender = None;
+        self.original_origin = None;
 
         data.env.tx = cached_env.tx;
         data.env.block.basefee = cached_env.block.basefee;
@@ -588,6 +600,20 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 self,
                 data
             );
+        } else {
+            if let (Some(sender), Some(needed_nonce)) = (self.sender, self.needed_sender_nonce) {
+                let account = data
+                    .journaled_state
+                    .state
+                    .get_mut(&sender)
+                    .expect("failed to load sender");
+                account.info.nonce = needed_nonce;
+                self.needed_sender_nonce = None;
+            }
+            if let Some(original_origin) = self.original_origin {
+                data.env.tx.caller = original_origin;
+                self.original_origin = None;
+            }
         }
 
         // We don't want to execute calls to cheatcodes as separate transactions because we may
@@ -681,7 +707,22 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 self,
                 data
             );
+        } else {
+            if let (Some(sender), Some(needed_nonce)) = (self.sender, self.needed_sender_nonce) {
+                let account = data
+                    .journaled_state
+                    .state
+                    .get_mut(&sender)
+                    .expect("failed to load sender");
+                account.info.nonce = needed_nonce;
+                self.needed_sender_nonce = None;
+            }
+            if let Some(original_origin) = self.original_origin {
+                data.env.tx.caller = original_origin;
+                self.original_origin = None;
+            }
         }
+
         if !self.in_inner_context && data.journaled_state.depth == 1 {
             return self.transact_inner(
                 data,
