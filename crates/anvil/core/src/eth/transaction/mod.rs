@@ -935,6 +935,7 @@ pub enum TypedReceipt {
     Legacy(ReceiptWithBloom),
     EIP2930(ReceiptWithBloom),
     EIP1559(ReceiptWithBloom),
+    EIP4844(ReceiptWithBloom),
     Deposit(ReceiptWithBloom),
 }
 
@@ -944,6 +945,7 @@ impl TypedReceipt {
             TypedReceipt::Legacy(r) |
             TypedReceipt::EIP1559(r) |
             TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => U256::from(r.receipt.cumulative_gas_used),
         }
     }
@@ -953,6 +955,7 @@ impl TypedReceipt {
             TypedReceipt::Legacy(r) |
             TypedReceipt::EIP1559(r) |
             TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => &r.bloom,
         }
     }
@@ -964,6 +967,7 @@ impl From<TypedReceipt> for ReceiptWithBloom {
             TypedReceipt::Legacy(r) |
             TypedReceipt::EIP1559(r) |
             TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => r,
         }
     }
@@ -979,6 +983,7 @@ impl Encodable for TypedReceipt {
                 let payload_len = match receipt {
                     TypedReceipt::EIP2930(r) => r.length() + 1,
                     TypedReceipt::EIP1559(r) => r.length() + 1,
+                    TypedReceipt::EIP4844(r) => r.length() + 1,
                     TypedReceipt::Deposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
@@ -992,6 +997,11 @@ impl Encodable for TypedReceipt {
                     TypedReceipt::EIP1559(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         2u8.encode(out);
+                        r.encode(out);
+                    }
+                    TypedReceipt::EIP4844(r) => {
+                        Header { list: true, payload_length: payload_len }.encode(out);
+                        3u8.encode(out);
                         r.encode(out);
                     }
                     TypedReceipt::Deposit(r) => {
@@ -1032,6 +1042,9 @@ impl Decodable for TypedReceipt {
                 } else if receipt_type == 0x02 {
                     buf.advance(1);
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP1559)
+                } else if receipt_type == 0x03 {
+                    buf.advance(1);
+                    <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP4844)
                 } else if receipt_type == 0x7E {
                     buf.advance(1);
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::Deposit)
