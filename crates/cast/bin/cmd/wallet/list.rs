@@ -33,7 +33,7 @@ pub struct ListArgs {
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
         // list local accounts as files in keystore dir, no need to unlock / provide password
-        if self.dir.is_some() || self.all || !self.ledger && !self.trezor && !self.aws {
+        if self.dir.is_some() || self.all || (!self.ledger && !self.trezor && !self.aws) {
             self.list_local_senders().await?;
         }
 
@@ -43,17 +43,7 @@ impl ListArgs {
             .mnemonic_indexes(Some(vec![0]))
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
-            .froms(None)
             .interactives(0)
-            .private_keys(None)
-            .private_key(None)
-            .mnemonics(None)
-            .mnemonic_passphrases(None)
-            .hd_paths(None)
-            .keystore_paths(None)
-            .keystore_account_names(None)
-            .keystore_passwords(None)
-            .keystore_password_files(None)
             .build()
             .expect("build multi wallet");
 
@@ -102,9 +92,8 @@ impl ListArgs {
     async fn list_local_senders(&self) -> Result<()> {
         let keystore_path = self.dir.clone().unwrap_or_default();
         let keystore_dir = if keystore_path.is_empty() {
-            let default_dir = Config::foundry_keystores_dir()
-                .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
-            // Create the keystore directory if it doesn't exist
+            // Create the keystore default directory if it doesn't exist
+            let default_dir = Config::foundry_keystores_dir().unwrap();
             fs::create_dir_all(&default_dir)?;
             default_dir
         } else {
