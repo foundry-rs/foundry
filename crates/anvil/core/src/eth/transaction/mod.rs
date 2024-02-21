@@ -71,12 +71,13 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         gas_price,
         max_fee_per_gas,
         max_priority_fee_per_gas,
+        access_list.take(),
         max_fee_per_blob_gas,
         blob_versioned_hashes,
-        access_list.take(),
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None) | (None, Some(_), None, None, None) => {
+        (Some(0), _, None, None, None, None, None) |
+        (None, Some(_), None, None, None, None, None) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 gas_price: gas_price.unwrap_or_default().to::<u128>(),
@@ -91,7 +92,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _) | (None, _, None, None, Some(_)) => {
+        (Some(1), _, None, None, _, None, None) | (None, _, None, None, Some(_), None, None) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 gas_price: gas_price.unwrap_or_default().to(),
@@ -107,10 +108,10 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _) |
-        (None, None, Some(_), _, _) |
-        (None, None, _, Some(_), _) |
-        (None, None, None, None, None) => {
+        (Some(2), None, _, _, _, _, _) |
+        (None, None, Some(_), _, _, _, _) |
+        (None, None, _, Some(_), _, _, _) |
+        (None, None, None, None, None, _, _) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
@@ -125,6 +126,25 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 },
                 chain_id: 0,
                 access_list: to_eip_access_list(access_list.unwrap_or_default()),
+            }))
+        }
+        // EIP4844
+        (Some(3), None, _, _, _, Some(max_fee_per_blob_gas), Some(blob_versioned_hashes)) => {
+            Some(TypedTransactionRequest::EIP4844(TxEip4844 {
+                nonce: nonce.unwrap_or_default().to::<u64>(),
+                max_fee_per_gas: max_fee_per_gas.unwrap_or_default().to::<u128>(),
+                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
+                max_fee_per_blob_gas: max_fee_per_blob_gas.to::<u128>(),
+                gas_limit: gas.unwrap_or_default().to::<u64>(),
+                value: value.unwrap_or(U256::ZERO),
+                input: input.into_input().unwrap_or_default(),
+                to: match to {
+                    Some(to) => TxKind::Call(to),
+                    None => TxKind::Create,
+                },
+                chain_id: 0,
+                access_list: to_eip_access_list(access_list.unwrap_or_default()),
+                blob_versioned_hashes,
             }))
         }
         _ => None,
@@ -345,7 +365,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             access_list: Some(from_eip_to_alloy_access_list(t.access_list.clone()).0),
             transaction_type: Some(U64::from(3)),
             max_fee_per_blob_gas: Some(U128::from(t.max_fee_per_blob_gas)),
-            blob_versioned_hashes: t.blob_versioned_hashes,
+            blob_versioned_hashes: t.blob_versioned_hashes.clone(),
             other: Default::default(),
         },
         TypedTransaction::Deposit(t) => RpcTransaction {
@@ -520,7 +540,7 @@ impl PendingTransaction {
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
                     max_fee_per_blob_gas: Some(U256::from(*max_fee_per_blob_gas)),
-                    blob_hashes: blob_versioned_hashes,
+                    blob_hashes: blob_versioned_hashes.clone(),
                     gas_limit: *gas_limit,
                     access_list: eip_to_revm_access_list(access_list.0.clone()),
                     ..Default::default()
