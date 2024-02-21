@@ -3,7 +3,6 @@ use super::{
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
-use alloy_signer::LocalWallet;
 use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
