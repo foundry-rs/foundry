@@ -318,6 +318,8 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Whether to include the AST as JSON in the compiler output.
+    pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
     /// Disables storage caching entirely. This overrides any settings made in
@@ -1064,7 +1066,7 @@ impl Config {
             }
         }
 
-        Ok(Settings {
+        let mut settings = Settings {
             libraries: self.libraries_with_remappings()?,
             optimizer: self.optimizer(),
             evm_version: Some(self.evm_version),
@@ -1087,7 +1089,13 @@ impl Config {
             // Set with `with_extra_output` below.
             output_selection: Default::default(),
         }
-        .with_extra_output(self.configured_artifacts_handler().output_selection()))
+        .with_extra_output(self.configured_artifacts_handler().output_selection());
+
+        if self.ast {
+            settings = settings.with_ast();
+        }
+
+        Ok(settings)
     }
 
     /// Returns the default figment
@@ -1877,6 +1885,7 @@ impl Default for Config {
             ignored_file_paths: vec![],
             deny_warnings: false,
             via_ir: false,
+            ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),

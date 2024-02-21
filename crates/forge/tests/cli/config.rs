@@ -98,6 +98,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         ignored_file_paths: vec![],
         deny_warnings: false,
         via_ir: true,
+        ast: false,
         rpc_storage_caching: StorageCachingConfig {
             chains: CachedChains::None,
             endpoints: CachedEndpoints::Remote,

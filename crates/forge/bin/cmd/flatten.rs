@@ -36,11 +36,10 @@ impl FlattenArgs {
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };
-        let config = build_args.try_load_config_emit_warnings()?;
-        let mut project = config.ephemeral_no_artifacts_project()?;
-
+        let mut config = build_args.try_load_config_emit_warnings()?;
         // `Flattener` uses the typed AST for better flattening results.
-        project.solc_config.settings = project.solc_config.settings.with_ast();
+        config.ast = true;
+        let project = config.ephemeral_no_artifacts_project()?;
 
         let target_path = dunce::canonicalize(target_path)?;
         let compiler_output = ProjectCompiler::new().files([target_path.clone()]).compile(&project);

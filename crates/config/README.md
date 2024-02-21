@@ -138,6 +138,7 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+ast = false
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
