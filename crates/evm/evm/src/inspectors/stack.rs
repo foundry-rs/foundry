@@ -6,6 +6,7 @@ use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_signer::LocalWallet;
 use foundry_evm_core::{
     backend::DatabaseExt,
+    constants::CHEATCODE_ADDRESS,
     debug::DebugArena,
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
@@ -427,14 +428,15 @@ impl InspectorStack {
         let cached_env = data.env.clone();
 
         data.env.block.basefee = U256::ZERO;
-        data.env.block.gas_limit = U256::MAX;
         data.env.tx.caller = caller;
         data.env.tx.transact_to = transact_to;
         data.env.tx.data = input;
         data.env.tx.value = value;
         data.env.tx.nonce = Some(nonce);
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        data.env.tx.gas_limit = gas_limit + 21000;
+        // We might have modified block gas limit earlier and revm will reject tx with gas limit >
+        // block gas limit, so we adjust.
+        data.env.tx.gas_limit = std::cmp::min(gas_limit + 21000, data.env.block.gas_limit.to());
         data.env.tx.gas_price = U256::ZERO;
 
         self.in_inner_context = true;
@@ -443,7 +445,6 @@ impl InspectorStack {
 
         data.env.tx = cached_env.tx;
         data.env.block.basefee = cached_env.block.basefee;
-        data.env.block.gas_limit = cached_env.block.gas_limit;
 
         let mut gas = Gas::new(gas_limit);
 
@@ -579,16 +580,45 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
-        // Avoid processing twice.
-        if self.in_inner_context && data.journaled_state.depth == 0 {
-            return (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new());
+        if !(self.in_inner_context && data.journaled_state.depth == 0) {
+            call_inspectors!(
+                [&mut self.tracer,],
+                |inspector| {
+                    let (status, gas, retdata) = inspector.call(data, call);
+
+                    // Allow inspectors to exit early
+                    if status != InstructionResult::Continue {
+                        Some((status, gas, retdata))
+                    } else {
+                        None
+                    }
+                },
+                self,
+                data
+            );
+        }
+
+        // We don't want to execute calls to cheatcodes as separate transactions because we may
+        // occur `selectFork` which replaces journaled state.
+        if call.contract != CHEATCODE_ADDRESS &&
+            call.context.scheme == CallScheme::Call &&
+            !self.in_inner_context &&
+            data.journaled_state.depth == 1
+        {
+            let (res, _, gas, output) = self.transact_inner(
+                data,
+                TransactTo::Call(call.contract),
+                call.context.caller,
+                call.input.clone(),
+                call.gas_limit,
+                call.transfer.value,
+            );
+            return (res, gas, output);
         }
         call_inspectors!(
             [
                 &mut self.fuzzer,
                 &mut self.debugger,
-                &mut self.tracer,
                 &mut self.coverage,
                 &mut self.log_collector,
                 &mut self.cheatcodes,
@@ -607,20 +637,6 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             self,
             data
         );
-        if call.context.scheme == CallScheme::Call &&
-            !self.in_inner_context &&
-            data.journaled_state.depth == 1
-        {
-            let (res, _, gas, output) = self.transact_inner(
-                data,
-                TransactTo::Call(call.contract),
-                call.context.caller,
-                call.input.clone(),
-                call.gas_limit,
-                call.transfer.value,
-            );
-            return (res, gas, output);
-        }
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -657,15 +673,36 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
-        // Avoid processing twice.
-        if self.in_inner_context && data.journaled_state.depth == 0 {
-            return (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new());
+        if !(self.in_inner_context && data.journaled_state.depth == 0) {
+            call_inspectors!(
+                [&mut self.tracer,],
+                |inspector| {
+                    let (status, addr, gas, retdata) = inspector.create(data, call);
+
+                    // Allow inspectors to exit early
+                    if status != InstructionResult::Continue {
+                        Some((status, addr, gas, retdata))
+                    } else {
+                        None
+                    }
+                },
+                self,
+                data
+            );
+        }
+        if !self.in_inner_context && data.journaled_state.depth == 1 {
+            return self.transact_inner(
+                data,
+                TransactTo::Create(call.scheme),
+                call.caller,
+                call.init_code.clone(),
+                call.gas_limit,
+                call.value,
+            );
         }
         call_inspectors!(
             [
                 &mut self.debugger,
-                &mut self.tracer,
                 &mut self.coverage,
                 &mut self.log_collector,
                 &mut self.cheatcodes,
@@ -684,16 +721,6 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             self,
             data
         );
-        if !self.in_inner_context && data.journaled_state.depth == 1 {
-            return self.transact_inner(
-                data,
-                TransactTo::Create(call.scheme),
-                call.caller,
-                call.init_code.clone(),
-                call.gas_limit,
-                call.value,
-            );
-        }
 
         (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }

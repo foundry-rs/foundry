@@ -274,7 +274,7 @@ contract PrankTest is DSTest {
     function testPrankConstructorSender(address sender) public {
         vm.prank(sender);
         ConstructorVictim victim = new ConstructorVictim(
-            sender, "msg.sender was not set during prank", tx.origin, "tx.origin invariant failed"
+            sender, "msg.sender was not set during prank", address(this), "tx.origin invariant failed"
         );
 
         // Ensure we cleaned up correctly
