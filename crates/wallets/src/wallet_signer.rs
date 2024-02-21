@@ -68,7 +68,6 @@ impl WalletSigner {
         match self {
             WalletSigner::Local(local) => {
                 senders.push(local.address());
-                Ok(senders)
             }
             WalletSigner::Ledger(ledger) => {
                 for i in 0..max {
@@ -85,7 +84,6 @@ impl WalletSigner {
                         senders.push(address);
                     }
                 }
-                Ok(senders)
             }
             WalletSigner::Trezor(trezor) => {
                 for i in 0..max {
@@ -95,13 +93,12 @@ impl WalletSigner {
                         senders.push(address);
                     }
                 }
-                Ok(senders)
             }
             WalletSigner::Aws(aws) => {
                 senders.push(aws.address());
-                Ok(senders)
             }
         }
+        Ok(senders)
     }
 
     pub fn from_mnemonic(

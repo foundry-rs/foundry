@@ -10,31 +10,35 @@ use foundry_wallets::{multi_wallet::MultiWalletOptsBuilder, WalletSigner};
 pub struct ListArgs {
     /// List all the accounts in the keystore directory.
     /// Default keystore directory is used if no path provided.
-    #[clap(long, default_missing_value = "", num_args(0..=1), help_heading = "List local accounts")]
+    #[clap(long, default_missing_value = "", num_args(0..=1))]
     dir: Option<String>,
 
     /// List accounts from a Ledger hardware wallet.
-    #[clap(long, short, help_heading = "List Ledger hardware wallet accounts")]
+    #[clap(long, short, group = "hw-wallets")]
     ledger: bool,
 
     /// List accounts from a Trezor hardware wallet.
-    #[clap(long, short, help_heading = "List Trezor hardware wallet accounts")]
+    #[clap(long, short, group = "hw-wallets")]
     trezor: bool,
 
     /// List accounts from AWS KMS.
-    #[clap(long, help_heading = "List AWS KMS account")]
+    #[clap(long)]
     aws: bool,
 
     /// List all configured accounts.
-    #[clap(long, help_heading = "List all accounts")]
+    #[clap(long, group = "hw-wallets")]
     all: bool,
+
+    /// Max number of addresses to display from hardware wallets.
+    #[clap(long, short, default_value = "3", requires = "hw-wallets")]
+    max_senders: Option<usize>,
 }
 
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
         // list local accounts as files in keystore dir, no need to unlock / provide password
         if self.dir.is_some() || self.all || (!self.ledger && !self.trezor && !self.aws) {
-            self.list_local_senders().await?;
+            let _ = self.list_local_senders();
         }
 
         // Create options for multi wallet - ledger, trezor and AWS
@@ -47,14 +51,16 @@ impl ListArgs {
             .build()
             .expect("build multi wallet");
 
-        // max number of senders to be shown for ledger and trezor signers
-        let max_senders = 3;
-
         macro_rules! list_signers {
             ($signers:ident, $label: ident) => {
                 match $signers.await {
                     Ok(signers) => {
-                        self.list_senders(signers.unwrap_or_default(), max_senders, $label).await?
+                        self.list_senders(
+                            signers.unwrap_or_default(),
+                            self.max_senders.unwrap(),
+                            $label,
+                        )
+                        .await?
                     }
                     Err(e) => {
                         if !self.all {
@@ -80,7 +86,7 @@ impl ListArgs {
         Ok(())
     }
 
-    async fn list_local_senders(&self) -> Result<()> {
+    fn list_local_senders(&self) -> Result<()> {
         let keystore_path = self.dir.clone().unwrap_or_default();
         let keystore_dir = if keystore_path.is_empty() {
             // Create the keystore default directory if it doesn't exist
@@ -91,25 +97,17 @@ impl ListArgs {
             dunce::canonicalize(keystore_path)?
         };
 
-        match std::fs::read_dir(keystore_dir) {
-            Ok(entries) => {
-                entries.flatten().for_each(|entry| {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().is_none() {
-                        if let Some(file_name) = path.file_name() {
-                            if let Some(name) = file_name.to_str() {
-                                println!("{} (Local)", name);
-                            }
-                        }
+        // list files within keystore dir
+        std::fs::read_dir(keystore_dir)?.flatten().for_each(|entry| {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_none() {
+                if let Some(file_name) = path.file_name() {
+                    if let Some(name) = file_name.to_str() {
+                        println!("{} (Local)", name);
                     }
-                });
-            }
-            Err(e) => {
-                if !self.all {
-                    println!("{}", e)
                 }
             }
-        }
+        });
 
         Ok(())
     }
@@ -121,16 +119,11 @@ impl ListArgs {
         label: &str,
     ) -> eyre::Result<()> {
         for signer in signers.iter() {
-            match signer.available_senders(max_senders).await {
-                Ok(senders) => {
-                    senders.iter().for_each(|sender| println!("{} ({})", sender.to_alloy(), label));
-                }
-                Err(e) => {
-                    if !self.all {
-                        println!("{}", e)
-                    }
-                }
-            }
+            signer
+                .available_senders(max_senders)
+                .await?
+                .iter()
+                .for_each(|sender| println!("{} ({})", sender.to_alloy(), label));
         }
 
         Ok(())
