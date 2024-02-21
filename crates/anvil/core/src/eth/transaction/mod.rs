@@ -108,10 +108,10 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _, _, _) |
-        (None, None, Some(_), _, _, _, _) |
-        (None, None, _, Some(_), _, _, _) |
-        (None, None, None, None, None, _, _) => {
+        (Some(2), None, _, _, _, _, None) |
+        (None, None, Some(_), _, _, _, None) |
+        (None, None, _, Some(_), _, _, None) |
+        (None, None, None, None, None, _, None) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
