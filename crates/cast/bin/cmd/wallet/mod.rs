@@ -1,16 +1,13 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Signature};
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},
     LocalWallet, MnemonicBuilder, Signer as AlloySigner,
 };
 use clap::Parser;
-use ethers_core::types::{transaction::eip712::TypedData, Signature};
+use ethers_core::types::transaction::eip712::TypedData;
 use ethers_signers::Signer;
 use eyre::{Context, Result};
-use foundry_common::{
-    fs,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
@@ -276,13 +273,11 @@ impl WalletSubcommands {
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                match signature.verify(Self::hex_str_to_bytes(&message)?, address.to_ethers()) {
-                    Ok(_) => {
-                        println!("Validation succeeded. Address {address} signed this message.")
-                    }
-                    Err(_) => {
-                        println!("Validation failed. Address {address} did not sign this message.")
-                    }
+                let recovered_address = signature.recover_address_from_msg(message)?;
+                if recovered_address == address {
+                    println!("Validation succeeded. Address {address} signed this message.");
+                } else {
+                    println!("Validation failed. Address {address} did not sign this message.");
                 }
             }
             WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
