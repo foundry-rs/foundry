@@ -635,10 +635,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             self.adjust_evm_data_for_inner_context(data);
         }
 
-        // We don't want to execute calls to cheatcodes as separate transactions because we may
-        // occur `selectFork` which replaces journaled state.
-        if call.contract != CHEATCODE_ADDRESS &&
-            call.context.scheme == CallScheme::Call &&
+        if call.context.scheme == CallScheme::Call &&
             !self.in_inner_context &&
             data.journaled_state.depth == 1
         {
