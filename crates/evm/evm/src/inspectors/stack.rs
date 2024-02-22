@@ -205,15 +205,12 @@ macro_rules! call_inspectors {
     }
 }
 
-fn merge_states(main_state: &mut State, new_state: State) {
-    for (addr, acc) in new_state {
-        if main_state.contains_key(&addr) {
-            let acc_mut = main_state.get_mut(&addr).unwrap();
-            acc_mut.status |= acc.status;
-            acc_mut.info = acc.info;
-            acc_mut.storage.extend(acc.storage);
-        } else {
-            main_state.insert(addr, acc);
+/// Helper method which updates data in the state with the data from the database.
+fn update_state<DB: DatabaseExt>(state: &mut State, db: &mut DB) {
+    for (addr, acc) in state.iter_mut() {
+        acc.info = db.basic(*addr).unwrap().unwrap_or_default();
+        for (key, val) in acc.storage.iter_mut() {
+            val.present_value = db.storage(*addr, *key).unwrap();
         }
     }
 }
@@ -233,7 +230,7 @@ pub struct InspectorData {
 pub struct InnerContextData {
     sender: Address,
     original_origin: Address,
-    origin_sender_nonce: u64,
+    original_sender_nonce: u64,
     is_create: bool,
 }
 
@@ -442,10 +439,9 @@ impl InspectorStack {
         self.inner_context_data = Some(InnerContextData {
             sender: data.env.tx.caller,
             original_origin: cached_env.tx.caller,
-            origin_sender_nonce: nonce,
+            original_sender_nonce: nonce,
             is_create: matches!(transact_to, TransactTo::Create(_)),
         });
-
         self.in_inner_context = true;
         let res = evm_inner(data.env, data.db, Some(self)).transact();
         self.in_inner_context = false;
@@ -456,12 +452,31 @@ impl InspectorStack {
 
         let mut gas = Gas::new(gas_limit);
 
-        let Ok(res) = res else {
+        let Ok(mut res) = res else {
             // Should we match, encode and propagate error as a revert reason?
             return (InstructionResult::Revert, None, gas, Bytes::new());
         };
 
-        merge_states(&mut data.journaled_state.state, res.state);
+        // Commit changes after transaction
+        data.db.commit(res.state.clone());
+
+        // Update both states with new DB data after commit.
+        update_state(&mut data.journaled_state.state, data.db);
+        update_state(&mut res.state, data.db);
+
+        // Merge transaction journal into the active journal.
+        for (addr, acc) in res.state {
+            if let Some(acc_mut) = data.journaled_state.state.get_mut(&addr) {
+                acc_mut.status |= acc.status;
+                for (key, val) in acc.storage {
+                    if !acc_mut.storage.contains_key(&key) {
+                        acc_mut.storage.insert(key, val);
+                    }
+                }
+            } else {
+                data.journaled_state.state.insert(addr, acc);
+            }
+        }
 
         match res.result {
             ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
@@ -497,7 +512,7 @@ impl InspectorStack {
             .get_mut(&inner_context_data.sender)
             .expect("failed to load sender");
         if !inner_context_data.is_create {
-            sender_acc.info.nonce = inner_context_data.origin_sender_nonce;
+            sender_acc.info.nonce = inner_context_data.original_sender_nonce;
         }
         data.env.tx.caller = inner_context_data.original_origin;
     }
