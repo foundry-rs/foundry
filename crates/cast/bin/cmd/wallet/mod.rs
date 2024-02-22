@@ -1,12 +1,10 @@
-use alloy_primitives::{Address};
+use alloy_primitives::Address;
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},
     LocalWallet, MnemonicBuilder, Signer as AlloySigner,
 };
 use clap::Parser;
-use ethers_core::{
-    types::{transaction::eip712::TypedData, Signature},
-};
+use ethers_core::types::{transaction::eip712::TypedData, Signature};
 use ethers_signers::Signer;
 use eyre::{Context, Result};
 use foundry_common::{
