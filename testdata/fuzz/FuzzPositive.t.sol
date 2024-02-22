@@ -15,5 +15,4 @@ contract FuzzPositive is DSTest {
     function testSuccessChecker3(uint32 val) public {
         assert(val + 0 == val);
     }
-
 }

@@ -5,7 +5,6 @@ import "ds-test/test.sol";
 
 // See https://github.com/foundry-rs/foundry/pull/735 for context
 contract FuzzNumbersTest is DSTest {
-
     function testPositive(int256) public {
         assertTrue(true);
     }

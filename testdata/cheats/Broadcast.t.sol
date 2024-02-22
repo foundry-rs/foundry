@@ -94,7 +94,7 @@ contract BroadcastTest is DSTest {
     }
 
     function deployOther() public {
-        vm.startBroadcast(ACCOUNT_A); 
+        vm.startBroadcast(ACCOUNT_A);
         Test tmptest = new Test();
         Test test = new Test();
 

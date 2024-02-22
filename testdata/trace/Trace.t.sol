@@ -7,7 +7,7 @@ contract RecursiveCall {
     TraceTest factory;
 
     event Depth(uint256 depth);
-    event ChildDepth(uint256 childDepth); 
+    event ChildDepth(uint256 childDepth);
     event CreatedChild(uint256 childDepth);
 
     constructor(address _factory) {

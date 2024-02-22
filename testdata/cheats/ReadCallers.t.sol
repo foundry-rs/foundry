@@ -14,7 +14,7 @@ contract ReadCallersTest is DSTest {
     function testReadCallersWithNoActivePrankOrBroadcast() public {
         address expectedSender = msg.sender;
         address expectedTxOrigin = tx.origin;
- 
+
         (Vm.CallerMode mode, address newSender, address newOrigin) = vm.readCallers();
 
         assertEq(uint256(mode), uint256(Vm.CallerMode.None));
