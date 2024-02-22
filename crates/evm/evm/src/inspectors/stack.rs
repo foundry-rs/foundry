@@ -50,6 +50,8 @@ pub struct InspectorStackBuilder {
     pub print: Option<bool>,
     /// The chisel state inspector.
     pub chisel_state: Option<usize>,
+    /// Whether to enable call isolation.
+    pub enable_isolation: bool,
 }
 
 impl InspectorStackBuilder {
@@ -129,6 +131,13 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable the call isolation.
+    #[inline]
+    pub fn enable_isolation(mut self, yes: bool) -> Self {
+        self.enable_isolation = yes;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     ///
     /// See also [`revm::Evm::inspect_ref`] and [`revm::Evm::commit_ref`].
@@ -144,6 +153,7 @@ impl InspectorStackBuilder {
             coverage,
             print,
             chisel_state,
+            enable_isolation,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -162,6 +172,8 @@ impl InspectorStackBuilder {
         stack.enable_debugger(debug.unwrap_or(false));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace.unwrap_or(false));
+
+        stack.enable_isolation(enable_isolation);
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -248,6 +260,8 @@ pub struct InspectorStack {
     pub log_collector: Option<LogCollector>,
     pub printer: Option<TracePrinter>,
     pub tracer: Option<TracingInspector>,
+    pub enable_isolation: bool,
+
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
@@ -315,6 +329,12 @@ impl InspectorStack {
     #[inline]
     pub fn enable_debugger(&mut self, yes: bool) {
         self.debugger = yes.then(Default::default);
+    }
+
+    /// Set whether to enable call isolation.
+    #[inline]
+    pub fn enable_isolation(&mut self, yes: bool) {
+        self.enable_isolation = yes;
     }
 
     /// Set whether to enable the log collector.
@@ -649,7 +669,8 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             self.adjust_evm_data_for_inner_context(data);
         }
 
-        if call.context.scheme == CallScheme::Call &&
+        if self.enable_isolation &&
+            call.context.scheme == CallScheme::Call &&
             !self.in_inner_context &&
             data.journaled_state.depth == 1
         {
@@ -726,7 +747,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             self.adjust_evm_data_for_inner_context(data);
         }
 
-        if !self.in_inner_context && data.journaled_state.depth == 1 {
+        if self.enable_isolation && !self.in_inner_context && data.journaled_state.depth == 1 {
             return self.transact_inner(
                 data,
                 TransactTo::Create(call.scheme),
