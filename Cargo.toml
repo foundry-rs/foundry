@@ -135,7 +135,7 @@ foundry-wallets = { path = "crates/wallets" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.6", default-features = false }
+foundry-compilers = { version = "0.3.8", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
