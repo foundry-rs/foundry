@@ -4,6 +4,7 @@ use crate::{
 };
 use alloy_primitives::Address;
 use clap::Parser;
+use derive_builder::Builder;
 use ethers_signers::Signer;
 use eyre::Result;
 use foundry_common::types::ToAlloy;
@@ -87,7 +88,7 @@ macro_rules! create_hw_wallets {
 /// 5. Private Keys (cleartext in CLI)
 /// 6. Private Keys (interactively via secure prompt)
 /// 7. AWS KMS
-#[derive(Clone, Debug, Default, Serialize, Parser)]
+#[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
     /// The sender accounts.
@@ -99,6 +100,7 @@ pub struct MultiWalletOpts {
         env = "ETH_FROM",
         num_args(0..),
     )]
+    #[builder(default = "None")]
     pub froms: Option<Vec<Address>>,
 
     /// Open an interactive prompt to enter your private key.
@@ -115,6 +117,7 @@ pub struct MultiWalletOpts {
 
     /// Use the provided private keys.
     #[clap(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
+    #[builder(default = "None")]
     pub private_keys: Option<Vec<String>>,
 
     /// Use the provided private key.
@@ -124,14 +127,17 @@ pub struct MultiWalletOpts {
         conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY"
     )]
+    #[builder(default = "None")]
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrases of mnemonic files at the specified paths.
     #[clap(long, alias = "mnemonic-paths", help_heading = "Wallet options - raw")]
+    #[builder(default = "None")]
     pub mnemonics: Option<Vec<String>>,
 
     /// Use a BIP39 passphrases for the mnemonic.
     #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
+    #[builder(default = "None")]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
     /// The wallet derivation path.
@@ -143,6 +149,7 @@ pub struct MultiWalletOpts {
         help_heading = "Wallet options - raw",
         value_name = "PATH"
     )]
+    #[builder(default = "None")]
     pub hd_paths: Option<Vec<String>>,
 
     /// Use the private key from the given mnemonic index.
@@ -165,6 +172,7 @@ pub struct MultiWalletOpts {
         value_name = "PATHS",
         env = "ETH_KEYSTORE"
     )]
+    #[builder(default = "None")]
     pub keystore_paths: Option<Vec<String>>,
 
     /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
@@ -176,6 +184,7 @@ pub struct MultiWalletOpts {
         env = "ETH_KEYSTORE_ACCOUNT",
         conflicts_with = "keystore_paths"
     )]
+    #[builder(default = "None")]
     pub keystore_account_names: Option<Vec<String>>,
 
     /// The keystore password.
@@ -187,6 +196,7 @@ pub struct MultiWalletOpts {
         requires = "keystore_paths",
         value_name = "PASSWORDS"
     )]
+    #[builder(default = "None")]
     pub keystore_passwords: Option<Vec<String>>,
 
     /// The keystore password file path.
@@ -199,6 +209,7 @@ pub struct MultiWalletOpts {
         value_name = "PATHS",
         env = "ETH_PASSWORD"
     )]
+    #[builder(default = "None")]
     pub keystore_password_files: Option<Vec<String>>,
 
     /// Use a Ledger hardware wallet.
