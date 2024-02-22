@@ -3,7 +3,7 @@ use eyre::Result;
 
 use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
-use foundry_wallets::{multi_wallet::MultiWalletOptsBuilder, WalletSigner};
+use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]
@@ -51,16 +51,18 @@ impl ListArgs {
             .build()
             .expect("build multi wallet");
 
-        macro_rules! list_signers {
+        // macro to print senders for a list of signers
+        macro_rules! list_senders {
             ($signers:ident, $label: ident) => {
                 match $signers.await {
                     Ok(signers) => {
-                        self.list_senders(
-                            &signers.unwrap_or_default(),
-                            self.max_senders.unwrap(),
-                            $label,
-                        )
-                        .await?
+                        for signer in signers.unwrap_or_default().iter() {
+                            signer
+                                .available_senders(self.max_senders.unwrap())
+                                .await?
+                                .iter()
+                                .for_each(|sender| println!("{} ({})", sender.to_alloy(), $label));
+                        }
                     }
                     Err(e) => {
                         if !self.all {
@@ -73,15 +75,15 @@ impl ListArgs {
 
         let label = "Ledger";
         let signers = list_opts.ledgers();
-        list_signers!(signers, label);
+        list_senders!(signers, label);
 
         let label = "Trezor";
         let signers = list_opts.trezors();
-        list_signers!(signers, label);
+        list_senders!(signers, label);
 
         let label = "AWS";
         let signers = list_opts.aws_signers();
-        list_signers!(signers, label);
+        list_senders!(signers, label);
 
         Ok(())
     }
@@ -108,23 +110,6 @@ impl ListArgs {
                 }
             }
         });
-
-        Ok(())
-    }
-
-    async fn list_senders(
-        &self,
-        signers: &[WalletSigner],
-        max_senders: usize,
-        label: &str,
-    ) -> Result<()> {
-        for signer in signers.iter() {
-            signer
-                .available_senders(max_senders)
-                .await?
-                .iter()
-                .for_each(|sender| println!("{} ({})", sender.to_alloy(), label));
-        }
 
         Ok(())
     }
