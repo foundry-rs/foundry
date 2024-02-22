@@ -5,7 +5,6 @@ use super::{
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_evm_core::{
     backend::DatabaseExt,
-    constants::CHEATCODE_ADDRESS,
     debug::DebugArena,
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
