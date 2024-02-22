@@ -56,7 +56,7 @@ impl ListArgs {
                 match $signers.await {
                     Ok(signers) => {
                         self.list_senders(
-                            signers.unwrap_or_default(),
+                            &signers.unwrap_or_default(),
                             self.max_senders.unwrap(),
                             $label,
                         )
@@ -114,10 +114,10 @@ impl ListArgs {
 
     async fn list_senders(
         &self,
-        signers: Vec<WalletSigner>,
+        signers: &[WalletSigner],
         max_senders: usize,
         label: &str,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         for signer in signers.iter() {
             signer
                 .available_senders(max_senders)
