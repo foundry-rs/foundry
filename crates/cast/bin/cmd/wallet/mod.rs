@@ -1,18 +1,23 @@
-use alloy_primitives::{Address, Signature, B256};
+use alloy_primitives::{Address};
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},
     LocalWallet, MnemonicBuilder, Signer as AlloySigner,
 };
 use clap::Parser;
-use ethers_core::types::transaction::eip712::TypedData;
+use ethers_core::{
+    types::{transaction::eip712::TypedData, Signature},
+};
 use ethers_signers::Signer;
 use eyre::{Context, Result};
-use foundry_common::{fs, types::ToAlloy};
+use foundry_common::{
+    fs,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
 use serde_json::json;
-use std::{path::Path, str::FromStr};
+use std::path::Path;
 use yansi::Paint;
 
 pub mod vanity;
@@ -273,12 +278,13 @@ impl WalletSubcommands {
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                let recovered_address =
-                    signature.recover_address_from_prehash(&B256::from_str(&message)?)?;
-                if recovered_address == address {
-                    println!("Validation succeeded. Address {address} signed this message.");
-                } else {
-                    println!("Validation failed. Address {address} did not sign this message.");
+                match signature.verify(Self::hex_str_to_bytes(&message)?, address.to_ethers()) {
+                    Ok(_) => {
+                        println!("Validation succeeded. Address {address} signed this message.")
+                    }
+                    Err(_) => {
+                        println!("Validation failed. Address {address} did not sign this message.")
+                    }
                 }
             }
             WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
