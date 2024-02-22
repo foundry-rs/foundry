@@ -53,7 +53,7 @@ impl ListArgs {
 
         // macro to print senders for a list of signers
         macro_rules! list_senders {
-            ($signers:ident, $label: ident) => {
+            ($signers:expr, $label:literal) => {
                 match $signers.await {
                     Ok(signers) => {
                         for signer in signers.unwrap_or_default().iter() {
@@ -73,17 +73,9 @@ impl ListArgs {
             };
         }
 
-        let label = "Ledger";
-        let signers = list_opts.ledgers();
-        list_senders!(signers, label);
-
-        let label = "Trezor";
-        let signers = list_opts.trezors();
-        list_senders!(signers, label);
-
-        let label = "AWS";
-        let signers = list_opts.aws_signers();
-        list_senders!(signers, label);
+        list_senders!(list_opts.ledgers(), "Ledger");
+        list_senders!(list_opts.trezors(), "Trezor");
+        list_senders!(list_opts.aws_signers(), "AWS");
 
         Ok(())
     }
