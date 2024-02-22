@@ -8623,8 +8623,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "foundry-compilers"
-version = "0.3.8"
-source = "git+https://github.com/foundry-rs/compilers?branch=dani/i-love-solc#a94508f7ce9cf612db19a5282f0629f61bea414a"
