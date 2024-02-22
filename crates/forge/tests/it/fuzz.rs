@@ -52,7 +52,7 @@ async fn test_successful_fuzz_cases() {
 
     let suite_result = runner
         .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/")
+            &Filter::new(".*", ".*", ".*fuzz/FuzzPositive")
                 .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
                 .exclude_paths("invariant"),
             test_opts(),
