@@ -3092,8 +3092,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.8"
-source = "git+https://github.com/foundry-rs/compilers?branch=dani/i-love-solc#a94508f7ce9cf612db19a5282f0629f61bea414a"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1b77c95e79bff02ddaa38426fc6809a3a438dce0e6a2eb212dac97da7c157b4"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -8622,3 +8623,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "foundry-compilers"
+version = "0.3.8"
+source = "git+https://github.com/foundry-rs/compilers?branch=dani/i-love-solc#a94508f7ce9cf612db19a5282f0629f61bea414a"
