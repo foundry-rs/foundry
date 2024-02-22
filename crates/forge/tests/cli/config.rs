@@ -380,7 +380,7 @@ contract Foo {}
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
     prj.add_source(
-        "foo.sol",
+        "Foo",
         r"
 contract Foo {
     function bar() public pure {
@@ -405,7 +405,12 @@ contract Foo {
         ..Default::default()
     };
     prj.write_config(config);
-    cmd.assert_success();
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "
+Compiler run successful!
+",
+    ));
 });
 
 // tests that the lib triple can be parsed
