@@ -143,6 +143,11 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
+        // Explicitly enable isolation for gas reports for more correct gas accounting
+        if self.gas_report {
+            evm_opts.isolate = true;
+        }
+
         // Set up the project.
         let mut project = config.project()?;
 
@@ -197,7 +202,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
             .with_test_options(test_options.clone())
-            .enable_isolation(self.gas_report)
+            .enable_isolation(self.evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
 
         if let Some(debug_test_pattern) = &self.debug {

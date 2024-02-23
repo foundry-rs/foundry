@@ -372,6 +372,11 @@ pub struct Config {
     /// Should be removed once EvmVersion Cancun is supported by solc
     pub cancun: bool,
 
+    /// Whether to enable call isolation.
+    ///
+    /// Useful for more correct gas accounting and EVM behavior in general.
+    pub isolate: bool,
+
     /// Address labels
     pub labels: HashMap<Address, String>,
 
@@ -1808,6 +1813,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             cancun: false,
+            isolate: false,
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),

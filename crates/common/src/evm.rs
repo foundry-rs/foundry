@@ -139,6 +139,11 @@ pub struct EvmArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
+
+    /// Whether to enable isolation of calls.
+    #[clap(long)]
+    #[serde(skip)]
+    pub isolate: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -159,6 +164,10 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.isolate {
+            dict.insert("isolate".to_string(), self.isolate.into());
         }
 
         if self.no_storage_caching {

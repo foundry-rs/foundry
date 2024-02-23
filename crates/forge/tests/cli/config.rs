@@ -119,6 +119,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         fs_permissions: Default::default(),
         labels: Default::default(),
         cancun: true,
+        isolate: true,
         __non_exhaustive: (),
         __warnings: vec![],
     };
