@@ -69,6 +69,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         invariant: InvariantConfig { runs: 256, ..Default::default() },
         ffi: true,
+        always_use_create_2_factory: false,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
@@ -381,7 +382,7 @@ contract Foo {}
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
     prj.add_source(
-        "Foo",
+        "foo.sol",
         r"
 contract Foo {
     function bar() public pure {
@@ -406,12 +407,7 @@ contract Foo {
         ..Default::default()
     };
     prj.write_config(config);
-
-    assert!(cmd.stdout_lossy().ends_with(
-        "
-Compiler run successful!
-",
-    ));
+    cmd.assert_success();
 });
 
 // tests that the lib triple can be parsed

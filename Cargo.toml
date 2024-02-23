@@ -135,7 +135,7 @@ foundry-wallets = { path = "crates/wallets" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.6", default-features = false }
+foundry-compilers = { version = "0.3.9", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -181,10 +181,7 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "std",
-] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
 derive_more = "0.99"
 eyre = "0.6"
