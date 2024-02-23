@@ -28,6 +28,11 @@ pub struct InvariantConfig {
     pub shrink_sequence: bool,
     /// The maximum number of attempts to shrink the sequence
     pub shrink_run_limit: usize,
+    /// If set to true then VM state is committed and available for next call
+    /// Useful for handlers that use cheatcodes as roll or warp
+    /// Applies only when `fail_on_revert` set to true. Use it with caution, introduces performance
+    /// penalty.
+    pub preserve_state: bool,
 }
 
 impl Default for InvariantConfig {
@@ -40,6 +45,7 @@ impl Default for InvariantConfig {
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18_u32),
+            preserve_state: false,
         }
     }
 }
@@ -68,6 +74,7 @@ impl InlineConfigParser for InvariantConfig {
                 "fail-on-revert" => conf_clone.fail_on_revert = parse_config_bool(key, value)?,
                 "call-override" => conf_clone.call_override = parse_config_bool(key, value)?,
                 "shrink-sequence" => conf_clone.shrink_sequence = parse_config_bool(key, value)?,
+                "preserve-state" => conf_clone.preserve_state = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
