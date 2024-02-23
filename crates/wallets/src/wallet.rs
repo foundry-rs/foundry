@@ -130,8 +130,8 @@ of the unlocked account you want to use, or provide the --from flag with the add
         Ok(signer)
     }
 
-    /// This function prefers the `from` field and may return a different address from the configured
-    /// signer
+    /// This function prefers the `from` field and may return a different address from the
+    /// configured signer
     /// If from is specified, returns it
     /// If from is not specified, but there is a signer configured, returns the signer's address
     /// If from is not specified and there is no signer configured, returns zero address
