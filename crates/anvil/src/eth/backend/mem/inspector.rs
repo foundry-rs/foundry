@@ -69,12 +69,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         topics: &[B256],
         data: &Bytes,
     ) {
-        call_inspectors!(
-            [&mut self.tracer, Some(&mut self.log_collector)],
-            |inspector| {
-                inspector.log(evm_data, address, topics, data);
-            }
-        );
+        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
+            inspector.log(evm_data, address, topics, data);
+        });
     }
 
     #[inline]
@@ -90,12 +87,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!(
-            [&mut self.tracer, Some(&mut self.log_collector)],
-            |inspector| {
-                inspector.call(data, call);
-            }
-        );
+        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
+            inspector.call(data, call);
+        });
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
