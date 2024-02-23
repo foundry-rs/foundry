@@ -193,24 +193,27 @@ impl InspectorStackBuilder {
 macro_rules! call_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{$(
         if let Some($id) = $inspector {
-            // Allow inspector to exit early
-            if let Some(result) = $call {
-                return result;
-            }
+            $call
         }
-    )+}};
+    )+}}
+}
+
+/// Same as [call_inspectors] macro, but with depth adjustment for isolated execution.
+macro_rules! call_inspectors_adjust_depth {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr, $self:ident, $data:ident $(,)?) => {
         if $self.in_inner_context {
             $data.journaled_state.depth += 1;
         }
-        call_inspectors!([$($inspector),+], |$id| {
-            $call.map(|result| {
-                if $self.in_inner_context {
-                    $data.journaled_state.depth -= 1;
+        {$(
+            if let Some($id) = $inspector {
+                if let Some(result) = $call {
+                    if $self.in_inner_context {
+                        $data.journaled_state.depth -= 1;
+                    }
+                    return result;
                 }
-                result
-            })
-        });
+            }
+        )+}
         if $self.in_inner_context {
             $data.journaled_state.depth -= 1;
         }
@@ -393,7 +396,7 @@ impl InspectorStack {
         status: InstructionResult,
         retdata: Bytes,
     ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!(
+        call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
                 &mut self.debugger,
@@ -541,7 +544,7 @@ impl InspectorStack {
 impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let res = interpreter.instruction_result;
-        call_inspectors!(
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.coverage,
@@ -567,7 +570,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
 
     fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let res = interpreter.instruction_result;
-        call_inspectors!(
+        call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
                 &mut self.debugger,
@@ -599,7 +602,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         topics: &[B256],
         data: &Bytes,
     ) {
-        call_inspectors!(
+        call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 inspector.log(evm_data, address, topics, data);
@@ -612,7 +615,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
 
     fn step_end(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let res = interpreter.instruction_result;
-        call_inspectors!(
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.tracer,
@@ -642,7 +645,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         if !(self.in_inner_context && data.journaled_state.depth == 0) {
-            call_inspectors!(
+            call_inspectors_adjust_depth!(
                 [
                     &mut self.fuzzer,
                     &mut self.debugger,
@@ -721,7 +724,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         if !(self.in_inner_context && data.journaled_state.depth == 0) {
-            call_inspectors!(
+            call_inspectors_adjust_depth!(
                 [
                     &mut self.debugger,
                     &mut self.tracer,
@@ -775,7 +778,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         if self.in_inner_context && data.journaled_state.depth == 0 {
             return (status, address, remaining_gas, retdata);
         }
-        call_inspectors!(
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.tracer,
@@ -819,7 +822,6 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             ],
             |inspector| {
                 Inspector::<DB>::selfdestruct(inspector, contract, target, value);
-                None
             }
         );
     }

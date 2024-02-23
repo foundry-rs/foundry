@@ -51,7 +51,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn initialize_interp(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.initialize_interp(interp, data);
-            None
         });
     }
 
@@ -59,7 +58,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step(interp, data);
-            None
         });
     }
 
@@ -71,17 +69,18 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         topics: &[B256],
         data: &Bytes,
     ) {
-        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            inspector.log(evm_data, address, topics, data);
-            None
-        });
+        call_inspectors!(
+            [&mut self.tracer, Some(&mut self.log_collector)],
+            |inspector| {
+                inspector.log(evm_data, address, topics, data);
+            }
+        );
     }
 
     #[inline]
     fn step_end(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step_end(interp, data);
-            None
         });
     }
 
@@ -91,10 +90,12 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            inspector.call(data, call);
-            None
-        });
+        call_inspectors!(
+            [&mut self.tracer, Some(&mut self.log_collector)],
+            |inspector| {
+                inspector.call(data, call);
+            }
+        );
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -110,7 +111,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.call_end(data, inputs, remaining_gas, ret, out.clone());
-            None
         });
         (ret, remaining_gas, out)
     }
@@ -123,7 +123,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.create(data, call);
-            None
         });
 
         (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
@@ -141,7 +140,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.create_end(data, inputs, status, address, gas, retdata.clone());
-            None
         });
         (status, address, gas, retdata)
     }
