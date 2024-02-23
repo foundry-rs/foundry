@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Signature, B256};
+use alloy_primitives::{Address, Signature};
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},
     LocalWallet, MnemonicBuilder, Signer as AlloySigner,
@@ -12,7 +12,7 @@ use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
 use serde_json::json;
-use std::{path::Path, str::FromStr};
+use std::path::Path;
 use yansi::Paint;
 
 pub mod vanity;
@@ -273,9 +273,8 @@ impl WalletSubcommands {
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                let recovered_address =
-                    signature.recover_address_from_prehash(&B256::from_str(&message)?)?;
-                if recovered_address == address {
+                let recovered_address = Self::recover_address_from_message(&message, &signature)?;
+                if address == recovered_address {
                     println!("Validation succeeded. Address {address} signed this message.");
                 } else {
                     println!("Validation failed. Address {address} did not sign this message.");
@@ -355,6 +354,11 @@ flag to set your key via:
         Ok(())
     }
 
+    /// Recovers an address from the specified message and signature
+    fn recover_address_from_message(message: &str, signature: &Signature) -> Result<Address> {
+        Ok(signature.recover_address_from_msg(message)?)
+    }
+
     fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>> {
         Ok(match s.strip_prefix("0x") {
             Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
@@ -365,6 +369,10 @@ flag to set your key via:
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use alloy_primitives::address;
+
     use super::*;
 
     #[test]
@@ -391,6 +399,17 @@ mod tests {
             }
             _ => panic!("expected WalletSubcommands::Sign"),
         }
+    }
+
+    #[test]
+    fn can_verify_signed_hex_message() {
+        let message = "hello";
+        let signature = Signature::from_str("f2dd00eac33840c04b6fc8a5ec8c4a47eff63575c2bc7312ecb269383de0c668045309c423484c8d097df306e690c653f8e1ec92f7f6f45d1f517027771c3e801c").unwrap();
+        let address = address!("28A4F420a619974a2393365BCe5a7b560078Cc13");
+        let recovered_address =
+            WalletSubcommands::recover_address_from_message(message, &signature);
+        assert!(recovered_address.is_ok());
+        assert_eq!(address, recovered_address.unwrap());
     }
 
     #[test]
