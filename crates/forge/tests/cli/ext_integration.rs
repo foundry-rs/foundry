@@ -1,6 +1,14 @@
 use foundry_test_utils::util::ExtTester;
 
 #[test]
+fn forge_std() {
+    ExtTester::new("foundry-rs", "forge-std", "1d0766bc5d814f117c7b1e643828f7d85024fb51")
+        // Skip fork tests.
+        .args(["--nmc", "Fork"])
+        .run();
+}
+
+#[test]
 fn solmate() {
     ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925").run();
 }
