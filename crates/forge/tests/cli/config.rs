@@ -99,6 +99,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         ignored_file_paths: vec![],
         deny_warnings: false,
         via_ir: true,
+        ast: false,
         rpc_storage_caching: StorageCachingConfig {
             chains: CachedChains::None,
             endpoints: CachedEndpoints::Remote,
@@ -548,7 +549,7 @@ forgetest_init!(
         pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
         let config = cmd.config();
-        let remappings = config.get_all_remappings();
+        let remappings = config.get_all_remappings().collect::<Vec<_>>();
         pretty_assertions::assert_eq!(
             remappings,
             vec![
