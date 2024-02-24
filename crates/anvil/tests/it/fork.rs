@@ -1,10 +1,10 @@
 //! various fork related test
 
 use crate::{
-    abi::*,
+    abi::{Erc721, Greeter, SolGreeter, ERC721},
     utils::{self, ethers_http_provider},
 };
-use alloy_primitives::U256 as rU256;
+use alloy_primitives::{Address as rAddress, U256 as rU256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{request::TransactionRequest as CallRequest, BlockNumberOrTag};
 use alloy_signer::Signer as AlloySigner;
@@ -80,12 +80,12 @@ async fn test_spawn_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
     for _ in 0..10 {
-        let addr = Address::random();
-        let balance = api.balance(addr.to_alloy(), None).await.unwrap();
+        let addr = rAddress::random();
+        let balance = api.balance(addr, None).await.unwrap();
         let provider_balance = provider.get_balance(addr, None).await.unwrap();
-        assert_eq!(balance, provider_balance.to_alloy())
+        assert_eq!(balance, provider_balance)
     }
 }
 
@@ -93,22 +93,22 @@ async fn test_fork_eth_get_balance() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance_after_mine() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
     let info = api.anvil_node_info().await.unwrap();
     let number = info.fork_config.fork_block_number.unwrap();
     assert_eq!(number, BLOCK_NUMBER);
 
-    let address = Address::random();
+    let address = rAddress::random();
 
     let _balance = provider
-        .get_balance(address, Some(BlockNumber::Number(number.into()).into()))
+        .get_balance(address, Some(BlockNumberOrTag::Number(number.into()).into()))
         .await
         .unwrap();
 
     api.evm_mine(None).await.unwrap();
 
     let _balance = provider
-        .get_balance(address, Some(BlockNumber::Number(number.into()).into()))
+        .get_balance(address, Some(BlockNumberOrTag::Number(number.into()).into()))
         .await
         .unwrap();
 }
@@ -450,13 +450,17 @@ async fn can_deploy_greeter_on_fork() {
         .await
         .unwrap();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
+    let greeter = SolGreeter::new(greeter_contract.address().to_alloy(), handle.http_provider());
+
+    let greeting = greeter.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 
     let greeter_contract =
         Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
+    let greeter = SolGreeter::new(greeter_contract.address().to_alloy(), handle.http_provider());
+
+    let greeting = greeter.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 }
 
@@ -622,14 +626,13 @@ async fn test_fork_nft_set_approve_all() {
     let token_id: U256 = 154u64.into();
 
     let nouns = Erc721::new(nouns_addr, Arc::clone(&provider));
+    let solnouns = ERC721::new(nouns_addr.to_alloy(), handle.http_provider());
 
-    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_owner, owner);
+    let real_owner = solnouns.ownerOf(token_id.to_alloy()).call().await.unwrap()._0;
+    assert_eq!(real_owner, owner.to_alloy());
     let approval = nouns.set_approval_for_all(nouns_addr, true);
     let tx = approval.send().await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
-
-    let real_owner = real_owner.to_alloy();
 
     // transfer: impersonate real owner and transfer nft
     api.anvil_impersonate_account(real_owner).await.unwrap();
@@ -643,8 +646,8 @@ async fn test_fork_nft_set_approve_all() {
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
-    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_owner, wallet.address());
+    let real_owner = solnouns.ownerOf(token_id.to_alloy()).call().await.unwrap()._0;
+    assert_eq!(real_owner, wallet.address().to_alloy());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2261>
@@ -1033,18 +1036,20 @@ async fn can_override_fork_chain_id() {
         .await
         .unwrap();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
+    let greeter = SolGreeter::new(greeter_contract.address().to_alloy(), handle.http_provider());
+    let greeting = greeter.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 
     let greeter_contract =
         Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
+    let greeter = SolGreeter::new(greeter_contract.address().to_alloy(), handle.http_provider());
+    let greeting = greeter.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
-    let chain_id = provider.get_chainid().await.unwrap();
-    assert_eq!(chain_id.as_u64(), chain_id_override);
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id.to::<u64>(), chain_id_override);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6485>
