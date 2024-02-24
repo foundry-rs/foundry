@@ -52,18 +52,10 @@ serde_json.opt-level = 3
 alloy-dyn-abi.opt-level = 3
 alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
-alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
-keccak.opt-level = 3
-revm-interpreter.opt-level = 3
-revm-precompile.opt-level = 3
 revm-primitives.opt-level = 3
 revm.opt-level = 3
-ruint.opt-level = 3
-sha2.opt-level = 3
-sha3.opt-level = 3
-tiny-keccak.opt-level = 3
 
 # fuzzing
 proptest.opt-level = 3
@@ -71,9 +63,6 @@ foundry-evm-fuzz.opt-level = 3
 
 # forking
 axum.opt-level = 3
-
-# keystores
-scrypt.opt-level = 3
 
 # Local "release" mode, more optimized than dev but much faster to compile than release.
 [profile.local]
@@ -103,18 +92,12 @@ codegen-units = 1
 # Override packages which aren't perf-sensitive for faster compilation speed.
 [profile.release.package]
 mdbook.opt-level = 1
-protobuf.opt-level = 1
 rusoto_core.opt-level = 1
-rusoto_credential.opt-level = 1
 rusoto_kms.opt-level = 1
 toml_edit.opt-level = 1
-trezor-client.opt-level = 1
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
-cast = { path = "crates/cast" }
-chisel = { path = "crates/chisel" }
-forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
@@ -147,7 +130,6 @@ revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev =
 ethers = { version = "2.0", default-features = false }
 ethers-core = { version = "2.0", default-features = false }
 ethers-contract = { version = "2.0", default-features = false }
-ethers-contract-abigen = { version = "2.0", default-features = false }
 ethers-providers = { version = "2.0", default-features = false }
 ethers-signers = { version = "2.0", default-features = false }
 ethers-middleware = { version = "2.0", default-features = false }
@@ -159,7 +141,6 @@ alloy-eips = { git = "https://github.com/alloy-rs/alloy" }
 alloy-genesis = { git = "https://github.com/alloy-rs/alloy" }
 alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
 alloy-network = { git = "https://github.com/alloy-rs/alloy" }
-alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy" }
 alloy-providers = { git = "https://github.com/alloy-rs/alloy" }
 alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
 alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
@@ -174,7 +155,6 @@ alloy-primitives = { version = "0.6.3", features = ["getrandom"] }
 alloy-dyn-abi = "0.6.3"
 alloy-json-abi = "0.6.3"
 alloy-sol-types = "0.6.3"
-syn-solidity = "0.6.3"
 alloy-chains = "0.1"
 
 alloy-rlp = "0.3.3"
@@ -192,7 +172,6 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
 jsonpath_lib = "0.3"
 pretty_assertions = "1.4"
-protobuf = "=3.2.0"
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }

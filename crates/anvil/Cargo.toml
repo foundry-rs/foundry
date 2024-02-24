@@ -84,6 +84,7 @@ ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
 ethereum-forkid = "0.12"
+base64.workspace = true
 
 [dev-dependencies]
 ethers = { workspace = true, features = ["abigen"] }

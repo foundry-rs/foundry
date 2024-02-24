@@ -41,7 +41,7 @@ use alloy_rpc_trace_types::{
     parity::LocalizedTransactionTrace,
 };
 use alloy_rpc_types::{
-    request::TransactionRequest,
+    request::{TransactionInput, TransactionRequest},
     state::StateOverride,
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
@@ -64,6 +64,7 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
@@ -333,7 +334,7 @@ impl EthApi {
                 if time >= U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The timestamp is too big",
-                    ))
+                    ));
                 }
                 let time = time.to::<u64>();
                 self.evm_set_next_block_timestamp(time).to_rpc_result()
@@ -342,7 +343,7 @@ impl EthApi {
                 if timestamp >= U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The timestamp is too big",
-                    ))
+                    ));
                 }
                 let time = timestamp.to::<u64>();
                 self.evm_set_time(time).to_rpc_result()
@@ -413,6 +414,9 @@ impl EthApi {
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
             }
+            EthRequest::SuavexCall(address, input) => {
+                self.suavex_call(address, input).await.to_rpc_result()
+            }
         }
     }
 
@@ -430,13 +434,13 @@ impl EthApi {
                         false,
                     )
                     .unwrap();
-                return build_typed_transaction(request, nil_signature)
+                return build_typed_transaction(request, nil_signature);
             }
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
                         let signature = signer.sign_transaction(request.clone(), from)?;
-                        return build_typed_transaction(request, signature)
+                        return build_typed_transaction(request, signature);
                     }
                 }
             }
@@ -2105,6 +2109,22 @@ impl EthApi {
         }
 
         Ok(content)
+    }
+
+    /// eth_call for SUAVE MEVM.
+    /// Returns base64-encoded bytestring.
+    pub async fn suavex_call(&self, contract_address: Address, calldata: String) -> Result<String> {
+        node_info!("suavex_call");
+        // TODO: use serde for this
+        let input: Bytes = BASE64_STANDARD
+            .decode(calldata)
+            .map_err(|_| BlockchainError::RpcError(RpcError::parse_error()))?
+            .into();
+        let request = TransactionRequest::default()
+            .to(Some(contract_address.0.into()))
+            .input(TransactionInput::new(input));
+        let res = self.call(request, Some(BlockNumber::Latest.into()), None).await?;
+        Ok(BASE64_STANDARD.encode(res.to_vec()))
     }
 }
 

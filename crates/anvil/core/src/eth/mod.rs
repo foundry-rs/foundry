@@ -170,6 +170,9 @@ pub enum EthRequest {
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
 
+    #[cfg_attr(feature = "serde", serde(rename = "suavex_call"))]
+    SuavexCall(Address, String),
+
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(
         TransactionRequest,
