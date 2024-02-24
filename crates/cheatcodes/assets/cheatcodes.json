@@ -375,7 +375,7 @@
         },
         {
           "name": "depth",
-          "ty": "uint256",
+          "ty": "uint64",
           "description": "Call depth traversed during the recording of state differences"
         }
       ]

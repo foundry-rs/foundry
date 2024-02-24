@@ -536,8 +536,6 @@ pub(super) fn journaled_account<'a, DB: DatabaseExt>(
 /// In the case where `stopAndReturnStateDiff` is called at a lower
 /// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
-///
-/// Depth value will be preserved in each AccountAccess member depth
 fn get_state_diff(state: &mut Cheatcodes) -> Result {
     let res = state
         .recorded_account_diffs_stack
@@ -545,10 +543,6 @@ fn get_state_diff(state: &mut Cheatcodes) -> Result {
         .unwrap_or_default()
         .into_iter()
         .flatten()
-        .map(|mut record| {
-            record.access.depth = U256::from(record.depth);
-            record.access
-        })
         .collect::<Vec<_>>();
     Ok(res.abi_encode())
 }

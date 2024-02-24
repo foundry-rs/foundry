@@ -349,7 +349,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 0
+                depth: 0
             })
         );
 
@@ -368,7 +368,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 1
+                depth: 1
             })
         );
         assertEq(
@@ -386,7 +386,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "hello world",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 2
+                depth: 2
             })
         );
         assertEq(
@@ -404,7 +404,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 3
+                depth: 3
             })
         );
         assertEq(
@@ -422,7 +422,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2")),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 3
+                depth: 3
             })
         );
         assertEq(
@@ -440,7 +440,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 3
+                depth: 3
             })
         );
     }
@@ -468,7 +468,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(this.revertingCall, (address(1234), "")),
                 reverted: true,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 0
+                depth: 0
             })
         );
         assertEq(
@@ -486,7 +486,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: true,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 1
+                depth: 1
             })
         );
     }
@@ -511,7 +511,7 @@ contract RecordAccountAccessesTest is DSTest {
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 7 + toUint(expectFirstCall), "incorrect length");
 
-        uint256 startingIndex = toUint(expectFirstCall);
+        uint64 startingIndex = uint64(toUint(expectFirstCall));
         if (expectFirstCall) {
             assertEq(
                 called[0],
@@ -528,7 +528,7 @@ contract RecordAccountAccessesTest is DSTest {
                     data: "",
                     reverted: false,
                     storageAccesses: new Vm.StorageAccess[](0),
-		    depth: startingIndex
+                    depth: startingIndex
                 })
             );
         }
@@ -561,7 +561,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(NestedRunner.run, (shouldRevert)),
                 reverted: shouldRevert,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex
+                depth: startingIndex
             }),
             false
         );
@@ -594,7 +594,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(Reverter.run, ()),
                 reverted: true,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex + 1
+                depth: startingIndex + 1
             }),
             false
         );
@@ -627,7 +627,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(Doer.run, ()),
                 reverted: true,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex + 2
+                depth: startingIndex + 2
             }),
             false
         );
@@ -660,7 +660,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(Doer.doStuff, ()),
                 reverted: true,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex + 3
+                depth: startingIndex + 3
             }),
             false
         );
@@ -693,7 +693,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(Succeeder.run, ()),
                 reverted: shouldRevert,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex + 4
+                depth: startingIndex + 4
             }),
             false
         );
@@ -726,7 +726,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(Doer.run, ()),
                 reverted: shouldRevert,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex + 5
+                depth: startingIndex + 5
             }),
             false
         );
@@ -759,7 +759,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(Doer.doStuff, ()),
                 reverted: shouldRevert,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: startingIndex + 6
+                depth: startingIndex + 6
             }),
             false
         );
@@ -799,7 +799,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(NestedStorer.run, ()),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 0
+                depth: 0
             }),
             false
         );
@@ -844,7 +844,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(NestedStorer.run2, ()),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 1
+                depth: 1
             }),
             false
         );
@@ -877,7 +877,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 2
+                depth: 2
             }),
             false
         );
@@ -923,7 +923,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(false)),
                 reverted: false,
                 storageAccesses: storageAccesses,
-		depth: 0
+                depth: 0
             })
         );
 
@@ -946,7 +946,7 @@ contract RecordAccountAccessesTest is DSTest {
                     ),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 1
+                depth: 1
             })
         );
 
@@ -975,7 +975,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: creationCode,
                 reverted: true,
                 storageAccesses: storageAccesses,
-		depth: 2
+                depth: 2
             })
         );
     }
@@ -1021,7 +1021,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: creationCode,
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 1
+                depth: 1
             })
         );
         assertEq(
@@ -1039,7 +1039,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 2
+                depth: 2
             })
         );
     }
@@ -1069,7 +1069,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(this))),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 1
+                depth: 1
             })
         );
         assertEq(
@@ -1087,7 +1087,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 2
+                depth: 2
             })
         );
         assertEq(
@@ -1105,7 +1105,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 3
+                depth: 3
             })
         );
         assertEq(
@@ -1123,7 +1123,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 4
+                depth: 4
             })
         );
     }
@@ -1219,7 +1219,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: "",
                 reverted: expected.reverted,
                 storageAccesses: new Vm.StorageAccess[](0),
-		depth: 0
+                depth: 0
             }),
             false
         );
