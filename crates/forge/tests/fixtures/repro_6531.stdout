@@ -14,6 +14,6 @@ Traces:
     │   └─ ← "USD Coin"
     └─ ← ()
 
-Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.43s
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.43s
 
 Ran 1 test suite: 1 tests passed, 0 failed, 0 skipped (1 total tests)

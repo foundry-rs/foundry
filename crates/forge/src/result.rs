@@ -128,7 +128,7 @@ impl TestOutcome {
         let total_skipped = self.skipped();
         let total_tests = total_passed + total_failed + total_skipped;
         format!(
-            "\nRan {} test {} in {:.2?} ({:.2?} user time): {} tests passed, {} failed, {} skipped ({} total tests)",
+            "\nRan {} test {} in {:.2?} ({:.2?} CPU time): {} tests passed, {} failed, {} skipped ({} total tests)",
             num_test_suites,
             suites,
             wall_clock_time,
@@ -257,7 +257,7 @@ impl SuiteResult {
         let failed = self.failed();
         let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} user time)",
+            "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
             result,
             Paint::green(self.passed()),
             Paint::red(failed),
