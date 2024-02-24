@@ -4,9 +4,12 @@ use crate::{
     abi::*,
     utils::{self, ethers_http_provider},
 };
-use alloy_primitives::U256 as rU256;
+use alloy_primitives::{address, U256 as rU256};
 use alloy_providers::provider::TempProvider;
-use alloy_rpc_types::{request::TransactionRequest as CallRequest, BlockNumberOrTag};
+use alloy_rpc_types::{
+    request::{TransactionInput, TransactionRequest as CallRequest},
+    BlockNumberOrTag,
+};
 use alloy_signer::Signer as AlloySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
@@ -1118,4 +1121,27 @@ async fn test_arbitrum_fork_dev_balance() {
         let balance = api.balance(acc.address(), Some(Default::default())).await.unwrap();
         assert_eq!(balance, rU256::from(100000000000000000000u128));
     }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/7023>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_execution_reverted() {
+    let target = 16681681u64;
+    let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(target + 1))).await;
+
+    let resp = api
+        .call(
+            CallRequest {
+                to: Some(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377")),
+                input: TransactionInput::new("0x8f283b3c".as_bytes().into()),
+                ..Default::default()
+            },
+            Some(target.into()),
+            None,
+        )
+        .await;
+
+    assert!(resp.is_err());
+    let err = resp.unwrap_err();
+    assert!(err.to_string().contains("execution reverted"));
 }

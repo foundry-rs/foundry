@@ -606,10 +606,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return fork
-                        .get_balance(address, number)
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_balance(address, number).await?)
                 }
             }
         }
@@ -634,9 +631,7 @@ impl EthApi {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return Ok(B256::from(
-                        fork.storage_at(address, index, Some(BlockNumber::Number(number)))
-                            .await
-                            .map_err(|_| BlockchainError::DataUnavailable)?,
+                        fork.storage_at(address, index, Some(BlockNumber::Number(number))).await?,
                     ));
                 }
             }
@@ -768,10 +763,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return fork
-                        .get_code(address, number)
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_code(address, number).await?)
                 }
             }
         }
@@ -796,10 +788,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return fork
-                        .get_proof(address, keys, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?)
                 }
             }
         }
@@ -994,10 +983,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return fork
-                        .call(&request, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.call(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1044,10 +1030,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return fork
-                        .create_access_list(&request, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.create_access_list(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1189,10 +1172,7 @@ impl EthApi {
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return fork
-                    .uncle_by_block_hash_and_index(block_hash, idx.into())
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1211,10 +1191,7 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return fork
-                    .uncle_by_block_number_and_index(number, idx.into())
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -2194,10 +2171,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return fork
-                        .estimate_gas(&request, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -2576,10 +2550,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return fork
-                        .get_nonce(address, number)
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_nonce(address, number).await?);
                 }
             }
         }
