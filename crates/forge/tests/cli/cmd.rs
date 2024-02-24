@@ -614,15 +614,12 @@ contract Foo {
 });
 
 // test that `forge snapshot` commands work
-forgetest!(
-    #[serial_test::serial]
-    can_check_snapshot,
-    |prj, cmd| {
-        prj.insert_ds_test();
+forgetest!(can_check_snapshot, |prj, cmd| {
+    prj.insert_ds_test();
 
-        prj.add_source(
-            "ATest.t.sol",
-            r#"
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -630,20 +627,18 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.arg("snapshot");
+    cmd.arg("snapshot");
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_check_snapshot.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
+    );
 
-        cmd.arg("--check");
-        let _ = cmd.output();
-    }
-);
+    cmd.arg("--check");
+    let _ = cmd.output();
+});
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {

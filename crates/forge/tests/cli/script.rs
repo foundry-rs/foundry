@@ -444,97 +444,75 @@ forgetest_async!(can_deploy_script_with_lib, |prj, cmd| {
         .await;
 });
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_script_private_key,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_script_private_key, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_addresses(&[
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
-            .await
-            .add_sig("BroadcastTest", "deployPrivateKey()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(&[(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                3,
-            )])
-            .await;
-    }
-);
+    tester
+        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .await
+        .add_sig("BroadcastTest", "deployPrivateKey()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            3,
+        )])
+        .await;
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_unlocked,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_unlocked, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
-            .unlocked()
-            .add_sig("BroadcastTest", "deployOther()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast);
-    }
-);
+    tester
+        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .unlocked()
+        .add_sig("BroadcastTest", "deployOther()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast);
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_script_remember_key,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_addresses(&[
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
-            .await
-            .add_sig("BroadcastTest", "deployRememberKey()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(&[(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                2,
-            )])
-            .await;
-    }
-);
+    tester
+        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .await
+        .add_sig("BroadcastTest", "deployRememberKey()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            2,
+        )])
+        .await;
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_script_remember_key_and_resume,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_script_remember_key_and_resume, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .add_deployer(0)
-            .load_addresses(&[
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
-            .await
-            .add_sig("BroadcastTest", "deployRememberKeyResume()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .resume(ScriptOutcome::MissingWallet)
-            // load missing wallet
-            .load_private_keys(&[0])
-            .await
-            .run(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(&[(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                1,
-            )])
-            .await
-            .assert_nonce_increment(&[(0, 2)])
-            .await;
-    }
-);
+    tester
+        .add_deployer(0)
+        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .await
+        .add_sig("BroadcastTest", "deployRememberKeyResume()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .resume(ScriptOutcome::MissingWallet)
+        // load missing wallet
+        .load_private_keys(&[0])
+        .await
+        .run(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            1,
+        )])
+        .await
+        .assert_nonce_increment(&[(0, 2)])
+        .await;
+});
 
 forgetest_async!(can_resume_script, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -621,41 +599,33 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
         .run(ScriptOutcome::ScriptFailed);
 });
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_and_simulate_25_txes_concurrently,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_private_keys(&[0])
-            .await
-            .add_sig("BroadcastTestNoLinking", "deployMany()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(&[(0, 25)])
-            .await;
-    }
-);
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_and_simulate_mixed_broadcast_modes,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_and_simulate_mixed_broadcast_modes, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_private_keys(&[0])
-            .await
-            .add_sig("BroadcastMix", "deployMix()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(&[(0, 15)])
-            .await;
-    }
-);
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastMix", "deployMix()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 15)])
+        .await;
+});
 
 forgetest_async!(deploy_with_setup, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -682,81 +652,76 @@ forgetest_async!(fail_broadcast_staticcall, |prj, cmd| {
         .simulate(ScriptOutcome::StaticCallNotAllowed);
 });
 
-forgetest_async!(
-    #[serial_test::serial]
-    check_broadcast_log,
-    |prj, cmd| {
-        let (api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(check_broadcast_log, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        // Prepare CREATE2 Deployer
-        let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-        let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr, code).await.unwrap();
+    // Prepare CREATE2 Deployer
+    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
+    api.anvil_set_code(addr, code).await.unwrap();
 
-        tester
-            .load_private_keys(&[0])
-            .await
-            .add_sig("BroadcastTestSetup", "run()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(&[(0, 6)])
-            .await;
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestSetup", "run()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 6)])
+        .await;
 
-        // Uncomment to recreate the broadcast log
-        // std::fs::copy(
-        //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
-        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixtures/broadcast.
-        // log. json" ), );
+    // Uncomment to recreate the broadcast log
+    // std::fs::copy(
+    //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
+    //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixtures/broadcast.
+    // log. json" ), );
 
-        // Check broadcast logs
-        // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
-        // transactionIndex and logIndex values since they can change inbetween runs
-        let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
+    // Check broadcast logs
+    // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
+    // transactionIndex and logIndex values since they can change inbetween runs
+    let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
-        let fixtures_log = std::fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../testdata/fixtures/broadcast.log.json"),
-        )
-        .unwrap();
-        let _fixtures_log = re.replace_all(&fixtures_log, "");
+    let fixtures_log = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/fixtures/broadcast.log.json"),
+    )
+    .unwrap();
+    let _fixtures_log = re.replace_all(&fixtures_log, "");
 
-        let run_log =
-            std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
-        let _run_log = re.replace_all(&run_log, "");
+    let run_log =
+        std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
+    let _run_log = re.replace_all(&run_log, "");
 
-        // pretty_assertions::assert_eq!(fixtures_log, run_log);
+    // pretty_assertions::assert_eq!(fixtures_log, run_log);
 
-        // Uncomment to recreate the sensitive log
-        // std::fs::copy(
-        //     "cache/Broadcast.t.sol/31337/run-latest.json",
-        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        //         .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
-        // );
+    // Uncomment to recreate the sensitive log
+    // std::fs::copy(
+    //     "cache/Broadcast.t.sol/31337/run-latest.json",
+    //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    //         .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
+    // );
 
-        // Check sensitive logs
-        // Ignore port number since it can change inbetween runs
-        let re = Regex::new(r":[0-9]+").unwrap();
+    // Check sensitive logs
+    // Ignore port number since it can change inbetween runs
+    let re = Regex::new(r":[0-9]+").unwrap();
 
-        let fixtures_log = std::fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
-        )
-        .unwrap();
-        let fixtures_log = re.replace_all(&fixtures_log, "");
+    let fixtures_log = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
+    )
+    .unwrap();
+    let fixtures_log = re.replace_all(&fixtures_log, "");
 
-        let run_log =
-            std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
-        let run_log = re.replace_all(&run_log, "");
+    let run_log = std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
+    let run_log = re.replace_all(&run_log, "");
 
-        // Clean up carriage return OS differences
-        let re = Regex::new(r"\r\n").unwrap();
-        let fixtures_log = re.replace_all(&fixtures_log, "\n");
-        let run_log = re.replace_all(&run_log, "\n");
+    // Clean up carriage return OS differences
+    let re = Regex::new(r"\r\n").unwrap();
+    let fixtures_log = re.replace_all(&fixtures_log, "\n");
+    let run_log = re.replace_all(&run_log, "\n");
 
-        pretty_assertions::assert_eq!(fixtures_log, run_log);
-    }
-);
+    pretty_assertions::assert_eq!(fixtures_log, run_log);
+});
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
