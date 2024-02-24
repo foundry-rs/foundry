@@ -359,8 +359,15 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
                 BlockchainError::AlloyForkProvider(err) => {
-                    error!(%err, "alloy fork provider error");
-                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
+                    error!(target: "backend", %err, "fork provider error");
+                    match err {
+                        TransportError::ErrorResp(err) => RpcError {
+                            code: ErrorCode::from(err.code),
+                            message: err.message.into(),
+                            data: err.data.and_then(|data| serde_json::to_value(data).ok()),
+                        },
+                        err => RpcError::internal_error_with(format!("Fork Error: {err:?}")),
+                    }
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())
