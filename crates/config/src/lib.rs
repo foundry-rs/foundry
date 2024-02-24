@@ -1091,7 +1091,8 @@ impl Config {
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
-        if self.ast {
+        // We're keeping AST in `--build-info` for backwards compatibility with HardHat.
+        if self.ast || self.build_info {
             settings = settings.with_ast();
         }
 
