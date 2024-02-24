@@ -2,6 +2,7 @@
 
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{hex, Address, Selector, B256};
+use eyre::Result;
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
     ArtifactId, ProjectPathsConfig,
@@ -33,10 +34,7 @@ impl ContractsByArtifact {
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
     /// found, return error.
-    pub fn find_by_name_or_identifier(
-        &self,
-        id: &str,
-    ) -> eyre::Result<Option<ArtifactWithContractRef>> {
+    pub fn find_by_name_or_identifier(&self, id: &str) -> Result<Option<ArtifactWithContractRef>> {
         let contracts = self
             .iter()
             .filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id)
@@ -203,9 +201,7 @@ pub fn get_artifact_path(paths: &ProjectPathsConfig, path: &str) -> PathBuf {
 }
 
 /// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
-pub fn compact_to_contract(
-    contract: CompactContractBytecode,
-) -> eyre::Result<ContractBytecodeSome> {
+pub fn compact_to_contract(contract: CompactContractBytecode) -> Result<ContractBytecodeSome> {
     Ok(ContractBytecodeSome {
         abi: contract.abi.ok_or_else(|| eyre::eyre!("No contract abi"))?,
         bytecode: contract.bytecode.ok_or_else(|| eyre::eyre!("No contract bytecode"))?.into(),
