@@ -32,7 +32,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use regex::Regex;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Instant};
+use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
