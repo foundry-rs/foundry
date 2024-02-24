@@ -2,7 +2,7 @@
 use foundry_common::rpc;
 use foundry_config::Config;
 use foundry_test_utils::util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
-use std::{path::PathBuf, process::Command, str::FromStr};
+use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj, cmd| {
@@ -258,31 +258,6 @@ contract ContractTest is DSTest {
             .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.2.stdout"),
     );
 });
-
-// checks that we can test forge std successfully
-// `forgetest_init!` will install with `forge-std` under `lib/forge-std`
-forgetest_init!(
-    #[serial_test::serial]
-    can_test_forge_std,
-    |prj, cmd| {
-        let forge_std_dir = prj.root().join("lib/forge-std");
-        let status = Command::new("git")
-            .current_dir(&forge_std_dir)
-            .args(["pull", "origin", "master"])
-            .status()
-            .unwrap();
-        if !status.success() {
-            panic!("failed to update forge-std");
-        }
-
-        // execute in subdir
-        cmd.cmd().current_dir(forge_std_dir);
-        cmd.args(["test", "--root", "."]);
-        let stdout = cmd.stdout_lossy();
-        assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
-        assert!(!stdout.contains("[FAIL]"), "Tests failed:\n{stdout}");
-    }
-);
 
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {

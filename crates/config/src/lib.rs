@@ -352,10 +352,8 @@ pub struct Config {
     /// included in solc's output selection, see also
     /// [OutputSelection](foundry_compilers::artifacts::output_selection::OutputSelection)
     pub sparse_mode: bool,
-    /// Whether to emit additional build info files
-    ///
-    /// If set to `true`, `ethers-solc` will generate additional build info json files for every
-    /// new build, containing the `CompilerInput` and `CompilerOutput`
+    /// Generates additional build info json files for every new build, containing the
+    /// `CompilerInput` and `CompilerOutput`.
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,

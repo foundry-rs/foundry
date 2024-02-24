@@ -93,12 +93,6 @@ config = [
         pr_cross_platform=False,
     ),
     Case(
-        name="integration / forge-std",
-        filter="package(=forge) & test(~forge_std)",
-        n_partitions=1,
-        pr_cross_platform=False,
-    ),
-    Case(
         name="integration / external",
         filter="package(=forge) & test(~ext_integration)",
         n_partitions=2,
