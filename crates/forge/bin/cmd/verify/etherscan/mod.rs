@@ -474,7 +474,7 @@ impl EtherscanVerificationProvider {
                 args.etherscan.chain.unwrap_or_default(),
                 args.verifier.verifier_url.as_deref(),
                 args.etherscan.key.as_deref(),
-                &config,
+                config,
             )?;
 
             let creation_data = client.contract_creation_data(args.address).await?;
