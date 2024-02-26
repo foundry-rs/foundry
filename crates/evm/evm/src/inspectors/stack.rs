@@ -644,33 +644,34 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        if !(self.in_inner_context && data.journaled_state.depth == 0) {
-            call_inspectors_adjust_depth!(
-                [
-                    &mut self.fuzzer,
-                    &mut self.debugger,
-                    &mut self.tracer,
-                    &mut self.coverage,
-                    &mut self.log_collector,
-                    &mut self.cheatcodes,
-                    &mut self.printer
-                ],
-                |inspector| {
-                    let (status, gas, retdata) = inspector.call(data, call);
-
-                    // Allow inspectors to exit early
-                    if status != InstructionResult::Continue {
-                        Some((status, gas, retdata))
-                    } else {
-                        None
-                    }
-                },
-                self,
-                data
-            );
-        } else {
+        if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
+            return (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new());
         }
+
+        call_inspectors_adjust_depth!(
+            [
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.log_collector,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
+            |inspector| {
+                let (status, gas, retdata) = inspector.call(data, call);
+
+                // Allow inspectors to exit early
+                if status != InstructionResult::Continue {
+                    Some((status, gas, retdata))
+                } else {
+                    None
+                }
+            },
+            self,
+            data
+        );
 
         if self.enable_isolation &&
             call.context.scheme == CallScheme::Call &&
@@ -723,32 +724,33 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        if !(self.in_inner_context && data.journaled_state.depth == 0) {
-            call_inspectors_adjust_depth!(
-                [
-                    &mut self.debugger,
-                    &mut self.tracer,
-                    &mut self.coverage,
-                    &mut self.log_collector,
-                    &mut self.cheatcodes,
-                    &mut self.printer
-                ],
-                |inspector| {
-                    let (status, addr, gas, retdata) = inspector.create(data, call);
-
-                    // Allow inspectors to exit early
-                    if status != InstructionResult::Continue {
-                        Some((status, addr, gas, retdata))
-                    } else {
-                        None
-                    }
-                },
-                self,
-                data
-            );
-        } else {
+        if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
+            return (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new());
         }
+
+        call_inspectors_adjust_depth!(
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.log_collector,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
+            |inspector| {
+                let (status, addr, gas, retdata) = inspector.create(data, call);
+
+                // Allow inspectors to exit early
+                if status != InstructionResult::Continue {
+                    Some((status, addr, gas, retdata))
+                } else {
+                    None
+                }
+            },
+            self,
+            data
+        );
 
         if self.enable_isolation && !self.in_inner_context && data.journaled_state.depth == 1 {
             return self.transact_inner(
