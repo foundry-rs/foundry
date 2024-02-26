@@ -1054,7 +1054,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
         // elapsed time
-        "(?:finished)? ?in .*?s",
+        r"(?:finished)? ?in .*?s(?: \(.*?s CPU time\))?",
         // file paths
         r"-->.*\.sol",
         r"Location(.|\n)*\.rs(.|\n)*Backtrace",
