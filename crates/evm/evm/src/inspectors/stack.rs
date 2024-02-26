@@ -247,8 +247,8 @@ pub struct InspectorData {
 /// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
 /// Used to adjust EVM state while in inner context.
 ///
-/// We need this to avoid breaking changes due to EVM behavior differences in isolated vs non-isolated mode.
-/// For descriptions and workarounds for those changes see: https://github.com/foundry-rs/foundry/pull/7186#issuecomment-1959102195
+/// We need this to avoid breaking changes due to EVM behavior differences in isolated vs
+/// non-isolated mode. For descriptions and workarounds for those changes see: https://github.com/foundry-rs/foundry/pull/7186#issuecomment-1959102195
 #[derive(Debug, Clone)]
 pub struct InnerContextData {
     /// The sender of the inner EVM context.
