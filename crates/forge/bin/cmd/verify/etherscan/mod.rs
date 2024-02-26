@@ -476,6 +476,10 @@ impl EtherscanVerificationProvider {
         Ok(args.constructor_args.clone())
     }
 
+    /// Uses Etherscan API to fetch contract creation transaction.
+    /// If transaction is a create transaction or a invocation of default CREATE2 deployer, tries to
+    /// match provided creation code with local bytecode of the target contract.
+    /// If bytecode match, returns latest bytes of on-chain creation code as constructor arguments.
     async fn guess_constructor_args(
         &mut self,
         args: &VerifyArgs,
