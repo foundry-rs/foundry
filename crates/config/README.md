@@ -252,7 +252,7 @@ The optional `url` attribute can be used to explicitly set the Etherscan API url
 [etherscan]
 mainnet = { key = "${ETHERSCAN_MAINNET_KEY}" }
 mainnet2 = { key = "ABCDEFG", chain = "mainnet" }
-optimism = { key = "1234576" }
+optimism = { key = "1234576", chain = 42 }
 unknownchain = { key = "ABCDEFG", url = "https://<etherscan-api-url-for-that-chain>" }
 ```
 
