@@ -123,6 +123,7 @@ pub fn test_opts() -> TestOptions {
                 dictionary_weight: 40,
                 max_fuzz_dictionary_addresses: 10_000,
                 max_fuzz_dictionary_values: 10_000,
+                max_calldata_fuzz_dictionary_addresses: None,
             },
         })
         .invariant(InvariantConfig {
@@ -136,6 +137,7 @@ pub fn test_opts() -> TestOptions {
                 include_push_bytes: true,
                 max_fuzz_dictionary_addresses: 10_000,
                 max_fuzz_dictionary_values: 10_000,
+                max_calldata_fuzz_dictionary_addresses: None,
             },
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18u32),
