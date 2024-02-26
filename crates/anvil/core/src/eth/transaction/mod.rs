@@ -683,7 +683,16 @@ impl TypedTransaction {
 
     /// Max cost of the transaction
     pub fn max_cost(&self) -> U256 {
-        self.gas_limit().saturating_mul(self.gas_price())
+        self.gas_limit()
+            .saturating_mul(self.gas_price())
+            .saturating_mul(self.blob_gas().map(U256::from).unwrap_or(U256::ZERO))
+    }
+
+    pub fn blob_gas(&self) -> Option<u64> {
+        match self {
+            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas()),
+            _ => None,
+        }
     }
 
     /// Returns a helper type that contains commonly used values as fields
@@ -999,6 +1008,13 @@ impl TypedReceipt {
             TypedReceipt::EIP2930(r) |
             TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => U256::from(r.receipt.cumulative_gas_used),
+        }
+    }
+
+    pub fn blob_gas_used(&self) -> U256 {
+        match self {
+            TypedReceipt::EIP4844(r) => U256::from(r.receipt.cumulative_gas_used),
+            _ => U256::ZERO,
         }
     }
 

@@ -131,6 +131,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let mut receipts = Vec::new();
         let mut bloom = Bloom::default();
         let mut cumulative_gas_used = U256::ZERO;
+        let mut cumulative_blob_gas_used = None;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
         let gas_limit = self.block_env.gas_limit;
@@ -144,6 +145,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         } else {
             None
         };
+        let excess_blob_gas =
+            if (self.cfg_env.spec_id as u8) >= (SpecId::CANCUN as u8) { Some(0) } else { None };
 
         for tx in self.into_iter() {
             let tx = match tx {
@@ -169,6 +172,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
+            cumulative_blob_gas_used =
+                tx.transaction.pending_transaction.transaction.transaction.blob_gas();
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
@@ -221,6 +226,9 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             mix_hash: Default::default(),
             nonce: Default::default(),
             base_fee: base_fee.map(|b| b.to::<u64>()),
+            parent_beacon_block_root: Default::default(),
+            blob_gas_used: cumulative_blob_gas_used,
+            excess_blob_gas,
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);

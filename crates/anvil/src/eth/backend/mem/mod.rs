@@ -1562,8 +1562,8 @@ impl Backend {
             base_fee_per_gas,
             withdrawals_root: _,
             blob_gas_used: _,
-            excess_blob_gas: _,
-            parent_beacon_block_root: _,
+            excess_blob_gas,
+            parent_beacon_block_root,
         } = header;
 
         AlloyBlock {
@@ -1588,8 +1588,8 @@ impl Backend {
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
                 withdrawals_root: None,
                 blob_gas_used: None,
-                excess_blob_gas: None,
-                parent_beacon_block_root: None,
+                excess_blob_gas: excess_blob_gas.map(|g| U64::from(g)),
+                parent_beacon_block_root,
             },
             size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
@@ -2384,6 +2384,7 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
+        // EIP-1559 London hard fork validation steps
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
             if tx.gas_price() < env.block.basefee && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
@@ -2396,6 +2397,37 @@ impl TransactionValidator for Backend {
                 if max_priority_fee_per_gas > max_fee_per_gas {
                     warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
                     return Err(InvalidTransactionError::TipAboveFeeCap);
+                }
+            }
+        }
+
+        // EIP-4844 Cancun hard fork validation steps
+        if (env.cfg.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            if tx.transaction.is_eip4844() {
+                // Light checks first: see if the blob fee cap is too low.
+                if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
+                    if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
+                        if max_fee_per_blob_gas.to::<u128>() > blob_gas_and_price.blob_gasprice {
+                            warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                            return Err(InvalidTransactionError::BlobGasPriceGreaterThanMax);
+                        }
+                    }
+                }
+
+                // Heavy (blob validation) checks
+                let tx = match &tx.transaction {
+                    TypedTransaction::EIP4844(tx) => tx.tx().clone(),
+                    _ => return Ok(()),
+                };
+
+                // Ensure there are blob hashes.
+                if tx.tx().blob_versioned_hashes.is_empty() {
+                    return Err(InvalidTransactionError::NoBlobHashes)
+                }
+
+                // Check for any blob validation errors
+                if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
+                    return Err(InvalidTransactionError::BlobTransactionValidationError(err))
                 }
             }
         }
@@ -2456,6 +2488,14 @@ pub fn transaction_build(
             transaction.gas_price = Some(
                 base_fee.checked_add(max_priority_fee_per_gas).unwrap_or(U256::MAX).to::<U128>(),
             );
+
+            // if the tx is eip4844 we need to also add the max fee per blob gas.
+            if eth_transaction.is_eip4844() {
+                transaction.gas_price = transaction.gas_price.map(|g| {
+                    g.checked_add(U128::from(transaction.max_fee_per_blob_gas.unwrap_or_default()))
+                        .unwrap_or(U128::MAX)
+                });
+            }
         }
     } else {
         transaction.max_fee_per_gas = None;
