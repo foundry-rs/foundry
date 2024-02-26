@@ -468,59 +468,70 @@ impl EtherscanVerificationProvider {
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()))
-        } else if args.guess_constructor_args {
-            let provider = utils::get_provider(config)?;
-            let client = self.client(
-                args.etherscan.chain.unwrap_or_default(),
-                args.verifier.verifier_url.as_deref(),
-                args.etherscan.key.as_deref(),
-                config,
-            )?;
-
-            let creation_data = client.contract_creation_data(args.address).await?;
-            let transaction = provider
-                .get_transaction(creation_data.transaction_hash.to_ethers())
-                .await?
-                .ok_or_eyre("Couldn't fetch transaction data from RPC")?;
-            let receipt = provider
-                .get_transaction_receipt(creation_data.transaction_hash.to_ethers())
-                .await?
-                .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
-
-            let maybe_creation_code: &[u8];
-
-            if receipt.contract_address == Some(args.address.to_ethers()) {
-                maybe_creation_code = &transaction.input;
-            } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER.to_ethers()) {
-                maybe_creation_code = &transaction.input[32..];
-            } else {
-                eyre::bail!("Fetching of constructor arguments is not supported for contracts created by contracts")
-            }
-
-            let output = project.compile_file(self.contract_path(args, project)?)?;
-            let artifact = output
-                .find_first(&args.contract.name)
-                .ok_or_eyre("Contract artifact wasn't found locally")?;
-            let bytecode = artifact
-                .get_bytecode_object()
-                .ok_or_eyre("Contract artifact does not contain bytecode")?;
-
-            let bytecode = match bytecode.as_ref() {
-                BytecodeObject::Bytecode(bytes) => Ok(bytes),
-                BytecodeObject::Unlinked(_) => Err(eyre!(
-                    "You have to provide correct libraries to use --guess-constructor-args"
-                )),
-            }?;
-
-            if maybe_creation_code.starts_with(bytecode) {
-                let constructor_args = &maybe_creation_code[bytecode.len()..];
-                return Ok(Some(hex::encode(constructor_args)));
-            } else {
-                eyre::bail!("Local bytecode doesn't match on-chain bytecode")
-            }
+        }
+        if args.guess_constructor_args {
+            return Ok(Some(self.guess_constructor_args(args, project, config).await?))
         }
 
         Ok(args.constructor_args.clone())
+    }
+
+    async fn guess_constructor_args(
+        &mut self,
+        args: &VerifyArgs,
+        project: &Project,
+        config: &Config,
+    ) -> Result<String> {
+        let provider = utils::get_provider(config)?;
+        let client = self.client(
+            args.etherscan.chain.unwrap_or_default(),
+            args.verifier.verifier_url.as_deref(),
+            args.etherscan.key.as_deref(),
+            config,
+        )?;
+
+        let creation_data = client.contract_creation_data(args.address).await?;
+        let transaction = provider
+            .get_transaction(creation_data.transaction_hash.to_ethers())
+            .await?
+            .ok_or_eyre("Couldn't fetch transaction data from RPC")?;
+        let receipt = provider
+            .get_transaction_receipt(creation_data.transaction_hash.to_ethers())
+            .await?
+            .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
+
+        let maybe_creation_code: &[u8];
+
+        if receipt.contract_address == Some(args.address.to_ethers()) {
+            maybe_creation_code = &transaction.input;
+        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER.to_ethers()) {
+            maybe_creation_code = &transaction.input[32..];
+        } else {
+            eyre::bail!("Fetching of constructor arguments is not supported for contracts created by contracts")
+        }
+
+        let contract_path = self.contract_path(args, project)?.to_string_lossy().into_owned();
+        let output = project.compile()?;
+        let artifact = output
+            .find(contract_path, &args.contract.name)
+            .ok_or_eyre("Contract artifact wasn't found locally")?;
+        let bytecode = artifact
+            .get_bytecode_object()
+            .ok_or_eyre("Contract artifact does not contain bytecode")?;
+
+        let bytecode = match bytecode.as_ref() {
+            BytecodeObject::Bytecode(bytes) => Ok(bytes),
+            BytecodeObject::Unlinked(_) => {
+                Err(eyre!("You have to provide correct libraries to use --guess-constructor-args"))
+            }
+        }?;
+
+        if maybe_creation_code.starts_with(bytecode) {
+            let constructor_args = &maybe_creation_code[bytecode.len()..];
+            Ok(hex::encode(constructor_args))
+        } else {
+            eyre::bail!("Local bytecode doesn't match on-chain bytecode")
+        }
     }
 }
 
