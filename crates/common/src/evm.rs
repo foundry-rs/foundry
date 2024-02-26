@@ -146,6 +146,8 @@ pub struct EvmArgs {
     pub env: EnvArgs,
 
     /// Whether to enable isolation of calls.
+    /// In isolation mode all top-level calls are executed as a separate transaction in a separate
+    /// EVM context, enabling more precise gas accounting and transaction state changes.
     #[clap(long)]
     #[serde(skip)]
     pub isolate: bool,

@@ -51,6 +51,8 @@ pub struct InspectorStackBuilder {
     /// The chisel state inspector.
     pub chisel_state: Option<usize>,
     /// Whether to enable call isolation.
+    /// In isolation mode all top-level calls are executed as a separate transaction in a separate
+    /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
 }
 
@@ -132,6 +134,7 @@ impl InspectorStackBuilder {
     }
 
     /// Set whether to enable the call isolation.
+    /// For description of call isolation, see [`InspectorStack::enable_isolation`].
     #[inline]
     pub fn enable_isolation(mut self, yes: bool) -> Self {
         self.enable_isolation = yes;
@@ -241,11 +244,21 @@ pub struct InspectorData {
     pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
+/// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
+/// Used to adjust EVM state while in inner context.
+///
+/// We need this to avoid breaking changes due to EVM behavior differences in isolated vs non-isolated mode.
+/// For descriptions and workarounds for those changes see: https://github.com/foundry-rs/foundry/pull/7186#issuecomment-1959102195
 #[derive(Debug, Clone)]
 pub struct InnerContextData {
+    /// The sender of the inner EVM context.
+    /// It is also an origin of the transaction that created the inner EVM context.
     sender: Address,
-    original_origin: Address,
+    /// Nonce of the sender before invocation of the inner EVM context.
     original_sender_nonce: u64,
+    /// Origin of the transaction in the outer EVM context.
+    original_origin: Address,
+    /// Whether the inner context was created by a CREATE transaction.
     is_create: bool,
 }
 
