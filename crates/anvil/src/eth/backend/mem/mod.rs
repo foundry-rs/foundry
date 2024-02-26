@@ -2038,7 +2038,7 @@ impl Backend {
                 .header
                 .base_fee_per_gas
                 .map_or(self.base_fee().to::<u128>(), |b| b as u128)
-                .checked_add(t.max_priority_fee_per_gas)
+                .checked_add(t.tx().tx().max_priority_fee_per_gas)
                 .unwrap_or(u128::MAX),
             TypedTransaction::Deposit(_) => 0_u128,
         };
