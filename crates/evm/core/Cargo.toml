@@ -35,6 +35,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
     "optimism",
+    "c-kzg"
 ] }
 revm-inspectors.workspace = true
 
