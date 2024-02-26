@@ -204,6 +204,11 @@ pub enum InvalidTransactionError {
     /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
     #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
     MaxFeePerBlobGasNotSupported,
+    /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
+    #[error("`blob_hashes` are required for EIP-4844 transactions")]
+    NoBlobHashes,
+    #[error(transparent)]
+    BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
