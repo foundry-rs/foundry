@@ -436,6 +436,10 @@ where
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
             }
+            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
+            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
+                "fraxtal-testnet"
+            }
             "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
                 "arbitrum-mainnet"
             }
