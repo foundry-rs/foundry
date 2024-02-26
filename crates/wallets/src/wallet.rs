@@ -130,12 +130,18 @@ of the unlocked account you want to use, or provide the --from flag with the add
         Ok(signer)
     }
 
-    /// Returns the sender address of the signer or `from`.
+    /// This function prefers the `from` field and may return a different address from the
+    /// configured signer
+    /// If from is specified, returns it
+    /// If from is not specified, but there is a signer configured, returns the signer's address
+    /// If from is not specified and there is no signer configured, returns zero address
     pub async fn sender(&self) -> Address {
-        if let Ok(signer) = self.signer().await {
+        if let Some(from) = self.from {
+            from
+        } else if let Ok(signer) = self.signer().await {
             signer.address().to_alloy()
         } else {
-            self.from.unwrap_or(Address::ZERO)
+            Address::ZERO
         }
     }
 }

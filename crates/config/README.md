@@ -115,6 +115,7 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 ffi = false
+always_use_create_2_factory = false
 # These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
 sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
 tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
@@ -138,6 +139,7 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+ast = false
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"

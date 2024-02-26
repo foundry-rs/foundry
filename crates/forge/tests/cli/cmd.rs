@@ -536,31 +536,10 @@ contract Greeter {
     cmd.arg("build");
 
     let output = cmd.stdout_lossy();
-    assert!(output.contains(
-        "
-Compiler run successful with warnings:
-Warning (5667): Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
-",
-    ));
+    assert!(output.contains("Warning"), "{output}");
 });
 
 // Tests that direct import paths are handled correctly
-//
-// NOTE(onbjerg): Disabled for Windows -- for some reason solc fails with a bogus error message
-// here: error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit
-// conversion from struct Bar memory to struct Bar memory requested.   --> src\Foo.sol:12:22:
-//    |
-// 12 |         FooLib.check(b);
-//    |                      ^
-//
-//
-//
-// error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit conversion
-// from contract Foo to contract Foo requested.   --> src\Foo.sol:15:23:
-//    |
-// 15 |         FooLib.check2(this);
-//    |                       ^^^^
-#[cfg(not(target_os = "windows"))]
 forgetest!(can_handle_direct_imports_into_src, |prj, cmd| {
     prj.add_source(
         "Foo",
@@ -635,15 +614,12 @@ contract Foo {
 });
 
 // test that `forge snapshot` commands work
-forgetest!(
-    #[serial_test::serial]
-    can_check_snapshot,
-    |prj, cmd| {
-        prj.insert_ds_test();
+forgetest!(can_check_snapshot, |prj, cmd| {
+    prj.insert_ds_test();
 
-        prj.add_source(
-            "ATest.t.sol",
-            r#"
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -651,20 +627,18 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.arg("snapshot");
+    cmd.arg("snapshot");
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_check_snapshot.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
+    );
 
-        cmd.arg("--check");
-        let _ = cmd.output();
-    }
-);
+    cmd.arg("--check");
+    let _ = cmd.output();
+});
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
@@ -1572,8 +1546,12 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     cmd.arg("build");
 
     let output = cmd.stdout_lossy();
-    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
-    assert!(output.contains("No files changed, compilation skipped"), "{}", output);
+    assert!(output.contains("Missing dependencies found. Installing now"), "{output}");
+
+    // re-run
+    let output = cmd.stdout_lossy();
+    assert!(!output.contains("Missing dependencies found. Installing now"), "{output}");
+    assert!(output.contains("No files changed, compilation skipped"), "{output}");
 });
 
 // checks that extra output works

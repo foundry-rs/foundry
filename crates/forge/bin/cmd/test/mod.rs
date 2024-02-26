@@ -18,7 +18,6 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    compact_to_contract,
     compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
     shell,
@@ -33,7 +32,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use regex::Regex;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel};
+use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -213,27 +212,15 @@ impl TestArgs {
         let outcome = self.run_tests(runner, config, verbosity, &filter, test_options).await?;
 
         if should_debug {
-            let mut sources = ContractSources::default();
-            for (id, artifact) in output_clone.unwrap().into_artifacts() {
-                // Sources are only required for the debugger, but it *might* mean that there's
-                // something wrong with the build and/or artifacts.
-                if let Some(source) = artifact.source_file() {
-                    let path = source
-                        .ast
-                        .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
-                        .absolute_path;
-                    let abs_path = project.root().join(&path);
-                    let source_code = fs::read_to_string(abs_path)?;
-                    let contract = artifact.clone().into_contract_bytecode();
-                    let source_contract = compact_to_contract(contract)?;
-                    sources.insert(&id, source.id, source_code, source_contract);
-                }
-            }
-
             // There is only one test.
             let Some(test) = outcome.into_tests_cloned().next() else {
                 return Err(eyre::eyre!("no tests were executed"));
             };
+
+            let sources = ContractSources::from_project_output(
+                output_clone.as_ref().unwrap(),
+                project.root(),
+            )?;
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -309,6 +296,7 @@ impl TestArgs {
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
+        let timer = Instant::now();
         let handle = tokio::task::spawn({
             let filter = filter.clone();
             async move { runner.test(&filter, tx, test_options).await }
@@ -432,6 +420,7 @@ impl TestArgs {
                 break;
             }
         }
+        let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
 
@@ -442,7 +431,7 @@ impl TestArgs {
         }
 
         if !outcome.results.is_empty() {
-            shell::println(outcome.summary())?;
+            shell::println(outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
@@ -528,7 +517,7 @@ fn list(
             }
         }
     }
-    Ok(TestOutcome::new(BTreeMap::new(), false))
+    Ok(TestOutcome::empty(false))
 }
 
 #[cfg(test)]

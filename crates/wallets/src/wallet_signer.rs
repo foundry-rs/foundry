@@ -57,6 +57,50 @@ impl WalletSigner {
         Ok(Self::Local(wallet))
     }
 
+    /// Returns a list of addresses available to use with current signer
+    ///
+    /// - for Ledger and Trezor signers the number of addresses to retrieve is specified as argument
+    /// - the result for Ledger signers includes addresses available for both LedgerLive and Legacy
+    ///   derivation paths
+    /// - for Local and AWS signers the result contains a single address
+    pub async fn available_senders(&self, max: usize) -> Result<Vec<ethers_core::types::Address>> {
+        let mut senders = Vec::new();
+        match self {
+            WalletSigner::Local(local) => {
+                senders.push(local.address());
+            }
+            WalletSigner::Ledger(ledger) => {
+                for i in 0..max {
+                    if let Ok(address) =
+                        ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await
+                    {
+                        senders.push(address);
+                    }
+                }
+                for i in 0..max {
+                    if let Ok(address) =
+                        ledger.get_address_with_path(&LedgerHDPath::Legacy(i)).await
+                    {
+                        senders.push(address);
+                    }
+                }
+            }
+            WalletSigner::Trezor(trezor) => {
+                for i in 0..max {
+                    if let Ok(address) =
+                        trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await
+                    {
+                        senders.push(address);
+                    }
+                }
+            }
+            WalletSigner::Aws(aws) => {
+                senders.push(aws.address());
+            }
+        }
+        Ok(senders)
+    }
+
     pub fn from_mnemonic(
         mnemonic: &str,
         passphrase: Option<&str>,
