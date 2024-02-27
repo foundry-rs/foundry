@@ -531,6 +531,7 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "axum",
+ "base64 0.21.7",
  "bytes",
  "chrono",
  "clap",
