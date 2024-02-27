@@ -24,10 +24,11 @@ impl fmt::Debug for CalldataFuzzDictionaryConfig {
 impl CalldataFuzzDictionaryConfig {
     pub fn new(config: &FuzzDictionaryConfig, state: EvmFuzzState) -> Self {
         let mut addresses: HashSet<Address> = HashSet::new();
+        let dict_size = config.max_calldata_fuzz_dictionary_addresses;
 
-        if let Some(len) = config.max_calldata_fuzz_dictionary_addresses {
+        if dict_size > 0 {
             loop {
-                if addresses.len() == len {
+                if addresses.len() == dict_size {
                     break
                 }
                 addresses.insert(Address::random());

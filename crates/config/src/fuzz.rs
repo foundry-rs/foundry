@@ -88,7 +88,7 @@ pub struct FuzzDictionaryConfig {
     pub max_fuzz_dictionary_values: usize,
     /// How many random addresses to use and to recycle when fuzzing calldata.
     /// If not specified then `max_fuzz_dictionary_addresses` value applies.
-    pub max_calldata_fuzz_dictionary_addresses: Option<usize>,
+    pub max_calldata_fuzz_dictionary_addresses: usize,
 }
 
 impl Default for FuzzDictionaryConfig {
@@ -101,7 +101,7 @@ impl Default for FuzzDictionaryConfig {
             max_fuzz_dictionary_addresses: (300 * 1024 * 1024) / 20,
             // limit this to 200MB
             max_fuzz_dictionary_values: (200 * 1024 * 1024) / 32,
-            max_calldata_fuzz_dictionary_addresses: None,
+            max_calldata_fuzz_dictionary_addresses: 0,
         }
     }
 }
