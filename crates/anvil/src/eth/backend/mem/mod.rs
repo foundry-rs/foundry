@@ -2402,33 +2402,31 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-4844 Cancun hard fork validation steps
-        if (env.cfg.spec_id as u8) >= (SpecId::CANCUN as u8) {
-            if tx.transaction.is_eip4844() {
-                // Light checks first: see if the blob fee cap is too low.
-                if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
-                    if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
-                        if max_fee_per_blob_gas.to::<u128>() > blob_gas_and_price.blob_gasprice {
-                            warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                            return Err(InvalidTransactionError::BlobGasPriceGreaterThanMax);
-                        }
+        if (env.cfg.spec_id as u8) >= (SpecId::CANCUN as u8) && tx.transaction.is_eip4844() {
+            // Light checks first: see if the blob fee cap is too low.
+            if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
+                if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
+                    if max_fee_per_blob_gas.to::<u128>() > blob_gas_and_price.blob_gasprice {
+                        warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                        return Err(InvalidTransactionError::BlobGasPriceGreaterThanMax);
                     }
                 }
+            }
 
-                // Heavy (blob validation) checks
-                let tx = match &tx.transaction {
-                    TypedTransaction::EIP4844(tx) => tx.tx().clone(),
-                    _ => return Ok(()),
-                };
+            // Heavy (blob validation) checks
+            let tx = match &tx.transaction {
+                TypedTransaction::EIP4844(tx) => tx.tx().clone(),
+                _ => return Ok(()),
+            };
 
-                // Ensure there are blob hashes.
-                if tx.tx().blob_versioned_hashes.is_empty() {
-                    return Err(InvalidTransactionError::NoBlobHashes)
-                }
+            // Ensure there are blob hashes.
+            if tx.tx().blob_versioned_hashes.is_empty() {
+                return Err(InvalidTransactionError::NoBlobHashes)
+            }
 
-                // Check for any blob validation errors
-                if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
-                    return Err(InvalidTransactionError::BlobTransactionValidationError(err))
-                }
+            // Check for any blob validation errors
+            if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
+                return Err(InvalidTransactionError::BlobTransactionValidationError(err))
             }
         }
 
