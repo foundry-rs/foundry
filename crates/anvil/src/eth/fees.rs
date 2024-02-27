@@ -100,7 +100,7 @@ impl FeeManager {
         if self.is_eip4844() {
             self.base_fee_per_blob_gas()
         } else {
-            *self.gas_price.read()
+            U256::ZERO
         }
     }
 
@@ -128,14 +128,6 @@ impl FeeManager {
     pub fn base_fee_per_blob_gas(&self) -> U256 {
         if self.is_eip4844() {
             U256::from(self.blob_excess_gas_and_price.read().blob_gasprice)
-        } else {
-            U256::ZERO
-        }
-    }
-
-    pub fn excess_blob_gas(&self) -> U256 {
-        if self.is_eip4844() {
-            U256::from(self.blob_excess_gas_and_price.read().excess_blob_gas)
         } else {
             U256::ZERO
         }
