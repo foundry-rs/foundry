@@ -145,8 +145,11 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         } else {
             None
         };
-        let excess_blob_gas =
-            if (self.cfg_env.spec_id as u8) >= (SpecId::CANCUN as u8) { Some(0) } else { None };
+        let excess_blob_gas = if (self.cfg_env.spec_id as u8) >= (SpecId::CANCUN as u8) {
+            self.block_env.get_blob_excess_gas()
+        } else {
+            None
+        };
 
         for tx in self.into_iter() {
             let tx = match tx {

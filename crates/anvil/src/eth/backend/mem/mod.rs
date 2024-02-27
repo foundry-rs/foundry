@@ -79,6 +79,7 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
+use revm::primitives::{calc_excess_blob_gas, BlobExcessGasAndPrice};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -1016,11 +1017,18 @@ impl Backend {
             U256::from(header.base_fee_per_gas.unwrap_or_default()),
         );
 
+        let next_block_excess_blob_gas = calc_excess_blob_gas(
+            header.excess_blob_gas.unwrap_or_default(),
+            header.blob_gas_used.unwrap_or_default(),
+        );
+
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
 
         // update next base fee
         self.fees.set_base_fee(U256::from(next_block_base_fee));
+        self.fees
+            .set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(next_block_excess_blob_gas));
 
         outcome
     }

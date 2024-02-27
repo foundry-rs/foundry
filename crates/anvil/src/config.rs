@@ -39,6 +39,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use rand::thread_rng;
+use revm::primitives::BlobExcessGasAndPrice;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -98,6 +99,8 @@ pub struct NodeConfig {
     pub gas_price: Option<U256>,
     /// Default base fee
     pub base_fee: Option<U256>,
+    /// Default blob excess gas and price
+    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
     pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
@@ -381,6 +384,7 @@ impl Default for NodeConfig {
             fork_block_number: None,
             account_generator: None,
             base_fee: None,
+            blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
             enable_auto_impersonate: false,
@@ -419,6 +423,28 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_gas_price(&self) -> U256 {
         self.gas_price.unwrap_or_else(|| U256::from(INITIAL_GAS_PRICE))
+    }
+
+    pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
+        if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
+            blob_excess_gas_and_price.clone()
+        } else {
+            if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas) {
+                BlobExcessGasAndPrice::new(excess_blob_gas)
+            } else {
+                BlobExcessGasAndPrice::new(0)
+            }
+        }
+    }
+
+    pub fn get_excess_blob_gas_and_price(&self) -> BlobExcessGasAndPrice {
+        self.blob_excess_gas_and_price.clone().unwrap_or_else(|| {
+            self.genesis
+                .as_ref()
+                .and_then(|g| g.excess_blob_gas)
+                .map(|g| BlobExcessGasAndPrice::new(g))
+                .unwrap_or_else(|| BlobExcessGasAndPrice::new(0))
+        })
     }
 
     /// Returns the base fee to use
@@ -823,7 +849,12 @@ impl NodeConfig {
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
-        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
+        let fees = FeeManager::new(
+            env.cfg.spec_id,
+            self.get_base_fee(),
+            self.get_gas_price(),
+            self.get_blob_excess_gas_and_price(),
+        );
 
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {

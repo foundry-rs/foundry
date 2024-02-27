@@ -4,7 +4,7 @@ use crate::eth::{
 };
 use alloy_primitives::{B256, U256};
 use anvil_core::eth::transaction::TypedTransaction;
-use foundry_evm::revm::primitives::SpecId;
+use foundry_evm::revm::primitives::{BlobExcessGasAndPrice, SpecId};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -44,6 +44,10 @@ pub struct FeeManager {
     ///
     /// This value will be updated after a new block was mined
     base_fee: Arc<RwLock<U256>>,
+    /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
+    ///
+    /// This value will be updated after a new block was mined
+    blob_excess_gas_and_price: Arc<RwLock<foundry_evm::revm::primitives::BlobExcessGasAndPrice>>,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
@@ -54,11 +58,17 @@ pub struct FeeManager {
 // === impl FeeManager ===
 
 impl FeeManager {
-    pub fn new(spec_id: SpecId, base_fee: U256, gas_price: U256) -> Self {
+    pub fn new(
+        spec_id: SpecId,
+        base_fee: U256,
+        gas_price: U256,
+        blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    ) -> Self {
         Self {
             spec_id,
             base_fee: Arc::new(RwLock::new(base_fee)),
             gas_price: Arc::new(RwLock::new(gas_price)),
+            blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
             elasticity: Arc::new(RwLock::new(default_elasticity())),
         }
     }
@@ -72,10 +82,23 @@ impl FeeManager {
         (self.spec_id as u8) >= (SpecId::LONDON as u8)
     }
 
+    pub fn is_eip4844(&self) -> bool {
+        (self.spec_id as u8) >= (SpecId::CANCUN as u8)
+    }
+
     /// Calculates the current gas price
     pub fn gas_price(&self) -> U256 {
         if self.is_eip1559() {
             self.base_fee().saturating_add(self.suggested_priority_fee())
+        } else {
+            *self.gas_price.read()
+        }
+    }
+
+    /// Calculates the current blob gas price
+    pub fn blob_gas_price(&self) -> U256 {
+        if self.is_eip4844() {
+            self.base_fee_per_blob_gas()
         } else {
             *self.gas_price.read()
         }
@@ -89,6 +112,22 @@ impl FeeManager {
     pub fn base_fee(&self) -> U256 {
         if self.is_eip1559() {
             *self.base_fee.read()
+        } else {
+            U256::ZERO
+        }
+    }
+
+    pub fn base_fee_per_blob_gas(&self) -> U256 {
+        if self.is_eip4844() {
+            U256::from(self.blob_excess_gas_and_price.read().blob_gasprice)
+        } else {
+            U256::ZERO
+        }
+    }
+
+    pub fn excess_blob_gas(&self) -> U256 {
+        if self.is_eip4844() {
+            U256::from(self.blob_excess_gas_and_price.read().excess_blob_gas)
         } else {
             U256::ZERO
         }
@@ -114,6 +153,13 @@ impl FeeManager {
         *base = fee;
     }
 
+    /// Sets the current blob excess gas and price
+    pub fn set_blob_excess_gas_and_price(&self, blob_excess_gas_and_price: BlobExcessGasAndPrice) {
+        trace!(target: "backend::fees", "updated blob base fee {:?}", blob_excess_gas_and_price);
+        let mut base = self.blob_excess_gas_and_price.write();
+        *base = blob_excess_gas_and_price;
+    }
+
     /// Calculates the base fee for the next block
     pub fn get_next_block_base_fee_per_gas(
         &self,
@@ -132,6 +178,11 @@ impl FeeManager {
             gas_limit.to::<u64>(),
             last_fee_per_gas.to::<u64>(),
         )
+    }
+
+    /// Calculates the next block blob base fee, using the provided excess blob gas
+    pub fn get_next_block_blob_base_fee_per_gas(&self, excess_blob_gas: U256) -> U256 {
+        U256::from(crate::revm::primitives::calc_blob_gasprice(excess_blob_gas.to::<u64>()))
     }
 }
 
