@@ -1,13 +1,9 @@
-use super::*;
+use super::{ScriptArgs, ScriptConfig};
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, ContextCompat, Result};
 use forge::link::{LinkOutput, Linker};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_common::{
-    compact_to_contract,
-    compile::{self, ContractSources, ProjectCompiler},
-    fs,
-};
+use foundry_common::compile::{self, ContractSources, ProjectCompiler};
 use foundry_compilers::{
     artifacts::{ContractBytecode, ContractBytecodeSome, Libraries},
     cache::SolFilesCache,
@@ -28,38 +24,15 @@ impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&mut self, script_config: &mut ScriptConfig) -> Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
-        let output = output.with_stripped_file_prefixes(project.root());
-
-        let mut sources: ContractSources = Default::default();
-
-        let contracts = output
-            .into_artifacts()
-            .map(|(id, artifact)| -> Result<_> {
-                // Sources are only required for the debugger, but it *might* mean that there's
-                // something wrong with the build and/or artifacts.
-                if let Some(source) = artifact.source_file() {
-                    let path = source
-                        .ast
-                        .ok_or_else(|| eyre::eyre!("source from artifact has no AST"))?
-                        .absolute_path;
-                    let abs_path = project.root().join(path);
-                    let source_code = fs::read_to_string(abs_path).wrap_err_with(|| {
-                        format!("failed to read artifact source file for `{}`", id.identifier())
-                    })?;
-                    let contract = artifact.clone().into_contract_bytecode();
-                    let source_contract = compact_to_contract(contract)?;
-                    sources.insert(&id, source.id, source_code, source_contract);
-                } else {
-                    warn!(?id, "source not found");
-                }
-                Ok((id, artifact))
-            })
-            .collect::<Result<ArtifactContracts>>()?;
+        let root = project.root();
+        let output = output.with_stripped_file_prefixes(root);
+        let sources = ContractSources::from_project_output(&output, root)?;
+        let contracts = output.into_artifacts().collect();
 
         let target = self.find_target(&project, &contracts)?.clone();
         script_config.target_contract = Some(target.clone());
 
-        let libraries = script_config.config.solc_settings()?.libraries;
+        let libraries = script_config.config.libraries_with_remappings()?;
         let linker = Linker::new(project.root(), contracts);
 
         let (highlevel_known_contracts, libraries, predeploy_libraries) = self.link_script_target(
@@ -104,7 +77,7 @@ impl ScriptArgs {
             true
         };
 
-        let mut target = None;
+        let mut target: Option<&ArtifactId> = None;
 
         for (id, contract) in contracts.iter() {
             if no_target_name {
@@ -112,8 +85,15 @@ impl ScriptArgs {
                 if id.source == std::path::Path::new(&target_fname) &&
                     contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0)
                 {
-                    if target.is_some() {
-                        eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
+                    if let Some(target) = target {
+                        // We might have multiple artifacts for the same contract but with different
+                        // solc versions. Their names will have form of {name}.0.X.Y, so we are
+                        // stripping versions off before comparing them.
+                        let target_name = target.name.split('.').next().unwrap();
+                        let id_name = id.name.split('.').next().unwrap();
+                        if target_name != id_name {
+                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
+                        }
                     }
                     target = Some(id);
                 }

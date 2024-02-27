@@ -67,7 +67,7 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
-    decode::maybe_decode_revert,
+    decode::RevertDecoder,
     revm::{
         db::DatabaseRef,
         interpreter::{return_ok, return_revert, InstructionResult},
@@ -602,10 +602,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return fork
-                        .get_balance(address, number)
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_balance(address, number).await?)
                 }
             }
         }
@@ -630,9 +627,7 @@ impl EthApi {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
                     return Ok(B256::from(
-                        fork.storage_at(address, index, Some(BlockNumber::Number(number)))
-                            .await
-                            .map_err(|_| BlockchainError::DataUnavailable)?,
+                        fork.storage_at(address, index, Some(BlockNumber::Number(number))).await?,
                     ));
                 }
             }
@@ -764,10 +759,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return fork
-                        .get_code(address, number)
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_code(address, number).await?)
                 }
             }
         }
@@ -792,10 +784,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return fork
-                        .get_proof(address, keys, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?)
                 }
             }
         }
@@ -990,10 +979,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return fork
-                        .call(&request, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.call(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1040,10 +1026,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return fork
-                        .create_access_list(&request, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.create_access_list(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1185,10 +1168,7 @@ impl EthApi {
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return fork
-                    .uncle_by_block_hash_and_index(block_hash, idx.into())
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1207,10 +1187,7 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return fork
-                    .uncle_by_block_number_and_index(number, idx.into())
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1304,8 +1281,6 @@ impl EthApi {
             return Err(FeeHistoryError::InvalidBlockRange.into());
         }
 
-        let fee_history = self.fee_history_cache.lock();
-
         let mut response = FeeHistory {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
@@ -1314,30 +1289,34 @@ impl EthApi {
             base_fee_per_blob_gas: Default::default(),
             blob_gas_used_ratio: Default::default(),
         };
-
         let mut rewards = Vec::new();
-        // iter over the requested block range
-        for n in lowest..=highest {
-            // <https://eips.ethereum.org/EIPS/eip-1559>
-            if let Some(block) = fee_history.get(&n) {
-                response.base_fee_per_gas.push(U256::from(block.base_fee));
-                response.gas_used_ratio.push(block.gas_used_ratio);
 
-                // requested percentiles
-                if !reward_percentiles.is_empty() {
-                    let mut block_rewards = Vec::new();
-                    let resolution_per_percentile: f64 = 2.0;
-                    for p in &reward_percentiles {
-                        let p = p.clamp(0.0, 100.0);
-                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                        let reward = if let Some(r) = block.rewards.get(index as usize) {
-                            U256::from(*r)
-                        } else {
-                            U256::ZERO
-                        };
-                        block_rewards.push(reward);
+        {
+            let fee_history = self.fee_history_cache.lock();
+
+            // iter over the requested block range
+            for n in lowest..=highest {
+                // <https://eips.ethereum.org/EIPS/eip-1559>
+                if let Some(block) = fee_history.get(&n) {
+                    response.base_fee_per_gas.push(U256::from(block.base_fee));
+                    response.gas_used_ratio.push(block.gas_used_ratio);
+
+                    // requested percentiles
+                    if !reward_percentiles.is_empty() {
+                        let mut block_rewards = Vec::new();
+                        let resolution_per_percentile: f64 = 2.0;
+                        for p in &reward_percentiles {
+                            let p = p.clamp(0.0, 100.0);
+                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                            let reward = if let Some(r) = block.rewards.get(index as usize) {
+                                U256::from(*r)
+                            } else {
+                                U256::ZERO
+                            };
+                            block_rewards.push(reward);
+                        }
+                        rewards.push(block_rewards);
                     }
-                    rewards.push(block_rewards);
                 }
             }
         }
@@ -1345,6 +1324,9 @@ impl EthApi {
         response.reward = Some(rewards);
 
         // calculate next base fee
+        // The spec states that `base_fee_per_gas` "[..] includes the next block after the
+        // newest of the returned range, because this value can be derived from the
+        // newest block"
         if let (Some(last_gas_used), Some(last_fee_per_gas)) =
             (response.gas_used_ratio.last(), response.base_fee_per_gas.last())
         {
@@ -1917,7 +1899,9 @@ impl EthApi {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
                             if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
-                                if let Some(reason) = maybe_decode_revert(&output, None, None) {
+                                if let Some(reason) =
+                                    RevertDecoder::new().maybe_decode(&output, None)
+                                {
                                     tx.other.insert(
                                         "revertReason".to_string(),
                                         serde_json::to_value(reason).expect("Infallible"),
@@ -2167,10 +2151,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return fork
-                        .estimate_gas(&request, Some(number.into()))
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -2549,10 +2530,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return fork
-                        .get_nonce(address, number)
-                        .await
-                        .map_err(|_| BlockchainError::DataUnavailable);
+                    return Ok(fork.get_nonce(address, number).await?);
                 }
             }
         }

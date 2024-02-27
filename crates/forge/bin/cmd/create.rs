@@ -11,7 +11,7 @@ use ethers_core::{
         TransactionReceipt, TransactionRequest,
     },
 };
-use ethers_middleware::MiddlewareBuilder;
+use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -145,8 +145,8 @@ impl CreateArgs {
             self.deploy(abi, bin, params, provider, chain_id).await
         } else {
             // Deploy with signer
-            let signer = self.eth.wallet.signer(chain_id).await?;
-            let provider = provider.with_signer(signer);
+            let signer = self.eth.wallet.signer().await?;
+            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
             self.deploy(abi, bin, params, provider, chain_id).await
         }
     }
@@ -186,6 +186,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.opts.via_ir,
+            evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
         };
 
@@ -334,6 +335,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
             via_ir: self.opts.via_ir,
+            evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);

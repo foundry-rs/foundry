@@ -543,7 +543,6 @@ fn get_state_diff(state: &mut Cheatcodes) -> Result {
         .unwrap_or_default()
         .into_iter()
         .flatten()
-        .map(|record| record.access)
         .collect::<Vec<_>>();
     Ok(res.abi_encode())
 }

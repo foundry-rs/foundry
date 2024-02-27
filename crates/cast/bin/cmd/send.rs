@@ -1,7 +1,7 @@
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers_core::types::NameOrAddress;
-use ethers_middleware::MiddlewareBuilder;
+use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
@@ -170,7 +170,7 @@ impl SendTxArgs {
         // enough information to sign and we must bail.
         } else {
             // Retrieve the signer, and bail if it can't be constructed.
-            let signer = eth.wallet.signer(chain.id()).await?;
+            let signer = eth.wallet.signer().await?;
             let from = signer.address();
 
             // prevent misconfigured hwlib from sending a transaction that defies
@@ -191,7 +191,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
                 tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
             }
 
-            let provider = provider.with_signer(signer);
+            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
 
             cast_send(
                 provider,

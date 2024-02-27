@@ -24,6 +24,7 @@ foundry-common.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+derive_builder = "0.20.0"
 eyre.workspace = true
 hex = { workspace = true, features = ["serde"] }
 itertools.workspace = true
@@ -31,6 +32,9 @@ rpassword = "7"
 serde.workspace = true
 thiserror = "1"
 tracing.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros"] }
 
 [features]
 default = ["rustls"]

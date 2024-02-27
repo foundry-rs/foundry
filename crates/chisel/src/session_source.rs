@@ -14,7 +14,7 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt;
+use solang_parser::{diagnostics::Diagnostic, pt};
 use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
@@ -318,15 +318,10 @@ impl SessionSource {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
 
+        let remappings = self.config.foundry_config.get_all_remappings().collect::<Vec<_>>();
+
         // Include Vm.sol if forge-std remapping is not available
-        if !self.config.no_vm &&
-            !self
-                .config
-                .foundry_config
-                .get_all_remappings()
-                .into_iter()
-                .any(|r| r.name.starts_with("forge-std"))
-        {
+        if !self.config.no_vm && !remappings.iter().any(|r| r.name.starts_with("forge-std")) {
             sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE));
         }
 
@@ -337,7 +332,7 @@ impl SessionSource {
             .expect("Solidity source not found");
 
         // get all remappings from the config
-        compiler_input.settings.remappings = self.config.foundry_config.get_all_remappings();
+        compiler_input.settings.remappings = remappings;
 
         // We also need to enforce the EVM version that the user has specified.
         compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
@@ -665,16 +660,26 @@ pub fn parse_fragment(
 
     match base.clone().with_run_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Function),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
     match base.clone().with_top_level_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Contract),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
     match base.with_global_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Source),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
 
     None
+}
+
+fn debug_errors(errors: &[Diagnostic]) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
+    for error in errors {
+        tracing::debug!("error: {}", error.message);
+    }
 }

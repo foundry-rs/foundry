@@ -98,6 +98,12 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
         return true
     }
 
+    // quick node error `"credits limited to 6000/sec"`
+    // <https://github.com/foundry-rs/foundry/pull/6712#issuecomment-1951441240>
+    if *code == -32012 && message.contains("credits") {
+        return true
+    }
+
     // quick node rate limit error: `100/second request limit reached - reduce calls per second or
     // upgrade your account at quicknode.com` <https://github.com/foundry-rs/foundry/issues/4894>
     if *code == -32007 && message.contains("request limit reached") {
@@ -113,6 +119,7 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
             msg.contains("rate limit") ||
                 msg.contains("rate exceeded") ||
                 msg.contains("too many requests") ||
+                msg.contains("credits limited") ||
                 msg.contains("request limit")
         }
     }

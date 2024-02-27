@@ -15,6 +15,11 @@ pub use self::paths::ProjectPathsArgs;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
+    /// Includes the AST as JSON in the compiler output.
+    #[clap(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub ast: bool,
+
     /// The target EVM version.
     #[clap(long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]

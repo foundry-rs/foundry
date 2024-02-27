@@ -513,24 +513,22 @@ impl DebuggerContext<'_> {
         // Color memory region based on read/write.
         let mut offset = None;
         let mut size = None;
+        let mut write_offset = None;
+        let mut write_size = None;
         let mut color = None;
         if let Instruction::OpCode(op) = step.instruction {
             let stack_len = step.stack.len();
             if stack_len > 0 {
                 if let Some(accesses) = get_buffer_accesses(op, &step.stack) {
                     if let Some(read_access) = accesses.read {
-                        if read_access.0 == self.active_buffer {
-                            offset = Some(read_access.1.offset);
-                            size = Some(read_access.1.size);
-                            color = Some(Color::Cyan);
-                        }
-                    } else if let Some(write_access) = accesses.write {
-                        // TODO: with MCOPY, it will be possible to both read from and write to the
-                        // memory buffer with the same opcode
+                        offset = Some(read_access.1.offset);
+                        size = Some(read_access.1.size);
+                        color = Some(Color::Cyan);
+                    }
+                    if let Some(write_access) = accesses.write {
                         if self.active_buffer == BufferKind::Memory {
-                            offset = Some(write_access.offset);
-                            size = Some(write_access.size);
-                            color = Some(Color::Red);
+                            write_offset = Some(write_access.offset);
+                            write_size = Some(write_access.size);
                         }
                     }
                 }
@@ -538,6 +536,9 @@ impl DebuggerContext<'_> {
         }
 
         // color word on previous write op
+        // TODO: technically it's possible for this to conflict with the current op, ie, with
+        // subsequent MCOPYs, but solc can't seem to generate that code even with high optimizer
+        // settings
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
@@ -574,8 +575,10 @@ impl DebuggerContext<'_> {
                 // Word hex bytes.
                 hex_bytes_spans(buf_word, &mut spans, |j, _| {
                     let mut byte_color = Color::White;
+                    let mut end = None;
+                    let idx = i * 32 + j;
                     if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
-                        let idx = i * 32 + j;
+                        end = Some(offset + size);
                         if (offset..offset + size).contains(&idx) {
                             // [offset, offset + size] is the memory region to be colored.
                             // If a byte at row i and column j in the memory panel
@@ -583,6 +586,29 @@ impl DebuggerContext<'_> {
                             byte_color = color;
                         }
                     }
+                    if let (Some(write_offset), Some(write_size)) = (write_offset, write_size) {
+                        // check for overlap with read region
+                        let write_end = write_offset + write_size;
+                        if let Some(read_end) = end {
+                            let read_start = offset.unwrap();
+                            if (write_offset..write_end).contains(&read_end) {
+                                // if it contains end, start from write_start up to read_end
+                                if (write_offset..read_end).contains(&idx) {
+                                    return Style::new().fg(Color::Yellow);
+                                }
+                            } else if (write_offset..write_end).contains(&read_start) {
+                                // otherwise if it contains read start, start from read_start up to
+                                // write_end
+                                if (read_start..write_end).contains(&idx) {
+                                    return Style::new().fg(Color::Yellow);
+                                }
+                            }
+                        }
+                        if (write_offset..write_end).contains(&idx) {
+                            byte_color = Color::Red;
+                        }
+                    }
+
                     Style::new().fg(byte_color)
                 });
 
@@ -683,6 +709,7 @@ fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         opcode::CREATE | opcode::CREATE2 => (Some((BufferKind::Memory, 2, 3)), None),
         opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
         opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
+        opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
         _ => Default::default(),
     };
 

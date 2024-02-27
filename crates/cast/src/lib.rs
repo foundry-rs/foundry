@@ -36,6 +36,7 @@ use std::{
 use tokio::signal::ctrl_c;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
+use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -434,6 +435,10 @@ where
             }
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
+            }
+            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
+            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
+                "fraxtal-testnet"
             }
             "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
                 "arbitrum-mainnet"
@@ -1548,6 +1553,37 @@ impl SimpleCast {
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
         };
         let encoded = &calldata[8..];
+        Ok(format!("0x{encoded}"))
+    }
+
+    /// Performs packed ABI encoding based off of the function signature or tuple.
+    ///
+    /// # Examplez
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000012c00000000000000c8",
+    ///     Cast::abi_encode_packed("(uint128[] a, uint64 b)", &["[100, 300]", "200"]).unwrap().as_str()
+    /// );
+    ///
+    /// assert_eq!(
+    ///     "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e68656c6c6f20776f726c64",
+    ///     Cast::abi_encode_packed("foo(address a, string b)", &["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "hello world"]).unwrap().as_str()
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn abi_encode_packed(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        // If the signature is a tuple, we need to prefix it to make it a function
+        let sig =
+            if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig.to_string() };
+
+        let func = get_func(sig.as_str())?;
+        let encoded = match encode_function_args_packed(&func, args) {
+            Ok(res) => hex::encode(res),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+        };
         Ok(format!("0x{encoded}"))
     }
 

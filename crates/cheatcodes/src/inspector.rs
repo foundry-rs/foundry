@@ -7,16 +7,16 @@ use crate::{
         prank::Prank,
         DealRecord, RecordAccess,
     },
-    script::Broadcast,
+    script::{Broadcast, ScriptWallets},
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
         ExpectedRevert, ExpectedRevertKind,
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
+    Vm::AccountAccess,
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256, U64};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
-use alloy_signer::LocalWallet;
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
 use foundry_evm_core::{
@@ -85,14 +85,6 @@ pub struct BroadcastableTransaction {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
-#[derive(Clone, Debug)]
-pub struct AccountAccess {
-    /// The account access.
-    pub access: crate::Vm::AccountAccess,
-    /// The call depth the account was accessed.
-    pub depth: u64,
-}
-
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -128,7 +120,7 @@ pub struct Cheatcodes {
     pub labels: HashMap<Address, String>,
 
     /// Remembered private keys
-    pub script_wallets: Vec<LocalWallet>,
+    pub script_wallets: Option<ScriptWallets>,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -219,7 +211,8 @@ impl Cheatcodes {
     #[inline]
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         let labels = config.labels.clone();
-        Self { config, fs_commit: true, labels, ..Default::default() }
+        let script_wallets = config.script_wallets.clone();
+        Self { config, fs_commit: true, labels, script_wallets, ..Default::default() }
     }
 
     fn apply_cheatcode<DB: DatabaseExt>(
@@ -233,7 +226,7 @@ impl Cheatcodes {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        data.db.ensure_cheatcode_access_forking_mode(caller)?;
+        data.db.ensure_cheatcode_access_forking_mode(&caller)?;
 
         apply_dispatch(&decoded, &mut CheatsCtxt { state: self, data, caller })
     }
@@ -256,7 +249,7 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = inputs.created_address(old_nonce);
 
-        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(&inputs.caller) {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
             return created_address;
@@ -436,10 +429,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     reverted: false,
                     deployedCode: vec![],
                     storageAccesses: vec![],
+                    depth: data.journaled_state.depth(),
                 };
                 // Ensure that we're not selfdestructing a context recording was initiated on
                 if let Some(last) = account_accesses.last_mut() {
-                    last.push(AccountAccess { access, depth: data.journaled_state.depth() });
+                    last.push(access);
                 }
             }
         }
@@ -545,18 +539,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         reverted: false,
                         deployedCode: vec![],
                         storageAccesses: vec![],
-                    };
-                    let access = AccountAccess {
-                        access: account_access,
-                        // use current depth; EXT* opcodes are not creating new contexts
                         depth: data.journaled_state.depth(),
                     };
                     // Record the EXT* call as an account access at the current depth
                     // (future storage accesses will be recorded in a new "Resume" context)
                     if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.push(access);
+                        last.push(account_access);
                     } else {
-                        recorded_account_diffs_stack.push(vec![access]);
+                        recorded_account_diffs_stack.push(vec![account_access]);
                     }
                 }
                 _ => (),
@@ -891,7 +881,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // updated with the revert status of this call, since the EVM does not mark accounts
             // as "warm" if the call from which they were accessed is reverted
             recorded_account_diffs_stack.push(vec![AccountAccess {
-                access: crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
                         forkId: context.db.active_fork_id().unwrap_or_default(),
                         chainId: U256::from(context.env.cfg.chain_id),
@@ -907,8 +896,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     reverted: false,
                     deployedCode: vec![],
                     storageAccesses: vec![], // updated on step
-                },
-                depth: context.journaled_state.depth(),
+                    depth: context.journaled_state.depth(),
             }]);
         }
 
@@ -1011,9 +999,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // accordance with EVM behavior
                 if status.is_revert() {
                     last_recorded_depth.iter_mut().for_each(|element| {
-                        element.access.reverted = true;
+                        element.reverted = true;
                         element
-                            .access
                             .storageAccesses
                             .iter_mut()
                             .for_each(|storage_access| storage_access.reverted = true);
@@ -1026,8 +1013,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 if call_access.depth == data.journaled_state.depth() {
                     if let Ok((acc, _)) = data.journaled_state.load_account(call.contract, data.db)
                     {
-                        debug_assert!(access_is_call(call_access.access.kind));
-                        call_access.access.newBalance = acc.info.balance;
+                        debug_assert!(access_is_call(call_access.kind));
+                        call_access.newBalance = acc.info.balance;
                     }
                 }
                 // Merge the last depth's AccountAccesses into the AccountAccesses at the current
@@ -1209,18 +1196,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 data.env.tx.caller = broadcast.new_origin;
 
                 if data.journaled_state.depth() == broadcast.depth {
-                    let (bytecode, to, nonce) = match process_create(
+                    let (bytecode, to, nonce) = process_broadcast_create(
                         broadcast.new_origin,
                         call.init_code.clone(),
                         data,
                         call,
-                    ) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            return (InstructionResult::Revert, None, gas, Error::encode(err))
-                        }
-                    };
-
+                    );
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1248,33 +1229,54 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // Apply the Create2 deployer
+        if self.broadcast.is_some() || self.config.always_use_create_2_factory {
+            match apply_create2_deployer(
+                data,
+                call,
+                self.prank.as_ref(),
+                self.broadcast.as_ref(),
+                self.recorded_account_diffs_stack.as_mut(),
+            ) {
+                Ok(_) => {}
+                Err(err) => return (InstructionResult::Revert, None, gas, Error::encode(err)),
+            };
+        }
+
         // allow cheatcodes from the address of the new contract
         // Compute the address *after* any possible broadcast updates, so it's based on the updated
         // call inputs
         let address = self.allow_cheatcodes_on_create(data, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            // If the create scheme is create2, and the caller is the DEFAULT_CREATE2_DEPLOYER then
+            // we must add 1 to the depth to account for the call to the create2 factory.
+            let mut depth = data.journaled_state.depth();
+            if let CreateScheme::Create2 { salt: _ } = call.scheme {
+                if call.caller == DEFAULT_CREATE2_DEPLOYER {
+                    depth += 1;
+                }
+            }
+
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs_stack.push(vec![AccountAccess {
-                access: crate::Vm::AccountAccess {
-                    chainInfo: crate::Vm::ChainInfo {
-                        forkId: data.db.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(data.env.cfg.chain_id),
-                    },
-                    accessor: call.caller,
-                    account: address,
-                    kind: crate::Vm::AccountAccessKind::Create,
-                    initialized: true,
-                    oldBalance: U256::ZERO, // updated on create_end
-                    newBalance: U256::ZERO, // updated on create_end
-                    value: call.value,
-                    data: call.init_code.to_vec(),
-                    reverted: false,
-                    deployedCode: vec![],    // updated on create_end
-                    storageAccesses: vec![], // updated on create_end
+                chainInfo: crate::Vm::ChainInfo {
+                    forkId: data.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(data.env.cfg.chain_id),
                 },
-                depth: data.journaled_state.depth(),
+                accessor: call.caller,
+                account: address,
+                kind: crate::Vm::AccountAccessKind::Create,
+                initialized: true,
+                oldBalance: U256::ZERO, // updated on create_end
+                newBalance: U256::ZERO, // updated on create_end
+                value: call.value,
+                data: call.init_code.to_vec(),
+                reverted: false,
+                deployedCode: vec![],    // updated on create_end
+                storageAccesses: vec![], // updated on create_end
+                depth,
             }]);
         }
 
@@ -1345,9 +1347,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // accordance with EVM behavior
                 if status.is_revert() {
                     last_depth.iter_mut().for_each(|element| {
-                        element.access.reverted = true;
+                        element.reverted = true;
                         element
-                            .access
                             .storageAccesses
                             .iter_mut()
                             .for_each(|storage_access| storage_access.reverted = true);
@@ -1360,15 +1361,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // percolated up to a higher depth.
                 if create_access.depth == data.journaled_state.depth() {
                     debug_assert_eq!(
-                        create_access.access.kind as u8,
+                        create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
                     if let Some(address) = address {
                         if let Ok((created_acc, _)) =
                             data.journaled_state.load_account(address, data.db)
                         {
-                            create_access.access.newBalance = created_acc.info.balance;
-                            create_access.access.deployedCode = created_acc
+                            create_access.newBalance = created_acc.info.balance;
+                            create_access.deployedCode = created_acc
                                 .info
                                 .code
                                 .clone()
@@ -1421,18 +1422,56 @@ fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
     interpreter.return_len = interpreter.shared_memory.len() - starting_offset
 }
 
-fn process_create<DB: DatabaseExt>(
-    broadcast_sender: Address,
-    bytecode: Bytes,
+/// Applies the default CREATE2 deployer for contract creation.
+///
+/// This function is invoked during the contract creation process and updates the caller of the
+/// contract creation transaction to be the `DEFAULT_CREATE2_DEPLOYER` if the `CreateScheme` is
+/// `Create2` and the current execution depth matches the depth at which the `prank` or `broadcast`
+/// was started, or the default depth of 1 if no prank or broadcast is currently active.
+///
+/// Returns a `DatabaseError::MissingCreate2Deployer` if the `DEFAULT_CREATE2_DEPLOYER` account is
+/// not found or if it does not have any associated bytecode.
+fn apply_create2_deployer<DB: DatabaseExt>(
     data: &mut EvmContext<DB>,
     call: &mut CreateInputs,
-) -> Result<(Bytes, Option<Address>, u64), DB::Error> {
-    match call.scheme {
-        CreateScheme::Create => {
-            call.caller = broadcast_sender;
-            Ok((bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce))
+    prank: Option<&Prank>,
+    broadcast: Option<&Broadcast>,
+    diffs_stack: Option<&mut Vec<Vec<AccountAccess>>>,
+) -> Result<(), DB::Error> {
+    if let CreateScheme::Create2 { salt } = call.scheme {
+        let mut base_depth = 1;
+        if let Some(prank) = &prank {
+            base_depth = prank.depth;
+        } else if let Some(broadcast) = &broadcast {
+            base_depth = broadcast.depth;
         }
-        CreateScheme::Create2 { salt } => {
+
+        // If the create scheme is Create2 and the depth equals the broadcast/prank/default
+        // depth, then use the default create2 factory as the deployer
+        if data.journaled_state.depth() == base_depth {
+            // Record the call to the create2 factory in the state diff
+            if let Some(recorded_account_diffs_stack) = diffs_stack {
+                let calldata = [&salt.to_be_bytes::<32>()[..], &call.init_code[..]].concat();
+                recorded_account_diffs_stack.push(vec![AccountAccess {
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: data.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(data.env.cfg.chain_id),
+                    },
+                    accessor: call.caller,
+                    account: DEFAULT_CREATE2_DEPLOYER,
+                    kind: crate::Vm::AccountAccessKind::Call,
+                    initialized: true,
+                    oldBalance: U256::ZERO, // updated on create_end
+                    newBalance: U256::ZERO, // updated on create_end
+                    value: call.value,
+                    data: calldata,
+                    reverted: false,
+                    deployedCode: vec![],    // updated on create_end
+                    storageAccesses: vec![], // updated on create_end
+                    depth: data.journaled_state.depth(),
+                }])
+            }
+
             // Sanity checks for our CREATE2 deployer
             let info =
                 &data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?.0.info;
@@ -1445,7 +1484,32 @@ fn process_create<DB: DatabaseExt>(
             }
 
             call.caller = DEFAULT_CREATE2_DEPLOYER;
+        }
+    }
+    Ok(())
+}
 
+/// Processes the creation of a new contract when broadcasting, preparing the necessary data for the
+/// transaction to deploy the contract.
+///
+/// Returns the transaction calldata and the target address.
+///
+/// If the CreateScheme is Create, then this function returns the input bytecode without
+/// modification and no address since it will be filled in later. If the CreateScheme is Create2,
+/// then this function returns the calldata for the call to the create2 deployer which must be the
+/// salt and init code concatenated.
+fn process_broadcast_create<DB: DatabaseExt>(
+    broadcast_sender: Address,
+    bytecode: Bytes,
+    data: &mut EVMData<'_, DB>,
+    call: &mut CreateInputs,
+) -> (Bytes, Option<Address>, u64) {
+    call.caller = broadcast_sender;
+    match call.scheme {
+        CreateScheme::Create => {
+            (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
+        }
+        CreateScheme::Create2 { salt } => {
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
             let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
@@ -1455,7 +1519,7 @@ fn process_create<DB: DatabaseExt>(
 
             // Proxy deployer requires the data to be `salt ++ init_code`
             let calldata = [&salt.to_be_bytes::<32>()[..], &bytecode[..]].concat();
-            Ok((calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev))
+            (calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev)
         }
     }
 }
@@ -1512,32 +1576,33 @@ fn append_storage_access(
             // 2. If there's an existing Resume record, then add the storage access to it.
             // 3. Otherwise, create a new Resume record based on the current context.
             if last.len() == 1 {
-                last.first_mut().unwrap().access.storageAccesses.push(storage_access);
+                last.first_mut().unwrap().storageAccesses.push(storage_access);
             } else {
                 let last_record = last.last_mut().unwrap();
-                if last_record.access.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
-                    last_record.access.storageAccesses.push(storage_access);
+                if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+                    last_record.storageAccesses.push(storage_access);
                 } else {
                     let entry = last.first().unwrap();
                     let resume_record = crate::Vm::AccountAccess {
                         chainInfo: crate::Vm::ChainInfo {
-                            forkId: entry.access.chainInfo.forkId,
-                            chainId: entry.access.chainInfo.chainId,
+                            forkId: entry.chainInfo.forkId,
+                            chainId: entry.chainInfo.chainId,
                         },
-                        accessor: entry.access.accessor,
-                        account: entry.access.account,
+                        accessor: entry.accessor,
+                        account: entry.account,
                         kind: crate::Vm::AccountAccessKind::Resume,
-                        initialized: entry.access.initialized,
+                        initialized: entry.initialized,
                         storageAccesses: vec![storage_access],
-                        reverted: entry.access.reverted,
+                        reverted: entry.reverted,
                         // The remaining fields are defaults
                         oldBalance: U256::ZERO,
                         newBalance: U256::ZERO,
                         value: U256::ZERO,
                         data: vec![],
                         deployedCode: vec![],
+                        depth: entry.depth,
                     };
-                    last.push(AccountAccess { access: resume_record, depth: entry.depth });
+                    last.push(resume_record);
                 }
             }
         }

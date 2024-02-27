@@ -34,6 +34,9 @@ mod string;
 mod test;
 mod utils;
 
+pub use script::ScriptWallets;
+pub use test::expect::ExpectedCallTracker;
+
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     /// Applies this cheatcode to the given state.

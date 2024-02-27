@@ -1,4 +1,3 @@
-use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
@@ -7,7 +6,6 @@ use alloy_rpc_types::request::TransactionRequest;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_providers::{Http, Middleware};
-use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     backend::Backend,
@@ -21,7 +19,6 @@ use forge::{
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
@@ -30,7 +27,6 @@ use foundry_common::{
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
-    contracts::ArtifactContracts,
     ArtifactId,
 };
 use foundry_config::{
@@ -43,14 +39,14 @@ use foundry_config::{
 };
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    decode,
+    decode::RevertDecoder,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
-use foundry_wallets::MultiWallet;
+use foundry_wallets::MultiWalletOpts;
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use yansi::Paint;
 
 mod artifacts;
@@ -180,7 +176,7 @@ pub struct ScriptArgs {
     pub opts: BuildArgs,
 
     #[clap(flatten)]
-    pub wallets: MultiWallet,
+    pub wallets: MultiWalletOpts,
 
     #[clap(flatten)]
     pub evm_opts: EvmArgs,
@@ -349,7 +345,7 @@ impl ScriptArgs {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                decode::decode_revert(&result.returned[..], None, None)
+                RevertDecoder::new().decode(&result.returned[..], None)
             ));
         }
 
@@ -367,7 +363,7 @@ impl ScriptArgs {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                decode::decode_revert(&result.returned[..], None, None)
+                RevertDecoder::new().decode(&result.returned[..], None)
             ));
         }
 
@@ -596,7 +592,6 @@ pub struct ScriptResult {
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
-    pub script_wallets: Vec<LocalWallet>,
     pub breakpoints: Breakpoints,
 }
 
@@ -705,7 +700,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_config::{NamedChain, UnresolvedEnvVarError};
+    use foundry_config::UnresolvedEnvVarError;
     use std::fs;
     use tempfile::tempdir;
 

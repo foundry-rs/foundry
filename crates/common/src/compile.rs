@@ -2,10 +2,10 @@
 
 use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, ContractBytecodeSome},
+    artifacts::{BytecodeObject, CompactContractBytecode, ContractBytecodeSome},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -281,6 +281,32 @@ pub struct ContractSources {
 }
 
 impl ContractSources {
+    /// Collects the contract sources and artifacts from the project compile output.
+    pub fn from_project_output(
+        output: &ProjectCompileOutput,
+        root: &Path,
+    ) -> Result<ContractSources> {
+        let mut sources = ContractSources::default();
+        for (id, artifact) in output.artifact_ids() {
+            if let Some(file_id) = artifact.id {
+                let abs_path = root.join(&id.path);
+                let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
+                    format!("failed to read artifact source file for `{}`", id.identifier())
+                })?;
+                let compact = CompactContractBytecode {
+                    abi: artifact.abi.clone(),
+                    bytecode: artifact.bytecode.clone(),
+                    deployed_bytecode: artifact.deployed_bytecode.clone(),
+                };
+                let contract = compact_to_contract(compact)?;
+                sources.insert(&id, file_id, source_code, contract);
+            } else {
+                warn!(id = id.identifier(), "source not found");
+            }
+        }
+        Ok(sources)
+    }
+
     /// Inserts a contract into the sources.
     pub fn insert(
         &mut self,

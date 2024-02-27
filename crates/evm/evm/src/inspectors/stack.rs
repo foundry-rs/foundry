@@ -4,8 +4,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Log, U256};
-use alloy_signer::LocalWallet;
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
@@ -190,8 +189,7 @@ pub struct InspectorData {
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
-    pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>,, Vec<u8>, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -317,12 +315,6 @@ impl InspectorStack {
             traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
-            #[allow(clippy::useless_asref)] // https://github.com/rust-lang/rust-clippy/issues/12135
-            script_wallets: self
-                .cheatcodes
-                .as_ref()
-                .map(|cheatcodes| cheatcodes.script_wallets.clone())
-                .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
             chisel_state: self.chisel_state.and_then(|state| state.state),
         }
