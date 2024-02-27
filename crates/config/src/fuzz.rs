@@ -88,6 +88,7 @@ pub struct FuzzDictionaryConfig {
     pub max_fuzz_dictionary_values: usize,
     /// How many random addresses to use and to recycle when fuzzing calldata.
     /// If not specified then `max_fuzz_dictionary_addresses` value applies.
+    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
     pub max_calldata_fuzz_dictionary_addresses: usize,
 }
 
