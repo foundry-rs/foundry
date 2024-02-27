@@ -1588,7 +1588,7 @@ impl Backend {
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
                 withdrawals_root: None,
                 blob_gas_used: None,
-                excess_blob_gas: excess_blob_gas.map(|g| U64::from(g)),
+                excess_blob_gas: excess_blob_gas.map(U64::from),
                 parent_beacon_block_root,
             },
             size: Some(size),
