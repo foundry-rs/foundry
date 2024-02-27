@@ -626,6 +626,10 @@ impl Backend {
         self.fees.base_fee()
     }
 
+    pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
+        self.fees.excess_blob_gas_and_price()
+    }
+
     /// Sets the current basefee
     pub fn set_base_fee(&self, basefee: U256) {
         self.fees.set_base_fee(basefee)
@@ -886,6 +890,7 @@ impl Backend {
 
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();
+            let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
 
             let mut env = self.env.read().clone();
 
@@ -898,6 +903,7 @@ impl Backend {
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(rU256::from(1));
             env.block.basefee = current_base_fee;
+            env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
             env.block.timestamp = rU256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
@@ -1016,7 +1022,6 @@ impl Backend {
             U256::from(header.gas_limit),
             U256::from(header.base_fee_per_gas.unwrap_or_default()),
         );
-
         let next_block_excess_blob_gas = calc_excess_blob_gas(
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),

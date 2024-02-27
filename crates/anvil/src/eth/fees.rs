@@ -117,6 +117,14 @@ impl FeeManager {
         }
     }
 
+    pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
+        if self.is_eip4844() {
+            Some(self.blob_excess_gas_and_price.read().clone())
+        } else {
+            None
+        }
+    }
+
     pub fn base_fee_per_blob_gas(&self) -> U256 {
         if self.is_eip4844() {
             U256::from(self.blob_excess_gas_and_price.read().blob_gasprice)
