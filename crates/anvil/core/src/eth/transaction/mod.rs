@@ -6,7 +6,7 @@ use crate::eth::{
 };
 use alloy_consensus::{
     BlobTransactionSidecar, ReceiptWithBloom, TxEip1559, TxEip2930, TxEip4844,
-    TxEip4844WithSidecar, TxEip4844Wrapper, TxLegacy,
+    TxEip4844WithSidecar, TxEip4844Variant, TxLegacy,
 };
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
@@ -169,7 +169,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                     .map(|p| c_kzg::Bytes48::from_bytes(p.as_slice()).unwrap())
                     .collect(),
             };
-            Some(TypedTransactionRequest::EIP4844(TxEip4844Wrapper::TxEip4844WithSidecar(
+            Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
                 TxEip4844WithSidecar::from_tx_and_sidecar(tx, blob_sidecar),
             )))
         }
@@ -182,7 +182,7 @@ pub enum TypedTransactionRequest {
     Legacy(TxLegacy),
     EIP2930(TxEip2930),
     EIP1559(TxEip1559),
-    EIP4844(TxEip4844Wrapper),
+    EIP4844(TxEip4844Variant),
     Deposit(DepositTransactionRequest),
 }
 
@@ -619,7 +619,7 @@ pub enum TypedTransaction {
     /// EIP-1559 transaction
     EIP1559(Signed<TxEip1559>),
     /// EIP-4844 transaction
-    EIP4844(Signed<TxEip4844Wrapper>),
+    EIP4844(Signed<TxEip4844Variant>),
     /// op-stack deposit transaction
     Deposit(DepositTransaction),
 }
@@ -931,7 +931,7 @@ impl Decodable for TypedTransaction {
                     <Signed<TxEip1559> as Decodable>::decode(buf).map(TypedTransaction::EIP1559)
                 } else if tx_type == 0x03 {
                     buf.advance(1);
-                    <Signed<TxEip4844Wrapper> as Decodable>::decode(buf)
+                    <Signed<TxEip4844Variant> as Decodable>::decode(buf)
                         .map(TypedTransaction::EIP4844)
                 } else if tx_type == 0x7E {
                     buf.advance(1);
