@@ -1,134 +1,162 @@
 use super::{ScriptArgs, ScriptConfig};
 use alloy_primitives::{Address, Bytes};
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_common::compile::{self, ContractSources, ProjectCompiler};
+use foundry_common::{
+    compile::{self, ContractSources, ProjectCompiler},
+    ContractsByArtifact,
+};
 use foundry_compilers::{
     artifacts::{ContractBytecode, ContractBytecodeSome, Libraries},
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
-    ArtifactId, Project, ProjectCompileOutput,
+    ArtifactId,
 };
 use foundry_linking::{LinkOutput, Linker};
 use std::str::FromStr;
 
-impl ScriptArgs {
-    /// Compiles the file or project and the verify metadata.
-    pub fn compile(&mut self, script_config: &mut ScriptConfig) -> Result<BuildOutput> {
-        trace!(target: "script", "compiling script");
+pub struct PreprocessedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+}
 
-        self.build(script_config)
-    }
+impl PreprocessedState {
+    pub fn compile(self) -> Result<CompiledState> {
+        let project = self.script_config.config.project()?;
+        let filters = self.args.opts.skip.clone().unwrap_or_default();
 
-    /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&mut self, script_config: &mut ScriptConfig) -> Result<BuildOutput> {
-        let (project, output) = self.get_project_and_output(script_config)?;
-        let root = project.root();
-        let output = output.with_stripped_file_prefixes(root);
-        let sources = ContractSources::from_project_output(&output, root)?;
-        let contracts = output.into_artifacts().collect();
+        let mut target_name = self.args.target_contract.clone();
 
-        let target = self.find_target(&project, &contracts)?.clone();
-        script_config.target_contract = Some(target.clone());
-
-        let libraries = script_config.config.libraries_with_remappings()?;
-        let linker = Linker::new(project.root(), contracts);
-
-        let (highlevel_known_contracts, libraries, predeploy_libraries) = self.link_script_target(
-            &linker,
-            libraries,
-            script_config.evm_opts.sender,
-            script_config.sender_nonce,
-            target.clone(),
-        )?;
-
-        let contract = highlevel_known_contracts.get(&target).unwrap();
-
-        Ok(BuildOutput {
-            project,
-            linker,
-            contract: contract.clone(),
-            highlevel_known_contracts,
-            libraries,
-            predeploy_libraries,
-            sources,
-        })
-    }
-
-    /// Tries to find artifact for the target script contract.
-    pub fn find_target<'a>(
-        &self,
-        project: &Project,
-        contracts: &'a ArtifactContracts,
-    ) -> Result<&'a ArtifactId> {
-        let mut target_fname = dunce::canonicalize(&self.path)
-            .wrap_err("Couldn't convert contract path to absolute path.")?
-            .strip_prefix(project.root())
-            .wrap_err("Couldn't strip project root from contract path.")?
-            .to_str()
-            .wrap_err("Bad path to string.")?
-            .to_string();
-
-        let no_target_name = if let Some(target_name) = &self.target_contract {
-            target_fname = target_fname + ":" + target_name;
-            false
+        // If we've received correct path, use it as target_path
+        // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
+        // present.
+        let target_path = if let Ok(path) = dunce::canonicalize(&self.args.path) {
+            Ok::<_, eyre::Report>(Some(path))
         } else {
-            true
+            let contract = ContractInfo::from_str(&self.args.path)?;
+            target_name = Some(contract.name.clone());
+            if let Some(path) = contract.path {
+                Ok(Some(dunce::canonicalize(path)?))
+            } else {
+                Ok(None)
+            }
+        }?;
+
+        // If we've found target path above, only compile it.
+        // Otherwise, compile everything to match contract by name later.
+        let output = if let Some(target_path) = target_path.clone() {
+            compile::compile_target_with_filter(
+                &target_path,
+                &project,
+                self.args.opts.args.silent,
+                self.args.verify,
+                filters,
+            )
+        } else if !project.paths.has_input_files() {
+            Err(eyre::eyre!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file."))
+        } else {
+            ProjectCompiler::new().compile(&project)
+        }?;
+
+        // If we still don't have target path, find it by name in the compilation cache.
+        let target_path = if let Some(target_path) = target_path {
+            target_path
+        } else {
+            let target_name = target_name.clone().expect("was set above");
+            let cache = SolFilesCache::read_joined(&project.paths)
+                .wrap_err("Could not open compiler cache")?;
+            let (path, _) = get_cached_entry_by_name(&cache, &target_name)
+                .wrap_err("Could not find target contract in cache")?;
+            path
         };
 
-        let mut target: Option<&ArtifactId> = None;
+        let target_path = project.root().join(target_path);
 
-        for (id, contract) in contracts.iter() {
-            if no_target_name {
-                // Match artifact source, and ignore interfaces
-                if id.source == std::path::Path::new(&target_fname) &&
-                    contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0)
-                {
-                    if let Some(target) = target {
-                        // We might have multiple artifacts for the same contract but with different
-                        // solc versions. Their names will have form of {name}.0.X.Y, so we are
-                        // stripping versions off before comparing them.
-                        let target_name = target.name.split('.').next().unwrap();
-                        let id_name = id.name.split('.').next().unwrap();
-                        if target_name != id_name {
-                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
-                        }
-                    }
-                    target = Some(id);
+        let mut target_id: Option<ArtifactId> = None;
+
+        // Find target artfifact id by name and path in compilation artifacts.
+        for (id, contract) in output.artifact_ids().filter(|(id, _)| id.source == target_path) {
+            if let Some(name) = &target_name {
+                if id.name != *name {
+                    continue;
                 }
-            } else {
-                let (path, name) =
-                    target_fname.rsplit_once(':').expect("The target specifier is malformed.");
-                let path = std::path::Path::new(path);
-                if path == id.source && name == id.name {
-                    target = Some(id);
+            } else if !contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0) {
+                // Ignore contracts with empty/missing bytecode, e.g. interfaces.
+                continue;
+            }
+
+            if let Some(target) = target_id {
+                // We might have multiple artifacts for the same contract but with different
+                // solc versions. Their names will have form of {name}.0.X.Y, so we are
+                // stripping versions off before comparing them.
+                let target_name = target.name.split('.').next().unwrap();
+                let id_name = id.name.split('.').next().unwrap();
+                if target_name != id_name {
+                    eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                 }
             }
+            target_id = Some(id);
         }
 
-        target.ok_or_else(|| eyre::eyre!("Could not find target contract: {}", target_fname))
-    }
+        let sources = ContractSources::from_project_output(&output, project.root())?;
+        let contracts = output.into_artifacts().collect();
+        let target = target_id.ok_or_eyre("Could not find target contract")?;
+        let linker = Linker::new(project.root(), contracts);
 
-    /// Links script artifact with given libraries or library addresses computed from script sender
-    /// and nonce.
-    ///
-    /// Populates [BuildOutput] with linked target contract, libraries, bytes of libs that need to
-    /// be predeployed and `highlevel_known_contracts` - set of known fully linked contracts
-    pub fn link_script_target(
-        &self,
-        linker: &Linker,
-        libraries: Libraries,
+        Ok(CompiledState {
+            args: self.args,
+            script_config: self.script_config,
+            build_data: BuildData { sources, linker, target },
+        })
+    }
+}
+
+pub struct BuildData {
+    pub linker: Linker,
+    pub target: ArtifactId,
+    pub sources: ContractSources,
+}
+
+impl BuildData {
+    /// Links the build data with given libraries, sender and nonce.
+    pub fn link(
+        self,
+        known_libraries: Libraries,
         sender: Address,
         nonce: u64,
-        target: ArtifactId,
-    ) -> Result<(ArtifactContracts<ContractBytecodeSome>, Libraries, Vec<Bytes>)> {
-        let LinkOutput { libs_to_deploy, libraries } =
-            linker.link_with_nonce_or_address(libraries, sender, nonce, &target)?;
+    ) -> Result<LinkedBuildData> {
+        let link_output =
+            self.linker.link_with_nonce_or_address(known_libraries, sender, nonce, &self.target)?;
 
-        // Collect all linked contracts with non-empty bytecode
-        let highlevel_known_contracts = linker
-            .get_linked_artifacts(&libraries)?
+        LinkedBuildData::new(link_output, self)
+    }
+
+    /// Links the build data with the given libraries.
+    pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
+        let link_output =
+            self.linker.link_with_nonce_or_address(libraries, Address::ZERO, 0, &self.target)?;
+
+        if !link_output.libs_to_deploy.is_empty() {
+            eyre::bail!("incomplete libraries set");
+        }
+
+        LinkedBuildData::new(link_output, self)
+    }
+}
+
+pub struct LinkedBuildData {
+    pub build_data: BuildData,
+    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+    pub libraries: Libraries,
+    pub predeploy_libraries: Vec<Bytes>,
+}
+
+impl LinkedBuildData {
+    pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
+        let highlevel_known_contracts = build_data
+            .linker
+            .get_linked_artifacts(&link_output.libraries)?
             .iter()
             .filter_map(|(id, contract)| {
                 ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
@@ -138,71 +166,58 @@ impl ScriptArgs {
             .filter(|(_, tc)| tc.bytecode.object.is_non_empty_bytecode())
             .collect();
 
-        Ok((highlevel_known_contracts, libraries, libs_to_deploy))
+        Ok(Self {
+            build_data,
+            highlevel_known_contracts,
+            libraries: link_output.libraries,
+            predeploy_libraries: link_output.libs_to_deploy,
+        })
     }
 
-    pub fn get_project_and_output(
-        &mut self,
-        script_config: &ScriptConfig,
-    ) -> Result<(Project, ProjectCompileOutput)> {
-        let project = script_config.config.project()?;
+    /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
+    pub fn get_flattened_contracts(&self, deployed_code: bool) -> ContractsByArtifact {
+        ContractsByArtifact(
+            self.highlevel_known_contracts
+                .iter()
+                .filter_map(|(id, c)| {
+                    let bytecode = if deployed_code {
+                        c.deployed_bytecode.bytes()
+                    } else {
+                        c.bytecode.bytes()
+                    };
+                    bytecode.cloned().map(|code| (id.clone(), (c.abi.clone(), code.into())))
+                })
+                .collect(),
+        )
+    }
 
-        let filters = self.opts.skip.clone().unwrap_or_default();
-        // We received a valid file path.
-        // If this file does not exist, `dunce::canonicalize` will
-        // result in an error and it will be handled below.
-        if let Ok(target_contract) = dunce::canonicalize(&self.path) {
-            let output = compile::compile_target_with_filter(
-                &target_contract,
-                &project,
-                self.opts.args.silent,
-                self.verify,
-                filters,
-            )?;
-            return Ok((project, output))
-        }
-
-        if !project.paths.has_input_files() {
-            eyre::bail!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file.")
-        }
-
-        let contract = ContractInfo::from_str(&self.path)?;
-        self.target_contract = Some(contract.name.clone());
-
-        // We received `contract_path:contract_name`
-        if let Some(path) = contract.path {
-            let path =
-                dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
-            let output = compile::compile_target_with_filter(
-                &path,
-                &project,
-                self.opts.args.silent,
-                self.verify,
-                filters,
-            )?;
-            self.path = path.to_string_lossy().to_string();
-            return Ok((project, output))
-        }
-
-        // We received `contract_name`, and need to find its file path.
-        let output = ProjectCompiler::new().compile(&project)?;
-        let cache =
-            SolFilesCache::read_joined(&project.paths).wrap_err("Could not open compiler cache")?;
-
-        let (path, _) = get_cached_entry_by_name(&cache, &contract.name)
-            .wrap_err("Could not find target contract in cache")?;
-        self.path = path.to_string_lossy().to_string();
-
-        Ok((project, output))
+    /// Fetches target bytecode from linked contracts.
+    pub fn get_target_contract(&self) -> Result<ContractBytecodeSome> {
+        self.highlevel_known_contracts
+            .get(&self.build_data.target)
+            .cloned()
+            .ok_or_eyre("target not found in linked artifacts")
     }
 }
 
-pub struct BuildOutput {
-    pub project: Project,
-    pub contract: ContractBytecodeSome,
-    pub linker: Linker,
-    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-    pub libraries: Libraries,
-    pub predeploy_libraries: Vec<Bytes>,
-    pub sources: ContractSources,
+pub struct CompiledState {
+    args: ScriptArgs,
+    script_config: ScriptConfig,
+    build_data: BuildData,
+}
+
+impl CompiledState {
+    pub fn link(self) -> Result<LinkedState> {
+        let sender = self.script_config.evm_opts.sender;
+        let nonce = self.script_config.sender_nonce;
+        let known_libraries = self.script_config.config.libraries_with_remappings()?;
+        let build_data = self.build_data.link(known_libraries, sender, nonce)?;
+
+        Ok(LinkedState { args: self.args, build_data })
+    }
+}
+
+pub struct LinkedState {
+    pub args: ScriptArgs,
+    pub build_data: LinkedBuildData,
 }

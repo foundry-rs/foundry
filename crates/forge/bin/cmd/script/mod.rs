@@ -379,13 +379,13 @@ impl ScriptArgs {
         &self,
         evm_opts: &EvmOpts,
         transactions: Option<&BroadcastableTransactions>,
-        predeploy_libraries: &[Bytes],
+        has_predeploy_libraries: bool,
     ) -> Result<Option<Address>> {
         let mut new_sender = None;
 
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
-            if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
+            if has_predeploy_libraries && self.evm_opts.sender.is_none() {
                 for tx in txs.iter() {
                     if tx.transaction.to.is_none() {
                         let sender = tx.transaction.from.expect("no sender");

@@ -2,28 +2,22 @@ use super::{
     multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyBundle, ScriptArgs,
     ScriptConfig, ScriptResult,
 };
-use crate::cmd::script::{build::BuildOutput, receipts};
-use alloy_primitives::{Address, Bytes};
+use crate::cmd::script::{
+    build::{LinkedBuildData, LinkedState, PreprocessedState},
+    receipts,
+};
+use alloy_primitives::Address;
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use forge::traces::CallTraceDecoder;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{
-    contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
-};
-use foundry_compilers::{
-    artifacts::{ContractBytecodeSome, Libraries},
-    contracts::ArtifactContracts,
-};
+use foundry_common::{provider::ethers::try_get_http_provider, types::ToAlloy};
+use foundry_compilers::artifacts::Libraries;
 use foundry_debugger::Debugger;
 use foundry_evm::inspectors::cheatcodes::{BroadcastableTransaction, ScriptWallets};
-use foundry_linking::Linker;
 use foundry_wallets::WalletSigner;
 use std::{collections::HashMap, sync::Arc};
-
-/// Helper alias type for the collection of data changed due to the new sender.
-type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<ContractBytecodeSome>);
 
 impl ScriptArgs {
     /// Executes the script
@@ -53,31 +47,26 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let build_output = self.compile(&mut script_config)?;
+        let state = PreprocessedState { args: self.clone(), script_config: script_config.clone() };
+
+        let LinkedState { build_data, .. } = state.compile()?.link()?;
+        script_config.target_contract = Some(build_data.build_data.target.clone());
 
         let mut verify = VerifyBundle::new(
-            &build_output.project,
+            &script_config.config.project()?,
             &script_config.config,
-            flatten_contracts(&build_output.highlevel_known_contracts, false),
+            build_data.get_flattened_contracts(false),
             self.retry,
             self.verifier.clone(),
         );
-
-        let BuildOutput {
-            contract,
-            mut highlevel_known_contracts,
-            predeploy_libraries,
-            linker,
-            sources,
-            mut libraries,
-            ..
-        } = build_output;
 
         // Execute once with default sender.
         let sender = script_config.evm_opts.sender;
 
         let multi_wallet = self.wallets.get_multi_wallet().await?;
         let script_wallets = ScriptWallets::new(multi_wallet, self.evm_opts.sender);
+
+        let contract = build_data.get_target_contract()?;
 
         // We need to execute the script even if just resuming, in case we need to collect private
         // keys from the execution.
@@ -86,42 +75,40 @@ impl ScriptArgs {
                 &mut script_config,
                 contract,
                 sender,
-                &predeploy_libraries,
+                &build_data.predeploy_libraries,
                 script_wallets.clone(),
             )
             .await?;
 
         if self.resume || (self.verify && !self.broadcast) {
             let signers = script_wallets.into_multi_wallet().into_signers()?;
-            return self.resume_deployment(script_config, linker, libraries, verify, &signers).await;
+            return self.resume_deployment(script_config, build_data, verify, &signers).await;
         }
 
-        let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
+        let known_contracts = build_data.get_flattened_contracts(true);
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
             let mut debugger = Debugger::builder()
                 .debug_arenas(result.debug.as_deref().unwrap_or_default())
                 .decoder(&decoder)
-                .sources(sources)
+                .sources(build_data.build_data.sources.clone())
                 .breakpoints(result.breakpoints.clone())
                 .build();
             debugger.try_run()?;
         }
 
-        if let Some((new_traces, updated_libraries, updated_contracts)) = self
+        let (maybe_new_traces, build_data) = self
             .maybe_prepare_libraries(
                 &mut script_config,
-                linker,
-                predeploy_libraries,
+                build_data,
                 &mut result,
                 script_wallets.clone(),
             )
-            .await?
-        {
+            .await?;
+
+        if let Some(new_traces) = maybe_new_traces {
             decoder = new_traces;
-            highlevel_known_contracts = updated_contracts;
-            libraries = updated_libraries;
         }
 
         if self.json {
@@ -130,14 +117,14 @@ impl ScriptArgs {
             self.show_traces(&script_config, &decoder, &mut result).await?;
         }
 
-        verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
-        self.check_contract_sizes(&result, &highlevel_known_contracts)?;
+        verify.known_contracts = build_data.get_flattened_contracts(false);
+        self.check_contract_sizes(&result, &build_data.highlevel_known_contracts)?;
 
         let signers = script_wallets.into_multi_wallet().into_signers()?;
 
         self.handle_broadcastable_transactions(
             result,
-            libraries,
+            build_data.libraries,
             &decoder,
             script_config,
             verify,
@@ -151,36 +138,41 @@ impl ScriptArgs {
     async fn maybe_prepare_libraries(
         &mut self,
         script_config: &mut ScriptConfig,
-        linker: Linker,
-        predeploy_libraries: Vec<Bytes>,
+        build_data: LinkedBuildData,
         result: &mut ScriptResult,
         script_wallets: ScriptWallets,
-    ) -> Result<Option<NewSenderChanges>> {
+    ) -> Result<(Option<CallTraceDecoder>, LinkedBuildData)> {
         if let Some(new_sender) = self.maybe_new_sender(
             &script_config.evm_opts,
             result.transactions.as_ref(),
-            &predeploy_libraries,
+            !build_data.predeploy_libraries.is_empty(),
         )? {
             // We have a new sender, so we need to relink all the predeployed libraries.
-            let (libraries, highlevel_known_contracts) = self
-                .rerun_with_new_deployer(script_config, new_sender, result, linker, script_wallets)
+            let build_data = self
+                .rerun_with_new_deployer(
+                    script_config,
+                    new_sender,
+                    result,
+                    build_data,
+                    script_wallets,
+                )
                 .await?;
 
             // redo traces for the new addresses
             let new_traces = self.decode_traces(
                 &*script_config,
                 result,
-                &flatten_contracts(&highlevel_known_contracts, true),
+                &build_data.get_flattened_contracts(true),
             )?;
 
-            return Ok(Some((new_traces, libraries, highlevel_known_contracts)));
+            return Ok((Some(new_traces), build_data));
         }
 
         // Add predeploy libraries to the list of broadcastable transactions.
         let mut lib_deploy = self.create_deploy_transactions(
             script_config.evm_opts.sender,
             script_config.sender_nonce,
-            &predeploy_libraries,
+            &build_data.predeploy_libraries,
             &script_config.evm_opts.fork_url,
         );
 
@@ -194,15 +186,14 @@ impl ScriptArgs {
             *txs = lib_deploy;
         }
 
-        Ok(None)
+        Ok((None, build_data))
     }
 
     /// Resumes the deployment and/or verification of the script.
     async fn resume_deployment(
         &mut self,
         script_config: ScriptConfig,
-        linker: Linker,
-        libraries: Libraries,
+        build_data: LinkedBuildData,
         verify: VerifyBundle,
         signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
@@ -214,7 +205,7 @@ impl ScriptArgs {
                         &self.sig,
                         script_config.target_contract(),
                     )?,
-                    libraries,
+                    build_data.libraries,
                     &script_config.config,
                     verify,
                     signers,
@@ -223,7 +214,7 @@ impl ScriptArgs {
         }
         self.resume_single_deployment(
             script_config,
-            linker,
+            build_data,
             verify,
             signers,
         )
@@ -237,7 +228,7 @@ impl ScriptArgs {
     async fn resume_single_deployment(
         &mut self,
         script_config: ScriptConfig,
-        linker: Linker,
+        build_data: LinkedBuildData,
         mut verify: VerifyBundle,
         signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
@@ -285,25 +276,14 @@ impl ScriptArgs {
         }
 
         if self.verify {
-            let target = script_config.target_contract();
             let libraries = Libraries::parse(&deployment_sequence.libraries)?
-                .with_stripped_file_prefixes(linker.root.as_path());
+                .with_stripped_file_prefixes(build_data.build_data.linker.root.as_path());
             // We might have predeployed libraries from the broadcasting, so we need to
             // relink the contracts with them, since their mapping is
             // not included in the solc cache files.
-            let (highlevel_known_contracts, _, predeploy_libraries) = self.link_script_target(
-                &linker,
-                libraries,
-                script_config.config.sender, // irrelevant, since we're not creating any
-                0,                           // irrelevant, since we're not creating any
-                target.clone(),
-            )?;
+            let build_data = build_data.build_data.link_with_libraries(libraries)?;
 
-            if !predeploy_libraries.is_empty() {
-                eyre::bail!("Incomplete set of libraries in deployment artifact.");
-            }
-
-            verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
+            verify.known_contracts = build_data.get_flattened_contracts(true);
 
             deployment_sequence.verify_contracts(&script_config.config, verify).await?;
         }
@@ -317,9 +297,9 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         new_sender: Address,
         first_run_result: &mut ScriptResult,
-        linker: Linker,
+        build_data: LinkedBuildData,
         script_wallets: ScriptWallets,
-    ) -> Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
+    ) -> Result<LinkedBuildData> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = forge::next_nonce(
@@ -331,27 +311,27 @@ impl ScriptArgs {
         )
         .await?;
         script_config.sender_nonce = nonce;
-        let target = script_config.target_contract();
 
         let libraries = script_config.config.libraries_with_remappings()?;
 
-        let (highlevel_known_contracts, libraries, predeploy_libraries) =
-            self.link_script_target(&linker, libraries, new_sender, nonce, target.clone())?;
-
-        let contract = highlevel_known_contracts
-            .get(target)
-            .ok_or_eyre("target not found in linked artifacts")?
-            .clone();
+        let build_data = build_data.build_data.link(libraries, new_sender, nonce)?;
+        let contract = build_data.get_target_contract()?;
 
         let mut txs = self.create_deploy_transactions(
             new_sender,
             nonce,
-            &predeploy_libraries,
+            &build_data.predeploy_libraries,
             &script_config.evm_opts.fork_url,
         );
 
         let result = self
-            .execute(script_config, contract, new_sender, &predeploy_libraries, script_wallets)
+            .execute(
+                script_config,
+                contract,
+                new_sender,
+                &build_data.predeploy_libraries,
+                script_wallets,
+            )
             .await?;
 
         if let Some(new_txs) = &result.transactions {
@@ -366,7 +346,7 @@ impl ScriptArgs {
         *first_run_result = result;
         first_run_result.transactions = Some(txs);
 
-        Ok((libraries, highlevel_known_contracts))
+        Ok(build_data)
     }
 
     /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
