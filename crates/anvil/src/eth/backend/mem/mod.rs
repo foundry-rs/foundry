@@ -863,6 +863,7 @@ impl Backend {
             cfg_env: env.cfg,
             parent_hash: storage.best_hash,
             gas_used: U256::ZERO,
+            blob_gas_used: U256::ZERO,
             enable_steps_tracing: self.enable_steps_tracing,
         };
 
@@ -924,6 +925,7 @@ impl Backend {
                     cfg_env: env.cfg.clone(),
                     parent_hash: best_hash,
                     gas_used: U256::ZERO,
+                    blob_gas_used: U256::ZERO,
                     enable_steps_tracing: self.enable_steps_tracing,
                 };
                 let executed_tx = executor.execute();

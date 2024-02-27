@@ -24,6 +24,7 @@ use foundry_evm::{
     traces::CallTraceNode,
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
+use revm::primitives::MAX_BLOB_GAS_PER_BLOCK;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -120,6 +121,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
+    /// Cumulative blob gas used by all executed transactions
+    pub blob_gas_used: U256,
     pub enable_steps_tracing: bool,
 }
 
@@ -270,9 +273,15 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
+
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
         if max_gas > env.block.gas_limit {
+            return Some(TransactionExecutionOutcome::Exhausted(transaction))
+        }
+
+        // check that we comply with the block's blob gas limit
+        if self.blob_gas_used.to::<u64>() > MAX_BLOB_GAS_PER_BLOCK {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
@@ -340,7 +349,14 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
+        // Track the total gas used for total gas per block checks
         self.gas_used = self.gas_used.saturating_add(U256::from(gas_used));
+
+        // Track the total blob gas used for total blob gas per blob checks
+        let blob_gas = transaction.pending_transaction.transaction.transaction.blob_gas();
+        if let Some(blob_gas) = blob_gas {
+            self.blob_gas_used = self.blob_gas_used.saturating_add(U256::from(blob_gas));
+        }
 
         trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 

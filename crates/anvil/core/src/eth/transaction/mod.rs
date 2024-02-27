@@ -20,7 +20,7 @@ use revm::{
     interpreter::InstructionResult,
     primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
 };
-use std::ops::Deref;
+use std::ops::{Deref, Mul};
 
 use super::utils::from_eip_to_alloy_access_list;
 
@@ -682,15 +682,34 @@ impl TypedTransaction {
     }
 
     /// Max cost of the transaction
+    /// It is the gas limit multiplied by the gas price,
+    /// and if the transaction is EIP-4844, the result of (total blob gas cost * max fee per blob
+    /// gas) is also added
     pub fn max_cost(&self) -> U256 {
-        self.gas_limit()
-            .saturating_mul(self.gas_price())
-            .saturating_mul(self.blob_gas().map(U256::from).unwrap_or(U256::ZERO))
+        let mut max_cost = self.gas_limit().saturating_mul(self.gas_price());
+
+        if self.is_eip4844() {
+            max_cost = max_cost.saturating_add(
+                self.blob_gas()
+                    .map(U256::from)
+                    .unwrap_or(U256::ZERO)
+                    .mul(self.max_fee_per_blob_gas().unwrap_or(U256::ZERO)),
+            )
+        }
+
+        max_cost
     }
 
     pub fn blob_gas(&self) -> Option<u64> {
         match self {
             TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas()),
+            _ => None,
+        }
+    }
+
+    pub fn max_fee_per_blob_gas(&self) -> Option<U256> {
+        match self {
+            TypedTransaction::EIP4844(tx) => Some(U256::from(tx.tx().tx().max_fee_per_blob_gas)),
             _ => None,
         }
     }
