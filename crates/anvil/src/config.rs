@@ -428,12 +428,11 @@ impl NodeConfig {
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
         if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
             blob_excess_gas_and_price.clone()
+        } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
+        {
+            BlobExcessGasAndPrice::new(excess_blob_gas)
         } else {
-            if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas) {
-                BlobExcessGasAndPrice::new(excess_blob_gas)
-            } else {
-                BlobExcessGasAndPrice::new(0)
-            }
+            BlobExcessGasAndPrice::new(0)
         }
     }
 
@@ -442,7 +441,7 @@ impl NodeConfig {
             self.genesis
                 .as_ref()
                 .and_then(|g| g.excess_blob_gas)
-                .map(|g| BlobExcessGasAndPrice::new(g))
+                .map(BlobExcessGasAndPrice::new)
                 .unwrap_or_else(|| BlobExcessGasAndPrice::new(0))
         })
     }
