@@ -35,7 +35,7 @@ trie-db = "0.23"
 hash-db = "0.15"
 memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }

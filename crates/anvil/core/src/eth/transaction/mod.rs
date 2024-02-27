@@ -554,7 +554,7 @@ impl PendingTransaction {
                     input,
                     access_list,
                     blob_versioned_hashes,
-                    ..
+                    ..    
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
