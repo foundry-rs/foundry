@@ -1,10 +1,10 @@
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Log, U256};
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
@@ -384,7 +384,6 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-        return_memory_offset: Range<usize>,
     ) -> Option<CallOutcome> {
         call_inspectors!(
             [
@@ -397,7 +396,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                if let Some(outcome) = inspector.call(context, inputs, return_memory_offset) {
+                if let Some(outcome) = inspector.call(context, inputs) {
                     return Some(outcome);
                 }
             }

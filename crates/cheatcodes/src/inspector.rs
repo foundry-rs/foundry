@@ -27,7 +27,7 @@ use itertools::Itertools;
 use revm::{
     interpreter::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
-        InstructionResult, Interpreter,
+        InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, TransactTo},
     EvmContext, Inspector,
@@ -686,7 +686,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, log);
         }
@@ -702,18 +702,27 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        call: &mut CallInputs,
-        return_memory_offset: Range<usize>,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, context: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
         if call.contract == CHEATCODE_ADDRESS {
             return match self.apply_cheatcode(context, call) {
-                Ok(retdata) => (InstructionResult::Return, gas, retdata.into()),
-                Err(err) => (InstructionResult::Revert, gas, err.abi_encode().into()),
+                Ok(retdata) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Return,
+                        output: retdata.into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                }),
+                Err(err) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: err.abi_encode().into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                }),
             };
         }
 
@@ -761,7 +770,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     })
                     .map(|(_, v)| v)
             }) {
-                return (return_data.ret_type, gas, return_data.data.clone());
+                return Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: return_data.data.clone(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                })
             }
         }
 
@@ -818,7 +834,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     if let Err(err) =
                         context.journaled_state.load_account(broadcast.new_origin, &mut context.db)
                     {
-                        return (InstructionResult::Revert, gas, Error::encode(err));
+                        return Some(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: Error::encode(err),
+                                gas,
+                            },
+                            memory_offset: call.return_memory_offset.clone(),
+                        })
                     }
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(context, call.gas_limit);
@@ -849,7 +872,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
-                    return (InstructionResult::Revert, Gas::new(0), Error::encode(msg));
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(msg),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    })
                 }
             }
         }
@@ -900,7 +930,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }]);
         }
 
-        (InstructionResult::Continue, gas, Bytes::new())
+        None
     }
 
     #[inline]
@@ -908,7 +938,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         &mut self,
         data: &mut EvmContext<DB>,
         call: &CallInputs,
-        outcome: CallOutcome,
+        mut outcome: CallOutcome,
     ) -> CallOutcome {
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
@@ -959,14 +989,20 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     return match expect::handle_expect_revert(
                         false,
                         expected_revert.reason.as_deref(),
-                        status,
-                        retdata,
+                        outcome.result.result,
+                        outcome.result.output.clone(),
                     ) {
                         Err(error) => {
-                            trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
-                            (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
+                            trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
+                            outcome.result.result = InstructionResult::Revert;
+                            outcome.result.output = error.abi_encode().into();
+                            outcome
                         }
-                        Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
+                        Ok((_, retdata)) => {
+                            outcome.result.result = InstructionResult::Return;
+                            outcome.result.output = retdata;
+                            outcome
+                        }
                     };
                 }
 
@@ -985,7 +1021,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
         // invocations
         if cheatcode_call {
-            return (status, remaining_gas, retdata);
+            return outcome;
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -997,7 +1033,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     recorded_account_diffs_stack.pop().expect("missing CALL account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
-                if status.is_revert() {
+                if outcome.result.is_revert() {
                     last_recorded_depth.iter_mut().for_each(|element| {
                         element.reverted = true;
                         element
@@ -1011,7 +1047,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Depending on the depth the cheat was called at, there may not be any pending
                 // calls to update if execution has percolated up to a higher depth.
                 if call_access.depth == data.journaled_state.depth() {
-                    if let Ok((acc, _)) = data.journaled_state.load_account(call.contract, data.db)
+                    if let Ok((acc, _)) =
+                        data.journaled_state.load_account(call.contract, &mut data.db)
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
@@ -1048,11 +1085,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if should_check_emits {
             // Not all emits were matched.
             if self.expected_emits.iter().any(|expected| !expected.found) {
-                return (
-                    InstructionResult::Revert,
-                    remaining_gas,
-                    "log != expected log".abi_encode().into(),
-                );
+                outcome.result.result = InstructionResult::Revert;
+                outcome.result.output = "log != expected log".abi_encode().into();
+                return outcome
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
@@ -1067,9 +1102,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // if there's a revert and a previous call was diagnosed as fork related revert then we can
         // return a better error here
-        if status == InstructionResult::Revert {
+        if outcome.result.is_revert() {
             if let Some(err) = diag {
-                return (status, remaining_gas, Error::encode(err.to_error_msg(&self.labels)));
+                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+                return outcome
             }
         }
 
@@ -1079,7 +1115,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
             if data.db.is_forked_mode() &&
-                status == InstructionResult::Stop &&
+                outcome.result.result == InstructionResult::Stop &&
                 call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
@@ -1092,8 +1128,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
             // earlier error that happened first with unrelated information about
             // another error when using cheatcodes.
-            if status == InstructionResult::Revert {
-                return (status, remaining_gas, retdata);
+            if outcome.result.is_revert() {
+                return outcome;
             }
 
             // If there's not a revert, we can continue on to run the last logic for expect*
@@ -1125,7 +1161,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         .into_iter()
                         .flatten()
                         .join(", ");
-                        let but = if status.is_ok() {
+                        let but = if outcome.result.is_ok() {
                             let s = if *actual_count == 1 { "" } else { "s" };
                             format!("was called {actual_count} time{s}")
                         } else {
@@ -1138,7 +1174,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             "expected call to {address} with {expected_values} \
                              to be called {count} time{s}, but {but}"
                         );
-                        return (InstructionResult::Revert, remaining_gas, Error::encode(msg));
+                        outcome.result.result = InstructionResult::Revert;
+                        outcome.result.output = Error::encode(msg);
+
+                        return outcome;
                     }
                 }
             }
@@ -1148,25 +1187,27 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             self.expected_emits.retain(|expected| !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
-                let msg = if status.is_ok() {
+                let msg = if outcome.result.is_ok() {
                     "expected an emit, but no logs were emitted afterwards. \
                      you might have mismatched events or not enough events were emitted"
                 } else {
                     "expected an emit, but the call reverted instead. \
                      ensure you're testing the happy path when using `expectEmit`"
                 };
-                return (InstructionResult::Revert, remaining_gas, Error::encode(msg));
+                outcome.result.result = InstructionResult::Revert;
+                outcome.result.output = Error::encode(msg);
+                return outcome;
             }
         }
 
-        (status, remaining_gas, retdata)
+        outcome
     }
 
     fn create(
         &mut self,
         data: &mut EvmContext<DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> Option<CreateOutcome> {
         let gas = Gas::new(call.gas_limit);
 
         // Apply our prank
@@ -1189,8 +1230,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if data.journaled_state.depth() >= broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                if let Err(err) = data.journaled_state.load_account(broadcast.new_origin, data.db) {
-                    return (InstructionResult::Revert, None, gas, Error::encode(err));
+                if let Err(err) =
+                    data.journaled_state.load_account(broadcast.new_origin, &mut data.db)
+                {
+                    return Some(CreateOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(err),
+                            gas,
+                        },
+                        address: None,
+                    })
                 }
 
                 data.env.tx.caller = broadcast.new_origin;
@@ -1239,7 +1289,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 self.recorded_account_diffs_stack.as_mut(),
             ) {
                 Ok(_) => {}
-                Err(err) => return (InstructionResult::Revert, None, gas, Error::encode(err)),
+                Err(err) => {
+                    return Some(CreateOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(err),
+                            gas,
+                        },
+                        address: None,
+                    })
+                }
             };
         }
 
@@ -1280,15 +1339,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }]);
         }
 
-        (InstructionResult::Continue, None, gas, Bytes::new())
+        None
     }
 
     #[inline]
     fn create_end(
         &mut self,
         data: &mut EvmContext<DB>,
-        call: &CreateInputs,
-        outcome: CreateOutcome,
+        _call: &CreateInputs,
+        mut outcome: CreateOutcome,
     ) -> CreateOutcome {
         // Clean up pranks
         if let Some(prank) = &self.prank {
@@ -1323,14 +1382,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 return match expect::handle_expect_revert(
                     true,
                     expected_revert.reason.as_deref(),
-                    status,
-                    retdata,
+                    outcome.result.result,
+                    outcome.result.output.clone(),
                 ) {
                     Ok((address, retdata)) => {
-                        (InstructionResult::Return, address, remaining_gas, retdata)
+                        outcome.result.result = InstructionResult::Return;
+                        outcome.result.output = retdata;
+                        outcome.address = address;
+                        outcome
                     }
                     Err(err) => {
-                        (InstructionResult::Revert, None, remaining_gas, err.abi_encode().into())
+                        outcome.result.result = InstructionResult::Revert;
+                        outcome.result.output = err.abi_encode().into();
+                        outcome
                     }
                 };
             }
@@ -1345,7 +1409,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
-                if status.is_revert() {
+                if outcome.result.is_revert() {
                     last_depth.iter_mut().for_each(|element| {
                         element.reverted = true;
                         element
@@ -1364,9 +1428,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
-                    if let Some(address) = address {
+                    if let Some(address) = outcome.address {
                         if let Ok((created_acc, _)) =
-                            data.journaled_state.load_account(address, data.db)
+                            data.journaled_state.load_account(address, &mut data.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
                             create_access.deployedCode = created_acc
@@ -1390,7 +1454,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        (status, address, remaining_gas, retdata)
+        outcome
     }
 }
 
@@ -1418,8 +1482,10 @@ fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
     let starting_offset = interpreter.shared_memory.len();
     interpreter.shared_memory.resize(starting_offset + bytes.len());
     interpreter.shared_memory.set_data(starting_offset, 0, bytes.len(), bytes);
-    interpreter.return_offset = starting_offset;
-    interpreter.return_len = interpreter.shared_memory.len() - starting_offset
+
+    // TODO(mattsse): what happened to this??
+    // interpreter.return_offset = starting_offset;
+    // interpreter.return_len = interpreter.shared_memory.len() - starting_offset
 }
 
 /// Applies the default CREATE2 deployer for contract creation.
@@ -1474,7 +1540,7 @@ fn apply_create2_deployer<DB: DatabaseExt>(
 
             // Sanity checks for our CREATE2 deployer
             let info =
-                &data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?.0.info;
+                &data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, &mut data.db)?.0.info;
             match &info.code {
                 Some(code) if code.is_empty() => return Err(DatabaseError::MissingCreate2Deployer),
                 None if data.db.code_by_hash(info.code_hash)?.is_empty() => {
@@ -1501,7 +1567,7 @@ fn apply_create2_deployer<DB: DatabaseExt>(
 fn process_broadcast_create<DB: DatabaseExt>(
     broadcast_sender: Address,
     bytecode: Bytes,
-    data: &mut EVMData<'_, DB>,
+    data: &mut EvmContext<DB>,
     call: &mut CreateInputs,
 ) -> (Bytes, Option<Address>, u64) {
     call.caller = broadcast_sender;

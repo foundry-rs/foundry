@@ -2,7 +2,6 @@ use revm::{
     interpreter::{opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
     Database, EvmContext, Inspector,
 };
-use std::ops::Range;
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -34,9 +33,8 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
     #[inline]
     fn call(
         &mut self,
-        context: &mut EvmContext<DB>,
+        _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-        return_memory_offset: Range<usize>,
     ) -> Option<CallOutcome> {
         println!(
             "SM CALL:   {},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
@@ -52,7 +50,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
     #[inline]
     fn create(
         &mut self,
-        context: &mut EvmContext<DB>,
+        _context: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         println!(

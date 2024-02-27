@@ -231,7 +231,7 @@ impl Cheatcode for difficultyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            ccx.data.env.cfg.spec_id < SpecId::MERGE,
+            ccx.data.spec_id() < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -252,7 +252,7 @@ impl Cheatcode for prevrandaoCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.data.env.cfg.spec_id >= SpecId::MERGE,
+            ccx.data.spec_id() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -393,7 +393,7 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, ccx.data.env()).abi_encode())
+        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, &mut ccx.data.env).abi_encode())
     }
 }
 
@@ -403,7 +403,7 @@ impl Cheatcode for revertToCall {
         let result = if let Some(journaled_state) = ccx.data.db.revert(
             *snapshotId,
             &ccx.data.journaled_state,
-            ccx.data.env(),
+            &mut ccx.data.env,
             RevertSnapshotAction::RevertKeep,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
@@ -422,7 +422,7 @@ impl Cheatcode for revertToAndDeleteCall {
         let result = if let Some(journaled_state) = ccx.data.db.revert(
             *snapshotId,
             &ccx.data.journaled_state,
-            ccx.data.env(),
+            &mut ccx.data.env,
             RevertSnapshotAction::RevertRemove,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state

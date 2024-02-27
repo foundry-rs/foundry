@@ -26,9 +26,10 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult},
     primitives::{
-        BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
+        BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
+        SpecId, TransactTo, TxEnv,
     },
 };
 use std::collections::HashMap;
@@ -62,7 +63,7 @@ pub struct Executor {
     // so the performance difference should be negligible.
     pub backend: Backend,
     /// The EVM environment.
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// The Revm inspector stack.
     pub inspector: InspectorStack,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
@@ -73,7 +74,12 @@ pub struct Executor {
 
 impl Executor {
     #[inline]
-    pub fn new(mut backend: Backend, env: Env, inspector: InspectorStack, gas_limit: U256) -> Self {
+    pub fn new(
+        mut backend: Backend,
+        env: EnvWithHandlerCfg,
+        inspector: InspectorStack,
+        gas_limit: U256,
+    ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
         backend.insert_account_info(
@@ -297,9 +303,9 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector.clone();
         // Build VM
-        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(&self.backend);
-        let result = db.inspect_ref(&mut env, &mut inspector)?;
+        let result = db.inspect_ref(env.clone(), &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
         let has_snapshot_failure = db.has_snapshot_failure();
@@ -307,17 +313,17 @@ impl Executor {
     }
 
     /// Execute the transaction configured in `env.tx` and commit the changes
-    pub fn commit_tx_with_env(&mut self, env: Env) -> eyre::Result<RawCallResult> {
+    pub fn commit_tx_with_env(&mut self, env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut result = self.call_raw_with_env(env)?;
         self.commit(&mut result);
         Ok(result)
     }
 
     /// Execute the transaction configured in `env.tx`
-    pub fn call_raw_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
+    pub fn call_raw_with_env(&mut self, env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         // execute the call
         let mut inspector = self.inspector.clone();
-        let result = self.backend.inspect_ref(&mut env, &mut inspector)?;
+        let result = self.backend.inspect_ref(env.clone(), &mut inspector)?;
         convert_executed_result(env, inspector, result, self.backend.has_snapshot_failure())
     }
 
@@ -349,7 +355,7 @@ impl Executor {
     /// database
     pub fn deploy_with_env(
         &mut self,
-        env: Env,
+        env: EnvWithHandlerCfg,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         debug_assert!(
@@ -549,8 +555,8 @@ impl Executor {
         transact_to: TransactTo,
         data: Bytes,
         value: U256,
-    ) -> Env {
-        Env {
+    ) -> EnvWithHandlerCfg {
+        let env = Env {
             cfg: self.env.cfg.clone(),
             // We always set the gas price to 0 so we can execute the transaction regardless of
             // network conditions - the actual gas price is kept in `self.block` and is applied by
@@ -571,7 +577,9 @@ impl Executor {
                 gas_limit: self.gas_limit.to(),
                 ..self.env.tx.clone()
             },
-        }
+        };
+
+        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.env.handler_cfg.spec_id)
     }
 }
 
@@ -624,7 +632,7 @@ pub struct DeployResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// The `revm::Env` after deployment
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// The coverage info collected during the deployment
     pub coverage: Option<HitMaps>,
 }
@@ -661,7 +669,7 @@ pub struct CallResult {
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
     /// The `revm::Env` after the call
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// breakpoints
     pub breakpoints: Breakpoints,
 }
@@ -704,7 +712,7 @@ pub struct RawCallResult {
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
     /// The `revm::Env` after the call
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
@@ -730,7 +738,7 @@ impl Default for RawCallResult {
             debug: None,
             transactions: None,
             state_changeset: None,
-            env: Default::default(),
+            env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -746,7 +754,7 @@ fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
-    env: Env,
+    env: EnvWithHandlerCfg,
     inspector: InspectorStack,
     result: ResultAndState,
     has_snapshot_failure: bool,
@@ -762,7 +770,7 @@ fn convert_executed_result(
         }
         ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
     };
-    let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
+    let stipend = calc_stipend(&env.tx.data, env.handler_cfg.spec_id);
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),

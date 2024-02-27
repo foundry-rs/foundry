@@ -49,7 +49,7 @@ impl Cheatcode for clearMockedCallsCall {
 impl Cheatcode for mockCall_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, data, returnData } = self;
-        let (acc, _) = ccx.data.journaled_state.load_account(*callee, ccx.data.db)?;
+        let (acc, _) = ccx.data.journaled_state.load_account(*callee, &mut ccx.data.db)?;
 
         // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
         // check Solidity might perform.
@@ -67,7 +67,7 @@ impl Cheatcode for mockCall_0Call {
 impl Cheatcode for mockCall_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
-        ccx.data.journaled_state.load_account(*callee, ccx.data.db)?;
+        ccx.data.load_account(*callee)?;
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
         Ok(Default::default())
     }

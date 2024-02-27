@@ -9,7 +9,6 @@ use revm::{
     interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
     Database, EvmContext, Inspector,
 };
-use std::ops::Range;
 
 /// An inspector that collects logs during execution.
 ///
@@ -39,16 +38,15 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
         self.logs.push(log.clone());
     }
 
     #[inline]
     fn call(
         &mut self,
-        context: &mut EvmContext<DB>,
+        _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-        return_memory_offset: Range<usize>,
     ) -> Option<CallOutcome> {
         if inputs.contract == HARDHAT_CONSOLE_ADDRESS {
             let (res, out) = self.hardhat_log(inputs.input.to_vec());
@@ -59,7 +57,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
                         output: out,
                         gas: Gas::new(inputs.gas_limit),
                     },
-                    memory_offset,
+                    memory_offset: inputs.return_memory_offset.clone(),
                 })
             }
         }

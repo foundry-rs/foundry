@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Address;
 use foundry_common::{ErrorExt, SELECTOR_LEN};
 use foundry_evm_core::{
     backend::DatabaseExt,
@@ -15,7 +15,6 @@ use revm::{
     EvmContext, Inspector,
 };
 use revm_inspectors::tracing::types::CallKind;
-use std::ops::Range;
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Clone, Debug, Default)]
@@ -90,7 +89,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-        return_memory_offset: Range<usize>,
     ) -> Option<CallOutcome> {
         self.enter(
             context.journaled_state.depth() as usize,
@@ -154,8 +152,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn create_end(
         &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &CreateInputs,
+        _context: &mut EvmContext<DB>,
+        _inputs: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         self.exit();

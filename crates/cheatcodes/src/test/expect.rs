@@ -1,5 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{address, Address, Bytes, LogData as RawLog, B256, U256};
+use alloy_primitives::{address, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
@@ -427,7 +427,7 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
     let Some(expected) = &event_to_fill_or_check.log else {
         // Fill the event.
         event_to_fill_or_check.log =
-            Some(RawLog::new_unchecked(log.topics().to_vec(), log.data.clone().into()));
+            Some(RawLog::new_unchecked(log.topics().to_vec(), log.data.data.clone()));
         state.expected_emits.push_back(event_to_fill_or_check);
         return
     };
@@ -455,7 +455,7 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
 
         // Maybe match data
         if event_to_fill_or_check.checks[3] {
-            event_to_fill_or_check.found &= expected.data.as_ref() == log.data.as_slice();
+            event_to_fill_or_check.found &= expected.data.as_ref() == log.data.data.as_ref();
         }
     }
 

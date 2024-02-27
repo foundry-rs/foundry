@@ -64,7 +64,12 @@ impl Cheatcode for createSelectFork_2Call {
 impl Cheatcode for rollFork_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber } = self;
-        ccx.data.db.roll_fork(None, *blockNumber, ccx.data.env, &mut ccx.data.journaled_state)?;
+        ccx.data.db.roll_fork(
+            None,
+            *blockNumber,
+            &mut ccx.data.env,
+            &mut ccx.data.journaled_state,
+        )?;
         Ok(Default::default())
     }
 }
@@ -75,7 +80,7 @@ impl Cheatcode for rollFork_1Call {
         ccx.data.db.roll_fork_to_transaction(
             None,
             *txHash,
-            ccx.data.env,
+            &mut ccx.data.env,
             &mut ccx.data.journaled_state,
         )?;
         Ok(Default::default())
@@ -88,7 +93,7 @@ impl Cheatcode for rollFork_2Call {
         ccx.data.db.roll_fork(
             Some(*forkId),
             *blockNumber,
-            ccx.data.env,
+            &mut ccx.data.env,
             &mut ccx.data.journaled_state,
         )?;
         Ok(Default::default())
@@ -101,7 +106,7 @@ impl Cheatcode for rollFork_3Call {
         ccx.data.db.roll_fork_to_transaction(
             Some(*forkId),
             *txHash,
-            ccx.data.env,
+            &mut ccx.data.env,
             &mut ccx.data.journaled_state,
         )?;
         Ok(Default::default())
@@ -117,7 +122,7 @@ impl Cheatcode for selectForkCall {
         // fork.
         ccx.state.corrected_nonce = true;
 
-        ccx.data.db.select_fork(*forkId, ccx.data.env, &mut ccx.data.journaled_state)?;
+        ccx.data.db.select_fork(*forkId, &mut ccx.data.env, &mut ccx.data.journaled_state)?;
         Ok(Default::default())
     }
 }
@@ -128,7 +133,7 @@ impl Cheatcode for transact_0Call {
         ccx.data.db.transact(
             None,
             txHash,
-            ccx.data.env,
+            &mut ccx.data.env,
             &mut ccx.data.journaled_state,
             ccx.state,
         )?;
@@ -142,7 +147,7 @@ impl Cheatcode for transact_1Call {
         ccx.data.db.transact(
             Some(forkId),
             txHash,
-            ccx.data.env,
+            &mut ccx.data.env,
             &mut ccx.data.journaled_state,
             ccx.state,
         )?;
@@ -302,7 +307,8 @@ fn create_select_fork<DB: DatabaseExt>(
     ccx.state.corrected_nonce = true;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let id = ccx.data.db.create_select_fork(fork, ccx.data.env, &mut ccx.data.journaled_state)?;
+    let id =
+        ccx.data.db.create_select_fork(fork, &mut ccx.data.env, &mut ccx.data.journaled_state)?;
     Ok(id.abi_encode())
 }
 
@@ -331,7 +337,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     let fork = create_fork_request(ccx, url_or_alias, None)?;
     let id = ccx.data.db.create_select_fork_at_transaction(
         fork,
-        ccx.data.env,
+        &mut ccx.data.env,
         &mut ccx.data.journaled_state,
         *transaction,
     )?;
@@ -361,7 +367,7 @@ fn create_fork_request<DB: DatabaseExt>(
     let fork = CreateFork {
         enable_caching: ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
-        env: ccx.data.env.clone(),
+        env: (*ccx.data.env).clone(),
         evm_opts,
     };
     Ok(fork)

@@ -3,7 +3,6 @@ use revm::{
     interpreter::{CallInputs, CallOutcome, CallScheme, Interpreter},
     Database, EvmContext, Inspector,
 };
-use std::ops::Range;
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -18,7 +17,7 @@ pub struct Fuzzer {
 
 impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
@@ -31,7 +30,6 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-        return_memory_offset: Range<usize>,
     ) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && context.env.tx.caller != inputs.context.caller {
@@ -48,8 +46,8 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
     fn call_end(
         &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &CallInputs,
+        _context: &mut EvmContext<DB>,
+        _inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
         if let Some(ref mut call_generator) = self.call_generator {

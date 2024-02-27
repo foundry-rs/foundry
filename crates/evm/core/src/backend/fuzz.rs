@@ -52,13 +52,13 @@ impl<'a> FuzzBackendWrapper<'a> {
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
+    pub fn inspect_ref<'b, INSP>(
+        &'b mut self,
         env: EnvWithHandlerCfg,
         inspector: INSP,
     ) -> eyre::Result<ResultAndState>
     where
-        INSP: for<'b> Inspector<&'b mut Self>,
+        INSP: Inspector<&'b mut Self>,
     {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state

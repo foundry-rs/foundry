@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use revm::{
-    interpreter::{InstructionResult, Interpreter, Stack},
+    interpreter::{InstructionResult, Interpreter},
     Database, EvmContext, Inspector,
 };
 
@@ -23,7 +23,7 @@ impl ChiselState {
 
 impl<DB: Database> Inspector<DB> for ChiselState {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         // If we are at the final pc of the REPL contract execution, set the state.
         // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
         if self.final_pc == interp.program_counter() - 1 {

@@ -18,7 +18,6 @@ pub use error::{Error, ErrorKind, Result};
 use foundry_evm_core::backend::DatabaseExt;
 pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
 pub use spec::{CheatcodeDef, Vm};
-pub use test::expect::ExpectedCallTracker;
 
 #[macro_use]
 mod error;
