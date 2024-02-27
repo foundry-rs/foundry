@@ -9,10 +9,11 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
     inspector_handle_register,
-    primitives::{AccountInfo, Bytecode, Env, EnvWithHandlerCfg, ResultAndState},
+    primitives::{AccountInfo, Bytecode, Env, EnvWithHandlerCfg, ResultAndState, SpecId},
     Database, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -41,11 +42,13 @@ pub struct FuzzBackendWrapper<'a> {
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
+    /// The [SpecId] of the current backend.
+    spec_id: SpecId,
 }
 
 impl<'a> FuzzBackendWrapper<'a> {
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -55,11 +58,13 @@ impl<'a> FuzzBackendWrapper<'a> {
         inspector: INSP,
     ) -> eyre::Result<ResultAndState>
     where
-        INSP: Inspector<Self>,
+        INSP: for<'b> Inspector<&'b mut Self>,
     {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
+        self.spec_id = env.handler_cfg.spec_id;
+
         let mut evm = revm::Evm::builder()
             .with_db(self)
             .with_external_context(inspector)
@@ -67,10 +72,7 @@ impl<'a> FuzzBackendWrapper<'a> {
             .append_handler_register(inspector_handle_register)
             .build();
 
-        match evm.transact() {
-            Ok(res) => Ok(res),
-            Err(err) => eyre::bail!("backend: failed while inspecting: {err}"),
-        }
+        evm.transact().wrap_err("backend: failed while inspecting")
     }
 
     /// Returns whether there was a snapshot failure in the fuzz backend.
@@ -86,7 +88,8 @@ impl<'a> FuzzBackendWrapper<'a> {
     fn backend_mut(&mut self, env: &Env) -> &mut Backend {
         if !self.is_initialized {
             let backend = self.backend.to_mut();
-            backend.initialize(env);
+            let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), self.spec_id);
+            backend.initialize(&env);
             self.is_initialized = true;
             return backend
         }

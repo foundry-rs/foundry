@@ -10,7 +10,7 @@ use foundry_common::{
 };
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::{Chain, Config};
-use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
+use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

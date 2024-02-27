@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use futures::channel::mpsc::{SendError, TrySendError};
+use revm::primitives::EVMError;
 use std::{
     convert::Infallible,
     sync::{mpsc::RecvError, Arc},
@@ -46,6 +47,8 @@ pub enum DatabaseError {
          For a test environment, you can use `etch` to place the required bytecode at that address."
     )]
     MissingCreate2Deployer,
+    #[error("{0}")]
+    Other(String),
 }
 
 impl DatabaseError {
@@ -76,6 +79,7 @@ impl DatabaseError {
             Self::BlockNotFound(_) |
             Self::TransactionNotFound(_) |
             Self::MissingCreate2Deployer => None,
+            DatabaseError::Other(_) => None,
         }
     }
 
@@ -105,5 +109,15 @@ impl<T> From<TrySendError<T>> for DatabaseError {
 impl From<Infallible> for DatabaseError {
     fn from(value: Infallible) -> Self {
         match value {}
+    }
+}
+
+// Note: this is mostly necessary to use some revm internals that return an [EVMError]
+impl From<EVMError<DatabaseError>> for DatabaseError {
+    fn from(err: EVMError<DatabaseError>) -> Self {
+        match err {
+            EVMError::Database(err) => err,
+            err => DatabaseError::Other(err.to_string()),
+        }
     }
 }

@@ -9,6 +9,7 @@ use crate::{
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -550,9 +551,9 @@ impl Backend {
     }
 
     /// Sets the current spec id
-    pub fn set_spec_id(&mut self, spec_id: PrecompileSpecId) -> &mut Self {
+    pub fn set_spec_id(&mut self, spec_id: SpecId) -> &mut Self {
         trace!("setting precompile id");
-        self.inner.precompile_id = spec_id;
+        self.inner.spec_id = spec_id;
         self
     }
 
@@ -750,7 +751,7 @@ impl Backend {
     /// We need to track these mainly to prevent issues when switching between different evms
     pub(crate) fn initialize(&mut self, env: &EnvWithHandlerCfg) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(PrecompileSpecId::from_spec_id(env.handler_cfg.spec_id));
+        self.set_spec_id(env.handler_cfg.spec_id);
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
@@ -765,6 +766,11 @@ impl Backend {
         self.set_test_contract(test_contract);
     }
 
+    /// Returns the `EnvWithHandlerCfg` with the current `spec_id` set.
+    fn env_with_handler_cfg(&self, env: Env) -> EnvWithHandlerCfg {
+        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.inner.spec_id)
+    }
+
     /// Executes the configured test call of the `env` without committing state changes
     pub fn inspect_ref<INSP>(
         &mut self,
@@ -772,7 +778,7 @@ impl Backend {
         inspector: INSP,
     ) -> eyre::Result<ResultAndState>
     where
-        INSP: Inspector<Self>,
+        INSP: for<'a> Inspector<&'a mut Self>,
     {
         self.initialize(&env);
 
@@ -783,10 +789,7 @@ impl Backend {
             .append_handler_register(inspector_handle_register)
             .build();
 
-        match evm.transact() {
-            Ok(res) => Ok(res),
-            Err(err) => eyre::bail!("backend: failed while inspecting: {err}"),
-        }
+        evm.transact().wrap_err("backend: failed while inspecting")
     }
 
     /// Returns true if the address is a precompile
@@ -889,6 +892,7 @@ impl Backend {
 
         let fork_id = self.ensure_fork_id(id)?.clone();
 
+        let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
@@ -1245,6 +1249,7 @@ impl DatabaseExt for Backend {
         let mut env = env.clone();
         update_env_block(&mut env, fork_block, &block);
 
+        let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector)
     }
@@ -1564,8 +1569,8 @@ pub struct BackendInner {
     ///
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
-    /// The configured precompile spec id
-    pub precompile_id: revm::precompile::PrecompileSpecId,
+    /// The configured spec id
+    pub spec_id: SpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
 }
@@ -1728,31 +1733,12 @@ impl BackendInner {
     }
 
     pub fn precompiles(&self) -> &'static Precompiles {
-        Precompiles::new(self.precompile_id)
+        Precompiles::new(PrecompileSpecId::from_spec_id(self.spec_id))
     }
 
     /// Returns a new, empty, `JournaledState` with set precompiles
     pub fn new_journaled_state(&self) -> JournaledState {
-        /// Helper function to convert from a `revm::precompile::SpecId` into a
-        /// `revm::primitives::SpecId` This only matters if the spec is Cancun or later, or
-        /// pre-Spurious Dragon.
-        fn precompiles_spec_id_to_primitives_spec_id(
-            spec: PrecompileSpecId,
-        ) -> revm::primitives::SpecId {
-            match spec {
-                PrecompileSpecId::HOMESTEAD => revm::primitives::SpecId::HOMESTEAD,
-                PrecompileSpecId::BYZANTIUM => revm::primitives::SpecId::BYZANTIUM,
-                PrecompileSpecId::ISTANBUL => revm::primitives::ISTANBUL,
-                PrecompileSpecId::BERLIN => revm::primitives::BERLIN,
-                PrecompileSpecId::CANCUN => revm::primitives::CANCUN,
-                // Point latest to berlin for now, as we don't wanna accidentally point to Cancun.
-                PrecompileSpecId::LATEST => revm::primitives::BERLIN,
-            }
-        }
-        JournaledState::new(
-            precompiles_spec_id_to_primitives_spec_id(self.precompile_id),
-            self.precompiles().addresses().into_iter().copied().collect(),
-        )
+        JournaledState::new(self.spec_id, self.precompiles().addresses().copied().collect())
     }
 }
 
@@ -1769,7 +1755,7 @@ impl Default for BackendInner {
             caller: None,
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),
-            precompile_id: PrecompileSpecId::LATEST,
+            spec_id: SpecId::LATEST,
             // grant the cheatcode,default test and caller address access to execute cheatcodes
             // itself
             cheatcode_access_accounts: HashSet::from([

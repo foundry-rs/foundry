@@ -189,7 +189,7 @@ pub struct InspectorData {
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
-    pub chisel_state: Option<(Vec<U256>,, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.

@@ -881,22 +881,22 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // updated with the revert status of this call, since the EVM does not mark accounts
             // as "warm" if the call from which they were accessed is reverted
             recorded_account_diffs_stack.push(vec![AccountAccess {
-                    chainInfo: crate::Vm::ChainInfo {
-                        forkId: context.db.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(context.env.cfg.chain_id),
-                    },
-                    accessor: call.context.caller,
-                    account: call.contract,
-                    kind,
-                    initialized,
-                    oldBalance: old_balance,
-                    newBalance: U256::ZERO, // updated on call_end
-                    value: call.transfer.value,
-                    data: call.input.to_vec(),
-                    reverted: false,
-                    deployedCode: vec![],
-                    storageAccesses: vec![], // updated on step
-                    depth: context.journaled_state.depth(),
+                chainInfo: crate::Vm::ChainInfo {
+                    forkId: context.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(context.env.cfg.chain_id),
+                },
+                accessor: call.context.caller,
+                account: call.contract,
+                kind,
+                initialized,
+                oldBalance: old_balance,
+                newBalance: U256::ZERO, // updated on call_end
+                value: call.transfer.value,
+                data: call.input.to_vec(),
+                reverted: false,
+                deployedCode: vec![],
+                storageAccesses: vec![], // updated on step
+                depth: context.journaled_state.depth(),
             }]);
         }
 

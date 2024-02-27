@@ -6200,6 +6200,7 @@ dependencies = [
  "anstyle",
  "colorchoice",
  "revm",
+ "serde",
 ]
 
 [[package]]

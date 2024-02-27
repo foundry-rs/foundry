@@ -3,14 +3,10 @@ use alloy_primitives::{FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
 use foundry_config::NamedChain;
-use revm::{
-    interpreter::InstructionResult,
-    primitives::{SpecId, TransactTo},
-};
+use revm::primitives::{SpecId, TransactTo};
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
-use revm::primitives::{HaltReason, SuccessReason};
 
 pub use crate::ic::*;
 

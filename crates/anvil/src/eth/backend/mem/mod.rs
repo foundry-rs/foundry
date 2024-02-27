@@ -62,10 +62,8 @@ use foundry_common::types::ToAlloy;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    decode::decode_revert,
-    inspectors::AccessListInspector,
-    decode::RevertDecoder,
-    inspectors::AccessListTracer,
+    decode::{decode_revert, RevertDecoder},
+    inspectors::{AccessListInspector, AccessListTracer},
     revm::{
         self,
         db::CacheDB,
