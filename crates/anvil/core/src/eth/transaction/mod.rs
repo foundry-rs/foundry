@@ -5,8 +5,8 @@ use crate::eth::{
     utils::eip_to_revm_access_list,
 };
 use alloy_consensus::{
-    BlobTransactionSidecar, ReceiptWithBloom, TxEip1559, TxEip2930, TxEip4844,
-    TxEip4844WithSidecar, TxEip4844Variant, TxLegacy,
+    BlobTransactionSidecar, ReceiptWithBloom, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant,
+    TxEip4844WithSidecar, TxLegacy,
 };
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
@@ -554,7 +554,7 @@ impl PendingTransaction {
                     input,
                     access_list,
                     blob_versioned_hashes,
-                    ..    
+                    ..
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
