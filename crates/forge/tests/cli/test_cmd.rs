@@ -407,3 +407,86 @@ contract CustomTypesTest is Test {
             .join("tests/fixtures/include_custom_types_in_traces.stdout"),
     );
 });
+
+forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Destructing {
+    function destruct() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract SelfDestructTest is Test {
+    function test() public {
+        Destructing d = new Destructing();
+        vm.store(address(d), bytes32(0), bytes32(uint256(1)));
+        d.destruct();
+        assertEq(address(d).code.length, 0);
+        assertEq(vm.load(address(d), bytes32(0)), bytes32(0));
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv", "--isolate"]).assert_success();
+});
+
+forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Test} from "forge-std/Test.sol";
+
+contract TransientTester {
+    function locked() public view returns (bool isLocked) {
+        assembly {
+            isLocked := tload(0)
+        }
+    }
+
+    modifier lock() {
+        require(!locked(), "locked");
+        assembly {
+            tstore(0, 1)
+        }
+        _;
+    }
+
+    function maybeReentrant(address target, bytes memory data) public lock {
+        (bool success, bytes memory ret) = target.call(data);
+        if (!success) {
+            // forwards revert reason
+            assembly {
+                let ret_size := mload(ret)
+                revert(add(32, ret), ret_size)
+            }
+        }
+    }
+}
+
+contract TransientTest is Test {
+    function test() public {
+        TransientTester t = new TransientTester();
+        vm.expectRevert(bytes("locked"));
+        t.maybeReentrant(address(t), abi.encodeCall(TransientTester.maybeReentrant, (address(0), new bytes(0))));
+
+        t.maybeReentrant(address(0), new bytes(0));
+        assertEq(t.locked(), false);
+    }
+}
+
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+});
