@@ -201,9 +201,9 @@ impl LinkedBuildData {
 }
 
 pub struct CompiledState {
-    args: ScriptArgs,
-    script_config: ScriptConfig,
-    build_data: BuildData,
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: BuildData,
 }
 
 impl CompiledState {
@@ -213,11 +213,12 @@ impl CompiledState {
         let known_libraries = self.script_config.config.libraries_with_remappings()?;
         let build_data = self.build_data.link(known_libraries, sender, nonce)?;
 
-        Ok(LinkedState { args: self.args, build_data })
+        Ok(LinkedState { args: self.args, script_config: self.script_config, build_data })
     }
 }
 
 pub struct LinkedState {
     pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
     pub build_data: LinkedBuildData,
 }

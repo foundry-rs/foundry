@@ -1,15 +1,23 @@
 use super::{
     artifacts::ArtifactInfo,
+    build::{CompiledState, LinkedBuildData, LinkedState},
     runner::{ScriptRunner, SimulationStage},
     transaction::{AdditionalContract, TransactionWithMetadata},
     ScriptArgs, ScriptConfig, ScriptResult,
 };
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_json_abi::{Function, JsonAbi};
+use alloy_primitives::{Address, Bytes, U256, U64};
+use alloy_rpc_types::request::TransactionRequest;
+use async_recursion::async_recursion;
 use eyre::{Context, Result};
 use forge::{
-    backend::Backend,
+    backend::{Backend, DatabaseExt},
     executors::ExecutorBuilder,
-    inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
+    inspectors::{
+        cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+        CheatsConfig,
+    },
+    revm::Database,
     traces::{render_trace_arena, CallTraceDecoder},
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -23,69 +31,244 @@ use std::{
     sync::Arc,
 };
 
-impl ScriptArgs {
-    /// Locally deploys and executes the contract method that will collect all broadcastable
-    /// transactions.
-    pub async fn execute(
-        &self,
-        script_config: &mut ScriptConfig,
-        contract: ContractBytecodeSome,
-        sender: Address,
-        predeploy_libraries: &[Bytes],
-        script_wallets: ScriptWallets,
-    ) -> Result<ScriptResult> {
-        trace!(target: "script", "start executing script");
+pub struct ExecutionData {
+    pub script_wallets: ScriptWallets,
+    pub func: Function,
+    pub calldata: Bytes,
+    pub bytecode: Bytes,
+    pub abi: JsonAbi,
+}
 
-        let ContractBytecodeSome { abi, bytecode, .. } = contract;
+pub struct PreExecutionState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+}
+
+impl LinkedState {
+    /// Given linked and compiled artifacts, prepares data we need for execution.
+    pub async fn prepare_execution(self) -> Result<PreExecutionState> {
+        let multi_wallet = self.args.wallets.get_multi_wallet().await?;
+        let script_wallets = ScriptWallets::new(multi_wallet, self.args.evm_opts.sender);
+
+        let ContractBytecodeSome { abi, bytecode, .. } = self.build_data.get_target_contract()?;
 
         let bytecode = bytecode.into_bytes().ok_or_else(|| {
             eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
         })?;
 
+        let (func, calldata) = self.args.get_method_and_calldata(&abi)?;
+
         ensure_clean_constructor(&abi)?;
 
+        Ok(PreExecutionState {
+            args: self.args,
+            script_config: self.script_config,
+            build_data: self.build_data,
+            execution_data: ExecutionData { script_wallets, func, calldata, bytecode, abi },
+        })
+    }
+}
+
+pub struct ExecutedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_result: ScriptResult,
+}
+
+impl PreExecutionState {
+    #[async_recursion]
+    pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
-            .prepare_runner(script_config, sender, SimulationStage::Local, Some(script_wallets))
+            .prepare_runner(
+                SimulationStage::Local,
+                Some(self.execution_data.script_wallets.clone()),
+            )
             .await?;
-        let (address, mut result) = runner.setup(
-            predeploy_libraries,
-            bytecode,
-            needs_setup(&abi),
-            script_config.sender_nonce,
-            self.broadcast,
-            script_config.evm_opts.fork_url.is_none(),
+
+        self.script_config.sender_nonce = if self.script_config.evm_opts.fork_url.is_none() {
+            // dapptools compatibility
+            1
+        } else {
+            runner
+                .executor
+                .backend
+                .basic(self.script_config.evm_opts.sender)?
+                .unwrap_or_default()
+                .nonce
+        };
+
+        let mut result = self.execute_with_runner(&mut runner).await?;
+
+        // If we have a new sender from execution, we need to use it to deploy libraries and relink
+        // contracts.
+        if let Some(new_sender) = self.maybe_new_sender(result.transactions.as_ref())? {
+            self.script_config.evm_opts.sender = new_sender;
+
+            // Rollback to linking state to relink contracts with the new sender.
+            let state = CompiledState {
+                args: self.args,
+                script_config: self.script_config,
+                build_data: self.build_data.build_data,
+            };
+
+            return state.link()?.prepare_execution().await?.execute().await;
+        }
+
+        // Add library deployment transactions to broadcastable transactions list.
+        if let Some(txs) = &mut result.transactions {
+            let mut library_txs = self
+                .build_data
+                .predeploy_libraries
+                .iter()
+                .enumerate()
+                .map(|(i, bytes)| BroadcastableTransaction {
+                    rpc: self.script_config.evm_opts.fork_url.clone(),
+                    transaction: TransactionRequest {
+                        from: Some(self.script_config.evm_opts.sender),
+                        input: Some(bytes.clone()).into(),
+                        nonce: Some(U64::from(self.script_config.sender_nonce + i as u64)),
+                        ..Default::default()
+                    },
+                })
+                .collect::<VecDeque<_>>();
+
+            for tx in txs.iter() {
+                library_txs.push_back(BroadcastableTransaction {
+                    rpc: tx.rpc.clone(),
+                    transaction: tx.transaction.clone(),
+                });
+            }
+            *txs = library_txs;
+        }
+
+        Ok(ExecutedState {
+            args: self.args,
+            script_config: self.script_config,
+            build_data: self.build_data,
+            execution_data: self.execution_data,
+            execution_result: result,
+        })
+    }
+
+    pub async fn execute_with_runner(&self, runner: &mut ScriptRunner) -> Result<ScriptResult> {
+        let (address, mut setup_result) = runner.setup(
+            &self.build_data.predeploy_libraries,
+            self.execution_data.bytecode.clone(),
+            needs_setup(&self.execution_data.abi),
+            self.script_config.sender_nonce,
+            self.args.broadcast,
+            self.script_config.evm_opts.fork_url.is_none(),
         )?;
 
-        let (func, calldata) = self.get_method_and_calldata(&abi)?;
-        script_config.called_function = Some(func);
+        if setup_result.success {
+            let script_result = runner.script(address, self.execution_data.calldata.clone())?;
 
-        // Only call the method if `setUp()` succeeded.
-        if result.success {
-            let script_result = runner.script(address, calldata)?;
+            setup_result.success &= script_result.success;
+            setup_result.gas_used = script_result.gas_used;
+            setup_result.logs.extend(script_result.logs);
+            setup_result.traces.extend(script_result.traces);
+            setup_result.debug = script_result.debug;
+            setup_result.labeled_addresses.extend(script_result.labeled_addresses);
+            setup_result.returned = script_result.returned;
+            setup_result.breakpoints = script_result.breakpoints;
 
-            result.success &= script_result.success;
-            result.gas_used = script_result.gas_used;
-            result.logs.extend(script_result.logs);
-            result.traces.extend(script_result.traces);
-            result.debug = script_result.debug;
-            result.labeled_addresses.extend(script_result.labeled_addresses);
-            result.returned = script_result.returned;
-            result.breakpoints = script_result.breakpoints;
-
-            match (&mut result.transactions, script_result.transactions) {
+            match (&mut setup_result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
                     txs.extend(new_txs);
                 }
                 (None, Some(new_txs)) => {
-                    result.transactions = Some(new_txs);
+                    setup_result.transactions = Some(new_txs);
                 }
                 _ => {}
             }
         }
 
-        Ok(result)
+        Ok(setup_result)
     }
 
+    fn maybe_new_sender(
+        &self,
+        transactions: Option<&BroadcastableTransactions>,
+    ) -> Result<Option<Address>> {
+        let mut new_sender = None;
+
+        if let Some(txs) = transactions {
+            // If the user passed a `--sender` don't check anything.
+            if !self.build_data.predeploy_libraries.is_empty() &&
+                self.args.evm_opts.sender.is_none()
+            {
+                for tx in txs.iter() {
+                    if tx.transaction.to.is_none() {
+                        let sender = tx.transaction.from.expect("no sender");
+                        if let Some(ns) = new_sender {
+                            if sender != ns {
+                                shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                return Ok(None);
+                            }
+                        } else if sender != self.script_config.evm_opts.sender {
+                            new_sender = Some(sender);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(new_sender)
+    }
+
+    /// Creates the Runner that drives script execution
+    async fn prepare_runner(
+        &mut self,
+        stage: SimulationStage,
+        script_wallets: Option<ScriptWallets>,
+    ) -> Result<ScriptRunner> {
+        trace!("preparing script runner");
+        let env = self.script_config.evm_opts.evm_env().await?;
+
+        let fork = if self.script_config.evm_opts.fork_url.is_some() {
+            self.script_config.evm_opts.get_fork(&self.script_config.config, env.clone())
+        } else {
+            None
+        };
+
+        let backend = Backend::spawn(fork).await;
+
+        // Cache forks
+        if let Some(fork_url) = backend.active_fork_url() {
+            self.script_config.backends.insert(fork_url.clone(), backend.clone());
+        }
+
+        // We need to enable tracing to decode contract names: local or external.
+        let mut builder = ExecutorBuilder::new()
+            .inspectors(|stack| stack.trace(true))
+            .spec(self.script_config.config.evm_spec_id())
+            .gas_limit(self.script_config.evm_opts.gas_limit());
+
+        if let SimulationStage::Local = stage {
+            builder = builder.inspectors(|stack| {
+                stack.debug(self.args.debug).cheatcodes(
+                    CheatsConfig::new(
+                        &self.script_config.config,
+                        self.script_config.evm_opts.clone(),
+                        script_wallets,
+                    )
+                    .into(),
+                )
+            });
+        }
+
+        Ok(ScriptRunner::new(
+            builder.build(env, backend),
+            self.script_config.evm_opts.initial_balance,
+            self.script_config.evm_opts.sender,
+        ))
+    }
+}
+
+impl ScriptArgs {
     /// Simulates onchain state by executing a list of transactions locally and persisting their
     /// state. Returns the transactions and any CREATE2 contract address created.
     pub async fn onchain_simulation(

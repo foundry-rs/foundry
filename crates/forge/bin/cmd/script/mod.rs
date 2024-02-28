@@ -1,8 +1,7 @@
 use super::build::BuildArgs;
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, U256, U64};
-use alloy_rpc_types::request::TransactionRequest;
+use alloy_primitives::{Address, Bytes, Log, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_providers::{Http, Middleware};
@@ -39,9 +38,8 @@ use foundry_config::{
     Config, NamedChain,
 };
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    decode::RevertDecoder,
-    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    constants::DEFAULT_CREATE2_DEPLOYER, decode::RevertDecoder,
+    inspectors::cheatcodes::BroadcastableTransactions,
 };
 use foundry_wallets::MultiWalletOpts;
 use futures::future;
@@ -369,62 +367,6 @@ impl ScriptArgs {
         }
 
         Ok(())
-    }
-
-    /// It finds the deployer from the running script and uses it to predeploy libraries.
-    ///
-    /// If there are multiple candidate addresses, it skips everything and lets `--sender` deploy
-    /// them instead.
-    fn maybe_new_sender(
-        &self,
-        evm_opts: &EvmOpts,
-        transactions: Option<&BroadcastableTransactions>,
-        has_predeploy_libraries: bool,
-    ) -> Result<Option<Address>> {
-        let mut new_sender = None;
-
-        if let Some(txs) = transactions {
-            // If the user passed a `--sender` don't check anything.
-            if has_predeploy_libraries && self.evm_opts.sender.is_none() {
-                for tx in txs.iter() {
-                    if tx.transaction.to.is_none() {
-                        let sender = tx.transaction.from.expect("no sender");
-                        if let Some(ns) = new_sender {
-                            if sender != ns {
-                                shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
-                                return Ok(None);
-                            }
-                        } else if sender != evm_opts.sender {
-                            new_sender = Some(sender);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(new_sender)
-    }
-
-    /// Helper for building the transactions for any libraries that need to be deployed ahead of
-    /// linking
-    fn create_deploy_transactions(
-        &self,
-        from: Address,
-        nonce: u64,
-        data: &[Bytes],
-        fork_url: &Option<RpcUrl>,
-    ) -> BroadcastableTransactions {
-        data.iter()
-            .enumerate()
-            .map(|(i, bytes)| BroadcastableTransaction {
-                rpc: fork_url.clone(),
-                transaction: TransactionRequest {
-                    from: Some(from),
-                    input: Some(bytes.clone()).into(),
-                    nonce: Some(U64::from(nonce + i as u64)),
-                    ..Default::default()
-                },
-            })
-            .collect()
     }
 
     /// Returns the Function and calldata based on the signature
