@@ -28,10 +28,10 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::primitives::Output,
+    revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxLegacy;
+use alloy_consensus::{TxEip4844Variant, TxLegacy};
 use alloy_dyn_abi::TypedData;
 use alloy_network::{Signed, TxKind};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
@@ -548,6 +548,10 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> Result<U256> {
         Ok(self.backend.gas_price())
+    }
+
+    pub fn excess_blob_gas_and_price(&self) -> Result<Option<BlobExcessGasAndPrice>> {
+        Ok(self.backend.excess_blob_gas_and_price())
     }
 
     /// Returns a fee per gas that is an estimate of how much you can pay as a priority fee, or
@@ -2476,6 +2480,7 @@ impl EthApi {
     ) -> Result<TypedTransactionRequest> {
         let chain_id = request.chain_id.map(|c| c.to::<u64>()).unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
+        let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
         let gas_limit = request.gas.map(Ok).unwrap_or_else(|| self.current_gas_limit())?;
@@ -2508,11 +2513,41 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::EIP4844(m)) => {
+                TypedTransactionRequest::EIP4844(match m {
+                    // We only accept the TxEip4844 variant which has the sidecar.
+                    TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
+                        m.tx.nonce = nonce.to::<u64>();
+                        m.tx.chain_id = chain_id;
+                        m.tx.gas_limit = gas_limit.to::<u64>();
+                        if max_fee_per_gas.is_none() {
+                            m.tx.max_fee_per_gas =
+                                self.gas_price().unwrap_or_default().to::<u128>();
+                        }
+                        if max_fee_per_blob_gas.is_none() {
+                            m.tx.max_fee_per_blob_gas = self
+                                .excess_blob_gas_and_price()
+                                .unwrap_or_default()
+                                .unwrap_or(BlobExcessGasAndPrice {
+                                    blob_gasprice: 0,
+                                    excess_blob_gas: 0,
+                                })
+                                .blob_gasprice
+                        }
+                        TxEip4844Variant::TxEip4844WithSidecar(m)
+                    }
+                    // It is not valid to receive a TxEip4844 without a sidecar, therefore
+                    // we must reject it.
+                    TxEip4844Variant::TxEip4844(_) => {
+                        return Err(BlockchainError::FailedToDecodeTransaction)
+                    }
+                })
+            }
             Some(TypedTransactionRequest::Deposit(mut m)) => {
                 m.gas_limit = gas_limit;
                 TypedTransactionRequest::Deposit(m)
             }
-            _ => return Err(BlockchainError::FailedToDecodeTransaction),
+            None => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
     }

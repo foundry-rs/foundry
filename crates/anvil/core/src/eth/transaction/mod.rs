@@ -625,9 +625,9 @@ pub enum TypedTransaction {
 }
 
 impl TypedTransaction {
-    /// Returns true if the transaction uses dynamic fees: EIP1559
+    /// Returns true if the transaction uses dynamic fees: EIP1559 or EIP4844
     pub fn is_dynamic_fee(&self) -> bool {
-        matches!(self, TypedTransaction::EIP1559(_))
+        matches!(self, TypedTransaction::EIP1559(_)) || matches!(self, TypedTransaction::EIP4844(_))
     }
 
     pub fn gas_price(&self) -> U256 {
@@ -635,7 +635,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.gas_price,
             TypedTransaction::EIP2930(tx) => tx.gas_price,
             TypedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
-            TypedTransaction::EIP4844(tx) => tx.tx().tx().max_fee_per_blob_gas,
+            TypedTransaction::EIP4844(tx) => tx.tx().tx().max_fee_per_gas,
             TypedTransaction::Deposit(_) => 0,
         })
     }
