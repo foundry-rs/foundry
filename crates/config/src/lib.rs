@@ -75,7 +75,6 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
-use foundry_compilers::error::SolcIoError;
 
 /// config providers
 pub mod providers;
