@@ -2,7 +2,7 @@
 
 use crate::config::*;
 use alloy_primitives::U256;
-use forge::fuzz::CounterExample;
+use forge::{fuzz::CounterExample, result::TestStatus, TestOptions};
 use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
 
@@ -114,6 +114,26 @@ async fn test_invariant() {
                     "invariantShouldFail()",
                     false,
                     Some("revert: it's false".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert",
+                vec![(
+                    "invariant_with_assert()",
+                    false,
+                    Some("<empty revert data>".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithRequire",
+                vec![(
+                    "invariant_with_require()",
+                    false,
+                    Some("revert: wrong counter".into()),
                     None,
                     None,
                 )],
@@ -256,6 +276,63 @@ async fn test_invariant_shrink() {
                 "fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
             );
             assert_eq!(betray_sequence.signature.unwrap(), "betray()");
+        }
+    };
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
+async fn test_invariant_assert_shrink() {
+    let mut opts = test_opts();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    // ensure assert and require shrinks to same sequence of 3
+    test_shrink(
+        opts.clone(),
+        "InvariantShrinkWithAssert",
+        ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
+        3,
+    )
+    .await;
+    test_shrink(
+        opts.clone(),
+        "InvariantShrinkWithRequire",
+        ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
+        3,
+    )
+    .await;
+}
+
+async fn test_shrink(
+    opts: TestOptions,
+    contract_pattern: &str,
+    path_pattern: &str,
+    shrink_sequence_len: usize,
+) {
+    let mut runner = runner().await;
+    runner.test_options = opts.clone();
+    let results =
+        runner.test_collect(&Filter::new(".*", contract_pattern, path_pattern), opts).await;
+    let results =
+        results.values().last().expect(format!("{path_pattern} should be testable.").as_str());
+
+    let result = results
+        .test_results
+        .values()
+        .last()
+        .expect(format!("{path_pattern} should be testable.").as_str());
+
+    assert_eq!(result.status, TestStatus::Failure);
+
+    let counter = result
+        .counterexample
+        .as_ref()
+        .expect(format!("{path_pattern} should have failed with a counterexample.").as_str());
+
+    match counter {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => {
+            assert_eq!(sequence.len(), shrink_sequence_len);
         }
     };
 }
