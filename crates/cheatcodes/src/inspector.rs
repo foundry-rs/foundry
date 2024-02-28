@@ -830,6 +830,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     let account =
                         data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
+                    account.mark_touch();
+
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: data.db.active_fork_url(),
                         transaction: TransactionRequest {
@@ -849,6 +851,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     let prev = account.info.nonce;
+                    account.info.nonce += 1;
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -937,13 +940,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if let Some(broadcast) = &self.broadcast {
                 if data.journaled_state.depth() == broadcast.depth {
                     data.env.tx.caller = broadcast.original_origin;
-
-                    if !call.is_static {
-                        let account =
-                            data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
-
-                        account.info.nonce += 1;
-                    }
 
                     // Clean single-call broadcast once we have returned to the original depth
                     if broadcast.single_call {
@@ -1490,6 +1486,7 @@ fn process_broadcast_create<DB: DatabaseExt>(
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
             let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
+            account.mark_touch();
             let prev = account.info.nonce;
             account.info.nonce += 1;
             debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
