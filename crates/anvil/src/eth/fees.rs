@@ -279,10 +279,12 @@ impl FeeHistoryService {
 
         let mut block_number: Option<u64> = None;
         let base_fee = self.fees.base_fee();
+        let excess_blob_gas_and_price = self.fees.excess_blob_gas_and_price();
         let mut item = FeeHistoryCacheItem {
             base_fee: base_fee.to::<u64>(),
             gas_used_ratio: 0f64,
             rewards: Vec::new(),
+            excess_blob_gas_and_price,
         };
 
         let current_block = self.storage_info.block(hash);
@@ -316,7 +318,6 @@ impl FeeHistoryService {
                                 .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
                                 .to::<u64>()
                         }
-                        // TODO: This probably needs to be extended to extract 4844 info.
                         Some(TypedTransaction::EIP4844(t)) => {
                             U256::from(t.tx().tx().max_priority_fee_per_gas)
                                 .min(
@@ -400,6 +401,7 @@ pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 pub struct FeeHistoryCacheItem {
     pub base_fee: u64,
     pub gas_used_ratio: f64,
+    pub excess_blob_gas_and_price: Option<BlobExcessGasAndPrice>,
     pub rewards: Vec<u64>,
 }
 

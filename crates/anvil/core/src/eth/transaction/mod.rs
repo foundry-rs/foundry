@@ -1030,13 +1030,6 @@ impl TypedReceipt {
         }
     }
 
-    pub fn blob_gas_used(&self) -> U256 {
-        match self {
-            TypedReceipt::EIP4844(r) => U256::from(r.receipt.cumulative_gas_used),
-            _ => U256::ZERO,
-        }
-    }
-
     pub fn logs_bloom(&self) -> &Bloom {
         match self {
             TypedReceipt::Legacy(r) |
