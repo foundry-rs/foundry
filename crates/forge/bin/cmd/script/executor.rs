@@ -303,14 +303,17 @@ impl ScriptArgs {
 
         if let SimulationStage::Local = stage {
             builder = builder.inspectors(|stack| {
-                stack.debug(self.debug).cheatcodes(
-                    CheatsConfig::new(
-                        &script_config.config,
-                        script_config.evm_opts.clone(),
-                        script_wallets,
+                stack
+                    .debug(self.debug)
+                    .cheatcodes(
+                        CheatsConfig::new(
+                            &script_config.config,
+                            script_config.evm_opts.clone(),
+                            script_wallets,
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
+                    .enable_isolation(script_config.evm_opts.isolate)
             });
         }
 
