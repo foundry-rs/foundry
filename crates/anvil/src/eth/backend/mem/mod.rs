@@ -2406,7 +2406,7 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-1559 London hard fork validation steps
-        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
+        if env.cfg.spec_id >= SpecId::LONDON {
             if tx.gas_price() < env.block.basefee && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
@@ -2423,7 +2423,7 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-4844 Cancun hard fork validation steps
-        if (env.cfg.spec_id as u8) >= (SpecId::CANCUN as u8) && tx.transaction.is_eip4844() {
+        if env.cfg.spec_id >= SpecId::CANCUN && tx.transaction.is_eip4844() {
             // Light checks first: see if the blob fee cap is too low.
             if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
                 if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
@@ -2437,7 +2437,14 @@ impl TransactionValidator for Backend {
             // Heavy (blob validation) checks
             let tx = match &tx.transaction {
                 TypedTransaction::EIP4844(tx) => tx.tx().clone(),
-                _ => return Ok(()),
+                // This should not happen. The transaction should explicitly be an eip 4844 tx.
+                _ => {
+                    return Err(InvalidTransactionError::BlobTransactionValidationError(
+                        alloy_consensus::BlobTransactionValidationError::NotBlobTransaction(
+                            tx.transaction.r#type().unwrap_or(u8::MAX),
+                        ),
+                    ))
+                }
             };
 
             // Ensure there are blob hashes.

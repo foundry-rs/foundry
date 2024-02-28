@@ -162,6 +162,10 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
                     continue
                 }
+                TransactionExecutionOutcome::BlobGasExhausted(tx) => {
+                    trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block blob gas limit exhausting, skipping transaction");
+                    continue
+                }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
                     trace!(target: "backend", ?tx,  "skipping invalid transaction");
                     invalid.push(tx);
@@ -265,6 +269,8 @@ pub enum TransactionExecutionOutcome {
     Invalid(Arc<PoolTransaction>, InvalidTransactionError),
     /// Execution skipped because could exceed gas limit
     Exhausted(Arc<PoolTransaction>),
+    /// Execution skipped because it exceeded the blob gas limit
+    BlobGasExhausted(Arc<PoolTransaction>),
     /// When an error occurred during execution
     DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
@@ -291,7 +297,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         // check that we comply with the block's blob gas limit
         if self.blob_gas_used.to::<u64>() > MAX_BLOB_GAS_PER_BLOCK {
-            return Some(TransactionExecutionOutcome::Exhausted(transaction))
+            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 
         // validate before executing
