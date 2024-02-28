@@ -138,6 +138,10 @@ async fn test_invariant() {
                     None,
                 )],
             ),
+            (
+                "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
+                vec![("invariant_preserve_state()", true, None, None, None)],
+            ),
         ]),
     );
 }
@@ -325,4 +329,53 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
             assert!(sequence.len() <= 3);
         }
     };
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_preserve_state() {
+    let mut runner = runner().await;
+
+    // should not fail with default options
+    let mut opts = test_opts();
+    opts.invariant.fail_on_revert = true;
+    runner.test_options = opts.clone();
+    let results = runner
+        .test_collect(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol"),
+            opts,
+        )
+        .await;
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
+            vec![("invariant_preserve_state()", true, None, None, None)],
+        )]),
+    );
+
+    // same test should revert when preserve state enabled
+    let mut opts = test_opts();
+    opts.invariant.fail_on_revert = true;
+    opts.invariant.preserve_state = true;
+    runner.test_options = opts.clone();
+
+    let results = runner
+        .test_collect(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol"),
+            opts,
+        )
+        .await;
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
+            vec![(
+                "invariant_preserve_state()",
+                false,
+                Some("EvmError: Revert".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
 }
