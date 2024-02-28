@@ -40,6 +40,10 @@ pub struct BindArgs {
     #[clap(long, conflicts_with_all = &["select", "skip"])]
     pub select_all: bool,
 
+    /// Only generate bindings for contracts in the `src` directory
+    #[clap(long)]
+    pub only_src: bool,
+
     /// The name of the Rust crate to generate.
     ///
     /// This should be a valid crates.io crate name,
@@ -97,7 +101,7 @@ impl BindArgs {
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
             println!("Bindings found. Checking for consistency.");
-            return self.check_existing_bindings(&artifacts)
+            return self.check_existing_bindings(&artifacts);
         }
 
         if self.overwrite && self.bindings_exist(&artifacts) {
@@ -127,13 +131,13 @@ impl BindArgs {
     /// Returns the filter to use for `MultiAbigen`
     fn get_filter(&self) -> ContractFilter {
         if self.select_all {
-            return ContractFilter::All
+            return ContractFilter::All;
         }
         if !self.select.is_empty() {
-            return SelectContracts::default().extend_regex(self.select.clone()).into()
+            return SelectContracts::default().extend_regex(self.select.clone()).into();
         }
         if !self.skip.is_empty() {
-            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+            return ExcludeContracts::default().extend_regex(self.skip.clone()).into();
         }
         // This excludes all Test/Script and forge-std contracts
         ExcludeContracts::default()
@@ -152,7 +156,7 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self, artifacts: impl AsRef<Path>) -> Result<MultiAbigen> {
-        let abigens = json_files(artifacts.as_ref())
+        let mut abigens = json_files(artifacts.as_ref())
             .into_iter()
             .filter_map(|path| {
                 // we don't want `.metadata.json files
@@ -174,6 +178,42 @@ impl BindArgs {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
+
+        if self.only_src {
+            abigens = abigens
+                .into_iter()
+                .map(|abi| {
+                    let abi_str = abi.source().get().wrap_err_with(|| {
+                        format!("failed to read Abigen source: {:?}", abi.source())
+                    });
+                    serde_json::from_str::<serde_json::Value>(&abi_str?)
+                        .wrap_err_with(|| {
+                            format!("failed to parse JSON from Abigen: {:?}", abi.source())
+                        })
+                        .map(|json| {
+                            let contract_path = json["metadata"]["settings"]["compilationTarget"]
+                                .as_object()
+                                .map(|obj| obj.keys().collect::<Vec<_>>())
+                                .map(|keys| *keys.first().unwrap())
+                                .unwrap()
+                                .clone();
+                            (abi, contract_path)
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter_map(
+                    |(abi, contract_path)| {
+                        if contract_path.starts_with("src/") {
+                            Some(abi)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .collect::<Vec<_>>();
+        }
+
         let multi = MultiAbigen::from_abigens(abigens).with_filter(self.get_filter());
 
         eyre::ensure!(
