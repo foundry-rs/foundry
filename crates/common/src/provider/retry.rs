@@ -31,6 +31,10 @@ impl RetryPolicy for RateLimitRetryPolicy {
             // the start.
             TransportError::SerError(_) => false,
             TransportError::DeserError { text, .. } => {
+                if let Ok(resp) = serde_json::from_str::<ErrorPayload>(text) {
+                    return should_retry_json_rpc_error(&resp)
+                }
+
                 // some providers send invalid JSON RPC in the error case (no `id:u64`), but the
                 // text should be a `JsonRpcError`
                 #[derive(Deserialize)]
@@ -41,6 +45,7 @@ impl RetryPolicy for RateLimitRetryPolicy {
                 if let Ok(resp) = serde_json::from_str::<Resp>(text) {
                     return should_retry_json_rpc_error(&resp.error)
                 }
+
                 false
             }
             TransportError::ErrorResp(err) => should_retry_json_rpc_error(err),
