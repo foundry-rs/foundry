@@ -2,7 +2,7 @@
 
 use crate::config::*;
 use alloy_primitives::U256;
-use forge::fuzz::CounterExample;
+use forge::{fuzz::CounterExample, result::TestStatus, TestOptions};
 use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
 
@@ -114,6 +114,26 @@ async fn test_invariant() {
                     "invariantShouldFail()",
                     false,
                     Some("revert: it's false".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert",
+                vec![(
+                    "invariant_with_assert()",
+                    false,
+                    Some("<empty revert data>".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithRequire",
+                vec![(
+                    "invariant_with_require()",
+                    false,
+                    Some("revert: wrong counter".into()),
                     None,
                     None,
                 )],
@@ -245,6 +265,68 @@ async fn test_invariant_shrink() {
         // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
         CounterExample::Sequence(sequence) => {
             assert_eq!(sequence.len(), 2);
+
+            // call order should always be preserved
+            let create_fren_sequence = sequence[0].clone();
+            assert_eq!(
+                create_fren_sequence.contract_name.unwrap(),
+                "fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
+            );
+            assert_eq!(create_fren_sequence.signature.unwrap(), "create_fren()");
+
+            let betray_sequence = sequence[1].clone();
+            assert_eq!(
+                betray_sequence.contract_name.unwrap(),
+                "fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
+            );
+            assert_eq!(betray_sequence.signature.unwrap(), "betray()");
+        }
+    };
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
+async fn test_invariant_assert_shrink() {
+    let mut opts = test_opts();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    // ensure assert and require shrinks to same sequence of 3 or less
+    test_shrink(opts.clone(), "InvariantShrinkWithAssert").await;
+    test_shrink(opts.clone(), "InvariantShrinkWithRequire").await;
+}
+
+async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
+    let mut runner = runner().await;
+    runner.test_options = opts.clone();
+    let results = runner
+        .test_collect(
+            &Filter::new(
+                ".*",
+                contract_pattern,
+                ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
+            ),
+            opts,
+        )
+        .await;
+    let results = results.values().last().expect("`InvariantShrinkWithAssert` should be testable.");
+
+    let result = results
+        .test_results
+        .values()
+        .last()
+        .expect("`InvariantShrinkWithAssert` should be testable.");
+
+    assert_eq!(result.status, TestStatus::Failure);
+
+    let counter = result
+        .counterexample
+        .as_ref()
+        .expect("`InvariantShrinkWithAssert` should have failed with a counterexample.");
+
+    match counter {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => {
+            assert!(sequence.len() <= 3);
         }
     };
 }

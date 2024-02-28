@@ -386,6 +386,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
+                        duration: start.elapsed(),
                         ..Default::default()
                     }
                 }
@@ -397,6 +398,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
+                        duration: start.elapsed(),
                         ..Default::default()
                     }
                 }
@@ -410,13 +412,8 @@ impl<'a> ContractRunner<'a> {
         );
 
         // Record test execution time
-        debug!(
-            duration = ?start.elapsed(),
-            gas,
-            reverted,
-            should_fail,
-            success,
-        );
+        let duration = start.elapsed();
+        debug!(?duration, gas, reverted, should_fail, success);
 
         TestResult {
             status: match success {
@@ -433,6 +430,7 @@ impl<'a> ContractRunner<'a> {
             labeled_addresses,
             debug: debug_arena,
             breakpoints,
+            duration,
         }
     }
 
@@ -452,6 +450,7 @@ impl<'a> ContractRunner<'a> {
         let TestSetup { address, logs, traces, labeled_addresses, coverage, .. } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
+        let start = Instant::now();
         if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
             self.sender,
             address,
@@ -468,6 +467,7 @@ impl<'a> ContractRunner<'a> {
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
                 coverage,
+                duration: start.elapsed(),
                 ..Default::default()
             }
         };
@@ -495,6 +495,7 @@ impl<'a> ContractRunner<'a> {
                     traces,
                     labeled_addresses,
                     kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
+                    duration: start.elapsed(),
                     ..Default::default()
                 }
             }
@@ -542,12 +543,6 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
-        let kind = TestKind::Invariant {
-            runs: cases.len(),
-            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
-            reverts,
-        };
-
         TestResult {
             status: match success {
                 true => TestStatus::Success,
@@ -557,10 +552,15 @@ impl<'a> ContractRunner<'a> {
             counterexample,
             decoded_logs: decode_console_logs(&logs),
             logs,
-            kind,
+            kind: TestKind::Invariant {
+                runs: cases.len(),
+                calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+                reverts,
+            },
             coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
+            duration: start.elapsed(),
             ..Default::default() // TODO collect debug traces on the last run or error
         }
     }
@@ -612,6 +612,7 @@ impl<'a> ContractRunner<'a> {
                 debug,
                 breakpoints,
                 coverage,
+                duration: start.elapsed(),
                 ..Default::default()
             }
         }
@@ -668,10 +669,8 @@ impl<'a> ContractRunner<'a> {
         coverage = merge_coverages(coverage, result.coverage);
 
         // Record test execution time
-        debug!(
-            duration = ?start.elapsed(),
-            success = %result.success
-        );
+        let duration = start.elapsed();
+        debug!(?duration, success = %result.success);
 
         TestResult {
             status: match result.success {
@@ -688,6 +687,7 @@ impl<'a> ContractRunner<'a> {
             labeled_addresses,
             debug,
             breakpoints,
+            duration,
         }
     }
 }

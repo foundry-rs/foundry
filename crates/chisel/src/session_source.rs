@@ -318,15 +318,10 @@ impl SessionSource {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
 
+        let remappings = self.config.foundry_config.get_all_remappings().collect::<Vec<_>>();
+
         // Include Vm.sol if forge-std remapping is not available
-        if !self.config.no_vm &&
-            !self
-                .config
-                .foundry_config
-                .get_all_remappings()
-                .into_iter()
-                .any(|r| r.name.starts_with("forge-std"))
-        {
+        if !self.config.no_vm && !remappings.iter().any(|r| r.name.starts_with("forge-std")) {
             sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE));
         }
 
@@ -337,7 +332,7 @@ impl SessionSource {
             .expect("Solidity source not found");
 
         // get all remappings from the config
-        compiler_input.settings.remappings = self.config.foundry_config.get_all_remappings();
+        compiler_input.settings.remappings = remappings;
 
         // We also need to enforce the EVM version that the user has specified.
         compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);

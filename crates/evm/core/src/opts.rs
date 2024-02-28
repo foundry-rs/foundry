@@ -61,6 +61,9 @@ pub struct EvmOpts {
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     pub memory_limit: u64,
+
+    /// Whether to enable isolation of calls.
+    pub isolate: bool,
 }
 
 impl EvmOpts {

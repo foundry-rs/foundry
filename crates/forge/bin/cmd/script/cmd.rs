@@ -332,7 +332,7 @@ impl ScriptArgs {
         script_config.sender_nonce = nonce;
         let target = script_config.target_contract();
 
-        let libraries = script_config.config.solc_settings()?.libraries;
+        let libraries = script_config.config.libraries_with_remappings()?;
 
         let (highlevel_known_contracts, libraries, predeploy_libraries) =
             self.link_script_target(&linker, libraries, new_sender, nonce, target.clone())?;

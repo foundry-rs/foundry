@@ -14,7 +14,7 @@ Traces:
     ├─ emit MyEvent(a: 100)
     └─ ← ()
 
-Test result: FAILED. 1 passed; 1 failed; 0 skipped; finished in 3.88ms
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; finished in 3.88ms
 
 Ran 1 test suite: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 

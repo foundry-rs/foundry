@@ -139,6 +139,7 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+ast = false
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
@@ -252,7 +253,7 @@ The optional `url` attribute can be used to explicitly set the Etherscan API url
 [etherscan]
 mainnet = { key = "${ETHERSCAN_MAINNET_KEY}" }
 mainnet2 = { key = "ABCDEFG", chain = "mainnet" }
-optimism = { key = "1234576" }
+optimism = { key = "1234576", chain = 42 }
 unknownchain = { key = "ABCDEFG", url = "https://<etherscan-api-url-for-that-chain>" }
 ```
 

@@ -216,6 +216,10 @@ impl Provider for CoreBuildArgs {
             dict.insert("build_info".to_string(), self.build_info.into());
         }
 
+        if self.compiler.ast {
+            dict.insert("ast".to_string(), true.into());
+        }
+
         if self.compiler.optimize {
             dict.insert("optimizer".to_string(), self.compiler.optimize.into());
         }

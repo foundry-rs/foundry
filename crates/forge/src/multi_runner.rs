@@ -60,6 +60,8 @@ pub struct MultiContractRunner {
     pub debug: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
+    /// Whether to enable call isolation
+    pub isolation: bool,
 }
 
 impl MultiContractRunner {
@@ -179,6 +181,7 @@ impl MultiContractRunner {
                             .trace(self.evm_opts.verbosity >= 3 || self.debug)
                             .debug(self.debug)
                             .coverage(self.coverage)
+                            .enable_isolation(self.isolation)
                     })
                     .spec(self.evm_spec)
                     .gas_limit(self.evm_opts.gas_limit())
@@ -256,6 +259,8 @@ pub struct MultiContractRunnerBuilder {
     pub coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
+    /// Whether to enable call isolation
+    pub isolation: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: Option<TestOptions>,
 }
@@ -298,6 +303,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_debug(mut self, enable: bool) -> Self {
         self.debug = enable;
+        self
+    }
+
+    pub fn enable_isolation(mut self, enable: bool) -> Self {
+        self.isolation = enable;
         self
     }
 
@@ -381,6 +391,7 @@ impl MultiContractRunnerBuilder {
             coverage: self.coverage,
             debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),
+            isolation: self.isolation,
         })
     }
 }
