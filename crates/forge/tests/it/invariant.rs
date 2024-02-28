@@ -287,52 +287,42 @@ async fn test_invariant_assert_shrink() {
     opts.fuzz.seed = Some(U256::from(119u32));
 
     // ensure assert and require shrinks to same sequence of 3
-    test_shrink(
-        opts.clone(),
-        "InvariantShrinkWithAssert",
-        ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
-        3,
-    )
-    .await;
-    test_shrink(
-        opts.clone(),
-        "InvariantShrinkWithRequire",
-        ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
-        3,
-    )
-    .await;
+    test_shrink(opts.clone(), "InvariantShrinkWithAssert").await;
+    test_shrink(opts.clone(), "InvariantShrinkWithRequire").await;
 }
 
-async fn test_shrink(
-    opts: TestOptions,
-    contract_pattern: &str,
-    path_pattern: &str,
-    shrink_sequence_len: usize,
-) {
+async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
     let mut runner = runner().await;
     runner.test_options = opts.clone();
-    let results =
-        runner.test_collect(&Filter::new(".*", contract_pattern, path_pattern), opts).await;
-    let results =
-        results.values().last().expect(format!("{path_pattern} should be testable.").as_str());
+    let results = runner
+        .test_collect(
+            &Filter::new(
+                ".*",
+                contract_pattern,
+                ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
+            ),
+            opts,
+        )
+        .await;
+    let results = results.values().last().expect("`InvariantShrinkWithAssert` should be testable.");
 
     let result = results
         .test_results
         .values()
         .last()
-        .expect(format!("{path_pattern} should be testable.").as_str());
+        .expect("`InvariantShrinkWithAssert` should be testable.");
 
     assert_eq!(result.status, TestStatus::Failure);
 
     let counter = result
         .counterexample
         .as_ref()
-        .expect(format!("{path_pattern} should have failed with a counterexample.").as_str());
+        .expect("`InvariantShrinkWithAssert` should have failed with a counterexample.");
 
     match counter {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         CounterExample::Sequence(sequence) => {
-            assert_eq!(sequence.len(), shrink_sequence_len);
+            assert_eq!(sequence.len(), 3);
         }
     };
 }
