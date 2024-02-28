@@ -148,11 +148,9 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         } else {
             None
         };
-        let excess_blob_gas = if (self.cfg_env.spec_id as u8) >= (SpecId::CANCUN as u8) {
-            self.block_env.get_blob_excess_gas()
-        } else {
-            None
-        };
+
+        let is_cancun = self.cfg_env.spec_id >= SpecId::CANCUN;
+        let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
 
         for tx in self.into_iter() {
             let tx = match tx {
@@ -178,8 +176,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            cumulative_blob_gas_used =
-                tx.transaction.pending_transaction.transaction.transaction.blob_gas();
+
+            if is_cancun {
+                cumulative_blob_gas_used = Some(
+                    cumulative_blob_gas_used.unwrap_or(0u64).saturating_add(
+                        tx.transaction
+                            .pending_transaction
+                            .transaction
+                            .transaction
+                            .blob_gas()
+                            .unwrap_or(0),
+                    ),
+                );
+            }
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
