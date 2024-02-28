@@ -214,12 +214,18 @@ impl InvariantFuzzError {
                 .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
                 .expect("bad call to evm");
 
-            // Checks the invariant. If we exit before the last call, all the better.
+            // Checks the invariant. If we revert or fail before the last call, all the better.
             if let Some(func) = &self.func {
-                let error_call_result = executor
+                let mut call_result = executor
                     .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
                     .expect("bad call to evm");
-                if error_call_result.reverted {
+                let is_success = executor.is_raw_call_success(
+                    self.addr,
+                    call_result.state_changeset.take().unwrap(),
+                    &call_result,
+                    false,
+                );
+                if !is_success {
                     let mut locked = curr_seq.write();
                     if new_sequence[..=seq_idx].len() < locked.len() {
                         // update the curr_sequence if the new sequence is lower than
