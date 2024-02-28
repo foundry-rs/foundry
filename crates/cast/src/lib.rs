@@ -1701,14 +1701,14 @@ impl SimpleCast {
             DynSolType::Address |
             DynSolType::Function => hasher.update(v.as_word().unwrap()),
 
-            // For strings and byte arrays, h(k) is just the unpadded data.
+            // For strings and byte arrays, `h(k)` is just the unpadded data.
             DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
 
             DynSolType::Array(..) |
             DynSolType::FixedArray(..) |
             DynSolType::Tuple(..) |
             DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type {v_ty} is not supported as a key for a mapping")
+                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
             }
         }
 
