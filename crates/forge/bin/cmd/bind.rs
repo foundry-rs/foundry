@@ -156,6 +156,17 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self, artifacts: impl AsRef<Path>) -> Result<MultiAbigen> {
+        //Try to load src directory from config and get the last part of the path
+        //If the config is not present, use "src" as the default
+        let src_path = self
+            .build_args
+            .project_paths
+            .contracts
+            .as_ref()
+            .map(|p| p.to_str().unwrap())
+            .map(|p| p.rsplit('/').next().unwrap())
+            .unwrap_or("src");
+
         let mut abigens = json_files(artifacts.as_ref())
             .into_iter()
             .filter_map(|path| {
@@ -220,7 +231,7 @@ impl BindArgs {
                 .filter_map(
                     // Filter out contracts that are not in the src directory
                     |(abi, contract_path)| {
-                        if contract_path.starts_with("src/") {
+                        if contract_path.starts_with(src_path) {
                             Some(abi)
                         } else {
                             None
