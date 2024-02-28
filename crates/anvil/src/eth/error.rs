@@ -207,6 +207,9 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
+    #[error("too many blobs: have {0}, want {1}")]
+    TooManyBlobs(usize, usize),
+    /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
 }

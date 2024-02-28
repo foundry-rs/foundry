@@ -30,6 +30,7 @@ use crate::{
     NodeConfig,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
+use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::Sealable;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rlp::Decodable;
@@ -2447,9 +2448,16 @@ impl TransactionValidator for Backend {
                 }
             };
 
+            let blob_count = tx.tx().blob_versioned_hashes.len();
+
             // Ensure there are blob hashes.
-            if tx.tx().blob_versioned_hashes.is_empty() {
+            if blob_count == 0 {
                 return Err(InvalidTransactionError::NoBlobHashes)
+            }
+
+            // Ensure the tx does not exceed the max blobs per block.
+            if blob_count > MAX_BLOBS_PER_BLOCK {
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
             }
 
             // Check for any blob validation errors
