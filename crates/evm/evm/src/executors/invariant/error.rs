@@ -253,18 +253,14 @@ impl InvariantFuzzError {
 
         let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0);
 
-        // we recreate the call sequence in the same order as they reproduce the failure
-        // otherwise we could end up with inverted sequence
-        // e.g. in a sequence of:
+        // We recreate the call sequence in the same order as they reproduce the failure,
+        // otherwise we could end up with inverted sequence.
+        // E.g. in a sequence of:
         // 1. Alice calls acceptOwnership and reverts
         // 2. Bob calls transferOwnership to Alice
         // 3. Alice calls acceptOwnership and test fails
-        // we shrink to indices of [2, 1] and we recreate call sequence in same order
-        let mut new_calls_sequence = Vec::with_capacity(shrunk_call_indices.len());
-        shrunk_call_indices.iter().for_each(|call_index| {
-            new_calls_sequence.push(calls.get(*call_index).unwrap());
-        });
-        new_calls_sequence
+        // we shrink to indices of [2, 1] and we recreate call sequence in same order.
+        shrunk_call_indices.iter().map(|idx| &calls[*idx]).collect()
     }
 
     /// We try to construct a [powerset](https://en.wikipedia.org/wiki/Power_set) of the sequence if
@@ -341,14 +337,12 @@ impl InvariantFuzzError {
             );
         });
 
-        // SAFETY: there are no more live references to shrunk_call_indices as the parallel
-        // execution is finished, so it is fine to get the inner value via unwrap &
-        // into_inner
-        let shrunk_call_indices =
-            Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk_call_indices).unwrap().into_inner();
+        // There are no more live references to shrunk_call_indices as the parallel execution is
+        // finished, so it is fine to get the inner value via `Arc::unwrap`.
+        let shrunk_call_indices = Arc::try_unwrap(shrunk_call_indices).unwrap().into_inner();
 
         if is_powerset {
-            // a powerset is guaranteed to be smallest local subset, so we return early
+            // A powerset is guaranteed to be smallest local subset, so we return early.
             return shrunk_call_indices
         }
 
