@@ -988,6 +988,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
         // this can be blocking for a bit, especially in forking mode
@@ -1454,6 +1455,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
@@ -2198,6 +2200,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 

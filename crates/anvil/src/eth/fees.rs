@@ -184,6 +184,12 @@ impl FeeManager {
     pub fn get_next_block_blob_base_fee_per_gas(&self, excess_blob_gas: U256) -> U256 {
         U256::from(crate::revm::primitives::calc_blob_gasprice(excess_blob_gas.to::<u64>()))
     }
+
+    /// Calculates the next block blob excess gas, using the provided parent blob gas used and
+    /// parent blob excess gas
+    pub fn get_next_block_blob_excess_gas(&self, blob_gas_used: u64, blob_excess_gas: u64) -> u64 {
+        crate::revm::primitives::calc_excess_blob_gas(blob_gas_used, blob_excess_gas)
+    }
 }
 
 /// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
@@ -402,6 +408,7 @@ pub struct FeeDetails {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,
     pub max_priority_fee_per_gas: Option<U256>,
+    pub max_fee_per_blob_gas: Option<U256>,
 }
 
 impl FeeDetails {
@@ -411,24 +418,33 @@ impl FeeDetails {
             gas_price: Some(U256::ZERO),
             max_fee_per_gas: Some(U256::ZERO),
             max_priority_fee_per_gas: Some(U256::ZERO),
+            // There is no "zero" for both of these, so we use `None`
+            max_fee_per_blob_gas: Some(U256::ZERO),
         }
     }
 
     /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
     pub fn or_zero_fees(self) -> Self {
-        let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
+        let FeeDetails {
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            max_fee_per_blob_gas,
+        } = self;
 
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(U256::ZERO) } else { gas_price };
         let max_fee_per_gas = if no_fees { Some(U256::ZERO) } else { max_fee_per_gas };
+        let max_fee_per_blob_gas = if no_fees { None } else { max_fee_per_blob_gas };
 
-        Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas }
+        Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas }
     }
 
     /// Turns this type into a tuple
-    pub fn split(self) -> (Option<U256>, Option<U256>, Option<U256>) {
-        let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
-        (gas_price, max_fee_per_gas, max_priority_fee_per_gas)
+    pub fn split(self) -> (Option<U256>, Option<U256>, Option<U256>, Option<U256>) {
+        let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
+            self;
+        (gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas)
     }
 
     /// Creates a new instance from the request's gas related values
@@ -436,17 +452,19 @@ impl FeeDetails {
         request_gas_price: Option<U256>,
         request_max_fee: Option<U256>,
         request_priority: Option<U256>,
+        max_fee_per_blob_gas: Option<U256>,
     ) -> Result<FeeDetails, BlockchainError> {
-        match (request_gas_price, request_max_fee, request_priority) {
-            (gas_price, None, None) => {
+        match (request_gas_price, request_max_fee, request_priority, max_fee_per_blob_gas) {
+            (gas_price, None, None, None) => {
                 // Legacy request, all default to gas price.
                 Ok(FeeDetails {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
+                    max_fee_per_blob_gas: None,
                 })
             }
-            (_, max_fee, max_priority) => {
+            (_, max_fee, max_priority, None) => {
                 // eip-1559
                 // Ensure `max_priority_fee_per_gas` is less or equal to `max_fee_per_gas`.
                 if let Some(max_priority) = max_priority {
@@ -459,6 +477,23 @@ impl FeeDetails {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
                     max_priority_fee_per_gas: max_priority,
+                    max_fee_per_blob_gas: None,
+                })
+            }
+            (_, max_fee, max_priority, max_fee_per_blob_gas) => {
+                // eip-1559
+                // Ensure `max_priority_fee_per_gas` is less or equal to `max_fee_per_gas`.
+                if let Some(max_priority) = max_priority {
+                    let max_fee = max_fee.unwrap_or_default();
+                    if max_priority > max_fee {
+                        return Err(BlockchainError::InvalidFeeInput)
+                    }
+                }
+                Ok(FeeDetails {
+                    gas_price: max_fee,
+                    max_fee_per_gas: max_fee,
+                    max_priority_fee_per_gas: max_priority,
+                    max_fee_per_blob_gas,
                 })
             }
         }

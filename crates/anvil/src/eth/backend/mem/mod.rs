@@ -79,7 +79,7 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use revm::primitives::{calc_excess_blob_gas, BlobExcessGasAndPrice};
+use revm::primitives::BlobExcessGasAndPrice;
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -1024,7 +1024,7 @@ impl Backend {
             U256::from(header.gas_limit),
             U256::from(header.base_fee_per_gas.unwrap_or_default()),
         );
-        let next_block_excess_blob_gas = calc_excess_blob_gas(
+        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
         );
@@ -1074,7 +1074,12 @@ impl Backend {
     ) -> Env {
         let TransactionRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
 
-        let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
+        let FeeDetails {
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            max_fee_per_blob_gas,
+        } = fee_details;
 
         let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
@@ -1095,6 +1100,7 @@ impl Backend {
             gas_limit: gas_limit.to::<u64>(),
             gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
+            max_fee_per_blob_gas,
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr),
                 None => TransactTo::Create(CreateScheme::Create),

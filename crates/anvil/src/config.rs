@@ -1054,6 +1054,19 @@ latest block number: {latest_block}"
                 // update next base fee
                 fees.set_base_fee(U256::from(next_block_base_fee));
             }
+            if let (Some(blob_excess_gas), Some(blob_gas_used)) =
+                (block.header.excess_blob_gas, block.header.blob_gas_used)
+            {
+                env.block.blob_excess_gas_and_price =
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas.to::<u64>()));
+                let next_block_blob_excess_gas = fees.get_next_block_blob_excess_gas(
+                    blob_excess_gas.to::<u64>(),
+                    blob_gas_used.to::<u64>(),
+                );
+                fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                    next_block_blob_excess_gas,
+                ));
+            }
         }
 
         // use remote gas price
