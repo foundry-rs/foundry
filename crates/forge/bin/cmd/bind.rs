@@ -42,7 +42,7 @@ pub struct BindArgs {
 
     /// Only generate bindings for contracts in the `src` directory
     #[clap(long)]
-    pub only_src: bool,
+    pub src_only: bool,
 
     /// The name of the Rust crate to generate.
     ///
@@ -179,30 +179,46 @@ impl BindArgs {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        if self.only_src {
+        if self.src_only {
+            //We are relying on compilationTarget being present in the metadata
+            //and that it is an object with a single key { "path/to/contract.sol": "ContractName" }
+            //After parsing the metadata, we filter out the contracts that are not in the src directory
             abigens = abigens
                 .into_iter()
                 .map(|abi| {
-                    let abi_str = abi.source().get().wrap_err_with(|| {
-                        format!("failed to read Abigen source: {:?}", abi.source())
-                    });
-                    serde_json::from_str::<serde_json::Value>(&abi_str?)
-                        .wrap_err_with(|| {
-                            format!("failed to parse JSON from Abigen: {:?}", abi.source())
-                        })
-                        .map(|json| {
-                            let contract_path = json["metadata"]["settings"]["compilationTarget"]
-                                .as_object()
-                                .map(|obj| obj.keys().collect::<Vec<_>>())
-                                .map(|keys| *keys.first().unwrap())
-                                .unwrap()
-                                .clone();
-                            (abi, contract_path)
-                        })
+                    // Read abi as string
+                    let abi_str = match abi.source().get() {
+                        Ok(s) => s,
+                        Err(_) => {
+                            return Err(eyre::eyre!(
+                                "Failed to read abi as string for {}",
+                                abi.name()
+                            ))
+                        }
+                    };
+                    // Deserialize abi as JSON
+                    let json = match serde_json::from_str::<serde_json::Value>(&abi_str) {
+                        Ok(json) => json,
+                        Err(_) => {
+                            return Err(eyre::eyre!(
+                                "Failed to deserialize abi as json for {}",
+                                abi.name()
+                            ))
+                        }
+                    };
+                    // Get the compilationTarget
+                    let contract_path = json["metadata"]["settings"]["compilationTarget"]
+                        .as_object()
+                        .map(|obj| obj.keys().collect::<Vec<_>>())
+                        .map(|keys| *keys.first().unwrap()) //compilationTarget is always an object with a single key
+                        .unwrap() //compilationTarget is always present
+                        .clone();
+                    Ok((abi, contract_path))
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .filter_map(
+                    // Filter out contracts that are not in the src directory
                     |(abi, contract_path)| {
                         if contract_path.starts_with("src/") {
                             Some(abi)
