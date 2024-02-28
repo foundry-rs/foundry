@@ -673,3 +673,11 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     let permission = fs_permissions.find_permission(&config_path.join("config.json")).unwrap();
     assert_eq!(permission, FsAccessPermission::Read);
 });
+
+// tests if evm version is normalized for config output
+forgetest!(normalize_config_evm_version, |_prj, cmd| {
+    cmd.args(["config", "--use", "0.8.0", "--json"]);
+    let output = cmd.stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Istanbul);
+});
