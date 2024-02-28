@@ -436,16 +436,6 @@ impl NodeConfig {
         }
     }
 
-    pub fn get_excess_blob_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        self.blob_excess_gas_and_price.clone().unwrap_or_else(|| {
-            self.genesis
-                .as_ref()
-                .and_then(|g| g.excess_blob_gas)
-                .map(BlobExcessGasAndPrice::new)
-                .unwrap_or_else(|| BlobExcessGasAndPrice::new(0))
-        })
-    }
-
     /// Returns the base fee to use
     pub fn get_hardfork(&self) -> Hardfork {
         self.hardfork.unwrap_or_default()
