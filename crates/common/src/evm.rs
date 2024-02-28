@@ -144,6 +144,13 @@ pub struct EvmArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
+
+    /// Whether to enable isolation of calls.
+    /// In isolation mode all top-level calls are executed as a separate transaction in a separate
+    /// EVM context, enabling more precise gas accounting and transaction state changes.
+    #[clap(long)]
+    #[serde(skip)]
+    pub isolate: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -164,6 +171,10 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.isolate {
+            dict.insert("isolate".to_string(), self.isolate.into());
         }
 
         if self.always_use_create_2_factory {

@@ -32,7 +32,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use regex::Regex;
-use std::{collections::BTreeMap, sync::mpsc::channel};
+use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -142,6 +142,11 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
+        // Explicitly enable isolation for gas reports for more correct gas accounting
+        if self.gas_report {
+            evm_opts.isolate = true;
+        }
+
         // Set up the project.
         let mut project = config.project()?;
 
@@ -196,6 +201,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
             .with_test_options(test_options.clone())
+            .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
 
         if let Some(debug_test_pattern) = &self.debug {
@@ -296,6 +302,7 @@ impl TestArgs {
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
+        let timer = Instant::now();
         let handle = tokio::task::spawn({
             let filter = filter.clone();
             async move { runner.test(&filter, tx, test_options).await }
@@ -419,6 +426,7 @@ impl TestArgs {
                 break;
             }
         }
+        let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
 
@@ -429,7 +437,7 @@ impl TestArgs {
         }
 
         if !outcome.results.is_empty() {
-            shell::println(outcome.summary())?;
+            shell::println(outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
@@ -515,7 +523,7 @@ fn list(
             }
         }
     }
-    Ok(TestOutcome::new(BTreeMap::new(), false))
+    Ok(TestOutcome::empty(false))
 }
 
 #[cfg(test)]

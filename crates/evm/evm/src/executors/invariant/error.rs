@@ -214,12 +214,18 @@ impl InvariantFuzzError {
                 .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
                 .expect("bad call to evm");
 
-            // Checks the invariant. If we exit before the last call, all the better.
+            // Checks the invariant. If we revert or fail before the last call, all the better.
             if let Some(func) = &self.func {
-                let error_call_result = executor
+                let mut call_result = executor
                     .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
                     .expect("bad call to evm");
-                if error_call_result.reverted {
+                let is_success = executor.is_raw_call_success(
+                    self.addr,
+                    call_result.state_changeset.take().unwrap(),
+                    &call_result,
+                    false,
+                );
+                if !is_success {
                     let mut locked = curr_seq.write();
                     if new_sequence[..=seq_idx].len() < locked.len() {
                         // update the curr_sequence if the new sequence is lower than
@@ -253,14 +259,14 @@ impl InvariantFuzzError {
 
         let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0);
 
-        // Filter the calls by if the call index is present in `shrunk_call_indices`
-        calls
-            .iter()
-            .enumerate()
-            .filter_map(
-                |(i, call)| if shrunk_call_indices.contains(&i) { Some(call) } else { None },
-            )
-            .collect()
+        // We recreate the call sequence in the same order as they reproduce the failure,
+        // otherwise we could end up with inverted sequence.
+        // E.g. in a sequence of:
+        // 1. Alice calls acceptOwnership and reverts
+        // 2. Bob calls transferOwnership to Alice
+        // 3. Alice calls acceptOwnership and test fails
+        // we shrink to indices of [2, 1] and we recreate call sequence in same order.
+        shrunk_call_indices.iter().map(|idx| &calls[*idx]).collect()
     }
 
     /// We try to construct a [powerset](https://en.wikipedia.org/wiki/Power_set) of the sequence if
@@ -337,14 +343,12 @@ impl InvariantFuzzError {
             );
         });
 
-        // SAFETY: there are no more live references to shrunk_call_indices as the parallel
-        // execution is finished, so it is fine to get the inner value via unwrap &
-        // into_inner
-        let shrunk_call_indices =
-            Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk_call_indices).unwrap().into_inner();
+        // There are no more live references to shrunk_call_indices as the parallel execution is
+        // finished, so it is fine to get the inner value via `Arc::unwrap`.
+        let shrunk_call_indices = Arc::try_unwrap(shrunk_call_indices).unwrap().into_inner();
 
         if is_powerset {
-            // a powerset is guaranteed to be smallest local subset, so we return early
+            // A powerset is guaranteed to be smallest local subset, so we return early.
             return shrunk_call_indices
         }
 
