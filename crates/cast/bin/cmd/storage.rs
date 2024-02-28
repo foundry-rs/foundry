@@ -198,13 +198,13 @@ impl StorageValue {
                 end = 32;
             }
         }
-        let mut value = [0u8; 32];
 
         // reverse range, because the value is stored in big endian
-        let offset = 32 - offset;
-        let end = 32 - end;
+        let raw_sliced_value = &self.raw_slot_value.as_slice()[32 - end..32 - offset];
 
-        value[end..offset].copy_from_slice(&self.raw_slot_value.as_slice()[end..offset]);
+        // copy the raw sliced value as tail
+        let mut value = [0u8; 32];
+        value[32 - raw_sliced_value.len()..32].copy_from_slice(raw_sliced_value);
         B256::from(value)
     }
 }
@@ -266,7 +266,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
-            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            storage_type.map_or("?", |t| &t.number_of_bytes),
             &converted_value.to_string(),
             &value.to_string(),
             &slot.contract,

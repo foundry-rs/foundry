@@ -62,7 +62,7 @@ use foundry_common::types::ToAlloy;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    decode::decode_revert,
+    decode::RevertDecoder,
     inspectors::AccessListTracer,
     revm::{
         self,
@@ -393,8 +393,7 @@ impl Backend {
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable)?
+                .await?
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
@@ -956,9 +955,8 @@ impl Backend {
                 }
                 node_info!("    Gas used: {}", receipt.gas_used());
                 if !info.exit.is_ok() {
-                    let r = decode_revert(
-                        info.out.clone().unwrap_or_default().as_ref(),
-                        None,
+                    let r = RevertDecoder::new().decode(
+                        info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
                         Some(info.exit),
                     );
                     node_info!("    Error: reverted with: {r}");
@@ -1249,7 +1247,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.logs(&filter).await.map_err(|_| BlockchainError::DataUnavailable);
+            return Ok(fork.logs(&filter).await?);
         }
 
         Ok(Vec::new())
@@ -1336,8 +1334,7 @@ impl Backend {
             if fork.predates_fork(from) {
                 // this data is only available on the forked client
                 let filter = filter.clone().from_block(from).to_block(to_on_fork);
-                all_logs =
-                    fork.logs(&filter).await.map_err(|_| BlockchainError::DataUnavailable)?;
+                all_logs = fork.logs(&filter).await?;
 
                 // update the range
                 from = fork.block_number() + 1;
@@ -1380,7 +1377,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.block_by_hash(hash).await.map_err(|_| BlockchainError::DataUnavailable);
+            return Ok(fork.block_by_hash(hash).await?);
         }
 
         Ok(None)
@@ -1396,10 +1393,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .block_by_hash_full(hash)
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable);
+            return Ok(fork.block_by_hash_full(hash).await?)
         }
 
         Ok(None)
@@ -1453,10 +1447,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return fork
-                    .block_by_number(number)
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.block_by_number(number).await?)
             }
         }
 
@@ -1475,10 +1466,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return fork
-                    .block_by_number_full(number)
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.block_by_number_full(number).await?)
             }
         }
 
@@ -1567,7 +1555,6 @@ impl Backend {
         } = header;
 
         AlloyBlock {
-            total_difficulty: Some(self.total_difficulty()),
             header: AlloyHeader {
                 hash: Some(hash),
                 parent_hash,
@@ -1582,6 +1569,7 @@ impl Backend {
                 extra_data: extra_data.0.into(),
                 logs_bloom,
                 timestamp: U256::from(timestamp),
+                total_difficulty: Some(self.total_difficulty()),
                 difficulty,
                 mix_hash: Some(mix_hash),
                 nonce: Some(B64::from(nonce)),
@@ -1892,10 +1880,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.debug_trace_transaction(hash, opts).await.map_err(|err| {
-                warn!(target: "backend", "error delegating debug_traceTransaction: {:?}", err);
-                BlockchainError::DataUnavailable
-            })
+            return Ok(fork.debug_trace_transaction(hash, opts).await?)
         }
 
         Ok(GethTrace::Default(Default::default()))
@@ -1921,10 +1906,7 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return fork.trace_block(number).await.map_err(|err| {
-                    warn!(target: "backend", "error delegating trace_block: {:?}", err);
-                    BlockchainError::DataUnavailable
-                })
+                return Ok(fork.trace_block(number).await?)
             }
         }
 
@@ -1940,10 +1922,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            let receipt = fork
-                .transaction_receipt(hash)
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable)?;
+            let receipt = fork.transaction_receipt(hash).await?;
             let number = self.convert_block_number(
                 receipt
                     .clone()
@@ -2073,7 +2052,7 @@ impl Backend {
         };
 
         inner.other.insert(
-            "deposit_nonce".to_string(),
+            "depositNonce".to_string(),
             serde_json::to_value(deposit_nonce).expect("Infallible"),
         );
 
@@ -2117,10 +2096,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return fork
-                    .transaction_by_block_number_and_index(number, index.into())
-                    .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
             }
         }
 
@@ -2137,10 +2113,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .transaction_by_block_hash_and_index(hash, index.into())
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable);
+            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
         }
 
         Ok(None)

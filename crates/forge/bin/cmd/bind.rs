@@ -77,6 +77,10 @@ pub struct BindArgs {
     #[clap(long)]
     skip_build: bool,
 
+    /// Don't add any additional derives to generated bindings
+    #[clap(long)]
+    skip_extra_derives: bool,
+
     #[clap(flatten)]
     build_args: CoreBuildArgs,
 }
@@ -161,10 +165,13 @@ impl BindArgs {
             })
             .map(|path| {
                 trace!(?path, "parsing Abigen from file");
-                Abigen::from_file(&path)
-                    .wrap_err_with(|| format!("failed to parse Abigen from file: {:?}", path))?
-                    .add_derive("serde::Serialize")?
-                    .add_derive("serde::Deserialize")
+                let abi = Abigen::from_file(&path)
+                    .wrap_err_with(|| format!("failed to parse Abigen from file: {:?}", path));
+                if !self.skip_extra_derives {
+                    abi?.add_derive("serde::Serialize")?.add_derive("serde::Deserialize")
+                } else {
+                    abi
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
         let multi = MultiAbigen::from_abigens(abigens).with_filter(self.get_filter());
@@ -207,11 +214,14 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
 
     /// Generate the bindings
     fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
-        let bindings = self.get_multi(&artifacts)?.build()?;
+        let mut bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");
-            bindings.dependencies([r#"serde = "1""#]).write_to_crate(
+            if !self.skip_extra_derives {
+                bindings = bindings.dependencies([r#"serde = "1""#])
+            }
+            bindings.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 self.bindings_root(&artifacts),

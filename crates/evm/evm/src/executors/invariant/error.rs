@@ -4,7 +4,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::{constants::CALLER, decode::decode_revert};
+use foundry_evm_core::{constants::CALLER, decode::RevertDecoder};
 use foundry_evm_fuzz::{BaseCounterExample, CounterExample, FuzzedCases, Reason};
 use foundry_evm_traces::{load_contracts, CallTraceArena, TraceKind, Traces};
 use itertools::Itertools;
@@ -15,8 +15,8 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm::primitives::U256;
 use std::sync::Arc;
 
-#[derive(Clone, Default)]
 /// Stores information about failures and reverts of the invariant tests.
+#[derive(Clone, Default)]
 pub struct InvariantFailures {
     /// Total number of reverts.
     pub reverts: usize,
@@ -89,11 +89,9 @@ impl InvariantFuzzError {
         } else {
             (None, "Revert")
         };
-        let revert_reason = decode_revert(
-            call_result.result.as_ref(),
-            Some(invariant_contract.abi),
-            Some(call_result.exit_reason),
-        );
+        let revert_reason = RevertDecoder::new()
+            .with_abi(invariant_contract.abi)
+            .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
         InvariantFuzzError {
             logs: call_result.logs,
@@ -255,14 +253,18 @@ impl InvariantFuzzError {
 
         let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0);
 
-        // Filter the calls by if the call index is present in `shrunk_call_indices`
-        calls
-            .iter()
-            .enumerate()
-            .filter_map(
-                |(i, call)| if shrunk_call_indices.contains(&i) { Some(call) } else { None },
-            )
-            .collect()
+        // we recreate the call sequence in the same order as they reproduce the failure
+        // otherwise we could end up with inverted sequence
+        // e.g. in a sequence of:
+        // 1. Alice calls acceptOwnership and reverts
+        // 2. Bob calls transferOwnership to Alice
+        // 3. Alice calls acceptOwnership and test fails
+        // we shrink to indices of [2, 1] and we recreate call sequence in same order
+        let mut new_calls_sequence = Vec::with_capacity(shrunk_call_indices.len());
+        shrunk_call_indices.iter().for_each(|call_index| {
+            new_calls_sequence.push(calls.get(*call_index).unwrap());
+        });
+        new_calls_sequence
     }
 
     /// We try to construct a [powerset](https://en.wikipedia.org/wiki/Power_set) of the sequence if

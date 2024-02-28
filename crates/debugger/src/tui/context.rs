@@ -13,8 +13,36 @@ pub(crate) struct DrawMemory {
     // TODO
     pub(crate) current_startline: RefCell<usize>,
     pub(crate) inner_call_index: usize,
-    pub(crate) current_mem_startline: usize,
+    pub(crate) current_buf_startline: usize,
     pub(crate) current_stack_startline: usize,
+}
+
+/// Used to keep track of which buffer is currently active to be drawn by the debugger.
+#[derive(Debug, PartialEq)]
+pub(crate) enum BufferKind {
+    Memory,
+    Calldata,
+    Returndata,
+}
+
+impl BufferKind {
+    /// Helper to cycle through the active buffers.
+    pub(crate) fn next(&self) -> Self {
+        match self {
+            BufferKind::Memory => BufferKind::Calldata,
+            BufferKind::Calldata => BufferKind::Returndata,
+            BufferKind::Returndata => BufferKind::Memory,
+        }
+    }
+
+    /// Helper to format the title of the active buffer pane
+    pub(crate) fn title(&self, size: usize) -> String {
+        match self {
+            BufferKind::Memory => format!("Memory (max expansion: {} bytes)", size),
+            BufferKind::Calldata => format!("Calldata (size: {} bytes)", size),
+            BufferKind::Returndata => format!("Returndata (size: {} bytes)", size),
+        }
+    }
 }
 
 pub(crate) struct DebuggerContext<'a> {
@@ -29,8 +57,11 @@ pub(crate) struct DebuggerContext<'a> {
     pub(crate) last_index: usize,
 
     pub(crate) stack_labels: bool,
-    pub(crate) mem_utf: bool,
+    /// Whether to decode active buffer as utf8 or not.
+    pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    /// The currently active buffer (memory, calldata, returndata) to be drawn.
+    pub(crate) active_buffer: BufferKind,
 }
 
 impl<'a> DebuggerContext<'a> {
@@ -45,8 +76,9 @@ impl<'a> DebuggerContext<'a> {
             last_index: 0,
 
             stack_labels: false,
-            mem_utf: false,
+            buf_utf: false,
             show_shortcuts: true,
+            active_buffer: BufferKind::Memory,
         }
     }
 
@@ -89,6 +121,14 @@ impl<'a> DebuggerContext<'a> {
     fn opcode_list(&self) -> Vec<String> {
         self.debug_steps().iter().map(DebugStep::pretty_opcode).collect()
     }
+
+    fn active_buffer(&self) -> &[u8] {
+        match self.active_buffer {
+            BufferKind::Memory => &self.current_step().memory,
+            BufferKind::Calldata => &self.current_step().calldata,
+            BufferKind::Returndata => &self.current_step().returndata,
+        }
+    }
 }
 
 impl DebuggerContext<'_> {
@@ -121,9 +161,9 @@ impl DebuggerContext<'_> {
                 // Grab number of times to do it
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        let max_mem = (self.current_step().memory.len() / 32).saturating_sub(1);
-                        if self.draw_memory.current_mem_startline < max_mem {
-                            self.draw_memory.current_mem_startline += 1;
+                        let max_buf = (self.active_buffer().len() / 32).saturating_sub(1);
+                        if self.draw_memory.current_buf_startline < max_buf {
+                            self.draw_memory.current_buf_startline += 1;
                         }
                     } else if self.current_step < self.opcode_list.len() - 1 {
                         self.current_step += 1;
@@ -147,8 +187,8 @@ impl DebuggerContext<'_> {
             KeyCode::Char('k') | KeyCode::Up => {
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        self.draw_memory.current_mem_startline =
-                            self.draw_memory.current_mem_startline.saturating_sub(1);
+                        self.draw_memory.current_buf_startline =
+                            self.draw_memory.current_buf_startline.saturating_sub(1);
                     } else if self.current_step > 0 {
                         self.current_step -= 1;
                     } else if self.draw_memory.inner_call_index > 0 {
@@ -164,6 +204,10 @@ impl DebuggerContext<'_> {
                         self.draw_memory.current_stack_startline.saturating_sub(1);
                 }
                 self.key_buffer.clear();
+            }
+            KeyCode::Char('b') => {
+                self.active_buffer = self.active_buffer.next();
+                self.draw_memory.current_buf_startline = 0;
             }
             // Go to top of file
             KeyCode::Char('g') => {
@@ -248,7 +292,7 @@ impl DebuggerContext<'_> {
             // toggle stack labels
             KeyCode::Char('t') => self.stack_labels = !self.stack_labels,
             // toggle memory utf8 decoding
-            KeyCode::Char('m') => self.mem_utf = !self.mem_utf,
+            KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
             // toggle help notice
             KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
             KeyCode::Char(
@@ -284,7 +328,7 @@ impl DebuggerContext<'_> {
                     self.current_step -= 1;
                 } else if self.draw_memory.inner_call_index > 0 {
                     self.draw_memory.inner_call_index -= 1;
-                    self.draw_memory.current_mem_startline = 0;
+                    self.draw_memory.current_buf_startline = 0;
                     self.draw_memory.current_stack_startline = 0;
                     self.current_step = self.debug_steps().len() - 1;
                 }
@@ -294,7 +338,7 @@ impl DebuggerContext<'_> {
                     self.current_step += 1;
                 } else if self.draw_memory.inner_call_index < self.debug_arena().len() - 1 {
                     self.draw_memory.inner_call_index += 1;
-                    self.draw_memory.current_mem_startline = 0;
+                    self.draw_memory.current_buf_startline = 0;
                     self.draw_memory.current_stack_startline = 0;
                     self.current_step = 0;
                 }

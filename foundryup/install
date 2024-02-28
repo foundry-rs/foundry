@@ -1,29 +1,28 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail
 
-echo Installing foundryup...
+echo "Installing foundryup..."
 
-BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
-FOUNDRY_DIR=${FOUNDRY_DIR-"$BASE_DIR/.foundry"}
+BASE_DIR="${XDG_CONFIG_HOME:-$HOME}"
+FOUNDRY_DIR="${FOUNDRY_DIR-"$BASE_DIR/.foundry"}"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
 BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
-
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
-mkdir -p $FOUNDRY_BIN_DIR
-curl -# -L $BIN_URL -o $BIN_PATH
-chmod +x $BIN_PATH
+mkdir -p "$FOUNDRY_BIN_DIR"
+curl -sSf -L "$BIN_URL" -o "$BIN_PATH"
+chmod +x "$BIN_PATH"
 
 # Create the man directory for future man files if it doesn't exist.
-mkdir -p $FOUNDRY_MAN_DIR
+mkdir -p "$FOUNDRY_MAN_DIR"
 
 # Store the correct profile file (i.e. .profile for bash or .zshenv for ZSH).
 case $SHELL in
 */zsh)
-    PROFILE=${ZDOTDIR-"$HOME"}/.zshenv
+    PROFILE="${ZDOTDIR-"$HOME"}/.zshenv"
     PREF_SHELL=zsh
     ;;
 */bash)
@@ -46,7 +45,12 @@ esac
 # Only add foundryup if it isn't already in PATH.
 if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
     # Add the foundryup directory to the path and ensure the old PATH variables remain.
-    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> $PROFILE
+    # If the shell is fish, echo fish_add_path instead of export.
+    if [[ "$PREF_SHELL" == "fish" ]]; then
+        echo >> "$PROFILE" && echo "fish_add_path -a $FOUNDRY_BIN_DIR" >> "$PROFILE"
+    else
+        echo >> "$PROFILE" && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> "$PROFILE"
+    fi
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
@@ -54,5 +58,7 @@ if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.
     echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
 fi
 
-echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
+echo
+echo "Detected your preferred shell is $PREF_SHELL and added foundryup to PATH."
+echo "Run 'source $PROFILE' or start a new terminal session to use foundryup."
 echo "Then, simply run 'foundryup' to install Foundry."
