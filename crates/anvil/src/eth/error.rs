@@ -196,7 +196,7 @@ pub enum InvalidTransactionError {
     /// Thrown when the block's `blob_gas_price` is greater than tx-specified
     /// `max_fee_per_blob_gas` after Cancun.
     #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
-    BlobGasPriceGreaterThanMax,
+    BlobFeeCapTooLow,
     /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
     /// fork.
     #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
@@ -252,7 +252,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 InvalidTransactionError::AccessListNotSupported
             }
             InvalidTransaction::BlobGasPriceGreaterThanMax => {
-                InvalidTransactionError::BlobGasPriceGreaterThanMax
+                InvalidTransactionError::BlobFeeCapTooLow
             }
             InvalidTransaction::BlobVersionedHashesNotSupported => {
                 InvalidTransactionError::BlobVersionedHashesNotSupported

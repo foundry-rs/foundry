@@ -2428,9 +2428,9 @@ impl TransactionValidator for Backend {
             // Light checks first: see if the blob fee cap is too low.
             if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
                 if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
-                    if max_fee_per_blob_gas.to::<u128>() > blob_gas_and_price.blob_gasprice {
+                    if max_fee_per_blob_gas.to::<u128>() < blob_gas_and_price.blob_gasprice {
                         warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                        return Err(InvalidTransactionError::BlobGasPriceGreaterThanMax);
+                        return Err(InvalidTransactionError::BlobFeeCapTooLow);
                     }
                 }
             }
