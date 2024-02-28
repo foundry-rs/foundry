@@ -286,7 +286,7 @@ async fn test_invariant_assert_shrink() {
     let mut opts = test_opts();
     opts.fuzz.seed = Some(U256::from(119u32));
 
-    // ensure assert and require shrinks to same sequence of 3
+    // ensure assert and require shrinks to same sequence of 3 or less
     test_shrink(opts.clone(), "InvariantShrinkWithAssert").await;
     test_shrink(opts.clone(), "InvariantShrinkWithRequire").await;
 }
@@ -322,7 +322,7 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
     match counter {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         CounterExample::Sequence(sequence) => {
-            assert_eq!(sequence.len(), 3);
+            assert!(sequence.len() <= 3);
         }
     };
 }

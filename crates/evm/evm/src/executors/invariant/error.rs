@@ -216,12 +216,12 @@ impl InvariantFuzzError {
 
             // Checks the invariant. If we revert or fail before the last call, all the better.
             if let Some(func) = &self.func {
-                let call_result = executor
+                let mut call_result = executor
                     .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
                     .expect("bad call to evm");
                 let is_success = executor.is_raw_call_success(
                     self.addr,
-                    call_result.state_changeset.clone().unwrap(),
+                    call_result.state_changeset.take().unwrap(),
                     &call_result,
                     false,
                 );
