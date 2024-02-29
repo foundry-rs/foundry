@@ -44,7 +44,7 @@ pub struct TransactionWithMetadata {
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
-    pub rpc: Option<RpcUrl>,
+    pub rpc: RpcUrl,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
@@ -80,7 +80,7 @@ impl TransactionWithMetadata {
 
     pub fn new(
         transaction: TransactionRequest,
-        rpc: Option<RpcUrl>,
+        rpc: RpcUrl,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,

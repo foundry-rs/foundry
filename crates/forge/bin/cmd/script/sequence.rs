@@ -1,4 +1,4 @@
-use super::NestedValue;
+use super::{multi::MultiChainSequence, NestedValue};
 use crate::cmd::{
     init::get_commit_hash,
     script::{
@@ -26,6 +26,26 @@ use std::{
 };
 use yansi::Paint;
 
+pub enum ScriptSequenceKind {
+    Single(ScriptSequence),
+    Multi(MultiChainSequence),
+}
+
+impl ScriptSequenceKind {
+    pub fn save(&mut self) -> Result<()> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => sequence.save(),
+            ScriptSequenceKind::Multi(sequence) => sequence.save(),
+        }
+    }
+}
+
+impl Drop for ScriptSequenceKind {
+    fn drop(&mut self) {
+        self.save().expect("could not save deployment sequence");
+    }
+}
+
 pub const DRY_RUN_DIR: &str = "dry-run";
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
@@ -44,15 +64,13 @@ pub struct ScriptSequence {
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
-    /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
-    pub multi: bool,
     pub commit: Option<String>,
 }
 
 /// Sensitive values from the transactions in a script sequence
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveTransactionMetadata {
-    pub rpc: Option<String>,
+    pub rpc: String,
 }
 
 /// Sensitive info from the script sequence which is saved into the cache folder
@@ -106,7 +124,6 @@ impl ScriptSequence {
             timestamp: now().as_secs(),
             libraries: vec![],
             chain,
-            multi: is_multi,
             commit,
         })
     }
@@ -146,7 +163,9 @@ impl ScriptSequence {
 
     /// Saves the transactions as file if it's a standalone deployment.
     pub fn save(&mut self) -> Result<()> {
-        if self.multi || self.transactions.is_empty() {
+        self.sort_receipts();
+
+        if self.transactions.is_empty() {
             return Ok(())
         }
 
@@ -355,7 +374,7 @@ impl ScriptSequence {
 
     /// Returns the first RPC URL of this sequence.
     pub fn rpc_url(&self) -> Option<&str> {
-        self.transactions.front().and_then(|tx| tx.rpc.as_deref())
+        self.transactions.front().map(|tx| tx.rpc.as_str())
     }
 
     /// Returns the list of the transactions without the metadata.
@@ -368,13 +387,6 @@ impl ScriptSequence {
             .iter_mut()
             .enumerate()
             .for_each(|(i, tx)| tx.rpc = sensitive.transactions[i].rpc.clone());
-    }
-}
-
-impl Drop for ScriptSequence {
-    fn drop(&mut self) {
-        self.sort_receipts();
-        self.save().expect("not able to save deployment sequence");
     }
 }
 

@@ -58,7 +58,7 @@ forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
     tester
         .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
-        .broadcast(ScriptOutcome::MissingWallet)
+        .broadcast(ScriptOutcome::WarnSpecifyDeployer)
         .load_private_keys(&[0, 1])
         .await
         .arg("--multi")

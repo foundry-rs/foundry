@@ -43,13 +43,6 @@ fn to_sensitive(sequence: &mut MultiChainSequence) -> SensitiveMultiChainSequenc
     }
 }
 
-impl Drop for MultiChainSequence {
-    fn drop(&mut self) {
-        self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
-        self.save().expect("could not save multi deployment sequence");
-    }
-}
-
 impl MultiChainSequence {
     pub fn new(
         deployments: Vec<ScriptSequence>,
@@ -138,6 +131,8 @@ impl MultiChainSequence {
 
     /// Saves the transactions as file if it's a standalone deployment.
     pub fn save(&mut self) -> Result<()> {
+        self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
+
         self.timestamp = now().as_secs();
 
         let sensitive_sequence: SensitiveMultiChainSequence = to_sensitive(self);
@@ -178,7 +173,7 @@ impl ScriptArgs {
     /// all in parallel. Supports `--resume` and `--verify`.
     pub async fn multi_chain_deployment(
         &self,
-        mut deployments: MultiChainSequence,
+        deployments: &mut MultiChainSequence,
         libraries: Libraries,
         config: &Config,
         verify: VerifyBundle,

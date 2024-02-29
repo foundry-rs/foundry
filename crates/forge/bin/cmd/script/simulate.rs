@@ -1,12 +1,5 @@
 use super::{
-    artifacts::ArtifactInfo,
-    build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData, PreSimulationState},
-    providers::ProvidersManager,
-    runner::ScriptRunner,
-    sequence::ScriptSequence,
-    transaction::TransactionWithMetadata,
-    ScriptArgs, ScriptConfig,
+    artifacts::ArtifactInfo, build::LinkedBuildData, execute::{ExecutionArtifacts, ExecutionData, PreSimulationState}, multi::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner, sequence::{ScriptSequence, ScriptSequenceKind}, transaction::TransactionWithMetadata, ScriptArgs, ScriptConfig
 };
 use alloy_primitives::{utils::format_units, Address, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
@@ -28,6 +21,8 @@ impl PreSimulationState {
     /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
     /// metadata. Otherwise, metadata (e.g. additional contracts, created contract names) is
     /// left empty.
+    ///
+    /// Both modes will panic if any of the transactions have None for the `rpc` field.
     pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
         let transactions = if let Some(txs) = self.execution_result.transactions.as_ref() {
             if self.args.skip_simulation {
@@ -74,8 +69,8 @@ impl PreSimulationState {
         let futs = transactions
             .into_iter()
             .map(|transaction| async {
-                let rpc = transaction.rpc.as_ref().expect("missing broadcastable tx rpc url");
-                let mut runner = runners.get(rpc).expect("invalid rpc url").write();
+                let rpc = transaction.rpc.expect("missing broadcastable tx rpc url");
+                let mut runner = runners.get(&rpc).expect("invalid rpc url").write();
 
                 let mut tx = transaction.transaction;
                 let result = runner
@@ -114,7 +109,7 @@ impl PreSimulationState {
                 }
                 let tx = TransactionWithMetadata::new(
                     tx,
-                    transaction.rpc,
+                    rpc,
                     &result,
                     &address_to_abi,
                     &self.execution_artifacts.decoder,
@@ -216,7 +211,7 @@ impl PreSimulationState {
             .into_iter()
             .map(|btx| {
                 let mut tx = TransactionWithMetadata::from_tx_request(btx.transaction);
-                tx.rpc = btx.rpc;
+                tx.rpc = btx.rpc.expect("missing broadcastable tx rpc url");
                 tx
             })
             .collect())
@@ -255,17 +250,8 @@ impl FilledTransactionsState {
         let mut txes_iter = self.transactions.clone().into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = match tx.rpc.clone() {
-                Some(rpc) => rpc,
-                None => {
-                    let rpc = self.args.evm_opts.ensure_fork_url()?.clone();
-                    // Fills the RPC inside the transaction, if missing one.
-                    tx.rpc = Some(rpc.clone());
-                    rpc
-                }
-            };
-
-            let provider_info = manager.get_or_init_provider(&tx_rpc, self.args.legacy).await?;
+            let tx_rpc = tx.rpc.clone();
+            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             // Handles chain specific requirements.
             tx.change_type(provider_info.is_legacy);
@@ -305,7 +291,7 @@ impl FilledTransactionsState {
             // We only create a [`ScriptSequence`] object when we collect all the rpc related
             // transactions.
             if let Some(next_tx) = txes_iter.peek() {
-                if next_tx.rpc == Some(tx_rpc) {
+                if next_tx.rpc == tx_rpc {
                     continue;
                 }
             }
@@ -359,13 +345,26 @@ impl FilledTransactionsState {
                 shell::println("\n==========================")?;
             }
         }
+
+        let sequence = if sequences.len() == 1 {
+            ScriptSequenceKind::Single(sequences.pop().expect("empty sequences"))
+        } else {
+            ScriptSequenceKind::Multi(MultiChainSequence::new(
+                sequences,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                &self.script_config.config,
+                self.args.broadcast,
+            )?)
+        };
+
         Ok(BundledState {
             args: self.args,
             script_config: self.script_config,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
-            sequences,
+            sequence,
         })
     }
 
@@ -395,5 +394,11 @@ pub struct BundledState {
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub sequences: Vec<ScriptSequence>,
+    pub sequence: ScriptSequenceKind,
+}
+
+impl BundledState {
+    pub async fn wait_for_pending(self) -> Result<()> {
+        Ok(())
+    }
 }

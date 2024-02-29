@@ -1,5 +1,4 @@
-use super::{
-    multi::MultiChainSequence, receipts::clear_pendings, sequence::ScriptSequence,
+use super::{receipts::clear_pendings, sequence::{ScriptSequence, ScriptSequenceKind},
     simulate::BundledState, verify::VerifyBundle, ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
@@ -294,35 +293,29 @@ impl ScriptArgs {
         mut state: BundledState,
         verify: VerifyBundle,
     ) -> Result<()> {
-        if state.script_config.has_multiple_rpcs() {
-            trace!(target: "script", "broadcasting multi chain deployment");
-
-            let multi = MultiChainSequence::new(
-                state.sequences.clone(),
-                &self.sig,
-                &state.build_data.build_data.target,
-                &state.script_config.config,
-                self.broadcast,
-            )?;
-
-            if self.broadcast {
-                self.multi_chain_deployment(
-                    multi,
-                    state.build_data.libraries,
-                    &state.script_config.config,
-                    verify,
-                    &state.script_config.script_wallets.into_multi_wallet().into_signers()?,
-                )
-                .await?;
+        if self.broadcast {
+            match &mut state.sequence {
+                ScriptSequenceKind::Multi(sequence) => {
+                    trace!(target: "script", "broadcasting multi chain deployment");
+                    self.multi_chain_deployment(
+                        sequence,
+                        state.build_data.libraries,
+                        &state.script_config.config,
+                        verify,
+                        &state.script_config.script_wallets.into_multi_wallet().into_signers()?,
+                    )
+                    .await?;
+                }
+                ScriptSequenceKind::Single(sequence) => {
+                    self.single_deployment(
+                        sequence,
+                        state.script_config,
+                        state.build_data.libraries,
+                        verify,
+                    )
+                    .await?;
+                }
             }
-        } else if self.broadcast {
-            self.single_deployment(
-                state.sequences.first_mut().expect("missing deployment"),
-                state.script_config,
-                state.build_data.libraries,
-                verify,
-            )
-            .await?;
         }
 
         if !self.broadcast {

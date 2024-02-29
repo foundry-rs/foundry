@@ -101,7 +101,7 @@ impl ScriptArgs {
         if self.multi {
             return self
                 .multi_chain_deployment(
-                    MultiChainSequence::load(
+                    &mut MultiChainSequence::load(
                         &script_config.config,
                         &self.sig,
                         &build_data.build_data.target,
