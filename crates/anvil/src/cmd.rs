@@ -91,7 +91,7 @@ pub struct NodeArgs {
     pub config_out: Option<String>,
 
     /// Disable auto and interval mining, and mine on demand instead.
-    #[arg(long, visible_alias = "no-mine", conflicts_with = "block-time")]
+    #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
     /// The hosts the server will listen on.

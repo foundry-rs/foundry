@@ -20,7 +20,7 @@ pub struct ServerConfig {
     /// Whether to enable CORS
     #[cfg_attr(
         feature = "clap",
-        arg(long, help = "Disable CORS", conflicts_with = "allow-origin")
+        arg(long, help = "Disable CORS", conflicts_with = "allow_origin")
     )]
     pub no_cors: bool,
 }
