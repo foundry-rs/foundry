@@ -432,7 +432,7 @@ impl NodeConfig {
         {
             BlobExcessGasAndPrice::new(excess_blob_gas)
         } else {
-            BlobExcessGasAndPrice::new(0)
+            BlobExcessGasAndPrice { blob_gasprice: 0, excess_blob_gas: 0 }
         }
     }
 

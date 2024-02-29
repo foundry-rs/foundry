@@ -430,8 +430,7 @@ impl FeeDetails {
             gas_price: Some(U256::ZERO),
             max_fee_per_gas: Some(U256::ZERO),
             max_priority_fee_per_gas: Some(U256::ZERO),
-            // There is no "zero" for both of these, so we use `None`
-            max_fee_per_blob_gas: Some(U256::ZERO),
+            max_fee_per_blob_gas: None,
         }
     }
 

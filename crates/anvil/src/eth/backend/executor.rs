@@ -163,7 +163,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     continue
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
-                    trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block blob gas limit exhausting, skipping transaction");
+                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
                     continue
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
