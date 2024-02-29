@@ -25,36 +25,36 @@ pub struct RunArgs {
     tx_hash: String,
 
     /// Opens the transaction in the debugger.
-    #[clap(long, short)]
+    #[arg(long, short)]
     debug: bool,
 
     /// Print out opcode traces.
-    #[clap(long, short)]
+    #[arg(long, short)]
     trace_printer: bool,
 
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
-    #[clap(long, short)]
+    #[arg(long, short)]
     quick: bool,
 
     /// Prints the full address of the contract.
-    #[clap(long, short)]
+    #[arg(long, short)]
     verbose: bool,
 
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
-    #[clap(long, short)]
+    #[arg(long, short)]
     label: Vec<String>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[clap(long, short)]
+    #[arg(long, short)]
     evm_version: Option<EvmVersion>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -62,7 +62,7 @@ pub struct RunArgs {
     /// default value: 330
     ///
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(long, alias = "cups", value_name = "CUPS")]
+    #[arg(long, alias = "cups", value_name = "CUPS")]
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting for this node's provider.
@@ -70,7 +70,7 @@ pub struct RunArgs {
     /// default value: false
     ///
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
+    #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 }
 

@@ -13,10 +13,10 @@ use serde::Serialize;
 /// 4. Keystore (via file path)
 /// 5. AWS KMS
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
+#[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct WalletOpts {
     /// The sender account.
-    #[clap(
+    #[arg(
         long,
         short,
         value_name = "ADDRESS",
@@ -25,11 +25,11 @@ pub struct WalletOpts {
     )]
     pub from: Option<Address>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub raw: RawWalletOpts,
 
     /// Use the keystore in the given folder or file.
-    #[clap(
+    #[arg(
         long = "keystore",
         help_heading = "Wallet options - keystore",
         value_name = "PATH",
@@ -38,7 +38,7 @@ pub struct WalletOpts {
     pub keystore_path: Option<String>,
 
     /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
-    #[clap(
+    #[arg(
         long = "account",
         help_heading = "Wallet options - keystore",
         value_name = "ACCOUNT_NAME",
@@ -50,7 +50,7 @@ pub struct WalletOpts {
     /// The keystore password.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password",
         help_heading = "Wallet options - keystore",
         requires = "keystore_path",
@@ -61,7 +61,7 @@ pub struct WalletOpts {
     /// The keystore password file path.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password-file",
         help_heading = "Wallet options - keystore",
         requires = "keystore_path",
@@ -71,15 +71,15 @@ pub struct WalletOpts {
     pub keystore_password_file: Option<String>,
 
     /// Use a Ledger hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
     /// Use a Trezor hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - AWS KMS")]
+    #[arg(long, help_heading = "Wallet options - AWS KMS")]
     pub aws: bool,
 }
 

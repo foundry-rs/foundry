@@ -48,7 +48,7 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
-#[clap(next_help_heading = "Test options")]
+#[command(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Run a test in the debugger.
     ///
@@ -65,58 +65,58 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "TEST_FUNCTION")]
+    #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
     /// Print a gas report.
-    #[clap(long, env = "FORGE_GAS_REPORT")]
+    #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
     /// Exit with code 0 even if a test fails.
-    #[clap(long, env = "FORGE_ALLOW_FAILURE")]
+    #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
     /// Stop running tests after the first failure.
-    #[clap(long)]
+    #[arg(long)]
     pub fail_fast: bool,
 
     /// The Etherscan (or equivalent) API key.
-    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
     /// List tests instead of running them.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long)]
+    #[arg(long)]
     pub fuzz_seed: Option<U256>,
 
-    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     filter: FilterArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub watch: WatchArgs,
 
     /// Print test summary table.
-    #[clap(long, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     pub summary: bool,
 
     /// Print detailed test summary table.
-    #[clap(long, help_heading = "Display options", requires = "summary")]
+    #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 }
 

@@ -10,31 +10,31 @@ use std::{fmt, path::Path};
 ///
 /// See also `FileFilter`.
 #[derive(Clone, Parser)]
-#[clap(next_help_heading = "Test filtering")]
+#[command(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
-    #[clap(long = "match-test", visible_alias = "mt", value_name = "REGEX")]
+    #[arg(long = "match-test", visible_alias = "mt", value_name = "REGEX")]
     pub test_pattern: Option<regex::Regex>,
 
     /// Only run test functions that do not match the specified regex pattern.
-    #[clap(long = "no-match-test", visible_alias = "nmt", value_name = "REGEX")]
+    #[arg(long = "no-match-test", visible_alias = "nmt", value_name = "REGEX")]
     pub test_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in contracts matching the specified regex pattern.
-    #[clap(long = "match-contract", visible_alias = "mc", value_name = "REGEX")]
+    #[arg(long = "match-contract", visible_alias = "mc", value_name = "REGEX")]
     pub contract_pattern: Option<regex::Regex>,
 
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[clap(long = "no-match-contract", visible_alias = "nmc", value_name = "REGEX")]
+    #[arg(long = "no-match-contract", visible_alias = "nmc", value_name = "REGEX")]
     pub contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in source files matching the specified glob pattern.
-    #[clap(long = "match-path", visible_alias = "mp", value_name = "GLOB")]
+    #[arg(long = "match-path", visible_alias = "mp", value_name = "GLOB")]
     pub path_pattern: Option<GlobMatcher>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
-    #[clap(
-        name = "no-match-path",
+    #[arg(
+        id = "no-match-path",
         long = "no-match-path",
         visible_alias = "nmp",
         value_name = "GLOB"

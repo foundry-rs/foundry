@@ -16,17 +16,17 @@ pub struct InterfaceArgs {
     path_or_address: String,
 
     /// The name to use for the generated interface.
-    #[clap(long, short)]
+    #[arg(long, short)]
     name: Option<String>,
 
     /// Solidity pragma version.
-    #[clap(long, short, default_value = "^0.8.4", value_name = "VERSION")]
+    #[arg(long, short, default_value = "^0.8.4", value_name = "VERSION")]
     pragma: String,
 
     /// The path to the output file.
     ///
     /// If not specified, the interface will be output to stdout.
-    #[clap(
+    #[arg(
         short,
         long,
         value_hint = clap::ValueHint::FilePath,
@@ -35,10 +35,10 @@ pub struct InterfaceArgs {
     output: Option<PathBuf>,
 
     /// If specified, the interface will be output as JSON rather than Solidity.
-    #[clap(long, short)]
+    #[arg(long, short)]
     json: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 }
 

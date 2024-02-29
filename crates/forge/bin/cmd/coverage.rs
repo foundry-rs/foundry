@@ -42,20 +42,20 @@ pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
     /// This flag can be used multiple times.
-    #[clap(long, value_enum, default_value = "summary")]
+    #[arg(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
 
     /// Enable viaIR with minimum optimization
     ///
     /// This can fix most of the "stack too deep" errors while resulting a
     /// relatively accurate source map.
-    #[clap(long)]
+    #[arg(long)]
     ir_minimum: bool,
 
     /// The path to output the report.
     ///
     /// If not specified, the report will be stored in the root of the project.
-    #[clap(
+    #[arg(
         long,
         short,
         value_hint = ValueHint::FilePath,
@@ -63,13 +63,13 @@ pub struct CoverageArgs {
     )]
     report_file: Option<PathBuf>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     filter: FilterArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 }
 

@@ -22,7 +22,7 @@ pub struct SendTxArgs {
     /// The destination of the transaction.
     ///
     /// If not provided, you must use cast send --create.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -32,39 +32,39 @@ pub struct SendTxArgs {
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
-    #[clap(name = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
 
     /// The number of confirmations until the receipt is fetched.
-    #[clap(long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     confirmations: usize,
 
     /// Print the transaction receipt as JSON.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
     /// Reuse the latest nonce for the sender account.
-    #[clap(long, conflicts_with = "nonce")]
+    #[arg(long, conflicts_with = "nonce")]
     resend: bool,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Option<SendTxSubcommands>,
 
     /// Send via `eth_sendTransaction using the `--from` argument or $ETH_FROM as sender
-    #[clap(long, requires = "from")]
+    #[arg(long, requires = "from")]
     unlocked: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]
 pub enum SendTxSubcommands {
     /// Use to deploy raw contract bytecode.
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// The bytecode of the contract to deploy.
         code: String,
