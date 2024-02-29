@@ -7,7 +7,17 @@ use hashbrown::HashSet;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use std::{fmt, sync::Arc};
 
-pub type CalldataFuzzDictionary = Arc<CalldataFuzzDictionaryConfig>;
+/// Clonable wrapper around [CalldataFuzzDictionary].
+#[derive(Debug, Clone)]
+pub struct CalldataFuzzDictionary {
+    pub inner: Arc<CalldataFuzzDictionaryConfig>,
+}
+
+impl CalldataFuzzDictionary {
+    pub fn new(config: &FuzzDictionaryConfig, state: EvmFuzzState) -> Self {
+        Self { inner: Arc::new(CalldataFuzzDictionaryConfig::new(config, state)) }
+    }
+}
 
 #[derive(Clone)]
 pub struct CalldataFuzzDictionaryConfig {
@@ -21,7 +31,16 @@ impl fmt::Debug for CalldataFuzzDictionaryConfig {
     }
 }
 
+/// Represents custom configuration for invariant fuzzed calldata strategies.
+///
+/// At the moment only the dictionary of addresses to be used for a fuzzed `function(address)` can
+/// be configured, but support for other types can be added.
 impl CalldataFuzzDictionaryConfig {
+    /// Creates config with the set of addresses that can be used for fuzzing invariant calldata (if
+    /// `max_calldata_fuzz_dictionary_addresses` configured).
+    /// The set of addresses contains a number of `max_calldata_fuzz_dictionary_addresses` random
+    /// addresses plus all addresses that already had their PUSH bytes collected (retrieved from
+    /// `EvmFuzzState`, if `include_push_bytes` config enabled).
     pub fn new(config: &FuzzDictionaryConfig, state: EvmFuzzState) -> Self {
         let mut addresses: HashSet<Address> = HashSet::new();
         let dict_size = config.max_calldata_fuzz_dictionary_addresses;
@@ -34,8 +53,7 @@ impl CalldataFuzzDictionaryConfig {
                 addresses.insert(Address::random());
             }
 
-            // add any state address calldata fuzz dictionary, in addition to random generated
-            // addresses
+            // Add all addresses that already had their PUSH bytes collected.
             let mut state = state.write();
             addresses.extend(state.addresses());
         }
@@ -50,6 +68,8 @@ pub fn fuzz_calldata(func: Function) -> BoxedStrategy<Bytes> {
     fuzz_calldata_with_config(func, None)
 }
 
+/// Given a function, it returns a strategy which generates valid calldata
+/// for that function's input types, following custom configuration rules.
 pub fn fuzz_calldata_with_config(
     func: Function,
     config: Option<CalldataFuzzDictionary>,

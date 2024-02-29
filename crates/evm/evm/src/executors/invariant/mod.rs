@@ -33,7 +33,7 @@ use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError, InvariantFuzzTestResult};
-use foundry_evm_fuzz::strategies::{CalldataFuzzDictionary, CalldataFuzzDictionaryConfig};
+use foundry_evm_fuzz::strategies::CalldataFuzzDictionary;
 
 mod funcs;
 pub use funcs::{assert_invariants, replay_run};
@@ -251,7 +251,7 @@ impl<'a> InvariantExecutor<'a> {
             Ok(())
         });
 
-        trace!(target: "forge::test::invariant::calldata_address_fuzz_dictionary", "{:?}", calldata_fuzz_dictionary.clone().addresses);
+        trace!(target: "forge::test::invariant::calldata_address_fuzz_dictionary", "{:?}", calldata_fuzz_dictionary.inner.addresses);
         trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().values().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, error) = failures.into_inner().into_inner();
@@ -290,9 +290,8 @@ impl<'a> InvariantExecutor<'a> {
         let targeted_contracts: FuzzRunIdentifiedContracts =
             Arc::new(Mutex::new(targeted_contracts));
 
-        let calldata_fuzz_config: CalldataFuzzDictionary = Arc::new(
-            CalldataFuzzDictionaryConfig::new(&self.config.dictionary, fuzz_state.clone()),
-        );
+        let calldata_fuzz_config =
+            CalldataFuzzDictionary::new(&self.config.dictionary, fuzz_state.clone());
 
         // Creates the invariant strategy.
         let strat = invariant_strat(

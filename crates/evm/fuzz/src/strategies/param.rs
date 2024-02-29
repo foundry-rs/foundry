@@ -18,22 +18,24 @@ pub fn fuzz_param(
     let param = param.to_owned();
     match param {
         DynSolType::Address => {
-            let cfg = config.clone();
-            if cfg.is_some() && !cfg.unwrap().addresses.is_empty() {
-                let dict_len = config.clone().unwrap().addresses.len();
-                any::<prop::sample::Index>()
-                    .prop_map(move |index| index.index(dict_len))
-                    .prop_map(move |index| {
-                        DynSolValue::Address(
-                            config.clone().unwrap().addresses.get(index).cloned().unwrap(),
-                        )
-                    })
-                    .boxed()
-            } else {
-                any::<[u8; 32]>()
-                    .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
-                    .boxed()
+            if config.is_some() {
+                let fuzz_config = config.unwrap().inner;
+                let address_dict_len = fuzz_config.addresses.len();
+                if address_dict_len > 0 {
+                    // Create strategy to return random address from configured dictionary.
+                    return any::<prop::sample::Index>()
+                        .prop_map(move |index| index.index(address_dict_len))
+                        .prop_map(move |index| {
+                            DynSolValue::Address(fuzz_config.addresses.get(index).cloned().unwrap())
+                        })
+                        .boxed()
+                }
             }
+
+            // If no config for addresses dictionary then create unbounded addresses strategy.
+            any::<[u8; 32]>()
+                .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
+                .boxed()
         }
         DynSolType::Int(n) => {
             let strat = super::IntStrategy::new(n, vec![]);
