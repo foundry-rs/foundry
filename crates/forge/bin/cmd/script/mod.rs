@@ -1,5 +1,6 @@
 use crate::cmd::script::runner::ScriptRunner;
 use super::build::BuildArgs;
+use self::transaction::AdditionalContract;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
 use clap::{Parser, ValueHint};
@@ -48,12 +49,13 @@ mod artifacts;
 mod broadcast;
 mod build;
 mod cmd;
-mod executor;
+mod execute;
 mod multi;
 mod providers;
 mod receipts;
 mod runner;
 mod sequence;
+mod simulate;
 pub mod transaction;
 mod verify;
 
@@ -355,6 +357,26 @@ pub struct ScriptResult {
     pub breakpoints: Breakpoints,
 }
 
+impl ScriptResult {
+    pub fn get_created_contracts(&self) -> Vec<AdditionalContract> {
+        self.traces
+            .iter()
+            .flat_map(|(_, traces)| {
+                traces.nodes().iter().filter_map(|node| {
+                    if node.trace.kind.is_any_create() {
+                        return Some(AdditionalContract {
+                            opcode: node.trace.kind,
+                            address: node.trace.address,
+                            init_code: node.trace.data.clone(),
+                        });
+                    }
+                    None
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct JsonResult {
     logs: Vec<String>,
@@ -375,10 +397,6 @@ pub struct ScriptConfig {
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
-    /// Script target contract
-    pub target_contract: Option<ArtifactId>,
-    /// Function called by the script
-    pub called_function: Option<Function>,
     /// Unique list of rpc urls present
     pub total_rpcs: HashSet<RpcUrl>,
     /// If true, one of the transactions did not have a rpc
@@ -406,8 +424,6 @@ impl ScriptConfig {
             evm_opts,
             sender_nonce,
             backends: HashMap::new(),
-            target_contract: None,
-            called_function: None,
             total_rpcs: HashSet::new(),
             missing_rpc: false,
             debug: false,
@@ -458,11 +474,6 @@ impl ScriptConfig {
             }
         }
         Ok(())
-    }
-
-    /// Returns the script target contract
-    fn target_contract(&self) -> &ArtifactId {
-        self.target_contract.as_ref().expect("should exist after building")
     }
 
     /// Checks if the RPCs used point to chains that support EIP-3855.

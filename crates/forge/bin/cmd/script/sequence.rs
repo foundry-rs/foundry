@@ -74,6 +74,7 @@ impl From<&mut ScriptSequence> for SensitiveScriptSequence {
 }
 
 impl ScriptSequence {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transactions: VecDeque<TransactionWithMetadata>,
         returns: HashMap<String, NestedValue>,

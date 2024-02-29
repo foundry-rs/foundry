@@ -200,10 +200,10 @@ impl PreExecutionState {
 
 impl ExecutedState {
     pub async fn prepare_simulation(mut self) -> Result<PreSimulationState> {
-        let known_contracts = self.build_data.get_flattened_contracts(true);
-
         let returns = self.get_returns()?;
-        let decoder = self.decode_traces(&known_contracts)?;
+
+        let known_contracts = self.build_data.get_flattened_contracts(true);
+        let decoder = self.build_trace_decoder(&known_contracts)?;
 
         if let Some(txs) = self.execution_result.transactions.as_ref() {
             self.script_config.collect_rpcs(txs);
@@ -228,14 +228,17 @@ impl ExecutedState {
         })
     }
 
-    fn decode_traces(&self, known_contracts: &ContractsByArtifact) -> Result<CallTraceDecoder> {
+    fn build_trace_decoder(
+        &self,
+        known_contracts: &ContractsByArtifact,
+    ) -> Result<CallTraceDecoder> {
         let verbosity = self.script_config.evm_opts.verbosity;
         let mut etherscan_identifier = EtherscanIdentifier::new(
             &self.script_config.config,
             self.script_config.evm_opts.get_remote_chain_id(),
         )?;
 
-        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(self.execution_result.labeled_addresses.clone())
             .with_verbosity(verbosity)
@@ -266,7 +269,7 @@ impl ExecutedState {
         let returned = &self.execution_result.returned;
         let func = &self.execution_data.func;
 
-        match func.abi_decode_output(&returned, false) {
+        match func.abi_decode_output(returned, false) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
                     let internal_type =
@@ -357,7 +360,7 @@ impl PreSimulationState {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(render_trace_arena(trace, &decoder).await?)?;
+                    shell::println(render_trace_arena(trace, decoder).await?)?;
                 }
             }
             shell::println(String::new())?;

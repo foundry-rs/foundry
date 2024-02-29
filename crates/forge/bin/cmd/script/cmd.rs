@@ -36,7 +36,7 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let state = PreprocessedState { args: self.clone(), script_config: script_config.clone() };
+        let state = PreprocessedState { args: self.clone(), script_config };
         let state = state
             .compile()?
             .link()?
@@ -47,19 +47,16 @@ impl ScriptArgs {
             .prepare_simulation()
             .await?;
 
-        script_config.target_contract = Some(state.build_data.build_data.target.clone());
-        script_config.called_function = Some(state.execution_data.func.clone());
-
         let mut verify = VerifyBundle::new(
-            &script_config.config.project()?,
-            &script_config.config,
+            &state.script_config.config.project()?,
+            &state.script_config.config,
             state.build_data.get_flattened_contracts(false),
             self.retry,
             self.verifier.clone(),
         );
 
         if self.resume || (self.verify && !self.broadcast) {
-            return self.resume_deployment(script_config, state.build_data, verify).await;
+            return self.resume_deployment(state.script_config, state.build_data, verify).await;
         }
 
         if self.debug {
@@ -96,7 +93,7 @@ impl ScriptArgs {
                     MultiChainSequence::load(
                         &script_config.config,
                         &self.sig,
-                        script_config.target_contract(),
+                        &build_data.build_data.target,
                     )?,
                     build_data.libraries,
                     &script_config.config,
@@ -139,7 +136,7 @@ impl ScriptArgs {
         let mut deployment_sequence = match ScriptSequence::load(
             &script_config.config,
             &self.sig,
-            script_config.target_contract(),
+            &build_data.build_data.target,
             chain,
             broadcasted,
         ) {
@@ -149,7 +146,7 @@ impl ScriptArgs {
             Err(_) if broadcasted => ScriptSequence::load(
                 &script_config.config,
                 &self.sig,
-                script_config.target_contract(),
+                &build_data.build_data.target,
                 chain,
                 false,
             )?,
