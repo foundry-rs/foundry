@@ -141,6 +141,7 @@ pub fn test_opts() -> TestOptions {
             },
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18u32),
+            preserve_state: false,
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")
