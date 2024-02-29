@@ -21,11 +21,11 @@ mod sourcify;
 #[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[clap(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
+    #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
     pub verifier: VerificationProviderType,
 
     /// The verifier URL, if using a custom provider
-    #[clap(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
 }
 
@@ -45,7 +45,7 @@ pub struct VerifyArgs {
     pub contract: ContractInfo,
 
     /// The ABI-encoded constructor arguments.
-    #[clap(
+    #[arg(
         long,
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
@@ -54,68 +54,68 @@ pub struct VerifyArgs {
     pub constructor_args: Option<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
     /// The `solc` version to use to build the smart contract.
-    #[clap(long, value_name = "VERSION")]
+    #[arg(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
 
     /// The number of optimization runs used to build the smart contract.
-    #[clap(long, visible_alias = "optimizer-runs", value_name = "NUM")]
+    #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
     /// Flatten the source code before verifying.
-    #[clap(long)]
+    #[arg(long)]
     pub flatten: bool,
 
     /// Do not compile the flattened smart contract before verifying (if --flatten is passed).
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub force: bool,
 
     /// Do not check if the contract is already verified before verifying.
-    #[clap(long)]
+    #[arg(long)]
     pub skip_is_verified_check: bool,
 
     /// Wait for verification result after submission.
-    #[clap(long)]
+    #[arg(long)]
     pub watch: bool,
 
     /// Set pre-linked libraries.
-    #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
+    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
 
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
     /// Prints the standard json compiler input.
     ///
     /// The standard json compiler input can be used to manually submit contract verification in
     /// the browser.
-    #[clap(long, conflicts_with = "flatten")]
+    #[arg(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
 
     /// Use the Yul intermediate representation compilation pipeline.
-    #[clap(long)]
+    #[arg(long)]
     pub via_ir: bool,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[clap(long)]
+    #[arg(long)]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub retry: RetryArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: VerifierArgs,
 }
 
@@ -205,13 +205,13 @@ pub struct VerifyCheckArgs {
     /// For Sourcify - Contract Address.
     id: String,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     retry: RetryArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     verifier: VerifierArgs,
 }
 

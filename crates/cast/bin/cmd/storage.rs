@@ -36,26 +36,26 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Clone, Debug, Parser)]
 pub struct StorageArgs {
     /// The contract address.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
     /// The storage slot number.
-    #[clap(value_parser = parse_slot)]
+    #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long, short)]
+    #[arg(long, short)]
     block: Option<BlockId>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     build: CoreBuildArgs,
 }
 

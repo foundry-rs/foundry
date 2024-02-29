@@ -16,12 +16,12 @@ use watchexec::{
 };
 
 #[derive(Clone, Debug, Default, Parser)]
-#[clap(next_help_heading = "Watch options")]
+#[command(next_help_heading = "Watch options")]
 pub struct WatchArgs {
     /// Watch the given files or directories for changes.
     ///
     /// If no paths are provided, the source and test directories of the project are watched.
-    #[clap(
+    #[arg(
         long,
         short,
         num_args(0..),
@@ -30,13 +30,13 @@ pub struct WatchArgs {
     pub watch: Option<Vec<PathBuf>>,
 
     /// Do not restart the command while it's still running.
-    #[clap(long)]
+    #[arg(long)]
     pub no_restart: bool,
 
     /// Explicitly re-run all tests when a change is made.
     ///
     /// By default, only the tests of the last modified test file are executed.
-    #[clap(long)]
+    #[arg(long)]
     pub run_all: bool,
 
     /// File update debounce delay.
@@ -52,7 +52,7 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(long, value_name = "DELAY")]
+    #[arg(long, value_name = "DELAY")]
     pub watch_delay: Option<String>,
 }
 

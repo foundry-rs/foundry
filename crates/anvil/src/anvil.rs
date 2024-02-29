@@ -4,26 +4,26 @@ use clap::{CommandFactory, Parser, Subcommand};
 
 /// A fast local Ethereum development node.
 #[derive(Parser)]
-#[clap(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
+#[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
 pub struct Anvil {
-    #[clap(flatten)]
+    #[command(flatten)]
     pub node: NodeArgs,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     pub cmd: Option<AnvilSubcommand>,
 }
 
 #[derive(Subcommand)]
 pub enum AnvilSubcommand {
     /// Generate shell completions script.
-    #[clap(visible_alias = "com")]
+    #[command(visible_alias = "com")]
     Completions {
-        #[clap(value_enum)]
+        #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
 
     /// Generate Fig autocompletion spec.
-    #[clap(visible_alias = "fig")]
+    #[command(visible_alias = "fig")]
     GenerateFigSpec,
 }
 

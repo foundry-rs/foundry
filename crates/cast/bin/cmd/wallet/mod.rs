@@ -25,7 +25,7 @@ use list::ListArgs;
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
     /// Create a new random keypair.
-    #[clap(visible_alias = "n")]
+    #[command(visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
@@ -33,53 +33,53 @@ pub enum WalletSubcommands {
         /// Triggers a hidden password prompt for the JSON keystore.
         ///
         /// Deprecated: prompting for a hidden password is now the default.
-        #[clap(long, short, requires = "path", conflicts_with = "unsafe_password")]
+        #[arg(long, short, requires = "path", conflicts_with = "unsafe_password")]
         password: bool,
 
         /// Password for the JSON keystore in cleartext.
         ///
         /// This is UNSAFE to use and we recommend using the --password.
-        #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
+        #[arg(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
 
         /// Number of wallets to generate.
-        #[clap(long, short, default_value = "1")]
+        #[arg(long, short, default_value = "1")]
         number: u32,
 
         /// Output generated wallets as JSON.
-        #[clap(long, short, default_value = "false")]
+        #[arg(long, short, default_value = "false")]
         json: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
-    #[clap(visible_alias = "nm")]
+    #[command(visible_alias = "nm")]
     NewMnemonic {
         /// Number of words for the mnemonic
-        #[clap(long, short, default_value = "12")]
+        #[arg(long, short, default_value = "12")]
         words: usize,
 
         /// Number of accounts to display
-        #[clap(long, short, default_value = "1")]
+        #[arg(long, short, default_value = "1")]
         accounts: u8,
     },
 
     /// Generate a vanity address.
-    #[clap(visible_alias = "va")]
+    #[command(visible_alias = "va")]
     Vanity(VanityArgs),
 
     /// Convert a private key to an address.
-    #[clap(visible_aliases = &["a", "addr"])]
+    #[command(visible_aliases = &["a", "addr"])]
     Address {
         /// If provided, the address will be derived from the specified private key.
-        #[clap(value_name = "PRIVATE_KEY")]
+        #[arg(value_name = "PRIVATE_KEY")]
         private_key_override: Option<String>,
 
-        #[clap(flatten)]
+        #[command(flatten)]
         wallet: WalletOpts,
     },
 
     /// Sign a message or typed data.
-    #[clap(visible_alias = "s")]
+    #[command(visible_alias = "s")]
     Sign {
         /// The message, typed data, or hash to sign.
         ///
@@ -97,23 +97,23 @@ pub enum WalletSubcommands {
         message: String,
 
         /// Treat the message as JSON typed data.
-        #[clap(long)]
+        #[arg(long)]
         data: bool,
 
         /// Treat the message as a file containing JSON typed data. Requires `--data`.
-        #[clap(long, requires = "data")]
+        #[arg(long, requires = "data")]
         from_file: bool,
 
         /// Treat the message as a raw 32-byte hash and sign it directly without hashing it again.
-        #[clap(long, conflicts_with = "data")]
+        #[arg(long, conflicts_with = "data")]
         no_hash: bool,
 
-        #[clap(flatten)]
+        #[command(flatten)]
         wallet: WalletOpts,
     },
 
     /// Verify the signature of a message.
-    #[clap(visible_alias = "v")]
+    #[command(visible_alias = "v")]
     Verify {
         /// The original message.
         message: String,
@@ -122,28 +122,30 @@ pub enum WalletSubcommands {
         signature: Signature,
 
         /// The address of the message signer.
-        #[clap(long, short)]
+        #[arg(long, short)]
         address: Address,
     },
+
     /// Import a private key into an encrypted keystore.
-    #[clap(visible_alias = "i")]
+    #[command(visible_alias = "i")]
     Import {
         /// The name for the account in the keystore.
-        #[clap(value_name = "ACCOUNT_NAME")]
+        #[arg(value_name = "ACCOUNT_NAME")]
         account_name: String,
         /// If provided, keystore will be saved here instead of the default keystores directory
         /// (~/.foundry/keystores)
-        #[clap(long, short)]
+        #[arg(long, short)]
         keystore_dir: Option<String>,
-        #[clap(flatten)]
+        #[command(flatten)]
         raw_wallet_options: RawWalletOpts,
     },
+
     /// List all the accounts in the keystore default directory
-    #[clap(visible_alias = "ls")]
+    #[command(visible_alias = "ls")]
     List(ListArgs),
 
     /// Derives private key from mnemonic
-    #[clap(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
+    #[command(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
     DerivePrivateKey { mnemonic: String, mnemonic_index: Option<u8> },
 }
 

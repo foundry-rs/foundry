@@ -72,22 +72,22 @@ pub struct ScriptArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath)]
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: String,
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
+    #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()")]
+    #[arg(long, short, default_value = "run()")]
     pub sig: String,
 
     /// Max priority fee per gas for EIP1559 transactions.
-    #[clap(
+    #[arg(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
         value_parser = foundry_cli::utils::parse_ether_value,
@@ -98,23 +98,23 @@ pub struct ScriptArgs {
     /// Use legacy transactions instead of EIP1559 ones.
     ///
     /// This is auto-enabled for common networks without EIP1559.
-    #[clap(long)]
+    #[arg(long)]
     pub legacy: bool,
 
     /// Broadcasts the transactions.
-    #[clap(long)]
+    #[arg(long)]
     pub broadcast: bool,
 
     /// Skips on-chain simulation.
-    #[clap(long)]
+    #[arg(long)]
     pub skip_simulation: bool,
 
     /// Relative percentage to multiply gas estimates by.
-    #[clap(long, short, default_value = "130")]
+    #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
-    #[clap(
+    #[arg(
         long,
         requires = "sender",
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
@@ -127,44 +127,44 @@ pub struct ScriptArgs {
     ///
     /// Example: If transaction N has a nonce of 22, then the account should have a nonce of 22,
     /// otherwise it fails.
-    #[clap(long)]
+    #[arg(long)]
     pub resume: bool,
 
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
-    #[clap(long)]
+    #[arg(long)]
     pub multi: bool,
 
     /// Open the script in the debugger.
     ///
     /// Takes precedence over broadcast.
-    #[clap(long)]
+    #[arg(long)]
     pub debug: bool,
 
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
-    #[clap(long)]
+    #[arg(long)]
     pub slow: bool,
 
     /// Disables interactive prompts that might appear when deploying big contracts.
     ///
     /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
-    #[clap(long)]
+    #[arg(long)]
     pub non_interactive: bool,
 
     /// The Etherscan (or equivalent) API key
-    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
-    #[clap(long)]
+    #[arg(long)]
     pub verify: bool,
 
     /// Output results in JSON format.
-    #[clap(long)]
+    #[arg(long)]
     pub json: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[clap(
+    #[arg(
         long,
         env = "ETH_GAS_PRICE",
         value_parser = foundry_cli::utils::parse_ether_value,
@@ -172,19 +172,19 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: BuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub wallets: MultiWalletOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub evm_opts: EvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: super::verify::VerifierArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub retry: RetryArgs,
 }
 

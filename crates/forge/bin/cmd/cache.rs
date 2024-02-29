@@ -11,7 +11,7 @@ use strum::VariantNames;
 /// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     pub sub: CacheSubcommands,
 }
 
@@ -26,12 +26,12 @@ pub enum CacheSubcommands {
 
 /// CLI arguments for `forge clean`.
 #[derive(Debug, Parser)]
-#[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
+#[command(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
     /// The chains to clean the cache for.
     ///
     /// Can also be "all" to clean all chains.
-    #[clap(
+    #[arg(
         env = "CHAIN",
         default_value = "all",
         value_parser = ChainOrAllValueParser::default(),
@@ -39,7 +39,7 @@ pub struct CleanArgs {
     chains: Vec<ChainOrAll>,
 
     /// The blocks to clean the cache for.
-    #[clap(
+    #[arg(
         short,
         long,
         num_args(1..),
@@ -50,7 +50,7 @@ pub struct CleanArgs {
     blocks: Vec<u64>,
 
     /// Whether to clean the Etherscan cache.
-    #[clap(long, group = "etherscan-blocks")]
+    #[arg(long, group = "etherscan-blocks")]
     etherscan: bool,
 }
 
@@ -82,7 +82,7 @@ pub struct LsArgs {
     /// The chains to list the cache for.
     ///
     /// Can also be "all" to list all chains.
-    #[clap(
+    #[arg(
         env = "CHAIN",
         default_value = "all",
         value_parser = ChainOrAllValueParser::default(),

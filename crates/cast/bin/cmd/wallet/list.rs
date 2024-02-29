@@ -10,27 +10,27 @@ use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
 pub struct ListArgs {
     /// List all the accounts in the keystore directory.
     /// Default keystore directory is used if no path provided.
-    #[clap(long, default_missing_value = "", num_args(0..=1))]
+    #[arg(long, default_missing_value = "", num_args(0..=1))]
     dir: Option<String>,
 
     /// List accounts from a Ledger hardware wallet.
-    #[clap(long, short, group = "hw-wallets")]
+    #[arg(long, short, group = "hw-wallets")]
     ledger: bool,
 
     /// List accounts from a Trezor hardware wallet.
-    #[clap(long, short, group = "hw-wallets")]
+    #[arg(long, short, group = "hw-wallets")]
     trezor: bool,
 
     /// List accounts from AWS KMS.
-    #[clap(long)]
+    #[arg(long)]
     aws: bool,
 
     /// List all configured accounts.
-    #[clap(long, group = "hw-wallets")]
+    #[arg(long, group = "hw-wallets")]
     all: bool,
 
     /// Max number of addresses to display from hardware wallets.
-    #[clap(long, short, default_value = "3", requires = "hw-wallets")]
+    #[arg(long, short, default_value = "3", requires = "hw-wallets")]
     max_senders: Option<usize>,
 }
 
