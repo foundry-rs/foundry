@@ -1522,13 +1522,17 @@ impl Config {
             return Ok(blocks)
         }
         for block in chain_path.read_dir()?.flatten() {
-            let filepath = if block.file_type()?.is_dir() {
+            let file_type = block.file_type()?;
+            let file_name = block.file_name();
+            let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else {
+            } else if file_type.is_file() && file_name.to_string_lossy().chars().all(char::is_numeric) {
                 block.path()
+            } else {
+                continue
             };
             blocks.push((
-                block.file_name().to_string_lossy().into_owned(),
+                file_name.to_string_lossy().into_owned(),
                 fs::metadata(filepath)?.len(),
             ));
         }
@@ -4563,23 +4567,34 @@ mod tests {
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
+        fn fake_block_cache_block_path_as_file(chain_path: &Path, block_number: &str, size_bytes: usize) {
+            let block_path = chain_path.join(block_number);
+            let mut file = File::create(block_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
+        }
+
         let chain_dir = tempdir()?;
 
         fake_block_cache(chain_dir.path(), "1", 100);
         fake_block_cache(chain_dir.path(), "2", 500);
+        fake_block_cache_block_path_as_file(chain_dir.path(), "3", 900);
         // Pollution file that should not show up in the cached block
         let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
         writeln!(pol_file, "{}", [' '; 10].iter().collect::<String>()).unwrap();
 
         let result = Config::get_cached_blocks(chain_dir.path())?;
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 3);
         let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
         let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
+        let block3 = &result.iter().find(|x| x.0 == "3").unwrap();
+
         assert_eq!(block1.0, "1");
         assert_eq!(block1.1, 100);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
+        assert_eq!(block3.0, "3");
+        assert_eq!(block3.1, 900);
 
         chain_dir.close()?;
         Ok(())
