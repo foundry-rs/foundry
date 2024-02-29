@@ -10,9 +10,8 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
-use alloy_signer::LocalWallet;
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use foundry_evm_core::{
     backend::{Backend, DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
@@ -20,7 +19,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
     },
     debug::DebugArena,
-    decode,
+    decode::RevertDecoder,
     utils::{eval_to_instruction_result, halt_to_instruction_result, StateChangeset},
 };
 use foundry_evm_coverage::HitMaps;
@@ -204,7 +203,6 @@ impl Executor {
                         labels: res.labels,
                         state_changeset: None,
                         transactions: None,
-                        script_wallets: res.script_wallets,
                     })))
                 }
             }
@@ -222,12 +220,12 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?);
         let result = self.call_raw_committing(from, to, calldata, value)?;
-        convert_call_result(abi, &func, result)
+        convert_call_result(rd, &func, result)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -254,7 +252,7 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
@@ -262,7 +260,7 @@ impl Executor {
         // execute the call
         let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
-        convert_call_result(abi, &func, call_result)
+        convert_call_result(rd, &func, call_result)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -275,12 +273,12 @@ impl Executor {
         func: F,
         args: T,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
         let call_result = self.call_raw(from, to, calldata, value)?;
-        convert_call_result(abi, &func, call_result)
+        convert_call_result(rd, &func, call_result)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -352,7 +350,7 @@ impl Executor {
     pub fn deploy_with_env(
         &mut self,
         env: Env,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         debug_assert!(
             matches!(env.tx.transact_to, TransactTo::Create(_)),
@@ -372,7 +370,6 @@ impl Executor {
             labels,
             traces,
             debug,
-            script_wallets,
             env,
             coverage,
             ..
@@ -400,12 +397,11 @@ impl Executor {
                         labels,
                         state_changeset: None,
                         transactions: None,
-                        script_wallets
                     })));
                 }
             }
             _ => {
-                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason));
+                let reason = rd.unwrap_or_default().decode(&result, Some(exit_reason));
                 return Err(EvmError::Execution(Box::new(ExecutionErr {
                     reverted: true,
                     reason,
@@ -418,7 +414,6 @@ impl Executor {
                     labels,
                     state_changeset: None,
                     transactions: None,
-                    script_wallets,
                 })))
             }
         };
@@ -441,10 +436,10 @@ impl Executor {
         from: Address,
         code: Bytes,
         value: U256,
-        abi: Option<&JsonAbi>,
+        rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         let env = self.build_test_env(from, TransactTo::Create(CreateScheme::Create), code, value);
-        self.deploy_with_env(env, abi)
+        self.deploy_with_env(env, rd)
     }
 
     /// Check if a call to a test contract was successful.
@@ -595,7 +590,6 @@ pub struct ExecutionErr {
     pub labels: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
     pub state_changeset: Option<StateChangeset>,
-    pub script_wallets: Vec<LocalWallet>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -666,8 +660,6 @@ pub struct CallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
-    /// The wallets added during the call using the `rememberKey` cheatcode
-    pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
     /// breakpoints
@@ -711,8 +703,6 @@ pub struct RawCallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
-    /// The wallets added during the call using the `rememberKey` cheatcode
-    pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
     /// The cheatcode states after execution
@@ -740,7 +730,6 @@ impl Default for RawCallResult {
             debug: None,
             transactions: None,
             state_changeset: None,
-            script_wallets: Vec::new(),
             env: Default::default(),
             cheatcodes: Default::default(),
             out: None,
@@ -782,16 +771,8 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData {
-        logs,
-        labels,
-        traces,
-        coverage,
-        debug,
-        cheatcodes,
-        script_wallets,
-        chisel_state,
-    } = inspector.collect();
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+        inspector.collect();
 
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
@@ -815,7 +796,6 @@ fn convert_executed_result(
         debug,
         transactions,
         state_changeset: Some(state_changeset),
-        script_wallets,
         env,
         cheatcodes,
         out,
@@ -824,7 +804,7 @@ fn convert_executed_result(
 }
 
 fn convert_call_result(
-    abi: Option<&JsonAbi>,
+    rd: Option<&RevertDecoder>,
     func: &Function,
     call_result: RawCallResult,
 ) -> Result<CallResult, EvmError> {
@@ -842,7 +822,6 @@ fn convert_call_result(
         debug,
         transactions,
         state_changeset,
-        script_wallets,
         env,
         ..
     } = call_result;
@@ -875,7 +854,6 @@ fn convert_call_result(
                 debug,
                 transactions,
                 state_changeset,
-                script_wallets,
                 env,
                 breakpoints,
                 skipped: false,
@@ -885,7 +863,7 @@ fn convert_call_result(
             if &result == crate::constants::MAGIC_SKIP {
                 return Err(EvmError::SkipError)
             }
-            let reason = decode::decode_revert(&result, abi, Some(status));
+            let reason = rd.unwrap_or_default().decode(&result, Some(status));
             Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,
@@ -898,7 +876,6 @@ fn convert_call_result(
                 labels,
                 transactions,
                 state_changeset,
-                script_wallets,
             })))
         }
     }

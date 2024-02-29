@@ -259,7 +259,8 @@ pub fn collect_created_contracts(
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
                 if !code.is_empty() {
-                    if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
+                    if let Some((artifact, (abi, _))) =
+                        project_contracts.find_by_code(&code.original_bytes())
                     {
                         if let Some(functions) =
                             artifact_filters.get_targeted_functions(artifact, abi)?

@@ -5,7 +5,6 @@ use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::Block;
 use eyre::WrapErr;
 use foundry_common::{
-    self,
     provider::alloy::{ProviderBuilder, RpcUrl},
     ALCHEMY_FREE_TIER_CUPS,
 };
@@ -53,12 +52,18 @@ pub struct EvmOpts {
     /// Enables the FFI cheatcode.
     pub ffi: bool,
 
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
+
     /// Verbosity mode of EVM output as number of occurrences.
     pub verbosity: u8,
 
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     pub memory_limit: u64,
+
+    /// Whether to enable isolation of calls.
+    pub isolate: bool,
 }
 
 impl EvmOpts {

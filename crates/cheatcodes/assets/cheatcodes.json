@@ -372,6 +372,11 @@
           "name": "storageAccesses",
           "ty": "StorageAccess[]",
           "description": "An ordered list of storage accesses made during an account access operation."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "Call depth traversed during the recording of state differences"
         }
       ]
     },
@@ -6932,6 +6937,26 @@
       "group": "scripting",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopExpectSafeMemory",
+        "description": "Stops all safe memory expectation in the current subcontext.",
+        "declaration": "function stopExpectSafeMemory() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopExpectSafeMemory()",
+        "selector": "0x0956441b",
+        "selectorBytes": [
+          9,
+          86,
+          68,
+          27
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

@@ -180,7 +180,7 @@ type                    {}",
         );
 
         if let Some(to) = to {
-            pretty.push_str(&format!("\nto                      {}", to));
+            pretty.push_str(&format!("\nto                      {}", to.pretty()));
         }
 
         // additional captured fields

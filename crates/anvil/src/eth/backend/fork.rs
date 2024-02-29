@@ -8,9 +8,9 @@ use alloy_rpc_trace_types::{
     parity::LocalizedTransactionTrace as Trace,
 };
 use alloy_rpc_types::{
-    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
-    TransactionReceipt,
+    request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
+    BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
+    Filter, Log, Transaction, TransactionReceipt,
 };
 use alloy_transport::TransportError;
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
@@ -77,7 +77,7 @@ impl ClientFork {
         let block_hash = block.header.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.header.timestamp.to::<u64>();
         let base_fee = block.header.base_fee_per_gas;
-        let total_difficulty = block.total_difficulty.unwrap_or_default();
+        let total_difficulty = block.header.total_difficulty.unwrap_or_default();
 
         self.config.write().update_block(
             block.header.number.ok_or(BlockchainError::BlockNotFound)?.to::<u64>(),
@@ -169,7 +169,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn call(
         &self,
-        request: &CallRequest,
+        request: &TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let request = Arc::new(request.clone());
@@ -199,7 +199,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn estimate_gas(
         &self,
-        request: &CallRequest,
+        request: &TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<U256, TransportError> {
         let request = Arc::new(request.clone());
@@ -229,7 +229,7 @@ impl ClientFork {
     /// Sends `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        request: &CallRequest,
+        request: &TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
         self.provider().create_access_list(request.clone(), block.map(|b| b.into())).await
@@ -268,7 +268,7 @@ impl ClientFork {
 
         let block_id = BlockId::Number(blocknumber.into());
 
-        let code = self.provider().get_code_at(address, block_id).await?;
+        let code = self.provider().get_code_at(address, Some(block_id)).await?;
 
         let mut storage = self.storage_write();
         storage.code_at.insert((address, blocknumber), code.clone().0.into());
@@ -674,8 +674,8 @@ pub struct ForkedStorage {
     pub geth_transaction_traces: HashMap<B256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<TransactionReceipt>>,
-    pub eth_gas_estimations: HashMap<(Arc<CallRequest>, u64), U256>,
-    pub eth_call: HashMap<(Arc<CallRequest>, u64), Bytes>,
+    pub eth_gas_estimations: HashMap<(Arc<TransactionRequest>, u64), U256>,
+    pub eth_call: HashMap<(Arc<TransactionRequest>, u64), Bytes>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
 

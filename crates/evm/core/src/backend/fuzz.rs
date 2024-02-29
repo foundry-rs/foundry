@@ -11,8 +11,8 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Bytecode, Env, ResultAndState},
-    Database, Inspector, JournaledState,
+    primitives::{Account, AccountInfo, Bytecode, Env, HashMap as Map, ResultAndState},
+    Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};
 
@@ -231,11 +231,11 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().allow_cheatcode_access(account)
     }
 
-    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
         self.backend.to_mut().revoke_cheatcode_access(account)
     }
 
-    fn has_cheatcode_access(&self, account: Address) -> bool {
+    fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
     }
 }
@@ -277,5 +277,11 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
 
     fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self, number)
+    }
+}
+
+impl<'a> DatabaseCommit for FuzzBackendWrapper<'a> {
+    fn commit(&mut self, changes: Map<Address, Account>) {
+        self.backend.to_mut().commit(changes)
     }
 }

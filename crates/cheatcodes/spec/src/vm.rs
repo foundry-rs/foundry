@@ -203,6 +203,8 @@ interface Vm {
         bool reverted;
         /// An ordered list of storage accesses made during an account access operation.
         StorageAccess[] storageAccesses;
+        /// Call depth traversed during the recording of state differences
+        uint64 depth;
     }
 
     /// The storage accessed during an `AccountAccess`.
@@ -700,6 +702,10 @@ interface Vm {
     /// memory is written to, the test will fail. Can be called multiple times to add more ranges to the set.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectSafeMemory(uint64 min, uint64 max) external;
+
+    /// Stops all safe memory expectation in the current subcontext.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function stopExpectSafeMemory() external;
 
     /// Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the next created subcontext.
     /// If any other memory is written to, the test will fail. Can be called multiple times to add more ranges

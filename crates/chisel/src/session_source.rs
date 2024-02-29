@@ -8,13 +8,13 @@ use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
     artifacts::{Source, Sources},
-    CompilerInput, CompilerOutput, EvmVersion, Solc,
+    CompilerInput, CompilerOutput, Solc,
 };
 use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt;
+use solang_parser::{diagnostics::Diagnostic, pt};
 use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
@@ -105,22 +105,17 @@ impl SessionSourceConfig {
 
         match solc_req {
             SolcReq::Version(version) => {
-                // We now need to verify if the solc version provided is supported by the evm
-                // version set. If not, we bail and ask the user to provide a newer version.
-                // 1. Do we need solc 0.8.18 or higher?
-                let evm_version = self.foundry_config.evm_version;
-                let needs_post_merge_solc = evm_version >= EvmVersion::Paris;
-                // 2. Check if the version provided is less than 0.8.18 and bail,
-                // or leave it as-is if we don't need a post merge solc version or the version we
-                // have is good enough.
-                let v = if needs_post_merge_solc && version < Version::new(0, 8, 18) {
-                    eyre::bail!("solc {version} is not supported by the set evm version: {evm_version}. Please install and use a version of solc higher or equal to 0.8.18.
-You can also set the solc version in your foundry.toml.")
-                } else {
-                    version.to_string()
-                };
+                // Validate that the requested evm version is supported by the solc version
+                let req_evm_version = self.foundry_config.evm_version;
+                if let Some(compat_evm_version) = req_evm_version.normalize_version(&version) {
+                    if req_evm_version > compat_evm_version {
+                        eyre::bail!(
+                            "The set evm version, {req_evm_version}, is not supported by solc {version}. Upgrade to a newer solc version."
+                        );
+                    }
+                }
 
-                let mut solc = Solc::find_svm_installed_version(&v)?;
+                let mut solc = Solc::find_svm_installed_version(version.to_string())?;
 
                 if solc.is_none() {
                     if self.foundry_config.offline {
@@ -131,7 +126,7 @@ You can also set the solc version in your foundry.toml.")
                         Paint::green(format!("Installing solidity version {version}..."))
                     );
                     Solc::blocking_install(&version)?;
-                    solc = Solc::find_svm_installed_version(&v)?;
+                    solc = Solc::find_svm_installed_version(version.to_string())?;
                 }
                 solc.ok_or_else(|| eyre::eyre!("Failed to install {version}"))
             }
@@ -323,15 +318,10 @@ impl SessionSource {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
 
+        let remappings = self.config.foundry_config.get_all_remappings().collect::<Vec<_>>();
+
         // Include Vm.sol if forge-std remapping is not available
-        if !self.config.no_vm &&
-            !self
-                .config
-                .foundry_config
-                .get_all_remappings()
-                .into_iter()
-                .any(|r| r.name.starts_with("forge-std"))
-        {
+        if !self.config.no_vm && !remappings.iter().any(|r| r.name.starts_with("forge-std")) {
             sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE));
         }
 
@@ -342,7 +332,7 @@ impl SessionSource {
             .expect("Solidity source not found");
 
         // get all remappings from the config
-        compiler_input.settings.remappings = self.config.foundry_config.get_all_remappings();
+        compiler_input.settings.remappings = remappings;
 
         // We also need to enforce the EVM version that the user has specified.
         compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
@@ -670,16 +660,26 @@ pub fn parse_fragment(
 
     match base.clone().with_run_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Function),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
     match base.clone().with_top_level_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Contract),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
     match base.with_global_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Source),
-        Err(e) => tracing::debug!(?e),
+        Err(e) => debug_errors(&e),
     }
 
     None
+}
+
+fn debug_errors(errors: &[Diagnostic]) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
+    for error in errors {
+        tracing::debug!("error: {}", error.message);
+    }
 }
