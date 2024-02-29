@@ -7,7 +7,7 @@ use foundry_common::{
     ContractsByArtifact,
 };
 use foundry_compilers::{
-    artifacts::{ContractBytecode, ContractBytecodeSome, Libraries},
+    artifacts::{BytecodeObject, ContractBytecode, ContractBytecodeSome, Libraries},
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
@@ -81,8 +81,14 @@ impl PreprocessedState {
                 if id.name != *name {
                     continue;
                 }
-            } else if !contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0) {
-                // Ignore contracts with empty/missing bytecode, e.g. interfaces.
+            } else if contract.abi.as_ref().map_or(true, |abi| abi.is_empty()) ||
+                contract.bytecode.as_ref().map_or(true, |b| match &b.object {
+                    BytecodeObject::Bytecode(b) => b.is_empty(),
+                    BytecodeObject::Unlinked(_) => false,
+                })
+            {
+                // Ignore contracts with empty abi or linked bytecode of length 0 which are
+                // interfaces/abstract contracts/libraries.
                 continue;
             }
 

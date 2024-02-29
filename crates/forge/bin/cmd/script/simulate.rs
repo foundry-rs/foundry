@@ -25,8 +25,9 @@ use std::{
 };
 
 impl PreSimulationState {
-    /// If simulation is enabled, simulates transactions against fork and fills gas estimation and metadata.
-    /// Otherwise, metadata (e.g. additional contracts, created contract names) is left empty.
+    /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
+    /// metadata. Otherwise, metadata (e.g. additional contracts, created contract names) is
+    /// left empty.
     pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
         let transactions = if let Some(txs) = self.execution_result.transactions.as_ref() {
             if self.args.skip_simulation {
