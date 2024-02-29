@@ -43,7 +43,6 @@ pub struct CleanArgs {
         short,
         long,
         num_args(1..),
-        use_value_delimiter(true),
         value_delimiter(','),
         group = "etherscan-blocks"
     )]
