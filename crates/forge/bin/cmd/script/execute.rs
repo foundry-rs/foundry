@@ -75,10 +75,7 @@ pub struct ExecutedState {
 impl PreExecutionState {
     #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
-        let mut runner = self
-            .script_config
-            .get_runner(self.script_config.evm_opts.fork_url.clone(), true)
-            .await?;
+        let mut runner = self.script_config.get_runner(true).await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
 
         // If we have a new sender from execution, we need to use it to deploy libraries and relink

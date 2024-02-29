@@ -504,16 +504,12 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
         Ok(())
     }
 
-    async fn get_runner(
-        &mut self,
-        fork_url: Option<String>,
-        cheatcodes: bool,
-    ) -> Result<ScriptRunner> {
+    async fn get_runner(&mut self, cheatcodes: bool) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = self.evm_opts.evm_env().await?;
 
-        let db = if let Some(fork_url) = fork_url {
-            match self.backends.get(&fork_url) {
+        let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+            match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
                     let fork = self.evm_opts.get_fork(&self.config, env.clone());
@@ -526,7 +522,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
             // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
             // no need to cache it, since there won't be any onchain simulation that we'd need
             // to cache the backend for.
-            Backend::spawn(self.evm_opts.get_fork(&self.config, env.clone()))
+            Backend::spawn(None)
         };
 
         // We need to enable tracing to decode contract names: local or external.

@@ -25,9 +25,12 @@ use std::{
 };
 
 impl PreSimulationState {
+    /// If simulation is enabled, simulates transactions against fork and fills gas estimation and metadata.
+    /// Otherwise, metadata (e.g. additional contracts, created contract names) is left empty.
     pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
         let transactions = if let Some(txs) = self.execution_result.transactions.as_ref() {
             if self.args.skip_simulation {
+                shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
                 self.no_simulation(txs.clone())?
             } else {
                 self.onchain_simulation(txs.clone()).await?
@@ -108,7 +111,6 @@ impl PreSimulationState {
                         tx.gas = Some(gas);
                     }
                 }
-
                 let tx = TransactionWithMetadata::new(
                     tx,
                     transaction.rpc,
@@ -196,7 +198,8 @@ impl PreSimulationState {
             .iter()
             .map(|rpc| async {
                 let mut script_config = self.script_config.clone();
-                let runner = script_config.get_runner(Some(rpc.clone()), false).await?;
+                script_config.evm_opts.fork_url = Some(rpc.clone());
+                let runner = script_config.get_runner(false).await?;
                 Ok((rpc.clone(), runner))
             })
             .collect::<Vec<_>>();
@@ -210,7 +213,11 @@ impl PreSimulationState {
     ) -> Result<VecDeque<TransactionWithMetadata>> {
         Ok(transactions
             .into_iter()
-            .map(|tx| TransactionWithMetadata::from_tx_request(tx.transaction))
+            .map(|btx| {
+                let mut tx = TransactionWithMetadata::from_tx_request(btx.transaction);
+                tx.rpc = btx.rpc;
+                tx
+            })
             .collect())
     }
 }
@@ -225,7 +232,7 @@ pub struct FilledTransactionsState {
 }
 
 impl FilledTransactionsState {
-    /// Returns all transactions of the [`TransactionWithMetadata`] type in a list of
+    /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
     /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///

@@ -12,7 +12,7 @@ use ethers_signers::Signer;
 use eyre::Result;
 use forge::inspectors::cheatcodes::ScriptWallets;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{provider::ethers::try_get_http_provider, types::ToAlloy};
+use foundry_common::{provider::ethers::try_get_http_provider, shell, types::ToAlloy};
 use foundry_compilers::artifacts::Libraries;
 use std::sync::Arc;
 
@@ -74,7 +74,18 @@ impl ScriptArgs {
                 &state.build_data.highlevel_known_contracts,
             )?;
 
-            let state = state.fill_metadata().await?.bundle().await?;
+            if state.script_config.missing_rpc {
+                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                return Ok(());
+            }
+
+            let state = state.fill_metadata().await?;
+
+            if state.transactions.is_empty() {
+                return Ok(());
+            }
+
+            let state = state.bundle().await?;
 
             self.handle_broadcastable_transactions(state, verify).await
         }
