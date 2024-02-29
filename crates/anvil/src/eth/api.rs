@@ -33,6 +33,7 @@ use crate::{
 };
 use alloy_consensus::{TxEip4844Variant, TxLegacy};
 use alloy_dyn_abi::TypedData;
+use alloy_eips::calc_blob_gasprice;
 use alloy_network::{Signed, TxKind};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rlp::Decodable;
@@ -1304,6 +1305,10 @@ impl EthApi {
                 // <https://eips.ethereum.org/EIPS/eip-1559>
                 if let Some(block) = fee_history.get(&n) {
                     response.base_fee_per_gas.push(U256::from(block.base_fee));
+                    response
+                        .base_fee_per_blob_gas
+                        .push(U256::from(block.base_fee_per_blob_gas.unwrap_or(0)));
+                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
                     response.gas_used_ratio.push(block.gas_used_ratio);
 
                     // requested percentiles
@@ -1327,6 +1332,13 @@ impl EthApi {
         }
 
         response.reward = Some(rewards);
+
+        let last_header = self
+            .backend
+            .block_by_number(newest_block)
+            .await?
+            .ok_or(FeeHistoryError::BlockNotFound(newest_block))?
+            .header;
 
         // calculate next base fee
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
@@ -1352,6 +1364,17 @@ impl EthApi {
                 response.base_fee_per_gas.push(U256::from(last_fee_per_gas as u64));
             }
         }
+
+        // Same goes for the `base_fee_per_blob_gas`:
+        // > "[..] includes the next block after the newest of the returned range, because this
+        // > value can be derived from the newest block.
+        response.base_fee_per_blob_gas.push(
+            last_header
+                .excess_blob_gas
+                .map(|excess| calc_blob_gasprice(excess.to::<u64>()))
+                .map(U256::from)
+                .unwrap_or(U256::ZERO),
+        );
 
         Ok(response)
     }

@@ -2,6 +2,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use alloy_eips::eip4844::MAX_DATA_GAS_PER_BLOCK;
 use alloy_primitives::{B256, U256};
 use anvil_core::eth::transaction::TypedTransaction;
 use foundry_evm::revm::primitives::{BlobExcessGasAndPrice, SpecId};
@@ -283,8 +284,11 @@ impl FeeHistoryService {
         let mut item = FeeHistoryCacheItem {
             base_fee: base_fee.to::<u64>(),
             gas_used_ratio: 0f64,
+            blob_gas_used_ratio: 0f64,
             rewards: Vec::new(),
-            excess_blob_gas_and_price,
+            excess_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.excess_blob_gas),
+            base_fee_per_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.blob_gasprice),
+            blob_gas_used: excess_blob_gas_and_price.as_ref().map(|_| 0),
         };
 
         let current_block = self.storage_info.block(hash);
@@ -295,9 +299,12 @@ impl FeeHistoryService {
 
             let gas_used = block.header.gas_used as f64;
             let gas_limit = block.header.gas_limit as f64;
+            let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
 
             let gas_target = gas_limit / elasticity;
             item.gas_used_ratio = gas_used / (gas_target * elasticity);
+            item.blob_gas_used_ratio =
+                blob_gas_used.map(|g| g / MAX_DATA_GAS_PER_BLOCK as f64).unwrap_or(0 as f64);
 
             // extract useful tx info (gas_used, effective_reward)
             let mut transactions: Vec<(u64, u64)> = receipts
@@ -401,7 +408,10 @@ pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 pub struct FeeHistoryCacheItem {
     pub base_fee: u64,
     pub gas_used_ratio: f64,
-    pub excess_blob_gas_and_price: Option<BlobExcessGasAndPrice>,
+    pub base_fee_per_blob_gas: Option<u128>,
+    pub blob_gas_used_ratio: f64,
+    pub excess_blob_gas: Option<u64>,
+    pub blob_gas_used: Option<u64>,
     pub rewards: Vec<u64>,
 }
 

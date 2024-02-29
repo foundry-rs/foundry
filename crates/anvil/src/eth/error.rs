@@ -2,6 +2,7 @@
 
 use crate::eth::pool::transactions::PoolTransaction;
 use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
@@ -126,8 +127,10 @@ pub enum PoolError {
 /// Errors that can occur with `eth_feeHistory`
 #[derive(Debug, thiserror::Error)]
 pub enum FeeHistoryError {
-    #[error("Requested block range is out of bounds")]
+    #[error("requested block range is out of bounds")]
     InvalidBlockRange,
+    #[error("could not find newest block number requested: {0}")]
+    BlockNotFound(BlockNumberOrTag),
 }
 
 #[derive(Debug)]
