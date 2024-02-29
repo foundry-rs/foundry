@@ -1,38 +1,34 @@
 use super::{
-    artifacts::ArtifactInfo,
     build::{CompiledState, LinkedBuildData, LinkedState},
-    runner::{ScriptRunner, SimulationStage},
-    transaction::{AdditionalContract, TransactionWithMetadata},
-    ScriptArgs, ScriptConfig, ScriptResult,
+    runner::ScriptRunner,
+    JsonResult, NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
 };
-use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256, U64};
+use alloy_dyn_abi::FunctionExt;
+use alloy_json_abi::{Function, InternalType, JsonAbi};
+use alloy_primitives::{Address, Bytes, U64};
 use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
-use eyre::{Context, Result};
+use eyre::Result;
 use forge::{
-    backend::{Backend, DatabaseExt},
-    executors::ExecutorBuilder,
-    inspectors::{
-        cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
-        CheatsConfig,
+    decode::{decode_console_logs, RevertDecoder},
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    traces::{
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
-    revm::Database,
-    traces::{render_trace_arena, CallTraceDecoder},
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{get_contract_name, provider::ethers::RpcUrl, shell, ContractsByArtifact};
-use foundry_compilers::artifacts::ContractBytecodeSome;
-use foundry_evm::inspectors::cheatcodes::ScriptWallets;
-use futures::future::join_all;
-use parking_lot::RwLock;
-use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    sync::Arc,
+use foundry_common::{
+    fmt::{format_token, format_token_raw},
+    shell, ContractsByArtifact,
 };
+use foundry_compilers::artifacts::ContractBytecodeSome;
+use foundry_config::Config;
+use foundry_debugger::Debugger;
+use std::collections::{HashMap, VecDeque};
+use yansi::Paint;
 
 pub struct ExecutionData {
-    pub script_wallets: ScriptWallets,
     pub func: Function,
     pub calldata: Bytes,
     pub bytecode: Bytes,
@@ -49,9 +45,6 @@ pub struct PreExecutionState {
 impl LinkedState {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
-        let multi_wallet = self.args.wallets.get_multi_wallet().await?;
-        let script_wallets = ScriptWallets::new(multi_wallet, self.args.evm_opts.sender);
-
         let ContractBytecodeSome { abi, bytecode, .. } = self.build_data.get_target_contract()?;
 
         let bytecode = bytecode.into_bytes().ok_or_else(|| {
@@ -66,7 +59,7 @@ impl LinkedState {
             args: self.args,
             script_config: self.script_config,
             build_data: self.build_data,
-            execution_data: ExecutionData { script_wallets, func, calldata, bytecode, abi },
+            execution_data: ExecutionData { func, calldata, bytecode, abi },
         })
     }
 }
@@ -83,30 +76,15 @@ impl PreExecutionState {
     #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
-            .prepare_runner(
-                SimulationStage::Local,
-                Some(self.execution_data.script_wallets.clone()),
-            )
+            .script_config
+            .get_runner(self.script_config.evm_opts.fork_url.clone(), true)
             .await?;
-
-        self.script_config.sender_nonce = if self.script_config.evm_opts.fork_url.is_none() {
-            // dapptools compatibility
-            1
-        } else {
-            runner
-                .executor
-                .backend
-                .basic(self.script_config.evm_opts.sender)?
-                .unwrap_or_default()
-                .nonce
-        };
-
         let mut result = self.execute_with_runner(&mut runner).await?;
 
         // If we have a new sender from execution, we need to use it to deploy libraries and relink
         // contracts.
         if let Some(new_sender) = self.maybe_new_sender(result.transactions.as_ref())? {
-            self.script_config.evm_opts.sender = new_sender;
+            self.script_config.update_sender(new_sender).await?;
 
             // Rollback to linking state to relink contracts with the new sender.
             let state = CompiledState {
@@ -218,291 +196,236 @@ impl PreExecutionState {
         }
         Ok(new_sender)
     }
+}
 
-    /// Creates the Runner that drives script execution
-    async fn prepare_runner(
-        &mut self,
-        stage: SimulationStage,
-        script_wallets: Option<ScriptWallets>,
-    ) -> Result<ScriptRunner> {
-        trace!("preparing script runner");
-        let env = self.script_config.evm_opts.evm_env().await?;
+impl ExecutedState {
+    pub async fn prepare_simulation(mut self) -> Result<PreSimulationState> {
+        let known_contracts = self.build_data.get_flattened_contracts(true);
 
-        let fork = if self.script_config.evm_opts.fork_url.is_some() {
-            self.script_config.evm_opts.get_fork(&self.script_config.config, env.clone())
-        } else {
-            None
-        };
+        let returns = self.get_returns()?;
+        let decoder = self.decode_traces(&known_contracts)?;
 
-        let backend = Backend::spawn(fork).await;
-
-        // Cache forks
-        if let Some(fork_url) = backend.active_fork_url() {
-            self.script_config.backends.insert(fork_url.clone(), backend.clone());
+        if let Some(txs) = self.execution_result.transactions.as_ref() {
+            self.script_config.collect_rpcs(txs);
         }
 
-        // We need to enable tracing to decode contract names: local or external.
-        let mut builder = ExecutorBuilder::new()
-            .inspectors(|stack| stack.trace(true))
-            .spec(self.script_config.config.evm_spec_id())
-            .gas_limit(self.script_config.evm_opts.gas_limit());
-
-        if let SimulationStage::Local = stage {
-            builder = builder.inspectors(|stack| {
-                stack.debug(self.args.debug).cheatcodes(
-                    CheatsConfig::new(
-                        &self.script_config.config,
-                        self.script_config.evm_opts.clone(),
-                        script_wallets,
-                    )
-                    .into(),
-                )
-            });
+        if self.execution_result.transactions.as_ref().map_or(true, |txs| txs.is_empty()) &&
+            self.args.broadcast
+        {
+            eyre::bail!("No onchain transactions generated in script");
         }
 
-        Ok(ScriptRunner::new(
-            builder.build(env, backend),
-            self.script_config.evm_opts.initial_balance,
-            self.script_config.evm_opts.sender,
-        ))
+        self.script_config.check_multi_chain_constraints(&self.build_data.libraries)?;
+        self.script_config.check_shanghai_support().await?;
+
+        Ok(PreSimulationState {
+            args: self.args,
+            script_config: self.script_config,
+            build_data: self.build_data,
+            execution_data: self.execution_data,
+            execution_result: self.execution_result,
+            execution_artifacts: ExecutionArtifacts { known_contracts, decoder, returns },
+        })
+    }
+
+    fn decode_traces(&self, known_contracts: &ContractsByArtifact) -> Result<CallTraceDecoder> {
+        let verbosity = self.script_config.evm_opts.verbosity;
+        let mut etherscan_identifier = EtherscanIdentifier::new(
+            &self.script_config.config,
+            self.script_config.evm_opts.get_remote_chain_id(),
+        )?;
+
+        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_labels(self.execution_result.labeled_addresses.clone())
+            .with_verbosity(verbosity)
+            .with_local_identifier_abis(&local_identifier)
+            .with_signature_identifier(SignaturesIdentifier::new(
+                Config::foundry_cache_dir(),
+                self.script_config.config.offline,
+            )?)
+            .build();
+
+        // Decoding traces using etherscan is costly as we run into rate limits,
+        // causing scripts to run for a very long time unnecessarily.
+        // Therefore, we only try and use etherscan if the user has provided an API key.
+        let should_use_etherscan_traces = self.script_config.config.etherscan_api_key.is_some();
+
+        for (_, trace) in &self.execution_result.traces {
+            decoder.identify(trace, &mut local_identifier);
+            if should_use_etherscan_traces {
+                decoder.identify(trace, &mut etherscan_identifier);
+            }
+        }
+
+        Ok(decoder)
+    }
+
+    fn get_returns(&self) -> Result<HashMap<String, NestedValue>> {
+        let mut returns = HashMap::new();
+        let returned = &self.execution_result.returned;
+        let func = &self.execution_data.func;
+
+        match func.abi_decode_output(&returned, false) {
+            Ok(decoded) => {
+                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                    let internal_type =
+                        output.internal_type.clone().unwrap_or(InternalType::Other {
+                            contract: None,
+                            ty: "unknown".to_string(),
+                        });
+
+                    let label = if !output.name.is_empty() {
+                        output.name.to_string()
+                    } else {
+                        index.to_string()
+                    };
+
+                    returns.insert(
+                        label,
+                        NestedValue {
+                            internal_type: internal_type.to_string(),
+                            value: format_token_raw(token),
+                        },
+                    );
+                }
+            }
+            Err(_) => {
+                shell::println(format!("{returned:?}"))?;
+            }
+        }
+
+        Ok(returns)
     }
 }
 
-impl ScriptArgs {
-    /// Simulates onchain state by executing a list of transactions locally and persisting their
-    /// state. Returns the transactions and any CREATE2 contract address created.
-    pub async fn onchain_simulation(
-        &self,
-        transactions: BroadcastableTransactions,
-        script_config: &ScriptConfig,
-        decoder: &CallTraceDecoder,
-        contracts: &ContractsByArtifact,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
-        trace!(target: "script", "executing onchain simulation");
+pub struct PreSimulationState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_result: ScriptResult,
+    pub execution_artifacts: ExecutionArtifacts,
+}
 
-        let runners = Arc::new(
-            self.build_runners(script_config)
-                .await?
-                .into_iter()
-                .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
-                .collect::<HashMap<_, _>>(),
-        );
+pub struct ExecutionArtifacts {
+    pub known_contracts: ContractsByArtifact,
+    pub decoder: CallTraceDecoder,
+    pub returns: HashMap<String, NestedValue>,
+}
 
-        if script_config.evm_opts.verbosity > 3 {
-            println!("==========================");
-            println!("Simulated On-chain Traces:\n");
-        }
+impl PreSimulationState {
+    pub fn show_json(&self) -> Result<()> {
+        let result = &self.execution_result;
 
-        let address_to_abi: BTreeMap<Address, ArtifactInfo> = decoder
-            .contracts
-            .iter()
-            .filter_map(|(addr, contract_id)| {
-                let contract_name = get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, code)))) =
-                    contracts.find_by_name_or_identifier(contract_name)
-                {
-                    let info = ArtifactInfo {
-                        contract_name: contract_name.to_string(),
-                        contract_id: contract_id.to_string(),
-                        abi,
-                        code,
-                    };
-                    return Some((*addr, info));
-                }
-                None
-            })
-            .collect();
-
-        let mut final_txs = VecDeque::new();
-
-        // Executes all transactions from the different forks concurrently.
-        let futs = transactions
-            .into_iter()
-            .map(|transaction| async {
-                let rpc = transaction.rpc.as_ref().expect("missing broadcastable tx rpc url");
-                let mut runner = runners.get(rpc).expect("invalid rpc url").write();
-
-                let mut tx = transaction.transaction;
-                let result = runner
-                    .simulate(
-                        tx.from
-                            .expect("transaction doesn't have a `from` address at execution time"),
-                        tx.to,
-                        tx.input.clone().into_input(),
-                        tx.value,
-                    )
-                    .wrap_err("Internal EVM error during simulation")?;
-
-                if !result.success || result.traces.is_empty() {
-                    return Ok((None, result.traces));
-                }
-
-                let created_contracts = result
-                    .traces
-                    .iter()
-                    .flat_map(|(_, traces)| {
-                        traces.nodes().iter().filter_map(|node| {
-                            if node.trace.kind.is_any_create() {
-                                return Some(AdditionalContract {
-                                    opcode: node.trace.kind,
-                                    address: node.trace.address,
-                                    init_code: node.trace.data.clone(),
-                                });
-                            }
-                            None
-                        })
-                    })
-                    .collect();
-
-                // Simulate mining the transaction if the user passes `--slow`.
-                if self.slow {
-                    runner.executor.env.block.number += U256::from(1);
-                }
-
-                let is_fixed_gas_limit = tx.gas.is_some();
-                match tx.gas {
-                    // If tx.gas is already set that means it was specified in script
-                    Some(gas) => {
-                        println!("Gas limit was set in script to {gas}");
-                    }
-                    // We inflate the gas used by the user specified percentage
-                    None => {
-                        let gas = U256::from(result.gas_used * self.gas_estimate_multiplier / 100);
-                        tx.gas = Some(gas);
-                    }
-                }
-
-                let tx = TransactionWithMetadata::new(
-                    tx,
-                    transaction.rpc,
-                    &result,
-                    &address_to_abi,
-                    decoder,
-                    created_contracts,
-                    is_fixed_gas_limit,
-                )?;
-
-                eyre::Ok((Some(tx), result.traces))
-            })
-            .collect::<Vec<_>>();
-
-        let mut abort = false;
-        for res in join_all(futs).await {
-            let (tx, traces) = res?;
-
-            // Transaction will be `None`, if execution didn't pass.
-            if tx.is_none() || script_config.evm_opts.verbosity > 3 {
-                // Identify all contracts created during the call.
-                if traces.is_empty() {
-                    eyre::bail!(
-                        "forge script requires tracing enabled to collect created contracts"
-                    );
-                }
-
-                for (_, trace) in &traces {
-                    println!("{}", render_trace_arena(trace, decoder).await?);
-                }
-            }
-
-            if let Some(tx) = tx {
-                final_txs.push_back(tx);
-            } else {
-                abort = true;
-            }
-        }
-
-        if abort {
-            eyre::bail!("Simulated execution failed.")
-        }
-
-        Ok(final_txs)
-    }
-
-    /// Build the multiple runners from different forks.
-    async fn build_runners(
-        &self,
-        script_config: &ScriptConfig,
-    ) -> Result<HashMap<RpcUrl, ScriptRunner>> {
-        let sender = script_config.evm_opts.sender;
-
-        if !shell::verbosity().is_silent() {
-            let n = script_config.total_rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
-            println!("\n## Setting up {n} EVM{s}.");
-        }
-
-        let futs = script_config
-            .total_rpcs
-            .iter()
-            .map(|rpc| async {
-                let mut script_config = script_config.clone();
-                script_config.evm_opts.fork_url = Some(rpc.clone());
-                let runner = self
-                    .prepare_runner(&mut script_config, sender, SimulationStage::OnChain, None)
-                    .await?;
-                Ok((rpc.clone(), runner))
-            })
-            .collect::<Vec<_>>();
-
-        join_all(futs).await.into_iter().collect()
-    }
-
-    /// Creates the Runner that drives script execution
-    async fn prepare_runner(
-        &self,
-        script_config: &mut ScriptConfig,
-        sender: Address,
-        stage: SimulationStage,
-        script_wallets: Option<ScriptWallets>,
-    ) -> Result<ScriptRunner> {
-        trace!("preparing script runner");
-        let env = script_config.evm_opts.evm_env().await?;
-
-        // The db backend that serves all the data.
-        let db = match &script_config.evm_opts.fork_url {
-            Some(url) => match script_config.backends.get(url) {
-                Some(db) => db.clone(),
-                None => {
-                    let fork = script_config.evm_opts.get_fork(&script_config.config, env.clone());
-                    let backend = Backend::spawn(fork);
-                    script_config.backends.insert(url.clone(), backend.clone());
-                    backend
-                }
-            },
-            None => {
-                // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
-                // no need to cache it, since there won't be any onchain simulation that we'd need
-                // to cache the backend for.
-                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()))
-            }
+        let console_logs = decode_console_logs(&result.logs);
+        let output = JsonResult {
+            logs: console_logs,
+            gas_used: result.gas_used,
+            returns: self.execution_artifacts.returns.clone(),
         };
+        let j = serde_json::to_string(&output)?;
+        shell::println(j)?;
 
-        // We need to enable tracing to decode contract names: local or external.
-        let mut builder = ExecutorBuilder::new()
-            .inspectors(|stack| stack.trace(true))
-            .spec(script_config.config.evm_spec_id())
-            .gas_limit(script_config.evm_opts.gas_limit());
-
-        if let SimulationStage::Local = stage {
-            builder = builder.inspectors(|stack| {
-                stack
-                    .debug(self.debug)
-                    .cheatcodes(
-                        CheatsConfig::new(
-                            &script_config.config,
-                            script_config.evm_opts.clone(),
-                            script_wallets,
-                        )
-                        .into(),
-                    )
-                    .enable_isolation(script_config.evm_opts.isolate)
-            });
+        if !self.execution_result.success {
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                RevertDecoder::new().decode(&self.execution_result.returned[..], None)
+            ));
         }
 
-        Ok(ScriptRunner::new(
-            builder.build(env, db),
-            script_config.evm_opts.initial_balance,
-            sender,
-        ))
+        Ok(())
+    }
+
+    pub async fn show_traces(&self) -> Result<()> {
+        let verbosity = self.script_config.evm_opts.verbosity;
+        let func = &self.execution_data.func;
+        let result = &self.execution_result;
+        let decoder = &self.execution_artifacts.decoder;
+
+        if !result.success || verbosity > 3 {
+            if result.traces.is_empty() {
+                warn!(verbosity, "no traces");
+            }
+
+            shell::println("Traces:")?;
+            for (kind, trace) in &result.traces {
+                let should_include = match kind {
+                    TraceKind::Setup => verbosity >= 5,
+                    TraceKind::Execution => verbosity > 3,
+                    _ => false,
+                } || !result.success;
+
+                if should_include {
+                    shell::println(render_trace_arena(trace, &decoder).await?)?;
+                }
+            }
+            shell::println(String::new())?;
+        }
+
+        if result.success {
+            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
+        }
+
+        if self.script_config.evm_opts.fork_url.is_none() {
+            shell::println(format!("Gas used: {}", result.gas_used))?;
+        }
+
+        if result.success && !result.returned.is_empty() {
+            shell::println("\n== Return ==")?;
+            match func.abi_decode_output(&result.returned, false) {
+                Ok(decoded) => {
+                    for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                        let internal_type =
+                            output.internal_type.clone().unwrap_or(InternalType::Other {
+                                contract: None,
+                                ty: "unknown".to_string(),
+                            });
+
+                        let label = if !output.name.is_empty() {
+                            output.name.to_string()
+                        } else {
+                            index.to_string()
+                        };
+                        shell::println(format!(
+                            "{}: {internal_type} {}",
+                            label.trim_end(),
+                            format_token(token)
+                        ))?;
+                    }
+                }
+                Err(_) => {
+                    shell::println(format!("{:x?}", (&result.returned)))?;
+                }
+            }
+        }
+
+        let console_logs = decode_console_logs(&result.logs);
+        if !console_logs.is_empty() {
+            shell::println("\n== Logs ==")?;
+            for log in console_logs {
+                shell::println(format!("  {log}"))?;
+            }
+        }
+
+        if !result.success {
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                RevertDecoder::new().decode(&result.returned[..], None)
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn run_debugger(&self) -> Result<()> {
+        let mut debugger = Debugger::builder()
+            .debug_arenas(self.execution_result.debug.as_deref().unwrap_or_default())
+            .decoder(&self.execution_artifacts.decoder)
+            .sources(self.build_data.build_data.sources.clone())
+            .breakpoints(self.execution_result.breakpoints.clone())
+            .build();
+        debugger.try_run()?;
+        Ok(())
     }
 }

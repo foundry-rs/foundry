@@ -1,36 +1,427 @@
 use super::{
-    multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
-    sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle,
-    NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
+    artifacts::ArtifactInfo,
+    build::LinkedBuildData,
+    executor::{ExecutionArtifacts, ExecutionData, PreSimulationState},
+    multi::MultiChainSequence,
+    providers::ProvidersManager,
+    receipts::clear_pendings,
+    runner::ScriptRunner,
+    sequence::ScriptSequence,
+    transaction::TransactionWithMetadata,
+    verify::VerifyBundle,
+    ScriptArgs, ScriptConfig,
 };
+use crate::cmd::script::transaction::AdditionalContract;
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
 use eyre::{bail, Context, ContextCompat, Result};
-use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::CallTraceDecoder};
+use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::render_trace_arena};
 use foundry_cli::{
     init_progress, update_progress,
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
+    get_contract_name,
     provider::{
         alloy::RpcUrl,
         ethers::{estimate_eip1559_fees, try_get_http_provider, RetryProvider},
     },
     shell,
     types::{ToAlloy, ToEthers},
-    ContractsByArtifact,
 };
-use foundry_compilers::{artifacts::Libraries, ArtifactId};
+use foundry_compilers::artifacts::Libraries;
 use foundry_config::Config;
 use foundry_wallets::WalletSigner;
-use futures::StreamExt;
+use futures::{future::join_all, StreamExt};
+use parking_lot::RwLock;
 use std::{
     cmp::min,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::Arc,
 };
+
+impl PreSimulationState {
+    pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
+        let transactions = if let Some(txs) = self.execution_result.transactions.as_ref() {
+            if self.args.skip_simulation {
+                self.no_simulation(txs.clone())?
+            } else {
+                self.onchain_simulation(txs.clone()).await?
+            }
+        } else {
+            VecDeque::new()
+        };
+
+        Ok(FilledTransactionsState {
+            args: self.args,
+            script_config: self.script_config,
+            build_data: self.build_data,
+            execution_data: self.execution_data,
+            execution_artifacts: self.execution_artifacts,
+            transactions,
+        })
+    }
+
+    pub async fn onchain_simulation(
+        &self,
+        transactions: BroadcastableTransactions,
+    ) -> Result<VecDeque<TransactionWithMetadata>> {
+        trace!(target: "script", "executing onchain simulation");
+
+        let runners = Arc::new(
+            self.build_runners()
+                .await?
+                .into_iter()
+                .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
+                .collect::<HashMap<_, _>>(),
+        );
+
+        if self.script_config.evm_opts.verbosity > 3 {
+            println!("==========================");
+            println!("Simulated On-chain Traces:\n");
+        }
+
+        let contracts = self.build_data.get_flattened_contracts(false);
+        let address_to_abi: BTreeMap<Address, ArtifactInfo> = self
+            .execution_artifacts
+            .decoder
+            .contracts
+            .iter()
+            .filter_map(|(addr, contract_id)| {
+                let contract_name = get_contract_name(contract_id);
+                if let Ok(Some((_, (abi, code)))) =
+                    contracts.find_by_name_or_identifier(contract_name)
+                {
+                    let info = ArtifactInfo {
+                        contract_name: contract_name.to_string(),
+                        contract_id: contract_id.to_string(),
+                        abi,
+                        code,
+                    };
+                    return Some((*addr, info));
+                }
+                None
+            })
+            .collect();
+
+        let mut final_txs = VecDeque::new();
+
+        // Executes all transactions from the different forks concurrently.
+        let futs = transactions
+            .into_iter()
+            .map(|transaction| async {
+                let rpc = transaction.rpc.as_ref().expect("missing broadcastable tx rpc url");
+                let mut runner = runners.get(rpc).expect("invalid rpc url").write();
+
+                let mut tx = transaction.transaction;
+                let result = runner
+                    .simulate(
+                        tx.from
+                            .expect("transaction doesn't have a `from` address at execution time"),
+                        tx.to,
+                        tx.input.clone().into_input(),
+                        tx.value,
+                    )
+                    .wrap_err("Internal EVM error during simulation")?;
+
+                if !result.success || result.traces.is_empty() {
+                    return Ok((None, result.traces));
+                }
+
+                let created_contracts = result
+                    .traces
+                    .iter()
+                    .flat_map(|(_, traces)| {
+                        traces.nodes().iter().filter_map(|node| {
+                            if node.trace.kind.is_any_create() {
+                                return Some(AdditionalContract {
+                                    opcode: node.trace.kind,
+                                    address: node.trace.address,
+                                    init_code: node.trace.data.clone(),
+                                });
+                            }
+                            None
+                        })
+                    })
+                    .collect();
+
+                // Simulate mining the transaction if the user passes `--slow`.
+                if self.args.slow {
+                    runner.executor.env.block.number += U256::from(1);
+                }
+
+                let is_fixed_gas_limit = tx.gas.is_some();
+                match tx.gas {
+                    // If tx.gas is already set that means it was specified in script
+                    Some(gas) => {
+                        println!("Gas limit was set in script to {gas}");
+                    }
+                    // We inflate the gas used by the user specified percentage
+                    None => {
+                        let gas =
+                            U256::from(result.gas_used * self.args.gas_estimate_multiplier / 100);
+                        tx.gas = Some(gas);
+                    }
+                }
+
+                let tx = TransactionWithMetadata::new(
+                    tx,
+                    transaction.rpc,
+                    &result,
+                    &address_to_abi,
+                    &self.execution_artifacts.decoder,
+                    created_contracts,
+                    is_fixed_gas_limit,
+                )?;
+
+                eyre::Ok((Some(tx), result.traces))
+            })
+            .collect::<Vec<_>>();
+
+        let mut abort = false;
+        for res in join_all(futs).await {
+            let (tx, traces) = res?;
+
+            // Transaction will be `None`, if execution didn't pass.
+            if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
+                // Identify all contracts created during the call.
+                if traces.is_empty() {
+                    eyre::bail!(
+                        "forge script requires tracing enabled to collect created contracts"
+                    );
+                }
+
+                for (_, trace) in &traces {
+                    println!(
+                        "{}",
+                        render_trace_arena(trace, &self.execution_artifacts.decoder).await?
+                    );
+                }
+            }
+
+            if let Some(tx) = tx {
+                final_txs.push_back(tx);
+            } else {
+                abort = true;
+            }
+        }
+
+        if abort {
+            eyre::bail!("Simulated execution failed.")
+        }
+
+        Ok(final_txs)
+    }
+
+    /// Build the multiple runners from different forks.
+    async fn build_runners(&self) -> Result<HashMap<RpcUrl, ScriptRunner>> {
+        if !shell::verbosity().is_silent() {
+            let n = self.script_config.total_rpcs.len();
+            let s = if n != 1 { "s" } else { "" };
+            println!("\n## Setting up {n} EVM{s}.");
+        }
+
+        let futs = self
+            .script_config
+            .total_rpcs
+            .iter()
+            .map(|rpc| async {
+                let mut script_config = self.script_config.clone();
+                let runner = script_config.get_runner(Some(rpc.clone()), false).await?;
+                Ok((rpc.clone(), runner))
+            })
+            .collect::<Vec<_>>();
+
+        join_all(futs).await.into_iter().collect()
+    }
+
+    fn no_simulation(
+        &self,
+        transactions: BroadcastableTransactions,
+    ) -> Result<VecDeque<TransactionWithMetadata>> {
+        Ok(transactions
+            .into_iter()
+            .map(|tx| TransactionWithMetadata::from_tx_request(tx.transaction))
+            .collect())
+    }
+}
+
+pub struct FilledTransactionsState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_artifacts: ExecutionArtifacts,
+    pub transactions: VecDeque<TransactionWithMetadata>,
+}
+
+impl FilledTransactionsState {
+    /// Returns all transactions of the [`TransactionWithMetadata`] type in a list of
+    /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
+    /// chain deployment.
+    ///
+    /// Each transaction will be added with the correct transaction type and gas estimation.
+    pub async fn bundle(self) -> Result<BundledState> {
+        // User might be using both "in-code" forks and `--fork-url`.
+        let last_rpc = &self.transactions.back().expect("exists; qed").rpc;
+        let is_multi_deployment = self.transactions.iter().any(|tx| &tx.rpc != last_rpc);
+
+        let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
+
+        // Batches sequence of transactions from different rpcs.
+        let mut new_sequence = VecDeque::new();
+        let mut manager = ProvidersManager::default();
+        let mut sequences = vec![];
+
+        // Peeking is used to check if the next rpc url is different. If so, it creates a
+        // [`ScriptSequence`] from all the collected transactions up to this point.
+        let mut txes_iter = self.transactions.clone().into_iter().peekable();
+
+        while let Some(mut tx) = txes_iter.next() {
+            let tx_rpc = match tx.rpc.clone() {
+                Some(rpc) => rpc,
+                None => {
+                    let rpc = self.args.evm_opts.ensure_fork_url()?.clone();
+                    // Fills the RPC inside the transaction, if missing one.
+                    tx.rpc = Some(rpc.clone());
+                    rpc
+                }
+            };
+
+            let provider_info = manager.get_or_init_provider(&tx_rpc, self.args.legacy).await?;
+
+            // Handles chain specific requirements.
+            tx.change_type(provider_info.is_legacy);
+            tx.transaction.set_chain_id(provider_info.chain);
+
+            if !self.args.skip_simulation {
+                let typed_tx = tx.typed_tx_mut();
+
+                if has_different_gas_calc(provider_info.chain) {
+                    trace!("estimating with different gas calculation");
+                    let gas = *typed_tx.gas().expect("gas is set by simulation.");
+
+                    // We are trying to show the user an estimation of the total gas usage.
+                    //
+                    // However, some transactions might depend on previous ones. For
+                    // example, tx1 might deploy a contract that tx2 uses. That
+                    // will result in the following `estimate_gas` call to fail,
+                    // since tx1 hasn't been broadcasted yet.
+                    //
+                    // Not exiting here will not be a problem when actually broadcasting, because
+                    // for chains where `has_different_gas_calc` returns true,
+                    // we await each transaction before broadcasting the next
+                    // one.
+                    if let Err(err) = self.estimate_gas(typed_tx, &provider_info.provider).await {
+                        trace!("gas estimation failed: {err}");
+
+                        // Restore gas value, since `estimate_gas` will remove it.
+                        typed_tx.set_gas(gas);
+                    }
+                }
+
+                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::ZERO);
+                *total_gas += (*typed_tx.gas().expect("gas is set")).to_alloy();
+            }
+
+            new_sequence.push_back(tx);
+            // We only create a [`ScriptSequence`] object when we collect all the rpc related
+            // transactions.
+            if let Some(next_tx) = txes_iter.peek() {
+                if next_tx.rpc == Some(tx_rpc) {
+                    continue;
+                }
+            }
+
+            let sequence = ScriptSequence::new(
+                new_sequence,
+                self.execution_artifacts.returns.clone(),
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                provider_info.chain.into(),
+                &self.script_config.config,
+                self.args.broadcast,
+                is_multi_deployment,
+            )?;
+
+            sequences.push(sequence);
+
+            new_sequence = VecDeque::new();
+        }
+
+        if !self.args.skip_simulation {
+            // Present gas information on a per RPC basis.
+            for (rpc, total_gas) in total_gas_per_rpc {
+                let provider_info = manager.get(&rpc).expect("provider is set.");
+
+                // We don't store it in the transactions, since we want the most updated value.
+                // Right before broadcasting.
+                let per_gas = if let Some(gas_price) = self.args.with_gas_price {
+                    gas_price
+                } else {
+                    provider_info.gas_price()?
+                };
+
+                shell::println("\n==========================")?;
+                shell::println(format!("\nChain {}", provider_info.chain))?;
+
+                shell::println(format!(
+                    "\nEstimated gas price: {} gwei",
+                    format_units(per_gas, 9)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                        .trim_end_matches('0')
+                        .trim_end_matches('.')
+                ))?;
+                shell::println(format!("\nEstimated total gas used for script: {total_gas}"))?;
+                shell::println(format!(
+                    "\nEstimated amount required: {} ETH",
+                    format_units(total_gas.saturating_mul(per_gas), 18)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                        .trim_end_matches('0')
+                ))?;
+                shell::println("\n==========================")?;
+            }
+        }
+        Ok(BundledState {
+            args: self.args,
+            script_config: self.script_config,
+            build_data: self.build_data,
+            execution_data: self.execution_data,
+            execution_artifacts: self.execution_artifacts,
+            sequences,
+        })
+    }
+
+    async fn estimate_gas<T>(&self, tx: &mut TypedTransaction, provider: &Provider<T>) -> Result<()>
+    where
+        T: JsonRpcClient,
+    {
+        // if already set, some RPC endpoints might simply return the gas value that is already
+        // set in the request and omit the estimate altogether, so we remove it here
+        let _ = tx.gas_mut().take();
+
+        tx.set_gas(
+            provider
+                .estimate_gas(tx, None)
+                .await
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
+                self.args.gas_estimate_multiplier /
+                100,
+        );
+        Ok(())
+    }
+}
+
+pub struct BundledState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_artifacts: ExecutionArtifacts,
+    pub sequences: Vec<ScriptSequence>,
+}
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -297,69 +688,42 @@ impl ScriptArgs {
     /// them.
     pub async fn handle_broadcastable_transactions(
         &self,
-        mut result: ScriptResult,
-        libraries: Libraries,
-        decoder: &CallTraceDecoder,
-        mut script_config: ScriptConfig,
+        mut state: BundledState,
         verify: VerifyBundle,
-        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
-        if let Some(txs) = result.transactions.take() {
-            script_config.collect_rpcs(&txs);
-            script_config.check_multi_chain_constraints(&libraries)?;
-            script_config.check_shanghai_support().await?;
+        if state.script_config.has_multiple_rpcs() {
+            trace!(target: "script", "broadcasting multi chain deployment");
 
-            if !script_config.missing_rpc {
-                trace!(target: "script", "creating deployments");
+            let multi = MultiChainSequence::new(
+                state.sequences.clone(),
+                &self.sig,
+                &state.build_data.build_data.target,
+                &state.script_config.config,
+                self.broadcast,
+            )?;
 
-                let mut deployments = self
-                    .create_script_sequences(
-                        txs,
-                        &result,
-                        &mut script_config,
-                        decoder,
-                        &verify.known_contracts,
-                    )
-                    .await?;
-
-                if script_config.has_multiple_rpcs() {
-                    trace!(target: "script", "broadcasting multi chain deployment");
-
-                    let multi = MultiChainSequence::new(
-                        deployments.clone(),
-                        &self.sig,
-                        script_config.target_contract(),
-                        &script_config.config,
-                        self.broadcast,
-                    )?;
-
-                    if self.broadcast {
-                        self.multi_chain_deployment(
-                            multi,
-                            libraries,
-                            &script_config.config,
-                            verify,
-                            signers,
-                        )
-                        .await?;
-                    }
-                } else if self.broadcast {
-                    self.single_deployment(
-                        deployments.first_mut().expect("missing deployment"),
-                        script_config,
-                        libraries,
-                        verify,
-                        signers,
-                    )
-                    .await?;
-                }
-
-                if !self.broadcast {
-                    shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
-                }
-            } else {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+            if self.broadcast {
+                self.multi_chain_deployment(
+                    multi,
+                    state.build_data.libraries,
+                    &state.script_config.config,
+                    verify,
+                    &state.script_config.script_wallets.into_multi_wallet().into_signers()?,
+                )
+                .await?;
             }
+        } else if self.broadcast {
+            self.single_deployment(
+                state.sequences.first_mut().expect("missing deployment"),
+                state.script_config,
+                state.build_data.libraries,
+                verify,
+            )
+            .await?;
+        }
+
+        if !self.broadcast {
+            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
         }
         Ok(())
     }
@@ -371,7 +735,6 @@ impl ScriptArgs {
         script_config: ScriptConfig,
         libraries: Libraries,
         verify: VerifyBundle,
-        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
 
@@ -383,221 +746,14 @@ impl ScriptArgs {
 
         deployment_sequence.add_libraries(libraries);
 
-        self.send_transactions(deployment_sequence, &rpc, signers).await?;
+        let signers = script_config.script_wallets.into_multi_wallet().into_signers()?;
+
+        self.send_transactions(deployment_sequence, &rpc, &signers).await?;
 
         if self.verify {
             return deployment_sequence.verify_contracts(&script_config.config, verify).await;
         }
         Ok(())
-    }
-
-    /// Given the collected transactions it creates a list of [`ScriptSequence`].  List length will
-    /// be higher than 1, if we're dealing with a multi chain deployment.
-    ///
-    /// If `--skip-simulation` is not passed, it will make an onchain simulation of the transactions
-    /// before adding them to [`ScriptSequence`].
-    async fn create_script_sequences(
-        &self,
-        txs: BroadcastableTransactions,
-        script_result: &ScriptResult,
-        script_config: &mut ScriptConfig,
-        decoder: &CallTraceDecoder,
-        known_contracts: &ContractsByArtifact,
-    ) -> Result<Vec<ScriptSequence>> {
-        if !txs.is_empty() {
-            let gas_filled_txs = self
-                .fills_transactions_with_gas(txs, script_config, decoder, known_contracts)
-                .await?;
-
-            let returns = self.get_returns(&*script_config, &script_result.returned)?;
-
-            return self
-                .bundle_transactions(
-                    gas_filled_txs,
-                    &script_config.target_contract().clone(),
-                    &mut script_config.config,
-                    returns,
-                )
-                .await;
-        } else if self.broadcast {
-            eyre::bail!("No onchain transactions generated in script");
-        }
-
-        Ok(vec![])
-    }
-
-    /// Takes the collected transactions and executes them locally before converting them to
-    /// [`TransactionWithMetadata`] with the appropriate gas execution estimation. If
-    /// `--skip-simulation` is passed, then it will skip the execution.
-    async fn fills_transactions_with_gas(
-        &self,
-        txs: BroadcastableTransactions,
-        script_config: &ScriptConfig,
-        decoder: &CallTraceDecoder,
-        known_contracts: &ContractsByArtifact,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
-        let gas_filled_txs = if self.skip_simulation {
-            shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
-            txs.into_iter()
-                .map(|btx| {
-                    let mut tx = TransactionWithMetadata::from_tx_request(btx.transaction);
-                    tx.rpc = btx.rpc;
-                    tx
-                })
-                .collect()
-        } else {
-            self.onchain_simulation(
-                txs,
-                script_config,
-                decoder,
-                known_contracts,
-            )
-            .await
-            .wrap_err("\nTransaction failed when running the on-chain simulation. Check the trace above for more information.")?
-        };
-        Ok(gas_filled_txs)
-    }
-
-    /// Returns all transactions of the [`TransactionWithMetadata`] type in a list of
-    /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
-    /// chain deployment.
-    ///
-    /// Each transaction will be added with the correct transaction type and gas estimation.
-    async fn bundle_transactions(
-        &self,
-        transactions: VecDeque<TransactionWithMetadata>,
-        target: &ArtifactId,
-        config: &mut Config,
-        returns: HashMap<String, NestedValue>,
-    ) -> Result<Vec<ScriptSequence>> {
-        // User might be using both "in-code" forks and `--fork-url`.
-        let last_rpc = &transactions.back().expect("exists; qed").rpc;
-        let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
-
-        let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
-
-        // Batches sequence of transactions from different rpcs.
-        let mut new_sequence = VecDeque::new();
-        let mut manager = ProvidersManager::default();
-        let mut deployments = vec![];
-
-        // Config is used to initialize the sequence chain, so we need to change when handling a new
-        // sequence. This makes sure we don't lose the original value.
-        let original_config_chain = config.chain;
-
-        // Peeking is used to check if the next rpc url is different. If so, it creates a
-        // [`ScriptSequence`] from all the collected transactions up to this point.
-        let mut txes_iter = transactions.into_iter().peekable();
-
-        while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = match tx.rpc.clone() {
-                Some(rpc) => rpc,
-                None => {
-                    let rpc = self.evm_opts.ensure_fork_url()?.clone();
-                    // Fills the RPC inside the transaction, if missing one.
-                    tx.rpc = Some(rpc.clone());
-                    rpc
-                }
-            };
-
-            let provider_info = manager.get_or_init_provider(&tx_rpc, self.legacy).await?;
-
-            // Handles chain specific requirements.
-            tx.change_type(provider_info.is_legacy);
-            tx.transaction.set_chain_id(provider_info.chain);
-
-            if !self.skip_simulation {
-                let typed_tx = tx.typed_tx_mut();
-
-                if has_different_gas_calc(provider_info.chain) {
-                    trace!("estimating with different gas calculation");
-                    let gas = *typed_tx.gas().expect("gas is set by simulation.");
-
-                    // We are trying to show the user an estimation of the total gas usage.
-                    //
-                    // However, some transactions might depend on previous ones. For
-                    // example, tx1 might deploy a contract that tx2 uses. That
-                    // will result in the following `estimate_gas` call to fail,
-                    // since tx1 hasn't been broadcasted yet.
-                    //
-                    // Not exiting here will not be a problem when actually broadcasting, because
-                    // for chains where `has_different_gas_calc` returns true,
-                    // we await each transaction before broadcasting the next
-                    // one.
-                    if let Err(err) = self.estimate_gas(typed_tx, &provider_info.provider).await {
-                        trace!("gas estimation failed: {err}");
-
-                        // Restore gas value, since `estimate_gas` will remove it.
-                        typed_tx.set_gas(gas);
-                    }
-                }
-
-                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::ZERO);
-                *total_gas += (*typed_tx.gas().expect("gas is set")).to_alloy();
-            }
-
-            new_sequence.push_back(tx);
-            // We only create a [`ScriptSequence`] object when we collect all the rpc related
-            // transactions.
-            if let Some(next_tx) = txes_iter.peek() {
-                if next_tx.rpc == Some(tx_rpc) {
-                    continue;
-                }
-            }
-
-            config.chain = Some(provider_info.chain.into());
-            let sequence = ScriptSequence::new(
-                new_sequence,
-                returns.clone(),
-                &self.sig,
-                target,
-                config,
-                self.broadcast,
-                is_multi_deployment,
-            )?;
-
-            deployments.push(sequence);
-
-            new_sequence = VecDeque::new();
-        }
-
-        // Restore previous config chain.
-        config.chain = original_config_chain;
-
-        if !self.skip_simulation {
-            // Present gas information on a per RPC basis.
-            for (rpc, total_gas) in total_gas_per_rpc {
-                let provider_info = manager.get(&rpc).expect("provider is set.");
-
-                // We don't store it in the transactions, since we want the most updated value.
-                // Right before broadcasting.
-                let per_gas = if let Some(gas_price) = self.with_gas_price {
-                    gas_price
-                } else {
-                    provider_info.gas_price()?
-                };
-
-                shell::println("\n==========================")?;
-                shell::println(format!("\nChain {}", provider_info.chain))?;
-
-                shell::println(format!(
-                    "\nEstimated gas price: {} gwei",
-                    format_units(per_gas, 9)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                        .trim_end_matches('0')
-                        .trim_end_matches('.')
-                ))?;
-                shell::println(format!("\nEstimated total gas used for script: {total_gas}"))?;
-                shell::println(format!(
-                    "\nEstimated amount required: {} ETH",
-                    format_units(total_gas.saturating_mul(per_gas), 18)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                        .trim_end_matches('0')
-                ))?;
-                shell::println("\n==========================")?;
-            }
-        }
-        Ok(deployments)
     }
 
     /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve

@@ -10,12 +10,6 @@ use forge::{
 use foundry_config::Config;
 use yansi::Paint;
 
-/// Represents which simulation stage is the script execution at.
-pub enum SimulationStage {
-    Local,
-    OnChain,
-}
-
 /// Drives script execution
 #[derive(Debug)]
 pub struct ScriptRunner {

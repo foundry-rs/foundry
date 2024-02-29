@@ -79,12 +79,11 @@ impl ScriptSequence {
         returns: HashMap<String, NestedValue>,
         sig: &str,
         target: &ArtifactId,
+        chain: u64,
         config: &Config,
         broadcasted: bool,
         is_multi: bool,
     ) -> Result<Self> {
-        let chain = config.chain.unwrap_or_default().id();
-
         let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
             &config.cache_path,

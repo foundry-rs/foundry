@@ -4,32 +4,32 @@ use super::{
 };
 use crate::cmd::script::{
     build::{LinkedBuildData, PreprocessedState},
-    executor::ExecutedState,
     receipts,
 };
 use alloy_primitives::Address;
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
+use forge::inspectors::cheatcodes::ScriptWallets;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{provider::ethers::try_get_http_provider, types::ToAlloy};
 use foundry_compilers::artifacts::Libraries;
-use foundry_debugger::Debugger;
-use foundry_wallets::WalletSigner;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(mut self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-        let mut script_config =
-            ScriptConfig { config, evm_opts, debug: self.debug, ..Default::default() };
+        let script_wallets =
+            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
-            script_config.evm_opts.sender = sender;
+            evm_opts.sender = sender;
         }
+
+        let mut script_config = ScriptConfig::new(config, evm_opts, script_wallets).await?;
 
         if script_config.evm_opts.fork_url.is_none() {
             // if not forking, then ignore any pre-deployed library addresses
@@ -37,63 +37,50 @@ impl ScriptArgs {
         }
 
         let state = PreprocessedState { args: self.clone(), script_config: script_config.clone() };
-        let ExecutedState { build_data, execution_result, execution_data, .. } =
-            state.compile()?.link()?.prepare_execution().await?.execute().await?;
-        script_config.target_contract = Some(build_data.build_data.target.clone());
-        script_config.called_function = Some(execution_data.func);
+        let state = state
+            .compile()?
+            .link()?
+            .prepare_execution()
+            .await?
+            .execute()
+            .await?
+            .prepare_simulation()
+            .await?;
+
+        script_config.target_contract = Some(state.build_data.build_data.target.clone());
+        script_config.called_function = Some(state.execution_data.func.clone());
 
         let mut verify = VerifyBundle::new(
             &script_config.config.project()?,
             &script_config.config,
-            build_data.get_flattened_contracts(false),
+            state.build_data.get_flattened_contracts(false),
             self.retry,
             self.verifier.clone(),
         );
 
-        let script_wallets = execution_data.script_wallets;
-
-        // We need to execute the script even if just resuming, in case we need to collect private
-        // keys from the execution.
-        let mut result = execution_result;
-
         if self.resume || (self.verify && !self.broadcast) {
-            let signers = script_wallets.into_multi_wallet().into_signers()?;
-            return self.resume_deployment(script_config, build_data, verify, &signers).await;
+            return self.resume_deployment(script_config, state.build_data, verify).await;
         }
-
-        let known_contracts = build_data.get_flattened_contracts(true);
-        let decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
-            let mut debugger = Debugger::builder()
-                .debug_arenas(result.debug.as_deref().unwrap_or_default())
-                .decoder(&decoder)
-                .sources(build_data.build_data.sources.clone())
-                .breakpoints(result.breakpoints.clone())
-                .build();
-            debugger.try_run()?;
-        }
-
-        if self.json {
-            self.show_json(&script_config, &result)?;
+            state.run_debugger()
         } else {
-            self.show_traces(&script_config, &decoder, &mut result).await?;
+            if self.json {
+                state.show_json()?;
+            } else {
+                state.show_traces().await?;
+            }
+
+            verify.known_contracts = state.build_data.get_flattened_contracts(false);
+            self.check_contract_sizes(
+                &state.execution_result,
+                &state.build_data.highlevel_known_contracts,
+            )?;
+
+            let state = state.fill_metadata().await?.bundle().await?;
+
+            self.handle_broadcastable_transactions(state, verify).await
         }
-
-        verify.known_contracts = build_data.get_flattened_contracts(false);
-        self.check_contract_sizes(&result, &build_data.highlevel_known_contracts)?;
-
-        let signers = script_wallets.into_multi_wallet().into_signers()?;
-
-        self.handle_broadcastable_transactions(
-            result,
-            build_data.libraries,
-            &decoder,
-            script_config,
-            verify,
-            &signers,
-        )
-        .await
     }
 
     /// Resumes the deployment and/or verification of the script.
@@ -102,7 +89,6 @@ impl ScriptArgs {
         script_config: ScriptConfig,
         build_data: LinkedBuildData,
         verify: VerifyBundle,
-        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if self.multi {
             return self
@@ -115,7 +101,7 @@ impl ScriptArgs {
                     build_data.libraries,
                     &script_config.config,
                     verify,
-                    signers,
+                    &script_config.script_wallets.into_multi_wallet().into_signers()?,
                 )
                 .await;
         }
@@ -123,7 +109,6 @@ impl ScriptArgs {
             script_config,
             build_data,
             verify,
-            signers,
         )
         .await
         .map_err(|err| {
@@ -137,7 +122,6 @@ impl ScriptArgs {
         script_config: ScriptConfig,
         build_data: LinkedBuildData,
         mut verify: VerifyBundle,
-        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "resuming single deployment");
 
@@ -178,8 +162,10 @@ impl ScriptArgs {
 
         receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
+        let signers = script_config.script_wallets.into_multi_wallet().into_signers()?;
+
         if self.resume {
-            self.send_transactions(&mut deployment_sequence, fork_url, signers).await?;
+            self.send_transactions(&mut deployment_sequence, fork_url, &signers).await?;
         }
 
         if self.verify {
@@ -190,7 +176,7 @@ impl ScriptArgs {
             // not included in the solc cache files.
             let build_data = build_data.build_data.link_with_libraries(libraries)?;
 
-            verify.known_contracts = build_data.get_flattened_contracts(true);
+            verify.known_contracts = build_data.get_flattened_contracts(false);
 
             deployment_sequence.verify_contracts(&script_config.config, verify).await?;
         }

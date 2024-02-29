@@ -1,6 +1,6 @@
+use crate::cmd::script::runner::ScriptRunner;
 use super::build::BuildArgs;
-use alloy_dyn_abi::FunctionExt;
-use alloy_json_abi::{Function, InternalType, JsonAbi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
@@ -9,21 +9,18 @@ use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     backend::Backend,
     debug::DebugArena,
-    decode::decode_console_logs,
+    executors::ExecutorBuilder,
+    inspectors::{cheatcodes::ScriptWallets, CheatsConfig},
     opts::EvmOpts,
-    traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
-    },
+    traces::Traces,
 };
 use forge_verify::RetryArgs;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    fmt::{format_token, format_token_raw},
     provider::ethers::RpcUrl,
-    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -38,8 +35,7 @@ use foundry_config::{
     Config, NamedChain,
 };
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, decode::RevertDecoder,
-    inspectors::cheatcodes::BroadcastableTransactions,
+    constants::DEFAULT_CREATE2_DEPLOYER, inspectors::cheatcodes::BroadcastableTransactions,
 };
 use foundry_wallets::MultiWalletOpts;
 use futures::future;
@@ -190,185 +186,6 @@ pub struct ScriptArgs {
 // === impl ScriptArgs ===
 
 impl ScriptArgs {
-    fn decode_traces(
-        &self,
-        script_config: &ScriptConfig,
-        result: &mut ScriptResult,
-        known_contracts: &ContractsByArtifact,
-    ) -> Result<CallTraceDecoder> {
-        let verbosity = script_config.evm_opts.verbosity;
-        let mut etherscan_identifier = EtherscanIdentifier::new(
-            &script_config.config,
-            script_config.evm_opts.get_remote_chain_id(),
-        )?;
-
-        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
-        let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.clone())
-            .with_verbosity(verbosity)
-            .with_local_identifier_abis(&local_identifier)
-            .with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                script_config.config.offline,
-            )?)
-            .build();
-
-        // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecessarily.
-        // Therefore, we only try and use etherscan if the user has provided an API key.
-        let should_use_etherscan_traces = script_config.config.etherscan_api_key.is_some();
-
-        for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &mut local_identifier);
-            if should_use_etherscan_traces {
-                decoder.identify(trace, &mut etherscan_identifier);
-            }
-        }
-        Ok(decoder)
-    }
-
-    fn get_returns(
-        &self,
-        script_config: &ScriptConfig,
-        returned: &Bytes,
-    ) -> Result<HashMap<String, NestedValue>> {
-        let func = script_config.called_function.as_ref().expect("There should be a function.");
-        let mut returns = HashMap::new();
-
-        match func.abi_decode_output(returned, false) {
-            Ok(decoded) => {
-                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type =
-                        output.internal_type.clone().unwrap_or(InternalType::Other {
-                            contract: None,
-                            ty: "unknown".to_string(),
-                        });
-
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
-                        index.to_string()
-                    };
-
-                    returns.insert(
-                        label,
-                        NestedValue {
-                            internal_type: internal_type.to_string(),
-                            value: format_token_raw(token),
-                        },
-                    );
-                }
-            }
-            Err(_) => {
-                shell::println(format!("{returned:?}"))?;
-            }
-        }
-
-        Ok(returns)
-    }
-
-    async fn show_traces(
-        &self,
-        script_config: &ScriptConfig,
-        decoder: &CallTraceDecoder,
-        result: &mut ScriptResult,
-    ) -> Result<()> {
-        let verbosity = script_config.evm_opts.verbosity;
-        let func = script_config.called_function.as_ref().expect("There should be a function.");
-
-        if !result.success || verbosity > 3 {
-            if result.traces.is_empty() {
-                warn!(verbosity, "no traces");
-            }
-
-            shell::println("Traces:")?;
-            for (kind, trace) in &result.traces {
-                let should_include = match kind {
-                    TraceKind::Setup => verbosity >= 5,
-                    TraceKind::Execution => verbosity > 3,
-                    _ => false,
-                } || !result.success;
-
-                if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
-                }
-            }
-            shell::println(String::new())?;
-        }
-
-        if result.success {
-            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
-        }
-
-        if script_config.evm_opts.fork_url.is_none() {
-            shell::println(format!("Gas used: {}", result.gas_used))?;
-        }
-
-        if result.success && !result.returned.is_empty() {
-            shell::println("\n== Return ==")?;
-            match func.abi_decode_output(&result.returned, false) {
-                Ok(decoded) => {
-                    for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                        let internal_type =
-                            output.internal_type.clone().unwrap_or(InternalType::Other {
-                                contract: None,
-                                ty: "unknown".to_string(),
-                            });
-
-                        let label = if !output.name.is_empty() {
-                            output.name.to_string()
-                        } else {
-                            index.to_string()
-                        };
-                        shell::println(format!(
-                            "{}: {internal_type} {}",
-                            label.trim_end(),
-                            format_token(token)
-                        ))?;
-                    }
-                }
-                Err(_) => {
-                    shell::println(format!("{:x?}", (&result.returned)))?;
-                }
-            }
-        }
-
-        let console_logs = decode_console_logs(&result.logs);
-        if !console_logs.is_empty() {
-            shell::println("\n== Logs ==")?;
-            for log in console_logs {
-                shell::println(format!("  {log}"))?;
-            }
-        }
-
-        if !result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn show_json(&self, script_config: &ScriptConfig, result: &ScriptResult) -> Result<()> {
-        let returns = self.get_returns(script_config, &result.returned)?;
-
-        let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
-        let j = serde_json::to_string(&output)?;
-        shell::println(j)?;
-
-        if !result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
-            ));
-        }
-
-        Ok(())
-    }
-
     /// Returns the Function and calldata based on the signature
     ///
     /// If the `sig` is a valid human-readable function we find the corresponding function in the
@@ -551,7 +368,7 @@ pub struct NestedValue {
     pub value: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
@@ -568,9 +385,47 @@ pub struct ScriptConfig {
     pub missing_rpc: bool,
     /// Should return some debug information
     pub debug: bool,
+    /// Container for wallets needed through script execution
+    pub script_wallets: ScriptWallets,
 }
 
 impl ScriptConfig {
+    pub async fn new(
+        config: Config,
+        evm_opts: EvmOpts,
+        script_wallets: ScriptWallets,
+    ) -> Result<Self> {
+        let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
+            forge::next_nonce(evm_opts.sender, fork_url, None).await?
+        } else {
+            // dapptools compatibility
+            1
+        };
+        Ok(Self {
+            config,
+            evm_opts,
+            sender_nonce,
+            backends: HashMap::new(),
+            target_contract: None,
+            called_function: None,
+            total_rpcs: HashSet::new(),
+            missing_rpc: false,
+            debug: false,
+            script_wallets,
+        })
+    }
+
+    pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
+        self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+            forge::next_nonce(sender, fork_url, None).await?
+        } else {
+            // dapptools compatibility
+            1
+        };
+        self.evm_opts.sender = sender;
+        Ok(())
+    }
+
     fn collect_rpcs(&mut self, txs: &BroadcastableTransactions) {
         self.missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
 
@@ -636,6 +491,60 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
             shell::println(Paint::yellow(msg))?;
         }
         Ok(())
+    }
+
+    async fn get_runner(
+        &mut self,
+        fork_url: Option<String>,
+        cheatcodes: bool,
+    ) -> Result<ScriptRunner> {
+        trace!("preparing script runner");
+        let env = self.evm_opts.evm_env().await?;
+
+        let db = if let Some(fork_url) = fork_url {
+            match self.backends.get(&fork_url) {
+                Some(db) => db.clone(),
+                None => {
+                    let fork = self.evm_opts.get_fork(&self.config, env.clone());
+                    let backend = Backend::spawn(fork);
+                    self.backends.insert(fork_url.clone(), backend.clone());
+                    backend
+                }
+            }
+        } else {
+            // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
+            // no need to cache it, since there won't be any onchain simulation that we'd need
+            // to cache the backend for.
+            Backend::spawn(self.evm_opts.get_fork(&self.config, env.clone()))
+        };
+
+        // We need to enable tracing to decode contract names: local or external.
+        let mut builder = ExecutorBuilder::new()
+            .inspectors(|stack| stack.trace(true))
+            .spec(self.config.evm_spec_id())
+            .gas_limit(self.evm_opts.gas_limit());
+
+        if cheatcodes {
+            builder = builder.inspectors(|stack| {
+                stack
+                    .debug(self.debug)
+                    .cheatcodes(
+                        CheatsConfig::new(
+                            &self.config,
+                            self.evm_opts.clone(),
+                            Some(self.script_wallets.clone()),
+                        )
+                        .into(),
+                    )
+                    .enable_isolation(self.evm_opts.isolate)
+            });
+        }
+
+        Ok(ScriptRunner::new(
+            builder.build(env, db),
+            self.evm_opts.initial_balance,
+            self.evm_opts.sender,
+        ))
     }
 }
 
