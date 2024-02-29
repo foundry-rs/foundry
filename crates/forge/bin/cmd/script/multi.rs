@@ -4,15 +4,17 @@ use super::{
     verify::VerifyBundle,
     ScriptArgs,
 };
-use ethers_signers::LocalWallet;
+use alloy_primitives::Address;
 use eyre::{ContextCompat, Report, Result, WrapErr};
 use foundry_cli::utils::now;
-use foundry_common::{fs, get_http_provider};
+use foundry_common::{fs, provider::ethers::get_http_provider};
 use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
+use foundry_wallets::WalletSigner;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     sync::Arc,
@@ -179,8 +181,8 @@ impl ScriptArgs {
         mut deployments: MultiChainSequence,
         libraries: Libraries,
         config: &Config,
-        script_wallets: Vec<LocalWallet>,
         verify: VerifyBundle,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if !libraries.is_empty() {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
@@ -199,9 +201,8 @@ impl ScriptArgs {
                 .deployments
                 .iter_mut()
                 .map(|sequence| async move {
-                    let provider = Arc::new(get_http_provider(
-                        sequence.typed_transactions().first().unwrap().0.clone(),
-                    ));
+                    let rpc_url = sequence.rpc_url().unwrap();
+                    let provider = Arc::new(get_http_provider(rpc_url));
                     receipts::wait_for_pending(provider, sequence).await
                 })
                 .collect::<Vec<_>>();
@@ -219,14 +220,8 @@ impl ScriptArgs {
         let mut results: Vec<Result<(), Report>> = Vec::new();
 
         for sequence in deployments.deployments.iter_mut() {
-            let result = match self
-                .send_transactions(
-                    sequence,
-                    &sequence.typed_transactions().first().unwrap().0.clone(),
-                    &script_wallets,
-                )
-                .await
-            {
+            let rpc_url = sequence.rpc_url().unwrap().to_string();
+            let result = match self.send_transactions(sequence, &rpc_url, signers).await {
                 Ok(_) if self.verify => sequence.verify_contracts(config, verify.clone()).await,
                 Ok(_) => Ok(()),
                 Err(err) => Err(err),
@@ -237,7 +232,7 @@ impl ScriptArgs {
         let errors = results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
         if !errors.is_empty() {
-            return Err(eyre::eyre!("{errors:?}"))
+            return Err(eyre::eyre!("{errors:?}"));
         }
 
         Ok(())

@@ -1,4 +1,4 @@
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector};
 use foundry_compilers::ArtifactId;
 use foundry_evm_core::utils::get_function;
@@ -23,7 +23,7 @@ impl ArtifactFilters {
     pub fn get_targeted_functions(
         &self,
         artifact: &ArtifactId,
-        abi: &Abi,
+        abi: &JsonAbi,
     ) -> eyre::Result<Option<Vec<Function>>> {
         if let Some(selectors) = self.targeted.get(&artifact.identifier()) {
             let functions = selectors

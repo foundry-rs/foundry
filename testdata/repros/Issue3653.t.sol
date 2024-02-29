@@ -11,13 +11,13 @@ contract Issue3653Test is DSTest {
     Token token;
 
     constructor() {
-        fork = vm.createSelectFork("rpcAlias", 10);
+        fork = vm.createSelectFork("rpcAlias", 1000000);
         token = new Token();
         vm.makePersistent(address(token));
     }
 
     function testDummy() public {
-        assertEq(block.number, 10);
+        assertEq(block.number, 1000000);
     }
 }
 

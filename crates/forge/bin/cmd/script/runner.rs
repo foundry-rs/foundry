@@ -1,6 +1,5 @@
-use super::*;
+use super::ScriptResult;
 use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use forge::{
     constants::CALLER,
@@ -8,6 +7,8 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
+use foundry_config::Config;
+use yansi::Paint;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -91,17 +92,9 @@ impl ScriptRunner {
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
-        {
+        let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
             self.executor.backend.set_test_contract(address);
-            (
-                true,
-                0,
-                Default::default(),
-                None,
-                vec![constructor_debug].into_iter().collect(),
-                vec![],
-            )
+            (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
             match self.executor.setup(Some(self.sender), address) {
                 Ok(CallResult {
@@ -112,7 +105,6 @@ impl ScriptRunner {
                     debug,
                     gas_used,
                     transactions,
-                    script_wallets,
                     ..
                 }) => {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
@@ -126,7 +118,6 @@ impl ScriptRunner {
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
-                        script_wallets,
                     )
                 }
                 Err(EvmError::Execution(err)) => {
@@ -138,7 +129,6 @@ impl ScriptRunner {
                         debug,
                         gas_used,
                         transactions,
-                        script_wallets,
                         ..
                     } = *err;
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
@@ -152,7 +142,6 @@ impl ScriptRunner {
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
-                        script_wallets,
                     )
                 }
                 Err(e) => return Err(e.into()),
@@ -165,16 +154,12 @@ impl ScriptRunner {
                 returned: Bytes::new(),
                 success,
                 gas_used,
-                labeled_addresses: labeled_addresses
-                    .into_iter()
-                    .map(|l| (l.0, l.1))
-                    .collect::<BTreeMap<_, _>>(),
+                labeled_addresses,
                 transactions,
                 logs,
                 traces,
                 debug,
                 address: None,
-                script_wallets,
                 ..Default::default()
             },
         ))
@@ -207,18 +192,12 @@ impl ScriptRunner {
     pub fn simulate(
         &mut self,
         from: Address,
-        to: Option<NameOrAddress>,
+        to: Option<Address>,
         calldata: Option<Bytes>,
         value: Option<U256>,
     ) -> Result<ScriptResult> {
-        if let Some(NameOrAddress::Address(to)) = to {
-            self.call(
-                from,
-                to.to_alloy(),
-                calldata.unwrap_or_default(),
-                value.unwrap_or(U256::ZERO),
-                true,
-            )
+        if let Some(to) = to {
+            self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::ZERO), true)
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,
@@ -244,9 +223,9 @@ impl ScriptRunner {
                 gas_used,
                 logs,
                 traces: traces
-                    .map(|mut traces| {
+                    .map(|traces| {
                         // Manually adjust gas for the trace to add back the stipend/real used gas
-                        traces.arena[0].trace.gas_cost = gas_used;
+
                         vec![(TraceKind::Execution, traces)]
                     })
                     .unwrap_or_default(),
@@ -286,17 +265,7 @@ impl ScriptRunner {
             res = self.executor.call_raw_committing(from, to, calldata, value)?;
         }
 
-        let RawCallResult {
-            result,
-            reverted,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            script_wallets,
-            ..
-        } = res;
+        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
@@ -305,9 +274,9 @@ impl ScriptRunner {
             gas_used,
             logs,
             traces: traces
-                .map(|mut traces| {
+                .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas_used;
+
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
@@ -315,7 +284,6 @@ impl ScriptRunner {
             labeled_addresses: labels,
             transactions,
             address: None,
-            script_wallets,
             breakpoints,
         })
     }
@@ -363,7 +331,7 @@ impl ScriptRunner {
                         {
                             // update the gas
                             gas_used = highest_gas_limit;
-                            break
+                            break;
                         }
                         last_highest_gas_limit = highest_gas_limit;
                     }

@@ -8,14 +8,13 @@
 extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::Log;
+use alloy_primitives::{Address, Bytes, Log};
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt};
+use std::{collections::HashMap, fmt};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -49,6 +48,7 @@ pub struct BaseCounterExample {
     /// Contract name if it exists
     pub contract_name: Option<String>,
     /// Traces
+    #[serde(skip)]
     pub traces: Option<CallTraceArena>,
     #[serde(skip)]
     pub args: Vec<DynSolValue>,
@@ -74,7 +74,7 @@ impl BaseCounterExample {
                         contract_name: Some(name.clone()),
                         traces,
                         args,
-                    }
+                    };
                 }
             }
         }
@@ -142,7 +142,7 @@ pub struct FuzzTestResult {
     pub decoded_logs: Vec<String>,
 
     /// Labeled addresses
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
 
     /// Exemplary traces for a fuzz run of the test function
     ///
@@ -157,18 +157,16 @@ pub struct FuzzTestResult {
 impl FuzzTestResult {
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::median_sorted(&values).to::<u64>()
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::mean(&values).to::<u64>()
+        calc::mean(&values)
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
@@ -223,19 +221,17 @@ impl FuzzedCases {
     /// Returns the median gas of all test cases
     #[inline]
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::median_sorted(&values).to::<u64>()
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::mean(&values).to::<u64>()
+        calc::mean(&values)
     }
 
     #[inline]

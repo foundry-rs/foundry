@@ -3,15 +3,14 @@
 //! This module contains the `ChiselRunner` struct, which assists with deploying
 //! and calling the REPL contract on a in-memory REVM instance.
 
-use alloy_primitives::{Address, Bytes, U256};
-use ethers_core::types::Log;
+use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},
     traces::{CallTraceArena, TraceKind},
 };
 use revm::interpreter::{return_ok, InstructionResult};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 /// The function selector of the REPL contract's entrypoint, the `run()` function.
 static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
@@ -44,7 +43,7 @@ pub struct ChiselResult {
     /// Amount of gas used in the transaction
     pub gas_used: u64,
     /// Map of addresses to their labels
-    pub labeled_addresses: BTreeMap<Address, String>,
+    pub labeled_addresses: HashMap<Address, String>,
     /// Return data
     pub returned: Bytes,
     /// Called address
@@ -168,7 +167,7 @@ impl ChiselRunner {
                         {
                             // update the gas
                             gas_used = highest_gas_limit;
-                            break
+                            break;
                         }
                         last_highest_gas_limit = highest_gas_limit;
                     }
@@ -203,8 +202,7 @@ impl ChiselRunner {
             traces: traces
                 .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    // TODO: For chisel, we may not want to perform this adjustment.
-                    // traces.arena[0].trace.gas_cost = gas_used;
+
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),

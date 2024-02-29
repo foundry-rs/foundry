@@ -41,6 +41,10 @@ pub struct EtherscanIdentifier {
 impl EtherscanIdentifier {
     /// Creates a new Etherscan identifier with the given client
     pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
+        if config.offline {
+            // offline mode, don't use etherscan
+            return Ok(Default::default())
+        }
         if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
             trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
             Ok(Self {
@@ -83,11 +87,7 @@ impl EtherscanIdentifier {
         for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
             let (artifact_id, file_id, bytecode) = results?;
-            sources
-                .0
-                .entry(artifact_id.clone().name)
-                .or_default()
-                .insert(file_id, (metadata.source_code(), bytecode));
+            sources.insert(&artifact_id, file_id, metadata.source_code(), bytecode);
         }
 
         Ok(sources)
@@ -99,7 +99,7 @@ impl TraceIdentifier for EtherscanIdentifier {
     where
         A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
     {
-        trace!(target: "etherscanidentifier", "identify {:?} addresses", addresses.size_hint().1);
+        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         let Some(client) = self.client.clone() else {
             // no client was configured

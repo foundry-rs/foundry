@@ -3,7 +3,7 @@
 pub use foundry_cheatcodes_spec::Vm;
 
 mod console;
-pub use console::Console;
+pub use console::{format_units_int, format_units_uint, Console};
 
 mod hardhat_console;
 pub use hardhat_console::{

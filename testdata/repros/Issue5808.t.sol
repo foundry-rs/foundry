@@ -10,7 +10,7 @@ contract Issue5808Test is DSTest {
 
     function testReadInt() public {
         string memory str1 = '["ffffffff","00000010"]';
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         int256[] memory ints1 = vm.parseJsonIntArray(str1, "");
 
         string memory str2 = '["0xffffffff","0x00000010"]';

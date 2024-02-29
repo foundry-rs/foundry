@@ -1,20 +1,36 @@
 use super::{
     multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
-    sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
+    sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle,
+    NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
 };
-use ethers_core::{types::TxHash, utils::format_units};
+use alloy_primitives::{utils::format_units, Address, TxHash, U256};
+use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
-use eyre::{bail, ContextCompat, Result, WrapErr};
+use eyre::{bail, Context, ContextCompat, Result};
+use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::CallTraceDecoder};
 use foundry_cli::{
-    init_progress,
-    opts::WalletSigner,
-    update_progress,
+    init_progress, update_progress,
     utils::{has_batch_support, has_different_gas_calc},
 };
-use foundry_common::{estimate_eip1559_fees, shell, try_get_http_provider, RetryProvider};
+use foundry_common::{
+    provider::{
+        alloy::RpcUrl,
+        ethers::{estimate_eip1559_fees, try_get_http_provider, RetryProvider},
+    },
+    shell,
+    types::{ToAlloy, ToEthers},
+    ContractsByArtifact,
+};
+use foundry_compilers::{artifacts::Libraries, ArtifactId};
+use foundry_config::Config;
+use foundry_wallets::WalletSigner;
 use futures::StreamExt;
-use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
+use std::{
+    cmp::min,
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -22,7 +38,7 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
-        script_wallets: &[LocalWallet],
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
@@ -30,9 +46,8 @@ impl ScriptArgs {
         if already_broadcasted < deployment_sequence.transactions.len() {
             let required_addresses: HashSet<Address> = deployment_sequence
                 .typed_transactions()
-                .into_iter()
                 .skip(already_broadcasted)
-                .map(|(_, tx)| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
+                .map(|tx| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
                 .collect();
 
             let (send_kind, chain) = if self.unlocked {
@@ -45,17 +60,38 @@ impl ScriptArgs {
                 senders.extend(
                     deployment_sequence
                         .typed_transactions()
-                        .iter()
-                        .filter_map(|(_, tx)| tx.from().copied().map(|addr| addr.to_alloy())),
+                        .filter_map(|tx| tx.from().copied().map(|addr| addr.to_alloy())),
                 );
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
-                let local_wallets = self
-                    .wallets
-                    .find_all(provider.clone(), required_addresses, script_wallets)
-                    .await?;
-                let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
-                (SendTransactionsKind::Raw(local_wallets), chain)
+                let mut missing_addresses = Vec::new();
+
+                println!("\n###\nFinding wallets for all the necessary addresses...");
+                for addr in &required_addresses {
+                    if !signers.contains_key(addr) {
+                        missing_addresses.push(addr);
+                    }
+                }
+
+                if !missing_addresses.is_empty() {
+                    let mut error_msg = String::new();
+
+                    // This is an actual used address
+                    if required_addresses.contains(&Config::DEFAULT_SENDER) {
+                        error_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.\n";
+                    }
+
+                    eyre::bail!(
+                        "{}No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
+                        error_msg,
+                        missing_addresses,
+                        signers.keys().collect::<Vec<_>>()
+                    );
+                }
+
+                let chain = provider.get_chainid().await?.as_u64();
+
+                (SendTransactionsKind::Raw(signers), chain)
             };
 
             // We only wait for a transaction receipt before sending the next transaction, if there
@@ -149,17 +185,13 @@ impl ScriptArgs {
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
-                        deployment_sequence.add_pending(index, tx_hash.to_alloy());
+                        deployment_sequence.add_pending(index, tx_hash);
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
 
-                        clear_pendings(
-                            provider.clone(),
-                            deployment_sequence,
-                            Some(vec![tx_hash.to_alloy()]),
-                        )
-                        .await?;
+                        clear_pendings(provider.clone(), deployment_sequence, Some(vec![tx_hash]))
+                            .await?;
                     } else {
                         pending_transactions.push(tx_hash);
                     }
@@ -170,7 +202,7 @@ impl ScriptArgs {
 
                     while let Some(tx_hash) = buffer.next().await {
                         let tx_hash = tx_hash?;
-                        deployment_sequence.add_pending(index, tx_hash.to_alloy());
+                        deployment_sequence.add_pending(index, tx_hash);
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
@@ -198,12 +230,12 @@ impl ScriptArgs {
             |acc, receipt| {
                 let gas_used = receipt.gas_used.unwrap_or_default().to_alloy();
                 let gas_price = receipt.effective_gas_price.unwrap_or_default().to_alloy();
-                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
+                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
             },
         );
-        let paid = format_units(total_paid.to_ethers(), 18).unwrap_or_else(|_| "N/A".to_string());
+        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let avg_gas_price =
-            format_units(total_gas_price.to_ethers() / deployment_sequence.receipts.len(), 9)
+            format_units(total_gas_price / U256::from(deployment_sequence.receipts.len()), 9)
                 .unwrap_or_else(|_| "N/A".to_string());
         shell::println(format!(
             "Total Paid: {} ETH ({} gas * avg {} gwei)",
@@ -255,7 +287,7 @@ impl ScriptArgs {
                 // Submit the transaction
                 let pending = provider.send_transaction(tx, None).await?;
 
-                Ok(pending.tx_hash())
+                Ok(pending.tx_hash().to_alloy())
             }
             SendTransactionKind::Raw(signer) => self.broadcast(provider, signer, tx).await,
         }
@@ -270,6 +302,7 @@ impl ScriptArgs {
         decoder: &CallTraceDecoder,
         mut script_config: ScriptConfig,
         verify: VerifyBundle,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
@@ -305,18 +338,18 @@ impl ScriptArgs {
                             multi,
                             libraries,
                             &script_config.config,
-                            result.script_wallets,
                             verify,
+                            signers,
                         )
                         .await?;
                     }
                 } else if self.broadcast {
                     self.single_deployment(
-                        deployments.first_mut().expect("to be set."),
+                        deployments.first_mut().expect("missing deployment"),
                         script_config,
                         libraries,
-                        result,
                         verify,
+                        signers,
                     )
                     .await?;
                 }
@@ -337,8 +370,8 @@ impl ScriptArgs {
         deployment_sequence: &mut ScriptSequence,
         script_config: ScriptConfig,
         libraries: Libraries,
-        result: ScriptResult,
         verify: VerifyBundle,
+        signers: &HashMap<Address, WalletSigner>,
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
 
@@ -350,10 +383,10 @@ impl ScriptArgs {
 
         deployment_sequence.add_libraries(libraries);
 
-        self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
+        self.send_transactions(deployment_sequence, &rpc, signers).await?;
 
         if self.verify {
-            return deployment_sequence.verify_contracts(&script_config.config, verify).await
+            return deployment_sequence.verify_contracts(&script_config.config, verify).await;
         }
         Ok(())
     }
@@ -385,7 +418,7 @@ impl ScriptArgs {
                     &mut script_config.config,
                     returns,
                 )
-                .await
+                .await;
         } else if self.broadcast {
             eyre::bail!("No onchain transactions generated in script");
         }
@@ -407,7 +440,7 @@ impl ScriptArgs {
             shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
             txs.into_iter()
                 .map(|btx| {
-                    let mut tx = TransactionWithMetadata::from_typed_transaction(btx.transaction);
+                    let mut tx = TransactionWithMetadata::from_tx_request(btx.transaction);
                     tx.rpc = btx.rpc;
                     tx
                 })
@@ -508,7 +541,7 @@ impl ScriptArgs {
             // transactions.
             if let Some(next_tx) = txes_iter.peek() {
                 if next_tx.rpc == Some(tx_rpc) {
-                    continue
+                    continue;
                 }
             }
 
@@ -549,7 +582,7 @@ impl ScriptArgs {
 
                 shell::println(format!(
                     "\nEstimated gas price: {} gwei",
-                    format_units(per_gas.to_ethers(), 9)
+                    format_units(per_gas, 9)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                         .trim_end_matches('.')
@@ -557,7 +590,7 @@ impl ScriptArgs {
                 shell::println(format!("\nEstimated total gas used for script: {total_gas}"))?;
                 shell::println(format!(
                     "\nEstimated amount required: {} ETH",
-                    format_units(total_gas.saturating_mul(per_gas).to_ethers(), 18)
+                    format_units(total_gas.saturating_mul(per_gas), 18)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                 ))?;
@@ -598,7 +631,7 @@ impl ScriptArgs {
         // Submit the raw transaction
         let pending = provider.send_raw_transaction(legacy_or_1559.rlp_signed(&signature)).await?;
 
-        Ok(pending.tx_hash())
+        Ok(pending.tx_hash().to_alloy())
     }
 
     async fn estimate_gas<T>(&self, tx: &mut TypedTransaction, provider: &Provider<T>) -> Result<()>
@@ -629,14 +662,14 @@ enum SendTransactionKind<'a> {
 }
 
 /// Represents how to send _all_ transactions
-enum SendTransactionsKind {
+enum SendTransactionsKind<'a> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, WalletSigner>),
+    Raw(&'a HashMap<Address, WalletSigner>),
 }
 
-impl SendTransactionsKind {
+impl SendTransactionsKind<'_> {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked

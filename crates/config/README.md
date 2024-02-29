@@ -56,7 +56,7 @@ The selected profile is the value of the `FOUNDRY_PROFILE` environment variable,
 
 ### All Options
 
-The following is a foundry.toml file with all configuration options set. See also [/config/src/lib.rs](/config/src/lib.rs) and [/cli/tests/it/config.rs](/cli/tests/it/config.rs).
+The following is a foundry.toml file with all configuration options set. See also [/config/src/lib.rs](./src/lib.rs) and [/cli/tests/it/config.rs](../forge/tests/it/config.rs).
 
 ```toml
 ## defaults for _all_ profiles
@@ -106,6 +106,7 @@ etherscan_api_key = "YOURETHERSCANAPIKEY"
 # known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname"]
 # additional warnings can be added using their numeric error code: ["license", 1337]
 ignored_error_codes = ["license", "code-size"]
+ignored_warnings_from = ["path_to_ignore"]
 deny_warnings = false
 match_test = "Foo"
 no_match_test = "Bar"
@@ -114,6 +115,7 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 ffi = false
+always_use_create_2_factory = false
 # These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
 sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
 tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
@@ -137,6 +139,7 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+ast = false
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
@@ -192,6 +195,7 @@ dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
 shrink_sequence = true
+preserve_state = false
 
 [fmt]
 line_length = 100
@@ -249,7 +253,7 @@ The optional `url` attribute can be used to explicitly set the Etherscan API url
 [etherscan]
 mainnet = { key = "${ETHERSCAN_MAINNET_KEY}" }
 mainnet2 = { key = "ABCDEFG", chain = "mainnet" }
-optimism = { key = "1234576" }
+optimism = { key = "1234576", chain = 42 }
 unknownchain = { key = "ABCDEFG", url = "https://<etherscan-api-url-for-that-chain>" }
 ```
 

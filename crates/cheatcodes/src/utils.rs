@@ -2,21 +2,21 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, B256, U256};
-use alloy_sol_types::SolValue;
-use ethers_core::k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, Curve},
-    Secp256k1,
-};
-use ethers_signers::{
+use alloy_signer::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalWallet, MnemonicBuilder, Signer,
+    LocalWallet, MnemonicBuilder, Signer, SignerSync,
 };
-use foundry_common::types::{ToAlloy, ToEthers};
+use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use k256::{
+    ecdsa::SigningKey,
+    elliptic_curve::{sec1::ToEncodedPoint, Curve},
+    Secp256k1,
+};
+use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -50,9 +50,9 @@ impl Cheatcode for getNonce_1Call {
 }
 
 impl Cheatcode for sign_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        sign(&wallet.privateKey, digest, ccx.data.env.cfg.chain_id)
+        sign(&wallet.privateKey, digest)
     }
 }
 
@@ -87,10 +87,12 @@ impl Cheatcode for deriveKey_3Call {
 impl Cheatcode for rememberKeyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
-        let wallet = parse_wallet(privateKey)?.with_chain_id(ccx.data.env.cfg.chain_id);
-        let address = wallet.address();
-        ccx.state.script_wallets.push(wallet);
-        Ok(address.to_alloy().abi_encode())
+        let key = parse_private_key(privateKey)?;
+        let address = LocalWallet::from(key.clone()).address();
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            script_wallets.add_signer(key.to_bytes())?;
+        }
+        Ok(address.abi_encode())
     }
 }
 
@@ -140,7 +142,7 @@ impl Cheatcode for computeCreate2Address_1Call {
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {
     let key = parse_private_key(private_key)?;
-    let addr = ethers_core::utils::secret_key_to_address(&key).to_alloy();
+    let addr = alloy_signer::utils::secret_key_to_address(&key);
 
     let pub_key = key.verifying_key().as_affine().to_encoded_point(false);
     let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());
@@ -154,21 +156,36 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-pub(super) fn sign(private_key: &U256, digest: &B256, chain_id: u64) -> Result {
-    let wallet = parse_wallet(private_key)?.with_chain_id(chain_id);
+pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
+    // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
+    let wallet = parse_wallet(private_key)?;
 
-    // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest.to_ethers())?;
-    let recovered = sig.recover(digest.to_ethers())?.to_alloy();
+    let sig = wallet.sign_hash_sync(*digest)?;
+    let recovered = sig.recover_address_from_prehash(digest)?;
 
-    assert_eq!(recovered, wallet.address().to_alloy());
+    assert_eq!(recovered, wallet.address());
 
-    let mut r_bytes = [0u8; 32];
-    let mut s_bytes = [0u8; 32];
-    sig.r.to_big_endian(&mut r_bytes);
-    sig.s.to_big_endian(&mut s_bytes);
+    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
+    let r = B256::from(sig.r());
+    let s = B256::from(sig.s());
 
-    Ok((sig.v, r_bytes, s_bytes).abi_encode())
+    Ok((v, r, s).abi_encode())
+}
+
+pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
+    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    let n = U256::from_limbs(*p256::NistP256::ORDER.as_words());
+    ensure!(
+        *private_key < n,
+        format!("private key must be less than the secp256r1 curve order ({})", n),
+    );
+    let bytes = private_key.to_be_bytes();
+    let signing_key = P256SigningKey::from_bytes((&bytes).into())?;
+    let signature: Signature = signing_key.sign_prehash(digest.as_slice())?;
+    let r_bytes: [u8; 32] = signature.r().to_bytes().into();
+    let s_bytes: [u8; 32] = signature.s().to_bytes().into();
+
+    Ok((r_bytes, s_bytes).abi_encode())
 }
 
 pub(super) fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
@@ -214,8 +231,71 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 
     let wallet = MnemonicBuilder::<W>::default()
         .phrase(mnemonic)
-        .derivation_path(&derive_key_path(path, index))?
+        .derivation_path(derive_key_path(path, index))?
         .build()?;
     let private_key = U256::from_be_bytes(wallet.signer().to_bytes().into());
     Ok(private_key.abi_encode())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CheatsConfig;
+    use alloy_primitives::FixedBytes;
+    use hex::FromHex;
+    use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    use std::{path::PathBuf, sync::Arc};
+
+    fn cheats() -> Cheatcodes {
+        let config = CheatsConfig {
+            ffi: true,
+            root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        Cheatcodes { config: Arc::new(config), ..Default::default() }
+    }
+
+    #[test]
+    fn test_sign_p256() {
+        use p256::ecdsa::VerifyingKey;
+
+        let pk_u256: U256 = "1".parse().unwrap();
+        let signing_key = P256SigningKey::from_bytes(&pk_u256.to_be_bytes().into()).unwrap();
+        let digest = FixedBytes::from_hex(
+            "0x44acf6b7e36c1342c2c5897204fe09504e1e2efb1a900377dbc4e7a6a133ec56",
+        )
+        .unwrap();
+        let mut cheats = cheats();
+
+        let result = sign_p256(&pk_u256, &digest, &mut cheats).unwrap();
+        let result_bytes: [u8; 64] = result.try_into().unwrap();
+        let signature = Signature::from_bytes(&result_bytes.into()).unwrap();
+        let verifying_key = VerifyingKey::from(&signing_key);
+        assert!(verifying_key.verify_prehash(digest.as_slice(), &signature).is_ok());
+    }
+
+    #[test]
+    fn test_sign_p256_pk_too_large() {
+        // max n from https://neuromancer.sk/std/secg/secp256r1
+        let pk =
+            "0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551".parse().unwrap();
+        let digest = FixedBytes::from_hex(
+            "0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad",
+        )
+        .unwrap();
+        let mut cheats = cheats();
+        let result = sign_p256(&pk, &digest, &mut cheats);
+        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the secp256r1 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
+    }
+
+    #[test]
+    fn test_sign_p256_pk_0() {
+        let digest = FixedBytes::from_hex(
+            "0x54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad",
+        )
+        .unwrap();
+        let mut cheats = cheats();
+        let result = sign_p256(&U256::ZERO, &digest, &mut cheats);
+        assert_eq!(result.err().unwrap().to_string(), "private key cannot be 0");
+    }
 }

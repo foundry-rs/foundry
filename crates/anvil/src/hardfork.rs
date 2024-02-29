@@ -1,5 +1,5 @@
+use alloy_rpc_types::BlockNumberOrTag;
 use ethereum_forkid::{ForkHash, ForkId};
-use ethers::types::BlockNumber;
 use foundry_evm::revm::primitives::SpecId;
 use std::str::FromStr;
 
@@ -160,11 +160,11 @@ impl From<Hardfork> for SpecId {
     }
 }
 
-impl<T: Into<BlockNumber>> From<T> for Hardfork {
-    fn from(block: T) -> Hardfork {
+impl<T: Into<BlockNumberOrTag>> From<T> for Hardfork {
+    fn from(block: T) -> Self {
         let num = match block.into() {
-            BlockNumber::Earliest => 0,
-            BlockNumber::Number(num) => num.as_u64(),
+            BlockNumberOrTag::Earliest => 0,
+            BlockNumberOrTag::Number(num) => num,
             _ => u64::MAX,
         };
 
@@ -190,8 +190,8 @@ impl<T: Into<BlockNumber>> From<T> for Hardfork {
 #[cfg(test)]
 mod tests {
     use crate::Hardfork;
+    use alloy_primitives::hex;
     use crc::{Crc, CRC_32_ISO_HDLC};
-    use ethers::utils::hex;
 
     #[test]
     fn test_hardfork_blocks() {

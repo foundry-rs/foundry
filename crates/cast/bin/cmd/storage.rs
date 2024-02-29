@@ -13,11 +13,13 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::find_source,
-    compile::{compile, etherscan_project, suppress_compile},
+    compile::{etherscan_project, ProjectCompiler},
+    provider::ethers::RetryProvider,
     types::{ToAlloy, ToEthers},
-    RetryProvider,
 };
-use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
+use foundry_compilers::{
+    artifacts::StorageLayout, Artifact, ConfigurableContractArtifact, Project, Solc,
+};
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
@@ -34,26 +36,26 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Clone, Debug, Parser)]
 pub struct StorageArgs {
     /// The contract address.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
     /// The storage slot number.
-    #[clap(value_parser = parse_slot)]
+    #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long, short)]
+    #[arg(long, short)]
     block: Option<BlockId>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     build: CoreBuildArgs,
 }
 
@@ -85,7 +87,7 @@ impl StorageArgs {
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
             println!("{}", cast.storage(address, slot.to_ethers(), block).await?);
-            return Ok(())
+            return Ok(());
         }
 
         // No slot was provided
@@ -100,16 +102,13 @@ impl StorageArgs {
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
-            let out = compile(&project, false, false)?;
-            let match_code = |artifact: &ConfigurableContractArtifact| -> Option<bool> {
-                let bytes =
-                    artifact.deployed_bytecode.as_ref()?.bytecode.as_ref()?.object.as_bytes()?;
-                Some(bytes == &address_code)
-            };
-            let artifact =
-                out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
+            let out = ProjectCompiler::new().compile(&project)?;
+            let artifact = out.artifacts().find(|(_, artifact)| {
+                artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
+            });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address.clone(), artifact, true).await
+                return fetch_and_print_storage(provider, address.clone(), block, artifact, true)
+                    .await;
             }
         }
 
@@ -117,7 +116,7 @@ impl StorageArgs {
         // Get code from Etherscan
         eprintln!("No matching artifacts found, fetching source code from Etherscan...");
 
-        if self.etherscan.key.is_none() {
+        if !self.etherscan.has_key() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
         }
 
@@ -146,7 +145,7 @@ impl StorageArgs {
         project.auto_detect = auto_detect;
 
         // Compile
-        let mut out = suppress_compile(&project)?;
+        let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
         let artifact = {
             let (_, mut artifact) = out
                 .artifacts()
@@ -159,7 +158,7 @@ impl StorageArgs {
                 let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
                 project.solc = solc;
                 project.auto_detect = false;
-                if let Ok(output) = suppress_compile(&project) {
+                if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
                         .artifacts()
@@ -175,7 +174,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, artifact, true).await
+        fetch_and_print_storage(provider, address, block, artifact, true).await
     }
 }
 
@@ -199,13 +198,13 @@ impl StorageValue {
                 end = 32;
             }
         }
-        let mut value = [0u8; 32];
 
         // reverse range, because the value is stored in big endian
-        let offset = 32 - offset;
-        let end = 32 - end;
+        let raw_sliced_value = &self.raw_slot_value.as_slice()[32 - end..32 - offset];
 
-        value[end..offset].copy_from_slice(&self.raw_slot_value.as_slice()[end..offset]);
+        // copy the raw sliced value as tail
+        let mut value = [0u8; 32];
+        value[32 - raw_sliced_value.len()..32].copy_from_slice(raw_sliced_value);
         B256::from(value)
     }
 }
@@ -213,6 +212,7 @@ impl StorageValue {
 async fn fetch_and_print_storage(
     provider: RetryProvider,
     address: NameOrAddress,
+    block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
 ) -> Result<()> {
@@ -221,7 +221,7 @@ async fn fetch_and_print_storage(
         Ok(())
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
-        let values = fetch_storage_slots(provider, address, &layout).await?;
+        let values = fetch_storage_slots(provider, address, block, &layout).await?;
         print_storage(layout, values, pretty)
     }
 }
@@ -229,12 +229,13 @@ async fn fetch_and_print_storage(
 async fn fetch_storage_slots(
     provider: RetryProvider,
     address: NameOrAddress,
+    block: Option<BlockId>,
     layout: &StorageLayout,
 ) -> Result<Vec<StorageValue>> {
     let requests = layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
         let raw_slot_value =
-            provider.get_storage_at(address.clone(), slot.to_ethers(), None).await?.to_alloy();
+            provider.get_storage_at(address.clone(), slot.to_ethers(), block).await?.to_alloy();
 
         let value = StorageValue { slot, raw_slot_value };
 
@@ -265,7 +266,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
-            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            storage_type.map_or("?", |t| &t.number_of_bytes),
             &converted_value.to_string(),
             &value.to_string(),
             &slot.contract,
@@ -288,5 +289,25 @@ fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
         s.storage.is_empty()
     } else {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_storage_etherscan_api_key() {
+        let args =
+            StorageArgs::parse_from(["foundry-cli", "addr", "--etherscan-api-key", "dummykey"]);
+        assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
+
+        std::env::set_var("ETHERSCAN_API_KEY", "FXY");
+        let config = Config::from(&args);
+        std::env::remove_var("ETHERSCAN_API_KEY");
+        assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
+
+        let key = config.get_etherscan_api_key(None).unwrap();
+        assert_eq!(key, "dummykey".to_string());
     }
 }

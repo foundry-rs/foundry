@@ -3,11 +3,11 @@
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     hashbrown::HashSet,
-    traces::{CallTraceArena, TraceCallData, TraceKind},
+    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData, TraceKind},
 };
-use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
+use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -37,100 +37,110 @@ impl GasReport {
     }
 
     /// Whether the given contract should be reported.
+    #[instrument(level = "trace", skip(self), ret)]
     fn should_report(&self, contract_name: &str) -> bool {
         if self.ignore.contains(contract_name) {
-            // could be specified in both ignore and report_for
-            return self.report_for.contains(contract_name)
-        }
-        self.report_any || self.report_for.contains(contract_name)
-    }
-
-    /// Analyzes the given traces and generates a gas report.
-    pub fn analyze(&mut self, traces: &[(TraceKind, CallTraceArena)]) {
-        traces.iter().for_each(|(_, trace)| {
-            self.analyze_node(0, trace);
-        });
-    }
-
-    fn analyze_node(&mut self, node_index: usize, arena: &CallTraceArena) {
-        let node = &arena.arena[node_index];
-        let trace = &node.trace;
-
-        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
-            return
-        }
-
-        if let Some(name) = &trace.contract {
-            let contract_name = name.rsplit(':').next().unwrap_or(name.as_str());
-            // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
-            // report for the contract is generated even if it's listed in the ignore
-            // list. This is addressed this way because getting a report you don't expect is
-            // preferable than not getting one you expect. A warning is printed to stderr
-            // indicating the "double listing".
-            if self.report_for.contains(contract_name) && self.ignore.contains(contract_name) {
+            let contains_anyway = self.report_for.contains(contract_name);
+            if contains_anyway {
+                // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
+                // report for the contract is generated even if it's listed in the ignore
+                // list. This is addressed this way because getting a report you don't expect is
+                // preferable than not getting one you expect. A warning is printed to stderr
+                // indicating the "double listing".
                 eprintln!(
                     "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
                     yansi::Paint::yellow("warning").bold(),
                     contract_name
                 );
             }
+            return contains_anyway;
+        }
+        self.report_any || self.report_for.contains(contract_name)
+    }
 
-            if self.should_report(contract_name) {
-                let contract_info = self.contracts.entry(name.to_string()).or_default();
+    /// Analyzes the given traces and generates a gas report.
+    pub async fn analyze(
+        &mut self,
+        traces: &[(TraceKind, CallTraceArena)],
+        decoder: &CallTraceDecoder,
+    ) {
+        for node in traces.iter().flat_map(|(_, arena)| arena.nodes()) {
+            self.analyze_node(node, decoder).await;
+        }
+    }
 
-                match &trace.data {
-                    TraceCallData::Raw(bytes) => {
-                        if trace.created() {
-                            contract_info.gas = U256::from(trace.gas_cost);
-                            contract_info.size = U256::from(bytes.len());
-                        }
-                    }
-                    TraceCallData::Decoded { signature, .. } => {
-                        let name = signature.split('(').next().unwrap();
-                        // ignore any test/setup functions
-                        let should_include =
-                            !(name.is_test() || name.is_invariant_test() || name.is_setup());
-                        if should_include {
-                            let gas_info = contract_info
-                                .functions
-                                .entry(name.into())
-                                .or_default()
-                                .entry(signature.clone())
-                                .or_default();
-                            gas_info.calls.push(U256::from(trace.gas_cost));
-                        }
-                    }
-                }
-            }
+    async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
+        let trace = &node.trace;
+
+        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
+            return;
         }
 
-        node.children.iter().for_each(|index| {
-            self.analyze_node(*index, arena);
-        });
+        // Only include top-level calls which accout for calldata and base (21.000) cost.
+        // Only include Calls and Creates as only these calls are isolated in inspector.
+        if trace.depth != 1 &&
+            (trace.kind == CallKind::Call ||
+                trace.kind == CallKind::Create ||
+                trace.kind == CallKind::Create2)
+        {
+            return;
+        }
+
+        let decoded = decoder.decode_function(&node.trace).await;
+
+        let Some(name) = &decoded.contract else { return };
+        let contract_name = name.rsplit(':').next().unwrap_or(name);
+
+        if !self.should_report(contract_name) {
+            return;
+        }
+
+        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        if trace.kind.is_any_create() {
+            trace!(contract_name, "adding create gas info");
+            contract_info.gas = trace.gas_used;
+            contract_info.size = trace.data.len();
+        } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
+            let name = signature.split('(').next().unwrap();
+            // ignore any test/setup functions
+            let should_include = !(name.is_test() || name.is_invariant_test() || name.is_setup());
+            if should_include {
+                trace!(contract_name, signature, "adding gas info");
+                let gas_info = contract_info
+                    .functions
+                    .entry(name.to_string())
+                    .or_default()
+                    .entry(signature.clone())
+                    .or_default();
+                gas_info.calls.push(trace.gas_used);
+            }
+        }
     }
 
     /// Finalizes the gas report by calculating the min, max, mean, and median for each function.
     #[must_use]
     pub fn finalize(mut self) -> Self {
-        self.contracts.iter_mut().for_each(|(_, contract)| {
-            contract.functions.iter_mut().for_each(|(_, sigs)| {
-                sigs.iter_mut().for_each(|(_, func)| {
+        trace!("finalizing gas report");
+        for contract in self.contracts.values_mut() {
+            for sigs in contract.functions.values_mut() {
+                for func in sigs.values_mut() {
                     func.calls.sort_unstable();
                     func.min = func.calls.first().copied().unwrap_or_default();
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
-                    func.median = U256::from(calc::median_sorted(func.calls.as_slice()));
-                });
-            });
-        });
+                    func.median = calc::median_sorted(&func.calls);
+                }
+            }
+        }
         self
     }
 }
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for (name, contract) in self.contracts.iter() {
+        for (name, contract) in &self.contracts {
             if contract.functions.is_empty() {
+                trace!(name, "gas report contract without functions");
                 continue
             }
 
@@ -178,16 +188,17 @@ impl Display for GasReport {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ContractInfo {
-    pub gas: U256,
-    pub size: U256,
+    pub gas: u64,
+    pub size: usize,
+    /// Function name -> Function signature -> GasInfo
     pub functions: BTreeMap<String, BTreeMap<String, GasInfo>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GasInfo {
-    pub calls: Vec<U256>,
-    pub min: U256,
-    pub mean: U256,
-    pub median: U256,
-    pub max: U256,
+    pub calls: Vec<u64>,
+    pub min: u64,
+    pub mean: u64,
+    pub median: u64,
+    pub max: u64,
 }

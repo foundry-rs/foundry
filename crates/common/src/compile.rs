@@ -1,12 +1,13 @@
 //! Support for compiling [foundry_compilers::Project]
-use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
-use comfy_table::{presets::ASCII_MARKDOWN, *};
-use eyre::Result;
+
+use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
+use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, ContractBytecodeSome},
+    artifacts::{BytecodeObject, CompactContractBytecode, ContractBytecodeSome},
     remappings::Remapping,
-    report::NoReporter,
+    report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
@@ -14,105 +15,198 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
     fmt::Display,
+    io::IsTerminal,
     path::{Path, PathBuf},
     result,
     str::FromStr,
 };
 
-/// Helper type to configure how to compile a project
+/// Builder type to configure how to compile a project.
 ///
-/// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
-/// settings
-#[derive(Clone, Debug, Default)]
+/// This is merely a wrapper for [`Project::compile()`] which also prints to stdout depending on its
+/// settings.
+#[must_use = "this builder does nothing unless you call a `compile*` method"]
 pub struct ProjectCompiler {
-    /// whether to also print the contract names
-    print_names: bool,
-    /// whether to also print the contract sizes
-    print_sizes: bool,
-    /// files to exclude
-    filters: Vec<SkipBuildFilter>,
+    /// Whether we are going to verify the contracts after compilation.
+    verify: Option<bool>,
+
+    /// Whether to also print contract names.
+    print_names: Option<bool>,
+
+    /// Whether to also print contract sizes.
+    print_sizes: Option<bool>,
+
+    /// Whether to print anything at all. Overrides other `print` options.
+    quiet: Option<bool>,
+
+    /// Whether to bail on compiler errors.
+    bail: Option<bool>,
+
+    /// Files to exclude.
+    filter: Option<Box<dyn FileFilter>>,
+
+    /// Extra files to include, that are not necessarily in the project's source dir.
+    files: Vec<PathBuf>,
+}
+
+impl Default for ProjectCompiler {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProjectCompiler {
-    /// Create a new instance with the settings
-    pub fn new(print_names: bool, print_sizes: bool) -> Self {
-        Self::with_filter(print_names, print_sizes, Vec::new())
+    /// Create a new builder with the default settings.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            verify: None,
+            print_names: None,
+            print_sizes: None,
+            quiet: Some(crate::shell::verbosity().is_silent()),
+            bail: None,
+            filter: None,
+            files: Vec::new(),
+        }
     }
 
-    /// Create a new instance with all settings
-    pub fn with_filter(
-        print_names: bool,
-        print_sizes: bool,
-        filters: Vec<SkipBuildFilter>,
-    ) -> Self {
-        Self { print_names, print_sizes, filters }
+    /// Sets whether we are going to verify the contracts after compilation.
+    #[inline]
+    pub fn verify(mut self, yes: bool) -> Self {
+        self.verify = Some(yes);
+        self
     }
 
-    /// Compiles the project with [`Project::compile()`]
-    pub fn compile(self, project: &Project) -> Result<ProjectCompileOutput> {
-        let filters = self.filters.clone();
-        self.compile_with(project, |prj| {
-            let output = if filters.is_empty() {
-                prj.compile()
+    /// Sets whether to print contract names.
+    #[inline]
+    pub fn print_names(mut self, yes: bool) -> Self {
+        self.print_names = Some(yes);
+        self
+    }
+
+    /// Sets whether to print contract sizes.
+    #[inline]
+    pub fn print_sizes(mut self, yes: bool) -> Self {
+        self.print_sizes = Some(yes);
+        self
+    }
+
+    /// Sets whether to print anything at all. Overrides other `print` options.
+    #[inline]
+    #[doc(alias = "silent")]
+    pub fn quiet(mut self, yes: bool) -> Self {
+        self.quiet = Some(yes);
+        self
+    }
+
+    /// Do not print anything at all if true. Overrides other `print` options.
+    #[inline]
+    pub fn quiet_if(mut self, maybe: bool) -> Self {
+        if maybe {
+            self.quiet = Some(true);
+        }
+        self
+    }
+
+    /// Sets whether to bail on compiler errors.
+    #[inline]
+    pub fn bail(mut self, yes: bool) -> Self {
+        self.bail = Some(yes);
+        self
+    }
+
+    /// Sets the filter to use.
+    #[inline]
+    pub fn filter(mut self, filter: Box<dyn FileFilter>) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
+    /// Sets extra files to include, that are not necessarily in the project's source dir.
+    #[inline]
+    pub fn files(mut self, files: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.files.extend(files);
+        self
+    }
+
+    /// Compiles the project.
+    pub fn compile(mut self, project: &Project) -> Result<ProjectCompileOutput> {
+        // TODO: Avoid process::exit
+        if !project.paths.has_input_files() && self.files.is_empty() {
+            println!("Nothing to compile");
+            // nothing to do here
+            std::process::exit(0);
+        }
+
+        // Taking is fine since we don't need these in `compile_with`.
+        let filter = std::mem::take(&mut self.filter);
+        let files = std::mem::take(&mut self.files);
+        self.compile_with(|| {
+            if !files.is_empty() {
+                project.compile_files(files)
+            } else if let Some(filter) = filter {
+                project.compile_sparse(filter)
             } else {
-                prj.compile_sparse(SkipBuildFilters(filters))
-            }?;
-            Ok(output)
+                project.compile()
+            }
+            .map_err(Into::into)
         })
-    }
-
-    /// Compiles the project with [`Project::compile_parse()`] and the given filter.
-    ///
-    /// This will emit artifacts only for files that match the given filter.
-    /// Files that do _not_ match the filter are given a pruned output selection and do not generate
-    /// artifacts.
-    pub fn compile_sparse<F: FileFilter + 'static>(
-        self,
-        project: &Project,
-        filter: F,
-    ) -> Result<ProjectCompileOutput> {
-        self.compile_with(project, |prj| Ok(prj.compile_sparse(filter)?))
     }
 
     /// Compiles the project with the given closure
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
-    /// ProjectCompiler::default()
-    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?))
-    ///     .unwrap();
+    /// let prj = config.project().unwrap();
+    /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
+    fn compile_with<F>(self, f: F) -> Result<ProjectCompileOutput>
     where
-        F: FnOnce(&Project) -> Result<ProjectCompileOutput>,
+        F: FnOnce() -> Result<ProjectCompileOutput>,
     {
-        if !project.paths.has_input_files() {
-            println!("Nothing to compile");
-            // nothing to do here
-            std::process::exit(0);
+        let quiet = self.quiet.unwrap_or(false);
+        let bail = self.bail.unwrap_or(true);
+        #[allow(clippy::collapsible_else_if)]
+        let reporter = if quiet {
+            Report::new(NoReporter::default())
+        } else {
+            if std::io::stdout().is_terminal() {
+                Report::new(SpinnerReporter::spawn())
+            } else {
+                Report::new(BasicStdoutReporter::default())
+            }
+        };
+
+        let output = foundry_compilers::report::with_scoped(&reporter, || {
+            tracing::debug!("compiling project");
+
+            let timer = std::time::Instant::now();
+            let r = f();
+            let elapsed = timer.elapsed();
+
+            tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
+            r
+        })?;
+
+        // need to drop the reporter here, so that the spinner terminates
+        drop(reporter);
+
+        if bail && output.has_compiler_errors() {
+            eyre::bail!("{output}")
         }
 
-        let now = std::time::Instant::now();
-        trace!("start compiling project");
-
-        let output = term::with_spinner_reporter(|| f(project))?;
-
-        let elapsed = now.elapsed();
-        trace!(?elapsed, "finished compiling");
-
-        if output.has_compiler_errors() {
-            warn!("compiled with errors");
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("No files changed, compilation skipped");
-            self.handle_output(&output);
-        } else {
-            // print the compiler output / warnings
-            println!("{output}");
+        if !quiet {
+            if output.is_unchanged() {
+                println!("No files changed, compilation skipped");
+            } else {
+                // print the compiler output / warnings
+                println!("{output}");
+            }
 
             self.handle_output(&output);
         }
@@ -122,8 +216,11 @@ impl ProjectCompiler {
 
     /// If configured, this will print sizes or names
     fn handle_output(&self, output: &ProjectCompileOutput) {
+        let print_names = self.print_names.unwrap_or(false);
+        let print_sizes = self.print_sizes.unwrap_or(false);
+
         // print any sizes or names
-        if self.print_names {
+        if print_names {
             let mut artifacts: BTreeMap<_, Vec<_>> = BTreeMap::new();
             for (name, (_, version)) in output.versioned_artifacts() {
                 artifacts.entry(version).or_default().push(name);
@@ -138,11 +235,13 @@ impl ProjectCompiler {
                 }
             }
         }
-        if self.print_sizes {
+
+        if print_sizes {
             // add extra newline if names were already printed
-            if self.print_names {
+            if print_names {
                 println!();
             }
+
             let mut size_report = SizeReport { contracts: BTreeMap::new() };
             let artifacts: BTreeMap<_, _> = output.artifacts().collect();
             for (name, artifact) in artifacts {
@@ -150,10 +249,10 @@ impl ProjectCompiler {
 
                 let dev_functions =
                     artifact.abi.as_ref().map(|abi| abi.functions()).into_iter().flatten().filter(
-                        |&func| {
+                        |func| {
                             func.name.is_test() ||
-                                func.name == "IS_TEST" ||
-                                func.name == "IS_SCRIPT"
+                                func.name.eq("IS_TEST") ||
+                                func.name.eq("IS_SCRIPT")
                         },
                     );
 
@@ -163,6 +262,7 @@ impl ProjectCompiler {
 
             println!("{size_report}");
 
+            // TODO: avoid process::exit
             // exit with error if any contract exceeds the size limit, excluding test contracts.
             if size_report.exceeds_size_limit() {
                 std::process::exit(1);
@@ -171,16 +271,83 @@ impl ProjectCompiler {
     }
 }
 
-/// Map over artifacts contract sources name -> file_id -> (source, contract)
+/// Contract source code and bytecode.
 #[derive(Clone, Debug, Default)]
-pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
+pub struct ContractSources {
+    /// Map over artifacts' contract names -> vector of file IDs
+    pub ids_by_name: HashMap<String, Vec<u32>>,
+    /// Map over file_id -> (source code, contract)
+    pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
+}
+
+impl ContractSources {
+    /// Collects the contract sources and artifacts from the project compile output.
+    pub fn from_project_output(
+        output: &ProjectCompileOutput,
+        root: &Path,
+    ) -> Result<ContractSources> {
+        let mut sources = ContractSources::default();
+        for (id, artifact) in output.artifact_ids() {
+            if let Some(file_id) = artifact.id {
+                let abs_path = root.join(&id.source);
+                let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
+                    format!("failed to read artifact source file for `{}`", id.identifier())
+                })?;
+                let compact = CompactContractBytecode {
+                    abi: artifact.abi.clone(),
+                    bytecode: artifact.bytecode.clone(),
+                    deployed_bytecode: artifact.deployed_bytecode.clone(),
+                };
+                let contract = compact_to_contract(compact)?;
+                sources.insert(&id, file_id, source_code, contract);
+            } else {
+                warn!(id = id.identifier(), "source not found");
+            }
+        }
+        Ok(sources)
+    }
+
+    /// Inserts a contract into the sources.
+    pub fn insert(
+        &mut self,
+        artifact_id: &ArtifactId,
+        file_id: u32,
+        source: String,
+        bytecode: ContractBytecodeSome,
+    ) {
+        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
+        self.sources_by_id.insert(file_id, (source, bytecode));
+    }
+
+    /// Returns the source for a contract by file ID.
+    pub fn get(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
+        self.sources_by_id.get(&id)
+    }
+
+    /// Returns all sources for a contract by name.
+    pub fn get_sources(
+        &self,
+        name: &str,
+    ) -> Option<impl Iterator<Item = (u32, &(String, ContractBytecodeSome))>> {
+        self.ids_by_name
+            .get(name)
+            .map(|ids| ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))))
+    }
+
+    /// Returns all (name, source) pairs.
+    pub fn entries(&self) -> impl Iterator<Item = (String, &(String, ContractBytecodeSome))> {
+        self.ids_by_name.iter().flat_map(|(name, ids)| {
+            ids.iter().filter_map(|id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
+        })
+    }
+}
 
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;
 
 /// Contracts with info about their size
 pub struct SizeReport {
-    /// `<contract name>:info>`
+    /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
 
@@ -261,175 +428,34 @@ pub struct ContractInfo {
     pub is_dev_contract: bool,
 }
 
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-pub fn compile(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-) -> Result<ProjectCompileOutput> {
-    ProjectCompiler::new(print_names, print_sizes).compile(project)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-///
-/// Takes a list of [`SkipBuildFilter`] for files to exclude from the build.
-pub fn compile_with_filter(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    ProjectCompiler::with_filter(print_names, print_sizes, skip).compile(project)
-}
-
-/// Compiles the provided [`Project`] and does not throw if there's any compiler error
-/// Doesn't print anything to stdout, thus is "suppressed".
-pub fn try_suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    Ok(foundry_compilers::report::with_scoped(
-        &foundry_compilers::report::Report::new(NoReporter::default()),
-        || project.compile(),
-    )?)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-/// Doesn't print anything to stdout, thus is "suppressed".
-pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    let output = try_suppress_compile(project)?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-
-    Ok(output)
-}
-
-/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
-/// [`suppress_compile`] and throw if there's any compiler error
-pub fn suppress_compile_with_filter(
-    project: &Project,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    if skip.is_empty() {
-        suppress_compile(project)
-    } else {
-        suppress_compile_sparse(project, SkipBuildFilters(skip))
-    }
-}
-
-/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
-/// [`suppress_compile`] and does not throw if there's any compiler error
-pub fn suppress_compile_with_filter_json(
-    project: &Project,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    if skip.is_empty() {
-        try_suppress_compile(project)
-    } else {
-        try_suppress_compile_sparse(project, SkipBuildFilters(skip))
-    }
-}
-
-/// Compiles the provided [`Project`],
-/// Doesn't print anything to stdout, thus is "suppressed".
-///
-/// See [`Project::compile_sparse`]
-pub fn try_suppress_compile_sparse<F: FileFilter + 'static>(
-    project: &Project,
-    filter: F,
-) -> Result<ProjectCompileOutput> {
-    Ok(foundry_compilers::report::with_scoped(
-        &foundry_compilers::report::Report::new(NoReporter::default()),
-        || project.compile_sparse(filter),
-    )?)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-/// Doesn't print anything to stdout, thus is "suppressed".
-///
-/// See [`Project::compile_sparse`]
-pub fn suppress_compile_sparse<F: FileFilter + 'static>(
-    project: &Project,
-    filter: F,
-) -> Result<ProjectCompileOutput> {
-    let output = try_suppress_compile_sparse(project, filter)?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-
-    Ok(output)
-}
-
-/// Compile a set of files not necessarily included in the `project`'s source dir
-///
-/// If `silent` no solc related output will be emitted to stdout
-pub fn compile_files(
-    project: &Project,
-    files: Vec<PathBuf>,
-    silent: bool,
-) -> Result<ProjectCompileOutput> {
-    let output = if silent {
-        foundry_compilers::report::with_scoped(
-            &foundry_compilers::report::Report::new(NoReporter::default()),
-            || project.compile_files(files),
-        )
-    } else {
-        term::with_spinner_reporter(|| project.compile_files(files))
-    }?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-    if !silent {
-        println!("{output}");
-    }
-
-    Ok(output)
-}
-
 /// Compiles target file path.
 ///
-/// If `silent` no solc related output will be emitted to stdout.
+/// If `quiet` no solc related output will be emitted to stdout.
 ///
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target(
-    target_path: &Path,
-    project: &Project,
-    silent: bool,
-    verify: bool,
-) -> Result<ProjectCompileOutput> {
-    compile_target_with_filter(target_path, project, silent, verify, Vec::new())
-}
-
-/// Compiles target file path.
 pub fn compile_target_with_filter(
     target_path: &Path,
     project: &Project,
-    silent: bool,
+    quiet: bool,
     verify: bool,
     skip: Vec<SkipBuildFilter>,
 ) -> Result<ProjectCompileOutput> {
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
-    if graph.files().get(target_path).is_none() {
+    let mut compiler = ProjectCompiler::new().quiet(quiet);
+    if !skip.is_empty() {
+        compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
+    }
+    if !graph.files().contains_key(target_path) {
         if verify {
             eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
         }
-        return compile_files(project, vec![target_path.to_path_buf()], silent)
+        compiler = compiler.files([target_path.into()]);
     }
-
-    if silent {
-        suppress_compile_with_filter(project, skip)
-    } else {
-        compile_with_filter(project, false, false, skip)
-    }
+    compiler.compile(project)
 }
 
 /// Compiles an Etherscan source from metadata by creating a project.
@@ -444,7 +470,7 @@ pub async fn compile_from_source(
     let project_output = project.compile()?;
 
     if project_output.has_compiler_errors() {
-        eyre::bail!(project_output.to_string())
+        eyre::bail!("{project_output}")
     }
 
     let (artifact_id, file_id, contract) = project_output
@@ -513,13 +539,20 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 }
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SkipBuildFilters(pub Vec<SkipBuildFilter>);
+#[derive(Clone, Debug)]
+pub struct SkipBuildFilters(Vec<GlobMatcher>);
 
 impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
-        self.0.iter().all(|filter| filter.is_match(file))
+        self.0.iter().all(|matcher| is_match_exclude(matcher, file))
+    }
+}
+
+impl SkipBuildFilters {
+    /// Creates a new `SkipBuildFilters` from multiple `SkipBuildFilter`.
+    pub fn new(matchers: impl IntoIterator<Item = SkipBuildFilter>) -> Result<Self> {
+        matchers.into_iter().map(|m| m.compile()).collect::<Result<_>>().map(Self)
     }
 }
 
@@ -535,6 +568,14 @@ pub enum SkipBuildFilter {
 }
 
 impl SkipBuildFilter {
+    fn new(s: &str) -> Self {
+        match s {
+            "test" | "tests" => SkipBuildFilter::Tests,
+            "script" | "scripts" => SkipBuildFilter::Scripts,
+            s => SkipBuildFilter::Custom(s.to_string()),
+        }
+    }
+
     /// Returns the pattern to match against a file
     fn file_pattern(&self) -> &str {
         match self {
@@ -543,15 +584,9 @@ impl SkipBuildFilter {
             SkipBuildFilter::Custom(s) => s.as_str(),
         }
     }
-}
 
-impl<T: AsRef<str>> From<T> for SkipBuildFilter {
-    fn from(s: T) -> Self {
-        match s.as_ref() {
-            "test" | "tests" => SkipBuildFilter::Tests,
-            "script" | "scripts" => SkipBuildFilter::Scripts,
-            s => SkipBuildFilter::Custom(s.to_string()),
-        }
+    fn compile(&self) -> Result<GlobMatcher> {
+        self.file_pattern().parse().map_err(Into::into)
     }
 }
 
@@ -559,23 +594,20 @@ impl FromStr for SkipBuildFilter {
     type Err = Infallible;
 
     fn from_str(s: &str) -> result::Result<Self, Self::Err> {
-        Ok(s.into())
+        Ok(Self::new(s))
     }
 }
 
-impl FileFilter for SkipBuildFilter {
-    /// Matches file only if the filter does not apply
-    ///
-    /// This is returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`
-    fn is_match(&self, file: &Path) -> bool {
-        fn exclude(file: &Path, pattern: &str) -> Option<bool> {
-            let matcher: GlobMatcher = pattern.parse().unwrap();
-            let file_name = file.file_name()?.to_str()?;
-            Some(file_name.contains(pattern) || matcher.is_match(file.as_os_str().to_str()?))
-        }
-
-        !exclude(file, self.file_pattern()).unwrap_or_default()
+/// Matches file only if the filter does not apply.
+///
+/// This returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`.
+fn is_match_exclude(matcher: &GlobMatcher, path: &Path) -> bool {
+    fn is_match(matcher: &GlobMatcher, path: &Path) -> Option<bool> {
+        let file_name = path.file_name()?.to_str()?;
+        Some(file_name.contains(matcher.as_str()) || matcher.is_match(path))
     }
+
+    !is_match(matcher, path).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -584,19 +616,24 @@ mod tests {
 
     #[test]
     fn test_build_filter() {
+        let tests = SkipBuildFilter::Tests.compile().unwrap();
+        let scripts = SkipBuildFilter::Scripts.compile().unwrap();
+        let custom = |s: &str| SkipBuildFilter::Custom(s.to_string()).compile().unwrap();
+
         let file = Path::new("A.t.sol");
-        assert!(!SkipBuildFilter::Tests.is_match(file));
-        assert!(SkipBuildFilter::Scripts.is_match(file));
-        assert!(!SkipBuildFilter::Custom("A.t".to_string()).is_match(file));
+        assert!(!is_match_exclude(&tests, file));
+        assert!(is_match_exclude(&scripts, file));
+        assert!(!is_match_exclude(&custom("A.t"), file));
 
         let file = Path::new("A.s.sol");
-        assert!(SkipBuildFilter::Tests.is_match(file));
-        assert!(!SkipBuildFilter::Scripts.is_match(file));
-        assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
+        assert!(is_match_exclude(&tests, file));
+        assert!(!is_match_exclude(&scripts, file));
+        assert!(!is_match_exclude(&custom("A.s"), file));
 
         let file = Path::new("/home/test/Foo.sol");
-        assert!(!SkipBuildFilter::Custom("*/test/**".to_string()).is_match(file));
+        assert!(!is_match_exclude(&custom("*/test/**"), file));
+
         let file = Path::new("/home/script/Contract.sol");
-        assert!(!SkipBuildFilter::Custom("*/script/**".to_string()).is_match(file));
+        assert!(!is_match_exclude(&custom("*/script/**"), file));
     }
 }

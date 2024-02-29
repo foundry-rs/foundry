@@ -7,6 +7,8 @@
 #[macro_use]
 extern crate tracing;
 
+mod ic;
+
 pub mod abi;
 pub mod backend;
 pub mod constants;

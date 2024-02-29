@@ -1,4 +1,14 @@
-use crate::abi::*;
+use crate::{
+    abi::*,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
+use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::{
+    request::TransactionRequest as AlloyTransactionRequest,
+    state::{AccountOverride, StateOverride},
+    BlockNumberOrTag,
+};
+use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
@@ -11,6 +21,7 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
+use foundry_common::types::{to_call_request_from_tx_request, ToAlloy, ToEthers};
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -18,9 +29,9 @@ use tokio::time::timeout;
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -29,11 +40,11 @@ async fn can_transfer_eth() {
 
     let balance_before = provider.get_balance(to, None).await.unwrap();
 
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
     // craft the tx
     // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
 
     // broadcast it via the eth_sendTransaction API
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
@@ -47,31 +58,36 @@ async fn can_transfer_eth() {
 
     let to_balance = provider.get_balance(to, None).await.unwrap();
 
-    assert_eq!(balance_before.saturating_add(amount), to_balance);
+    assert_eq!(balance_before.saturating_add(amount.to_ethers()), to_balance);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
     let gas_price = provider.get_gas_price().await.unwrap();
 
     // craft the tx with lower price
-    let tx = TransactionRequest::new().to(to).from(from).value(amount).gas_price(gas_price);
+    let tx =
+        TransactionRequest::new().to(to).from(from).value(amount.to_ethers()).gas_price(gas_price);
     let tx_lower = provider.send_transaction(tx, None).await.unwrap();
 
     // craft the tx with higher price
-    let tx = TransactionRequest::new().to(from).from(to).value(amount).gas_price(gas_price + 1);
+    let tx = TransactionRequest::new()
+        .to(from)
+        .from(to)
+        .value(amount.to_ethers())
+        .gas_price(gas_price + 1);
     let tx_higher = provider.send_transaction(tx, None).await.unwrap();
 
     // manually mine the block with the transactions
@@ -87,16 +103,16 @@ async fn can_order_transactions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
 
     // send the transaction with higher nonce than on chain
     let higher_pending_tx =
@@ -126,17 +142,17 @@ async fn can_replace_transaction() {
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
-    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from).nonce(nonce);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from).nonce(nonce);
 
     // send transaction with lower gas price
     let lower_priced_pending_tx =
@@ -164,32 +180,33 @@ async fn can_replace_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_too_high_gas_limits() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let gas_limit = api.gas_limit();
-    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
 
     // send transaction with the exact gas limit
-    let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
+    let pending = provider.send_transaction(tx.clone().gas(gas_limit.to_ethers()), None).await;
 
     pending.unwrap();
 
     // send transaction with higher gas limit
-    let pending = provider.send_transaction(tx.clone().gas(gas_limit + 1u64), None).await;
+    let pending =
+        provider.send_transaction(tx.clone().gas(gas_limit.to_ethers() + 1u64), None).await;
 
     assert!(pending.is_err());
     let err = pending.unwrap_err();
     assert!(err.to_string().contains("gas too high"));
 
-    api.anvil_set_balance(from, U256::MAX).await.unwrap();
+    api.anvil_set_balance(from.to_alloy(), U256::MAX.to_alloy()).await.unwrap();
 
-    let pending = provider.send_transaction(tx.gas(gas_limit), None).await;
+    let pending = provider.send_transaction(tx.gas(gas_limit.to_ethers()), None).await;
     pending.unwrap();
 }
 
@@ -200,17 +217,17 @@ async fn can_reject_underpriced_replacement() {
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
-    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from).nonce(nonce);
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from).nonce(nonce);
 
     // send transaction with higher gas price
     let higher_priced_pending_tx =
@@ -235,9 +252,9 @@ async fn can_reject_underpriced_replacement() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -268,9 +285,9 @@ async fn can_deploy_and_mine_manually() {
     // can mine in manual mode
     api.evm_mine(None).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
@@ -301,12 +318,12 @@ async fn can_deploy_and_mine_manually() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_automatically() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
@@ -322,9 +339,9 @@ async fn can_mine_automatically() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -357,9 +374,9 @@ async fn can_call_greeter_historic() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -382,9 +399,9 @@ async fn can_deploy_greeter_ws() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_get_code() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -401,9 +418,9 @@ async fn can_deploy_get_code() {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_blocktimestamp_works() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract =
@@ -413,14 +430,15 @@ async fn get_blocktimestamp_works() {
 
     assert!(timestamp > U256::one());
 
-    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    let latest_block =
+        api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.timestamp);
+    assert_eq!(timestamp, latest_block.header.timestamp.to_ethers());
 
     // repeat call same result
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.timestamp);
+    assert_eq!(timestamp, latest_block.header.timestamp.to_ethers());
 
     // mock timestamp
     let next_timestamp = timestamp.as_u64() + 1337;
@@ -439,9 +457,9 @@ async fn get_blocktimestamp_works() {
 #[tokio::test(flavor = "multi_thread")]
 async fn call_past_state() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
@@ -496,9 +514,9 @@ async fn call_past_state() {
 async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -526,9 +544,9 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
     let nonce = client.get_transaction_count(from, None).await.unwrap();
@@ -560,9 +578,9 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -619,10 +637,10 @@ async fn can_get_pending_transaction() {
     // disable auto mining so we can check if we can return pending tx from the mempool
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let from = handle.dev_wallets().next().unwrap().address();
-    let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+    let tx = TransactionRequest::new().from(from.to_ethers()).value(1337u64).to(Address::random());
     let tx = provider.send_transaction(tx, None).await.unwrap();
 
     let pending = provider.get_transaction(tx.tx_hash()).await.unwrap();
@@ -640,11 +658,11 @@ async fn test_first_noce_is_zero() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let from = handle.dev_wallets().next().unwrap().address();
 
     let nonce = provider
-        .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+        .get_transaction_count(from.to_ethers(), Some(BlockId::Number(BlockNumber::Pending)))
         .await
         .unwrap();
 
@@ -657,8 +675,8 @@ async fn can_handle_different_sender_nonce_calculation() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from_first = accounts[0].address();
     let from_second = accounts[1].address();
 
@@ -692,17 +710,18 @@ async fn includes_pending_tx_for_transaction_count() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     let from = handle.dev_wallets().next().unwrap().address();
 
     let tx_count = 10u64;
 
     // send a bunch of tx to the mempool and check nonce is returned correctly
     for idx in 1..=tx_count {
-        let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+        let tx =
+            TransactionRequest::new().from(from.to_ethers()).value(1337u64).to(Address::random());
         let _tx = provider.send_transaction(tx, None).await.unwrap();
         let nonce = provider
-            .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+            .get_transaction_count(from.to_ethers(), Some(BlockId::Number(BlockNumber::Pending)))
             .await
             .unwrap();
         assert_eq!(nonce, idx.into());
@@ -710,7 +729,7 @@ async fn includes_pending_tx_for_transaction_count() {
 
     api.mine_one().await;
     let nonce = provider
-        .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+        .get_transaction_count(from.to_ethers(), Some(BlockId::Number(BlockNumber::Pending)))
         .await
         .unwrap();
     assert_eq!(nonce, tx_count.into());
@@ -719,14 +738,14 @@ async fn includes_pending_tx_for_transaction_count() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_historic_info() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
+    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
     let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let nonce_pre = provider
@@ -747,7 +766,7 @@ async fn can_get_historic_info() {
     assert!(balance_post < balance_pre);
 
     let to_balance = provider.get_balance(to, None).await.unwrap();
-    assert_eq!(balance_pre.saturating_add(amount), to_balance);
+    assert_eq!(balance_pre.saturating_add(amount.to_ethers()), to_balance);
 }
 
 // <https://github.com/eth-brownie/brownie/issues/1549>
@@ -755,8 +774,9 @@ async fn can_get_historic_info() {
 async fn test_tx_receipt() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let client =
+        Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
 
@@ -777,8 +797,8 @@ async fn can_stream_pending_transactions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(2)))).await;
     let num_txs = 5;
-    let provider = handle.http_provider();
-    let ws_provider = handle.ws_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let ws_provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let accounts = provider.get_accounts().await.unwrap();
     let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
@@ -860,8 +880,9 @@ async fn test_tx_access_list() {
     //     - The sender shouldn't be in the AL
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let client =
+        Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
 
     let sender = Address::random();
     let other_acc = Address::random();
@@ -930,9 +951,9 @@ async fn estimates_gas_on_pending_by_default() {
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let recipient = Address::random();
 
@@ -943,13 +964,55 @@ async fn estimates_gas_on_pending_by_default() {
 
     let tx =
         TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
-    api.estimate_gas(tx.into(), None).await.unwrap();
+    api.estimate_gas(to_call_request_from_tx_request(tx), None, None).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let tx =
+        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
+    // Expect the gas estimation to fail due to insufficient funds.
+    let error_result =
+        api.estimate_gas(to_call_request_from_tx_request(tx.clone()), None, None).await;
+
+    assert!(error_result.is_err(), "Expected an error due to insufficient funds");
+    let error_message = error_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("Insufficient funds for gas * price + value"),
+        "Error message did not match expected: {}",
+        error_message
+    );
+
+    // Setup state override to simulate sufficient funds for the recipient.
+    let addr = alloy_primitives::Address::from_slice(recipient.as_bytes());
+    let account_override =
+        AccountOverride { balance: Some(alloy_primitives::U256::from(1e18)), ..Default::default() };
+    let mut state_override = StateOverride::new();
+    state_override.insert(addr, account_override);
+
+    // Estimate gas with state override implying sufficient funds.
+    let gas_estimate = api
+        .estimate_gas(to_call_request_from_tx_request(tx), None, Some(state_override))
+        .await
+        .expect("Failed to estimate gas with state override");
+
+    // Assert the gas estimate meets the expected minimum.
+    assert!(
+        gas_estimate >= alloy_primitives::U256::from(21000),
+        "Gas estimate is lower than expected minimum"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_gas_too_low() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let account = handle.dev_accounts().next().unwrap();
 
@@ -957,7 +1020,7 @@ async fn test_reject_gas_too_low() {
     let tx = TransactionRequest::new()
         .to(Address::random())
         .value(U256::from(1337u64))
-        .from(account)
+        .from(account.to_ethers())
         .gas(gas);
 
     let resp = provider.send_transaction(tx, None).await;
@@ -970,10 +1033,10 @@ async fn test_reject_gas_too_low() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_high_gas_limit() {
     let (_api, handle) =
-        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000)))).await;
-    let provider = handle.http_provider();
+        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000).to_alloy()))).await;
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
@@ -989,17 +1052,17 @@ async fn can_call_with_high_gas_limit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_eip1559_pre_london() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
-    let provider = handle.http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let gas_limit = api.gas_limit();
     let gas_price = api.gas_price().unwrap();
     let unsupported = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
         .unwrap()
-        .gas(gas_limit)
-        .gas_price(gas_price)
+        .gas(gas_limit.to_ethers())
+        .gas_price(gas_price.to_ethers())
         .send()
         .await
         .unwrap_err()
@@ -1015,4 +1078,29 @@ async fn test_reject_eip1559_pre_london() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+// https://github.com/foundry-rs/foundry/issues/6931
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_multiple_in_block() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let tx = AlloyTransactionRequest {
+        from: Some("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap()),
+        ..Default::default()
+    };
+
+    // broadcast it via the eth_sendTransaction API
+    let first = api.send_transaction(tx.clone()).await.unwrap();
+    let second = api.send_transaction(tx.clone()).await.unwrap();
+
+    api.anvil_mine(Some(rU256::from(1)), Some(rU256::ZERO)).await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let txs = block.transactions.hashes().copied().collect::<Vec<_>>();
+    assert_eq!(txs, vec![first, second]);
 }

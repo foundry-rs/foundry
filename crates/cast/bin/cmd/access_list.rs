@@ -15,25 +15,24 @@ use std::str::FromStr;
 #[derive(Debug, Parser)]
 pub struct AccessListArgs {
     /// The destination of the transaction.
-    #[clap(
+    #[arg(
         value_name = "TO",
         value_parser = NameOrAddress::from_str
     )]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
-    #[clap(value_name = "SIG")]
+    #[arg(value_name = "SIG")]
     sig: Option<String>,
 
     /// The arguments of the function to call.
-    #[clap(value_name = "ARGS")]
+    #[arg(value_name = "ARGS")]
     args: Vec<String>,
 
     /// The data for the transaction.
-    #[clap(
+    #[arg(
         long,
         value_name = "DATA",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
         conflicts_with_all = &["sig", "args"]
     )]
     data: Option<String>,
@@ -41,17 +40,17 @@ pub struct AccessListArgs {
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long, short = 'B')]
+    #[arg(long, short = 'B')]
     block: Option<BlockId>,
 
     /// Print the access list as JSON.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 

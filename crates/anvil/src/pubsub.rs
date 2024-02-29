@@ -1,17 +1,13 @@
 use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
-    StorageInfo, U256,
+    StorageInfo,
 };
-use anvil_core::eth::{
-    block::Block,
-    receipt::{EIP658Receipt, Log, TypedReceipt},
-    subscription::{SubscriptionId, SubscriptionResult},
-};
+use alloy_consensus::ReceiptWithBloom;
+use alloy_network::Sealable;
+use alloy_primitives::{Log, TxHash, B256, U256};
+use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
+use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
 use anvil_rpc::{request::Version, response::ResponseResult};
-use ethers::{
-    prelude::{Log as EthersLog, H256, H256 as TxHash, U64},
-    types::FilteredParams,
-};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{
@@ -26,7 +22,7 @@ pub struct LogsSubscription {
     pub blocks: NewBlockNotifications,
     pub storage: StorageInfo,
     pub filter: FilteredParams,
-    pub queued: VecDeque<EthersLog>,
+    pub queued: VecDeque<AlloyLog>,
     pub id: SubscriptionId,
 }
 
@@ -40,7 +36,7 @@ impl LogsSubscription {
                     subscription: self.id.clone(),
                     result: to_rpc_result(log),
                 };
-                return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
             if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
@@ -52,16 +48,16 @@ impl LogsSubscription {
                         // this ensures we poll the receiver until it is pending, in which case the
                         // underlying `UnboundedReceiver` will register the new waker, see
                         // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
-                        continue
+                        continue;
                     }
                     self.queued.extend(logs)
                 }
             } else {
-                return Poll::Ready(None)
+                return Poll::Ready(None);
             }
 
             if self.queued.is_empty() {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }
@@ -115,10 +111,10 @@ impl EthSubscription {
                                 subscription: id.clone(),
                                 result: to_rpc_result(block),
                             };
-                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
                         }
                     } else {
-                        return Poll::Ready(None)
+                        return Poll::Ready(None);
                     }
                 }
             }
@@ -153,30 +149,28 @@ pub fn filter_logs(
     block: Block,
     receipts: Vec<TypedReceipt>,
     filter: &FilteredParams,
-) -> Vec<EthersLog> {
+) -> Vec<AlloyLog> {
     /// Determines whether to add this log
-    fn add_log(block_hash: H256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
-        let log = EthersLog {
+    fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
+        let log = AlloyLog {
             address: l.address,
-            topics: l.topics.clone(),
-            data: l.data.clone(),
+            topics: l.topics().to_vec(),
+            data: l.data.data.clone(),
             block_hash: None,
             block_number: None,
             transaction_hash: None,
             transaction_index: None,
             log_index: None,
-            transaction_log_index: None,
-            log_type: None,
-            removed: Some(false),
+            removed: false,
         };
         if params.filter.is_some() {
-            let block_number = block.header.number.as_u64();
+            let block_number = block.header.number;
             if !params.filter_block_range(block_number) ||
                 !params.filter_block_hash(block_hash) ||
                 !params.filter_address(&log) ||
                 !params.filter_topics(&log)
             {
-                return false
+                return false;
             }
         }
         true
@@ -186,27 +180,25 @@ pub fn filter_logs(
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let receipt: EIP658Receipt = receipt.into();
-        let receipt_logs = receipt.logs;
-        let transaction_hash: Option<H256> = if !receipt_logs.is_empty() {
+        let receipt: ReceiptWithBloom = receipt.into();
+        let receipt_logs = receipt.receipt.logs;
+        let transaction_hash: Option<B256> = if !receipt_logs.is_empty() {
             Some(block.transactions[receipt_index].hash())
         } else {
             None
         };
-        for (transaction_log_index, log) in receipt_logs.into_iter().enumerate() {
+        for log in receipt_logs.into_iter() {
             if add_log(block_hash, &log, &block, filter) {
-                logs.push(EthersLog {
+                logs.push(AlloyLog {
                     address: log.address,
-                    topics: log.topics,
-                    data: log.data,
+                    topics: log.topics().to_vec(),
+                    data: log.data.data,
                     block_hash: Some(block_hash),
-                    block_number: Some(block.header.number.as_u64().into()),
+                    block_number: Some(U256::from(block.header.number)),
                     transaction_hash,
-                    transaction_index: Some(U64::from(receipt_index)),
+                    transaction_index: Some(U256::from(receipt_index)),
                     log_index: Some(U256::from(log_index)),
-                    transaction_log_index: Some(U256::from(transaction_log_index)),
-                    log_type: None,
-                    removed: Some(false),
+                    removed: false,
                 });
             }
             log_index += 1;

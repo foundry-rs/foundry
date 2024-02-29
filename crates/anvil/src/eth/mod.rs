@@ -1,5 +1,6 @@
 pub mod api;
 pub mod otterscan;
+pub mod sign;
 pub use api::EthApi;
 
 pub mod backend;
@@ -10,5 +11,4 @@ pub mod fees;
 pub(crate) mod macros;
 pub mod miner;
 pub mod pool;
-pub mod sign;
 pub mod util;

@@ -1,6 +1,6 @@
 use super::{retry::RetryArgs, verify};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
-use alloy_json_abi::{Constructor, JsonAbi as Abi};
+use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
 use ethers_contract::ContractError;
@@ -11,7 +11,7 @@ use ethers_core::{
         TransactionReceipt, TransactionRequest,
     },
 };
-use ethers_middleware::MiddlewareBuilder;
+use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -19,8 +19,9 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    compile, estimate_eip1559_fees,
+    compile::ProjectCompiler,
     fmt::parse_tokens,
+    provider::ethers::estimate_eip1559_fees,
     types::{ToAlloy, ToEthers},
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
@@ -34,7 +35,7 @@ pub struct CreateArgs {
     contract: ContractInfo,
 
     /// The constructor arguments.
-    #[clap(
+    #[arg(
         long,
         num_args(1..),
         conflicts_with = "constructor_args_path",
@@ -43,7 +44,7 @@ pub struct CreateArgs {
     constructor_args: Vec<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(
+    #[arg(
         long,
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
@@ -51,37 +52,37 @@ pub struct CreateArgs {
     constructor_args_path: Option<PathBuf>,
 
     /// Print the deployment information as JSON.
-    #[clap(long, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     json: bool,
 
     /// Verify contract after creation.
-    #[clap(long)]
+    #[arg(long)]
     verify: bool,
 
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
-    #[clap(long, requires = "from")]
+    #[arg(long, requires = "from")]
     unlocked: bool,
 
     /// Prints the standard json compiler input if `--verify` is provided.
     ///
     /// The standard json compiler input can be used to manually submit contract verification in
     /// the browser.
-    #[clap(long, requires = "verify")]
+    #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: verify::VerifierArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     retry: RetryArgs,
 }
 
@@ -90,12 +91,8 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let mut output = if self.json || self.opts.silent {
-            // Suppress compile stdout messages when printing json output or when silent
-            compile::suppress_compile(&project)
-        } else {
-            compile::compile(&project, false, false)
-        }?;
+        let mut output =
+            ProjectCompiler::new().quiet_if(self.json || self.opts.silent).compile(&project)?;
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
@@ -148,8 +145,8 @@ impl CreateArgs {
             self.deploy(abi, bin, params, provider, chain_id).await
         } else {
             // Deploy with signer
-            let signer = self.eth.wallet.signer(chain_id).await?;
-            let provider = provider.with_signer(signer);
+            let signer = self.eth.wallet.signer().await?;
+            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
             self.deploy(abi, bin, params, provider, chain_id).await
         }
     }
@@ -179,10 +176,7 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
-            etherscan: EtherscanOpts {
-                key: self.eth.etherscan.key.clone(),
-                chain: Some(chain.into()),
-            },
+            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
             flatten: false,
             force: false,
             skip_is_verified_check: true,
@@ -191,6 +185,8 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier.clone(),
+            via_ir: self.opts.via_ir,
+            evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
         };
 
@@ -207,7 +203,7 @@ impl CreateArgs {
     /// Deploys the contract
     async fn deploy<M: Middleware + 'static>(
         self,
-        abi: Abi,
+        abi: JsonAbi,
         bin: BytecodeObject,
         args: Vec<DynSolValue>,
         provider: M,
@@ -315,7 +311,7 @@ impl CreateArgs {
         };
 
         if !self.verify {
-            return Ok(())
+            return Ok(());
         }
 
         println!("Starting contract verification...");
@@ -329,7 +325,7 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations,
-            etherscan: EtherscanOpts { key: self.eth.etherscan.key, chain: Some(chain.into()) },
+            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
             flatten: false,
             force: false,
             skip_is_verified_check: false,
@@ -338,6 +334,8 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier,
+            via_ir: self.opts.via_ir,
+            evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
@@ -410,7 +408,7 @@ impl<B, M, C> From<Deployer<B, M>> for ContractDeploymentTx<B, M, C> {
 pub struct Deployer<B, M> {
     /// The deployer's transaction, exposed for overriding the defaults
     pub tx: TypedTransaction,
-    abi: Abi,
+    abi: JsonAbi,
     client: B,
     confs: usize,
     block: BlockNumber,
@@ -516,7 +514,7 @@ where
 #[derive(Debug)]
 pub struct DeploymentTxFactory<B, M> {
     client: B,
-    abi: Abi,
+    abi: JsonAbi,
     bytecode: Bytes,
     _m: PhantomData<M>,
 }
@@ -543,7 +541,7 @@ where
     /// Creates a factory for deployment of the Contract with bytecode, and the
     /// constructor defined in the abi. The client will be used to send any deployment
     /// transaction.
-    pub fn new(abi: Abi, bytecode: Bytes, client: B) -> Self {
+    pub fn new(abi: JsonAbi, bytecode: Bytes, client: B) -> Self {
         Self { client, abi, bytecode, _m: PhantomData }
     }
 

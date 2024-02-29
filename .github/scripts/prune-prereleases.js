@@ -1,3 +1,23 @@
+// In case node 21 is not used.
+function groupBy(array, keyOrIterator) {
+    var iterator;
+
+    // use the function passed in, or create one
+    if(typeof keyOrIterator !== 'function') {
+        const key = String(keyOrIterator);
+        iterator = function (item) { return item[key]; };
+    } else {
+        iterator = keyOrIterator;
+    }
+
+    return array.reduce(function (memo, item) {
+        const key = iterator(item);
+        memo[key] = memo[key] || [];
+        memo[key].push(item);
+        return memo;
+    }, {});
+}
+
 module.exports = async ({ github, context }) => {
     console.log("Pruning old prereleases");
 
@@ -11,16 +31,25 @@ module.exports = async ({ github, context }) => {
         release =>
             // Only consider releases tagged `nightly-${SHA}` for deletion
             release.tag_name.includes("nightly") &&
-            release.tag_name !== "nightly" &&
-            // ref: https://github.com/foundry-rs/foundry/issues/3881
-            // Skipping pruning the build on 1st day of each month
-            !release.created_at.includes("-01T")
+            release.tag_name !== "nightly"
     );
 
-    // Keep newest 3 nightlies
-    nightlies = nightlies.slice(3);
+    // Pruning rules:
+    //   1. only keep the earliest (by created_at) release of the month
+    //   2. to keep the newest 3 nightlies
+    // Notes:
+    //   - This addresses https://github.com/foundry-rs/foundry/issues/6732
+    //   - Name of the release may deviate from created_at due to the usage of different timezones.
 
-    for (const nightly of nightlies) {
+    // Group releases by months.
+    // Per doc:
+    // > The latest release is the most recent non-prerelease, non-draft release, sorted by the created_at attribute.
+    const groups = groupBy(nightlies, i => i.created_at.slice(0, 7));
+    const nightliesToPrune = Object.values(groups)
+        .reduce((acc, cur) => acc.concat(cur.slice(0, -1)), []) // rule 1
+        .slice(3); // rule 2
+
+    for (const nightly of nightliesToPrune) {
         console.log(`Deleting nightly: ${nightly.tag_name}`);
         await github.rest.repos.deleteRelease({
             owner: context.repo.owner,

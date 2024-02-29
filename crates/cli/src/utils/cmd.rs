@@ -1,4 +1,4 @@
-use alloy_json_abi::JsonAbi as Abi;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
@@ -17,7 +17,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
@@ -29,7 +29,7 @@ use yansi::Paint;
 pub fn remove_contract(
     output: &mut ProjectCompileOutput,
     info: &ContractInfo,
-) -> Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
+) -> Result<(JsonAbi, CompactBytecode, CompactDeployedBytecode)> {
     let contract = if let Some(contract) = output.remove_contract(info) {
         contract
     } else {
@@ -93,7 +93,7 @@ pub fn get_cached_entry_by_name(
     }
 
     if let Some(entry) = cached_entry {
-        return Ok(entry)
+        return Ok(entry);
     }
 
     let mut err = format!("could not find artifact: `{name}`");
@@ -108,7 +108,7 @@ pub fn get_cached_entry_by_name(
 }
 
 /// Returns error if constructor has arguments.
-pub fn ensure_clean_constructor(abi: &Abi) -> Result<()> {
+pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
     if let Some(constructor) = &abi.constructor {
         if !constructor.inputs.is_empty() {
             eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
@@ -117,7 +117,7 @@ pub fn ensure_clean_constructor(abi: &Abi) -> Result<()> {
     Ok(())
 }
 
-pub fn needs_setup(abi: &Abi) -> bool {
+pub fn needs_setup(abi: &JsonAbi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
     for setup_fn in setup_fns.iter() {
@@ -175,7 +175,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::Moonriver |
                 NamedChain::Moonbase |
                 NamedChain::MoonbeamDev
-        )
+        );
     }
     false
 }
@@ -189,7 +189,7 @@ pub fn has_batch_support(chain_id: u64) -> bool {
                 NamedChain::ArbitrumTestnet |
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia
-        )
+        );
     }
     true
 }
@@ -316,6 +316,7 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
 }
 
 /// A slimmed down return from the executor used for returning minimal trace + gas metering info
+#[derive(Debug)]
 pub struct TraceResult {
     pub success: bool,
     pub traces: Traces,
@@ -374,30 +375,28 @@ pub async fn handle_traces(
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
-    verbose: bool,
     debug: bool,
 ) -> Result<()> {
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-
-    let labeled_addresses = labels.iter().filter_map(|label_str| {
+    let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
         if let Some(addr) = iter.next() {
             if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                return Some((address, label.to_string()))
+                return Some((address, label.to_string()));
             }
         }
         None
     });
-
+    let config_labels = config.labels.clone().into_iter();
     let mut decoder = CallTraceDecoderBuilder::new()
-        .with_labels(labeled_addresses)
+        .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,
         )?)
         .build();
 
+    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
     for (_, trace) in &mut result.traces {
         decoder.identify(trace, &mut etherscan_identifier);
     }
@@ -411,29 +410,20 @@ pub async fn handle_traces(
             .build();
         debugger.try_run()?;
     } else {
-        print_traces(&mut result, &decoder, verbose).await?;
+        print_traces(&mut result, &decoder).await?;
     }
 
     Ok(())
 }
 
-pub async fn print_traces(
-    result: &mut TraceResult,
-    decoder: &CallTraceDecoder,
-    verbose: bool,
-) -> Result<()> {
+pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
     if result.traces.is_empty() {
         panic!("No traces found")
     }
 
     println!("Traces:");
-    for (_, trace) in &mut result.traces {
-        decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
-        } else {
-            println!("{trace:#}");
-        }
+    for (_, arena) in &result.traces {
+        println!("{}", render_trace_arena(arena, decoder).await?);
     }
     println!();
 

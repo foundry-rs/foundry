@@ -22,7 +22,7 @@ type Provider = ethers_providers::Provider<RuntimeClient>;
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -32,62 +32,51 @@ pub struct CallArgs {
     args: Vec<String>,
 
     /// Data for the transaction.
-    #[clap(
+    #[arg(
         long,
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
         conflicts_with_all = &["sig", "args"]
     )]
     data: Option<String>,
 
     /// Forks the remote rpc, executes the transaction locally and prints a trace
-    #[clap(long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     trace: bool,
 
-    /// Can only be used with "--trace"
-    ///
-    /// opens an interactive debugger
-    #[clap(long, requires = "trace")]
+    /// Opens an interactive debugger.
+    /// Can only be used with `--trace`.
+    #[arg(long, requires = "trace")]
     debug: bool,
 
-    /// Can only be used with "--trace"
-    ///
-    /// prints a more verbose trace
-    #[clap(long, requires = "trace")]
-    verbose: bool,
-
-    /// Can only be used with "--trace"
-    /// Labels to apply to the traces.
-    ///
-    /// Format: `address:label`
-    #[clap(long, requires = "trace")]
+    /// Labels to apply to the traces; format: `address:label`.
+    /// Can only be used with `--trace`.
+    #[arg(long, requires = "trace")]
     labels: Vec<String>,
 
-    /// Can only be used with "--trace"
-    ///
     /// The EVM Version to use.
-    #[clap(long, requires = "trace")]
+    /// Can only be used with `--trace`.
+    #[arg(long, requires = "trace")]
     evm_version: Option<EvmVersion>,
 
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long, short)]
+    #[arg(long, short)]
     block: Option<BlockId>,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Option<CallSubcommands>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]
 pub enum CallSubcommands {
     /// ignores the address field and simulates creating a contract
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// Bytecode of contract.
         code: String,
@@ -103,7 +92,7 @@ pub enum CallSubcommands {
         /// Either specified in wei, or as a string with a unit type.
         ///
         /// Examples: 1ether, 10gwei, 0.01ether
-        #[clap(long, value_parser = parse_ether_value)]
+        #[arg(long, value_parser = parse_ether_value)]
         value: Option<U256>,
     },
 }
@@ -122,7 +111,6 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
-            verbose,
             labels,
         } = self;
 
@@ -166,9 +154,9 @@ impl CallArgs {
                         Err(evm_err) => TraceResult::try_from(evm_err)?,
                     };
 
-                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, debug).await?;
 
-                    return Ok(())
+                    return Ok(());
                 }
 
                 // fill the builder after the conditional so we dont move values
@@ -200,9 +188,9 @@ impl CallArgs {
                         tx.value().copied().unwrap_or_default().to_alloy(),
                     )?);
 
-                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, debug).await?;
 
-                    return Ok(())
+                    return Ok(());
                 }
             }
         };
@@ -266,11 +254,11 @@ mod tests {
     #[test]
     fn can_parse_call_data() {
         let data = hex::encode("hello");
-        let args: CallArgs =
-            CallArgs::parse_from(["foundry-cli", "--data", format!("0x{data}").as_str()]);
-        assert_eq!(args.data, Some(data.clone()));
+        let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        assert_eq!(args.data, Some(data));
 
-        let args: CallArgs = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        let data = hex::encode_prefixed("hello");
+        let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
         assert_eq!(args.data, Some(data));
     }
 

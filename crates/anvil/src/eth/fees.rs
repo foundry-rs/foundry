@@ -2,8 +2,8 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use alloy_primitives::{B256, U256};
 use anvil_core::eth::transaction::TypedTransaction;
-use ethers::types::{H256, U256};
 use foundry_evm::revm::primitives::SpecId;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -90,16 +90,15 @@ impl FeeManager {
         if self.is_eip1559() {
             *self.base_fee.read()
         } else {
-            U256::zero()
+            U256::ZERO
         }
     }
 
     /// Returns the suggested fee cap
     ///
-    /// This mirrors geth's auto values for `SuggestGasTipCap` which is: `priority fee + 2x current
-    /// basefee`.
+    /// Note: This currently returns a constant value: [Self::suggested_priority_fee]
     pub fn max_priority_fee_per_gas(&self) -> U256 {
-        self.suggested_priority_fee() + *self.base_fee.read() * 2
+        self.suggested_priority_fee()
     }
 
     /// Returns the current gas price
@@ -125,13 +124,13 @@ impl FeeManager {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee() == U256::zero() {
+        if self.base_fee().is_zero() {
             return 0
         }
         calculate_next_block_base_fee(
-            gas_used.as_u64(),
-            gas_limit.as_u64(),
-            last_fee_per_gas.as_u64(),
+            gas_used.to::<u64>(),
+            gas_limit.to::<u64>(),
+            last_fee_per_gas.to::<u64>(),
         )
     }
 }
@@ -199,12 +198,15 @@ impl FeeHistoryService {
         self.fee_history_limit
     }
 
+    /// Inserts a new cache entry for the given block
+    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256) {
+        let (result, block_number) = self.create_cache_entry(hash);
+        self.insert_cache_entry(result, block_number);
+    }
+
     /// Create a new history entry for the block
-    fn create_cache_entry(
-        &self,
-        hash: H256,
-        elasticity: f64,
-    ) -> (FeeHistoryCacheItem, Option<u64>) {
+    fn create_cache_entry(&self, hash: B256) -> (FeeHistoryCacheItem, Option<u64>) {
+        let elasticity = self.fees.elasticity();
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
         let reward_percentiles: Vec<f64> = {
@@ -221,7 +223,7 @@ impl FeeHistoryService {
         let mut block_number: Option<u64> = None;
         let base_fee = self.fees.base_fee();
         let mut item = FeeHistoryCacheItem {
-            base_fee: base_fee.as_u64(),
+            base_fee: base_fee.to::<u64>(),
             gas_used_ratio: 0f64,
             rewards: Vec::new(),
         };
@@ -230,10 +232,10 @@ impl FeeHistoryService {
         let current_receipts = self.storage_info.receipts(hash);
 
         if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number.as_u64());
+            block_number = Some(block.header.number);
 
-            let gas_used = block.header.gas_used.as_u64() as f64;
-            let gas_limit = block.header.gas_limit.as_u64() as f64;
+            let gas_used = block.header.gas_used as f64;
+            let gas_limit = block.header.gas_limit as f64;
 
             let gas_target = gas_limit / elasticity;
             item.gas_used_ratio = gas_used / (gas_target * elasticity);
@@ -243,24 +245,25 @@ impl FeeHistoryService {
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
-                    let gas_used = receipt.gas_used().as_u64();
+                    let gas_used = receipt.gas_used();
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
                         Some(TypedTransaction::Legacy(t)) => {
-                            t.gas_price.saturating_sub(base_fee).as_u64()
+                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
                         }
                         Some(TypedTransaction::EIP2930(t)) => {
-                            t.gas_price.saturating_sub(base_fee).as_u64()
+                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
                         }
-                        Some(TypedTransaction::EIP1559(t)) => t
-                            .max_priority_fee_per_gas
-                            .min(t.max_fee_per_gas.saturating_sub(base_fee))
-                            .as_u64(),
+                        Some(TypedTransaction::EIP1559(t)) => {
+                            U256::from(t.max_priority_fee_per_gas)
+                                .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
+                                .to::<u64>()
+                        }
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
 
-                    (gas_used, effective_reward)
+                    (gas_used.to::<u64>(), effective_reward)
                 })
                 .collect();
 
@@ -315,11 +318,9 @@ impl Future for FeeHistoryService {
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
             let hash = notification.hash;
-            let elasticity = default_elasticity();
 
             // add the imported block.
-            let (result, block_number) = pin.create_cache_entry(hash, elasticity);
-            pin.insert_cache_entry(result, block_number)
+            pin.insert_cache_entry_for_block(hash);
         }
 
         Poll::Pending
@@ -347,9 +348,9 @@ impl FeeDetails {
     /// All values zero
     pub fn zero() -> Self {
         Self {
-            gas_price: Some(U256::zero()),
-            max_fee_per_gas: Some(U256::zero()),
-            max_priority_fee_per_gas: Some(U256::zero()),
+            gas_price: Some(U256::ZERO),
+            max_fee_per_gas: Some(U256::ZERO),
+            max_priority_fee_per_gas: Some(U256::ZERO),
         }
     }
 
@@ -358,8 +359,8 @@ impl FeeDetails {
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
 
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
-        let gas_price = if no_fees { Some(U256::zero()) } else { gas_price };
-        let max_fee_per_gas = if no_fees { Some(U256::zero()) } else { max_fee_per_gas };
+        let gas_price = if no_fees { Some(U256::ZERO) } else { gas_price };
+        let max_fee_per_gas = if no_fees { Some(U256::ZERO) } else { max_fee_per_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas }
     }

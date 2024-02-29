@@ -1,12 +1,15 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
-use ethers_core::utils::{Genesis, GenesisAccount};
-use ethers_signers::Signer;
-use foundry_common::{fs::read_json_file, types::ToAlloy};
-use foundry_evm_core::backend::{DatabaseExt, RevertSnapshotAction};
+use foundry_common::fs::{read_json_file, write_json_file};
+use foundry_evm_core::{
+    backend::{DatabaseExt, RevertSnapshotAction},
+    constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+};
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,
@@ -42,7 +45,7 @@ impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let wallet = super::utils::parse_wallet(privateKey)?;
-        Ok(wallet.address().to_alloy().abi_encode())
+        Ok(wallet.address().abi_encode())
     }
 }
 
@@ -70,11 +73,14 @@ impl Cheatcode for loadAllocsCall {
         let path = Path::new(pathToAllocsJson);
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
 
-        // Let's first assume we're reading a genesis.json file.
-        let allocs: HashMap<Address, GenesisAccount> = match read_json_file::<Genesis>(path) {
-            Ok(genesis) => genesis.alloc.into_iter().map(|(k, g)| (k.to_alloy(), g)).collect(),
-            // If that fails, let's try reading a file with just the genesis accounts.
-            Err(_) => read_json_file(path)?,
+        // Let's first assume we're reading a file with only the allocs.
+        let allocs: HashMap<Address, GenesisAccount> = match read_json_file(path) {
+            Ok(allocs) => allocs,
+            Err(_) => {
+                // Let's try and read from a genesis file, and extract allocs.
+                let genesis = read_json_file::<Genesis>(path)?;
+                genesis.alloc
+            }
         };
 
         // Then, load the allocs into the database.
@@ -86,10 +92,63 @@ impl Cheatcode for loadAllocsCall {
     }
 }
 
+impl Cheatcode for dumpStateCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { pathToStateJson } = self;
+        let path = Path::new(pathToStateJson);
+
+        // Do not include system account or empty accounts in the dump.
+        let skip = |key: &Address, val: &Account| {
+            key == &CHEATCODE_ADDRESS ||
+                key == &CALLER ||
+                key == &HARDHAT_CONSOLE_ADDRESS ||
+                key == &TEST_CONTRACT_ADDRESS ||
+                key == &ccx.caller ||
+                key == &ccx.state.config.evm_opts.sender ||
+                val.is_empty()
+        };
+
+        let alloc = ccx
+            .data
+            .journaled_state
+            .state()
+            .into_iter()
+            .filter(|(key, val)| !skip(key, val))
+            .map(|(key, val)| {
+                (
+                    key,
+                    GenesisAccount {
+                        nonce: Some(val.info.nonce),
+                        balance: val.info.balance,
+                        code: val.info.code.as_ref().map(|o| o.original_bytes()),
+                        storage: Some(
+                            val.storage
+                                .iter()
+                                .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
+                                .collect(),
+                        ),
+                        private_key: None,
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        write_json_file(path, &alloc)?;
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for sign_0Call {
+    fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+        let Self { privateKey, digest } = self;
+        super::utils::sign(privateKey, digest)
+    }
+}
+
+impl Cheatcode for signP256Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey, digest } = self;
-        super::utils::sign(privateKey, digest, ccx.data.env.cfg.chain_id)
+        super::utils::sign_p256(privateKey, digest, ccx.state)
     }
 }
 
@@ -484,7 +543,6 @@ fn get_state_diff(state: &mut Cheatcodes) -> Result {
         .unwrap_or_default()
         .into_iter()
         .flatten()
-        .map(|record| record.access)
         .collect::<Vec<_>>();
     Ok(res.abi_encode())
 }

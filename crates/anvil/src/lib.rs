@@ -16,14 +16,10 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
+use alloy_primitives::{Address, U256};
+use alloy_signer::{LocalWallet, Signer as AlloySigner};
 use eth::backend::fork::ClientFork;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::Wallet,
-    signers::Signer,
-    types::{Address, U256},
-};
-use foundry_common::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -34,7 +30,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 use tokio::{
     runtime::Handle,
@@ -57,8 +52,6 @@ pub use hardfork::Hardfork;
 pub mod eth;
 /// support for polling filters
 pub mod filter;
-/// support for handling `genesis.json` files
-pub mod genesis;
 /// commandline output
 pub mod logging;
 /// types for subscriptions
@@ -133,11 +126,14 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
     if let Some(genesis) = genesis {
-        // include all signers from genesis.json if any
-        let genesis_signers = genesis.private_keys();
+        let genesis_signers = genesis
+            .alloc
+            .values()
+            .filter_map(|acc| acc.private_key)
+            .flat_map(|k| LocalWallet::from_bytes(&k))
+            .collect::<Vec<_>>();
         if !genesis_signers.is_empty() {
-            let genesis_signers: Box<dyn EthSigner> = Box::new(DevSigner::new(genesis_signers));
-            signers.push(genesis_signers);
+            signers.push(Box::new(DevSigner::new(genesis_signers)));
         }
     }
 
@@ -149,6 +145,12 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         fees,
         StorageInfo::new(Arc::clone(&backend)),
     );
+    // create an entry for the best block
+    if let Some(best_block) =
+        backend.get_block(backend.best_number()).map(|block| block.header.hash_slow())
+    {
+        fee_history_service.insert_cache_entry_for_block(best_block);
+    }
 
     let filters = Filters::default();
 
@@ -271,10 +273,8 @@ impl NodeHandle {
 
     /// Constructs a [`RetryProvider`] for this handle's HTTP endpoint.
     pub fn http_provider(&self) -> RetryProvider {
-        ProviderBuilder::new(&self.http_endpoint())
-            .build()
-            .expect("failed to build HTTP provider")
-            .interval(Duration::from_millis(500))
+        ProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build HTTP provider")
+        // .interval(Duration::from_millis(500))
     }
 
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
@@ -293,7 +293,7 @@ impl NodeHandle {
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub fn dev_wallets(&self) -> impl Iterator<Item = Wallet<SigningKey>> + '_ {
+    pub fn dev_wallets(&self) -> impl Iterator<Item = LocalWallet> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 
@@ -353,7 +353,7 @@ impl Future for NodeHandle {
         // poll the ipc task
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
-                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)))
+                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)));
             } else {
                 pin.ipc_task = Some(ipc);
             }
@@ -361,13 +361,13 @@ impl Future for NodeHandle {
 
         // poll the node service task
         if let Poll::Ready(res) = pin.node_service.poll_unpin(cx) {
-            return Poll::Ready(res)
+            return Poll::Ready(res);
         }
 
         // poll the axum server handles
         for server in pin.servers.iter_mut() {
             if let Poll::Ready(res) = server.poll_unpin(cx) {
-                return Poll::Ready(res)
+                return Poll::Ready(res);
             }
         }
 

@@ -30,7 +30,7 @@
 ///         Metadata::default()
 ///     }
 ///
-///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+///     fn data(&self) -> std::result::Result<Map<Profile, Dict>, Error> {
 ///         let value = Value::serialize(self)?;
 ///         let error = InvalidType(value.to_actual(), "map".into());
 ///         let mut dict = value.into_dict().ok_or(error)?;
@@ -137,7 +137,7 @@ macro_rules! impl_figment_convert {
 ///         Metadata::default()
 ///     }
 ///
-///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+///     fn data(&self) -> std::result::Result<Map<Profile, Dict>, Error> {
 ///         todo!()
 ///     }
 /// }
@@ -155,7 +155,7 @@ macro_rules! impl_figment_convert {
 ///         Metadata::default()
 ///     }
 ///
-///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+///     fn data(&self) -> std::result::Result<Map<Profile, Dict>, Error> {
 ///         todo!()
 ///     }
 /// }

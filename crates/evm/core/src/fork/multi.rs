@@ -4,9 +4,9 @@
 //! concurrently active pairs at once.
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
-use ethers_core::types::{BlockId, BlockNumber};
-use ethers_providers::Provider;
-use foundry_common::{runtime_client::RuntimeClient, types::ToEthers, ProviderBuilder};
+use alloy_providers::provider::Provider;
+use alloy_transport::BoxTransport;
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -17,19 +17,38 @@ use futures::{
 use revm::primitives::Env;
 use std::{
     collections::HashMap,
-    fmt,
+    fmt::{self, Write},
     pin::Pin,
     sync::{
+        atomic::AtomicUsize,
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
         Arc,
     },
     time::Duration,
 };
 
-/// The identifier for a specific fork, this could be the name of the network a custom descriptive
-/// name.
+/// The _unique_ identifier for a specific fork, this could be the name of the network a custom
+/// descriptive name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ForkId(pub String);
+
+impl ForkId {
+    /// Returns the identifier for a Fork from a URL and block number.
+    pub fn new(url: &str, num: Option<u64>) -> Self {
+        let mut id = url.to_string();
+        id.push('@');
+        match num {
+            Some(n) => write!(id, "{n:#x}").unwrap(),
+            None => id.push_str("latest"),
+        }
+        ForkId(id)
+    }
+
+    /// Returns the identifier of the fork.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl fmt::Display for ForkId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -150,9 +169,10 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Arc<Provider<RuntimeClient>>>;
+type Handler = BackendHandler<Arc<Provider<BoxTransport>>>;
 
-type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
+type CreateFuture =
+    Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;
 type GetEnvSender = OneshotSender<Option<Env>>;
 
@@ -163,7 +183,7 @@ enum Request {
     CreateFork(Box<CreateFork>, CreateSender),
     /// Returns the Fork backend for the `ForkId` if it exists
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
-    /// Adjusts the block that's being forked
+    /// Adjusts the block that's being forked, by creating a new fork at the new block
     RollFork(ForkId, u64, CreateSender),
     /// Returns the environment of the fork
     GetEnv(ForkId, GetEnvSender),
@@ -192,7 +212,10 @@ pub struct MultiForkHandler {
     // tasks currently in progress
     pending_tasks: Vec<ForkTask>,
 
-    /// All created Forks in order to reuse them
+    /// All _unique_ forkids mapped to their corresponding backend.
+    ///
+    /// Note: The backend can be shared by multiple ForkIds if the target the same provider and
+    /// block number.
     forks: HashMap<ForkId, CreatedFork>,
 
     /// Optional periodic interval to flush rpc cache
@@ -225,7 +248,7 @@ impl MultiForkHandler {
             #[allow(irrefutable_let_patterns)]
             if let ForkTask::Create(_, in_progress, _, additional) = task {
                 if in_progress == id {
-                    return Some(additional)
+                    return Some(additional);
                 }
             }
         }
@@ -233,22 +256,35 @@ impl MultiForkHandler {
     }
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
-        let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
+        let fork_id = ForkId::new(&fork.url, fork.evm_opts.fork_block_number);
         trace!(?fork_id, "created new forkId");
 
-        if let Some(fork) = self.forks.get_mut(&fork_id) {
-            fork.num_senders += 1;
-            let _ = sender.send(Ok((fork_id, fork.backend.clone(), fork.opts.env.clone())));
-        } else {
-            // there could already be a task for the requested fork in progress
-            if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
-                in_progress.push(sender);
-                return
-            }
+        // there could already be a task for the requested fork in progress
+        if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
+            in_progress.push(sender);
+            return;
+        }
 
-            // need to create a new fork
-            let task = Box::pin(create_fork(fork));
-            self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
+        // need to create a new fork
+        let task = Box::pin(create_fork(fork));
+        self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
+    }
+
+    fn insert_new_fork(
+        &mut self,
+        fork_id: ForkId,
+        fork: CreatedFork,
+        sender: CreateSender,
+        additional_senders: Vec<CreateSender>,
+    ) {
+        self.forks.insert(fork_id.clone(), fork.clone());
+        let _ = sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.opts.env.clone())));
+
+        // notify all additional senders and track unique forkIds
+        for sender in additional_senders {
+            let next_fork_id = fork.inc_senders(fork_id.clone());
+            self.forks.insert(next_fork_id.clone(), fork.clone());
+            let _ = sender.send(Ok((next_fork_id, fork.backend.clone(), fork.opts.env.clone())));
         }
     }
 
@@ -304,7 +340,7 @@ impl Future for MultiForkHandler {
                 Poll::Ready(None) => {
                     // channel closed, but we still need to drive the fork handlers to completion
                     trace!(target: "fork::multi", "request channel closed");
-                    break
+                    break;
                 }
                 Poll::Pending => break,
             }
@@ -317,18 +353,17 @@ impl Future for MultiForkHandler {
                 ForkTask::Create(mut fut, id, sender, additional_senders) => {
                     if let Poll::Ready(resp) = fut.poll_unpin(cx) {
                         match resp {
-                            Ok((fork, handler)) => {
-                                pin.handlers.push((id.clone(), handler));
-                                let backend = fork.backend.clone();
-                                let env = fork.opts.env.clone();
-                                pin.forks.insert(id.clone(), fork);
-
-                                let _ = sender.send(Ok((id.clone(), backend.clone(), env.clone())));
-
-                                // also notify all additional senders
-                                for sender in additional_senders {
-                                    let _ =
-                                        sender.send(Ok((id.clone(), backend.clone(), env.clone())));
+                            Ok((fork_id, fork, handler)) => {
+                                if let Some(fork) = pin.forks.get(&fork_id).cloned() {
+                                    pin.insert_new_fork(
+                                        fork.inc_senders(fork_id),
+                                        fork,
+                                        sender,
+                                        additional_senders,
+                                    );
+                                } else {
+                                    pin.handlers.push((fork_id.clone(), handler));
+                                    pin.insert_new_fork(fork_id, fork, sender, additional_senders);
                                 }
                             }
                             Err(err) => {
@@ -365,7 +400,7 @@ impl Future for MultiForkHandler {
 
         if pin.handlers.is_empty() && pin.incoming.is_done() {
             trace!(target: "fork::multi", "completed");
-            return Poll::Ready(())
+            return Poll::Ready(());
         }
 
         // periodically flush cached RPC state
@@ -392,7 +427,7 @@ impl Future for MultiForkHandler {
 }
 
 /// Tracks the created Fork
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CreatedFork {
     /// How the fork was initially created
     opts: CreateFork,
@@ -400,14 +435,24 @@ struct CreatedFork {
     backend: SharedBackend,
     /// How many consumers there are, since a `SharedBacked` can be used by multiple
     /// consumers
-    num_senders: usize,
+    num_senders: Arc<AtomicUsize>,
 }
 
 // === impl CreatedFork ===
 
 impl CreatedFork {
     pub fn new(opts: CreateFork, backend: SharedBackend) -> Self {
-        Self { opts, backend, num_senders: 1 }
+        Self { opts, backend, num_senders: Arc::new(AtomicUsize::new(1)) }
+    }
+
+    /// Increment senders and return unique identifier of the fork
+    fn inc_senders(&self, fork_id: ForkId) -> ForkId {
+        format!(
+            "{}-{}",
+            fork_id.as_str(),
+            self.num_senders.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )
+        .into()
     }
 }
 
@@ -436,16 +481,10 @@ impl Drop for ShutDownMultiFork {
     }
 }
 
-/// Returns  the identifier for a Fork which consists of the url and the block number
-fn create_fork_id(url: &str, num: Option<u64>) -> ForkId {
-    let num = num.map(|num| BlockNumber::Number(num.into())).unwrap_or(BlockNumber::Latest);
-    ForkId(format!("{url}@{num}"))
-}
-
 /// Creates a new fork
 ///
 /// This will establish a new `Provider` to the endpoint and return the Fork Backend
-async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler)> {
+async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork, Handler)> {
     let provider = Arc::new(
         ProviderBuilder::new(fork.url.as_str())
             .maybe_max_retry(fork.evm_opts.fork_retries)
@@ -461,10 +500,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler
 
     // we need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number = block
-        .number
-        .map(|num| num.as_u64())
-        .unwrap_or_else(|| meta.block_env.number.to_ethers().as_u64());
+    let number = block.header.number.unwrap_or(meta.block_env.number).to::<u64>();
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
@@ -474,8 +510,9 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler
     };
 
     let db = BlockchainDb::new(meta, cache_path);
-    let (backend, handler) =
-        SharedBackend::new(provider, db, Some(BlockId::Number(BlockNumber::Number(number.into()))));
+    let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork = CreatedFork::new(fork, backend);
-    Ok((fork, handler))
+    let fork_id = ForkId::new(&fork.opts.url, number.into());
+
+    Ok((fork_id, fork, handler))
 }

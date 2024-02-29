@@ -1,7 +1,5 @@
-use alloy_primitives::{Sign, I256, U256};
-use ethers_core::utils::ParseUnits;
+use alloy_primitives::{utils::ParseUnits, Sign, I256, U256};
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use std::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult, UpperHex},
@@ -41,12 +39,12 @@ impl FromStr for Base {
             "10" | "d" | "dec" | "decimal" => Ok(Self::Decimal),
             "16" | "h" | "hex" | "hexadecimal" => Ok(Self::Hexadecimal),
             s => Err(eyre::eyre!(
-                r#"Invalid base "{}". Possible values:
-2, b, bin, binary
-8, o, oct, octal
+                "\
+Invalid base \"{s}\". Possible values:
+ 2, b, bin, binary
+ 8, o, oct, octal
 10, d, dec, decimal
-16, h, hex, hexadecimal"#,
-                s
+16, h, hex, hexadecimal"
             )),
         }
     }
@@ -281,8 +279,8 @@ impl From<I256> for NumberWithBase {
 impl From<ParseUnits> for NumberWithBase {
     fn from(value: ParseUnits) -> Self {
         match value {
-            ParseUnits::U256(val) => val.to_alloy().into(),
-            ParseUnits::I256(val) => val.to_alloy().into(),
+            ParseUnits::U256(val) => val.into(),
+            ParseUnits::I256(val) => val.into(),
         }
     }
 }

@@ -12,32 +12,32 @@ use yansi::Paint;
 #[derive(Clone, Debug, Parser)]
 pub struct InitArgs {
     /// The root directory of the new project.
-    #[clap(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
+    #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
     root: PathBuf,
 
     /// The template to start from.
-    #[clap(long, short)]
+    #[arg(long, short)]
     template: Option<String>,
 
     /// Branch argument that can only be used with template option.
     /// If not specified, the default branch is used.
-    #[clap(long, short, requires = "template")]
+    #[arg(long, short, requires = "template")]
     branch: Option<String>,
 
     /// Do not install dependencies from the network.
-    #[clap(long, conflicts_with = "template", visible_alias = "no-deps")]
+    #[arg(long, conflicts_with = "template", visible_alias = "no-deps")]
     offline: bool,
 
     /// Create the project even if the specified root directory is not empty.
-    #[clap(long, conflicts_with = "template")]
+    #[arg(long, conflicts_with = "template")]
     force: bool,
 
     /// Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt
     /// file.
-    #[clap(long, conflicts_with = "template")]
+    #[arg(long, conflicts_with = "template")]
     vscode: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: DependencyInstallOpts,
 }
 
@@ -84,7 +84,7 @@ impl InitArgs {
                 git.submodule_init()?;
             } else {
                 // if not shallow, initialize and clone submodules (without fetching latest)
-                git.submodule_update(false, false, true, true, None::<PathBuf>)?;
+                git.submodule_update(false, false, true, true, std::iter::empty::<PathBuf>())?;
             }
         } else {
             // if target is not empty

@@ -113,7 +113,7 @@ The way bindings are generated and extra information can be found in the [`sol!`
 
 We leverage this macro to apply the [`Cheatcode` derive macro](#cheatcode-derive-macro) on the `Vm` interface.
 
-### [`Cheatcode`](../../crates/macros/impl/src/cheatcodes.rs) derive macro
+### [`Cheatcode`](../../crates/macros/src/cheatcodes.rs) derive macro
 
 This is derived once on the `Vm` interface declaration, which recursively applies it to all of the
 interface's items, as well as the `sol!`-generated items, such as the `VmCalls` enum.

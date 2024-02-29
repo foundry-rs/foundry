@@ -1,6 +1,6 @@
 # Temporarily exclude rusoto and ethers-providers from bans since we've yet to transition to the 
 # Rust AWS SDK.
-exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite"]
+exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite", "shlex"]
 
 # This section is considered when running `cargo deny check advisories`
 # More documentation for the advisories section can be found here:
@@ -10,9 +10,7 @@ vulnerability = "deny"
 unmaintained = "warn"
 yanked = "warn"
 notice = "warn"
-ignore = [
-    "RUSTSEC-2020-0071", # https://rustsec.org/advisories/RUSTSEC-2020-0071
-]
+ignore = []
 
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
@@ -24,9 +22,7 @@ multiple-versions = "warn"
 wildcards = "allow"
 highlight = "all"
 # List of crates to deny
-deny = [
-    { name = "openssl" },
-]
+deny = [{ name = "openssl" }]
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = []
 # Similarly to `skip` allows you to skip certain crates during duplicate
@@ -64,15 +60,13 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "secp256k1" },
     { allow = ["CC0-1.0"], name = "secp256k1-sys" },
     { allow = ["CC0-1.0"], name = "tiny-keccak" },
+    { allow = ["CC0-1.0"], name = "to_method" },
     { allow = ["CC0-1.0"], name = "more-asserts" },
     { allow = ["CC0-1.0"], name = "trezor-client" },
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "constant_time_eq" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-
-    { allow = ["GPL-3.0"], name = "fastrlp" },
-    { allow = ["GPL-3.0"], name = "fastrlp-derive" },
 ]
 #copyleft = "deny"
 
@@ -81,16 +75,12 @@ exceptions = [
 name = "unicode-ident"
 version = "*"
 expression = "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
-license-files = [
-    { path = "LICENSE-UNICODE", hash = 0x3fb01745 }
-]
+license-files = [{ path = "LICENSE-UNICODE", hash = 0x3fb01745 }]
 [[licenses.clarify]]
 name = "ring"
 version = "*"
 expression = "OpenSSL"
-license-files = [
-    { path = "LICENSE", hash = 0xbd0eed23 }
-]
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 # This section is considered when running `cargo deny check sources`.
 # More documentation about the 'sources' section can be found here:

@@ -23,10 +23,10 @@ contract FsTest is DSTest {
 
         assertEq(vm.readFile(path), "hello readable world\nthis is the second line!");
 
-        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_READ_ERR);
         vm.readFile("/etc/hosts");
 
-        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_READ_ERR);
         vm.readFileBinary("/etc/hosts");
     }
 
@@ -37,7 +37,7 @@ contract FsTest is DSTest {
         assertEq(vm.readLine(path), "this is the second line!");
         assertEq(vm.readLine(path), "");
 
-        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_READ_ERR);
         vm.readLine("/etc/hosts");
     }
 
@@ -50,9 +50,9 @@ contract FsTest is DSTest {
 
         vm.removeFile(path);
 
-        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_WRITE_ERR);
         vm.writeFile("/etc/hosts", "malicious stuff");
-        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_WRITE_ERR);
         vm.writeFileBinary("/etc/hosts", "malicious stuff");
     }
 
@@ -78,7 +78,7 @@ contract FsTest is DSTest {
 
         vm.removeFile(path);
 
-        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_WRITE_ERR);
         vm.writeLine("/etc/hosts", "malicious stuff");
     }
 
@@ -103,7 +103,7 @@ contract FsTest is DSTest {
 
         vm.removeFile(path);
 
-        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_WRITE_ERR);
         vm.removeFile("/etc/hosts");
     }
 
@@ -111,16 +111,16 @@ contract FsTest is DSTest {
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeLine(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeLine("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeLine("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeLine("./Foundry.toml", "\nffi = true\n");
     }
 
@@ -128,16 +128,16 @@ contract FsTest is DSTest {
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeFile(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeFile("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeFile("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.writeFile("./Foundry.toml", "\nffi = true\n");
     }
 
@@ -156,7 +156,7 @@ contract FsTest is DSTest {
             assertEq(entries[1].path, entries2[1].path);
 
             string memory contents = vm.readFile(entries[0].path);
-            assertEq(contents, unicode"Wow! 😀\n");
+            assertEq(contents, unicode"Wow! 😀");
         }
 
         {
@@ -172,7 +172,7 @@ contract FsTest is DSTest {
             assertEntry(entries[4], 3, false);
         }
 
-        vm.expectRevert(FOUNDRY_READ_DIR_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_READ_DIR_ERR);
         vm.readDir("/etc");
     }
 
@@ -184,11 +184,11 @@ contract FsTest is DSTest {
         assertEq(vm.fsMetadata(path).isDir, true);
 
         vm.removeDir(path, false);
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.fsMetadata(path);
 
         // reverts because not recursive
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.createDir(child, false);
 
         vm.createDir(child, true);
@@ -196,9 +196,9 @@ contract FsTest is DSTest {
 
         // deleted both, recursively
         vm.removeDir(path, true);
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.fsMetadata(path);
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.fsMetadata(child);
     }
 
@@ -226,10 +226,10 @@ contract FsTest is DSTest {
         // TODO: symlinks are canonicalized away in `ensure_path_allowed`
         // assertEq(metadata.isSymlink, true);
 
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.fsMetadata("../not-found");
 
-        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm._expectCheatcodeRevert(FOUNDRY_READ_ERR);
         vm.fsMetadata("/etc/hosts");
     }
 

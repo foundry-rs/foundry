@@ -1,17 +1,11 @@
 //! tests for `eth_getProof`
 
 use crate::proof::eip1186::verify_proof;
+use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_rlp::Decodable;
+use alloy_rpc_types::EIP1186AccountProofResponse;
 use anvil::{spawn, NodeConfig};
-use anvil_core::eth::{
-    proof::{AccountProof, BasicAccount},
-    trie::ExtensionLayout,
-};
-use ethers::{
-    abi::ethereum_types::BigEndianHash,
-    types::{Address, H256, U256},
-    utils::{keccak256, rlp},
-};
-use foundry_common::types::ToEthers;
+use anvil_core::eth::{proof::BasicAccount, trie::ExtensionLayout};
 use foundry_evm::revm::primitives::KECCAK_EMPTY;
 
 mod eip1186;
@@ -22,47 +16,48 @@ async fn can_get_proof() {
 
     let acc: Address = "0xaaaf5374fce5edbc8e2a8697c15331677e6ebaaa".parse().unwrap();
 
-    let key = U256::zero();
-    let value = U256::one();
+    let key = U256::ZERO;
+    let value = U256::from(1);
 
-    api.anvil_set_storage_at(acc, key, H256::from_uint(&value)).await.unwrap();
+    api.anvil_set_storage_at(acc, key, B256::from(value)).await.unwrap();
 
-    let proof: AccountProof = api.get_proof(acc, vec![H256::from_uint(&key)], None).await.unwrap();
+    let proof: EIP1186AccountProofResponse =
+        api.get_proof(acc, vec![B256::from(key)], None).await.unwrap();
 
     let account = BasicAccount {
-        nonce: 0.into(),
-        balance: 0.into(),
+        nonce: U256::from(0),
+        balance: U256::from(0),
         storage_root: proof.storage_hash,
-        code_hash: KECCAK_EMPTY.to_ethers(),
+        code_hash: KECCAK_EMPTY,
     };
 
-    let rlp_account = rlp::encode(&account);
+    let rlp_account = alloy_rlp::encode(&account);
 
-    let root: H256 = api.state_root().await.unwrap();
+    let root: B256 = api.state_root().await.unwrap();
     let acc_proof: Vec<Vec<u8>> = proof
         .account_proof
         .into_iter()
-        .map(|node| rlp::decode::<Vec<u8>>(&node).unwrap())
+        .map(|node| Vec::<u8>::decode(&mut &node[..]).unwrap())
         .collect();
 
     verify_proof::<ExtensionLayout>(
         &root.0,
         &acc_proof,
-        &keccak256(acc.as_bytes())[..],
+        &keccak256(acc.as_slice())[..],
         Some(rlp_account.as_ref()),
     )
     .unwrap();
 
     assert_eq!(proof.storage_proof.len(), 1);
-    let expected_value = rlp::encode(&value);
+    let expected_value = alloy_rlp::encode(value);
     let proof = proof.storage_proof[0].clone();
     let storage_proof: Vec<Vec<u8>> =
-        proof.proof.into_iter().map(|node| rlp::decode::<Vec<u8>>(&node).unwrap()).collect();
-    let key = H256::from(keccak256(proof.key.as_bytes()));
+        proof.proof.into_iter().map(|node| Vec::<u8>::decode(&mut &node[..]).unwrap()).collect();
+    let key = B256::from(keccak256(proof.key.0 .0));
     verify_proof::<ExtensionLayout>(
         &account.storage_root.0,
         &storage_proof,
-        key.as_bytes(),
+        key.as_slice(),
         Some(expected_value.as_ref()),
     )
     .unwrap();

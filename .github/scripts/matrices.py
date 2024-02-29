@@ -6,15 +6,15 @@ import os
 
 # A runner target
 class Target:
-    # GitHub runner OS
-    os_id: str
+    # GHA runner
+    runner_label: str
     # Rust target triple
     target: str
     # SVM Solc target
     svm_target_platform: str
 
-    def __init__(self, os_id: str, target: str, svm_target_platform: str):
-        self.os_id = os_id
+    def __init__(self, runner_label: str, target: str, svm_target_platform: str):
+        self.runner_label = runner_label
         self.target = target
         self.svm_target_platform = svm_target_platform
 
@@ -42,7 +42,7 @@ class Case:
 # GHA matrix entry
 class Expanded:
     name: str
-    os: str
+    runner_label: str
     target: str
     svm_target_platform: str
     flags: str
@@ -51,14 +51,14 @@ class Expanded:
     def __init__(
         self,
         name: str,
-        os: str,
+        runner_label: str,
         target: str,
         svm_target_platform: str,
         flags: str,
         partition: int,
     ):
         self.name = name
-        self.os = os
+        self.runner_label = runner_label
         self.target = target
         self.svm_target_platform = svm_target_platform
         self.flags = flags
@@ -76,7 +76,7 @@ targets = [t_linux_x86, t_windows] if is_pr else [t_linux_x86, t_macos, t_window
 config = [
     Case(
         name="unit",
-        filter="kind(lib) | kind(bench) | kind(proc-macro)",
+        filter="!kind(test)",
         n_partitions=1,
         pr_cross_platform=True,
     ),
@@ -90,12 +90,6 @@ config = [
         name="integration / issue-repros",
         filter="package(=forge) & test(~issue)",
         n_partitions=2,
-        pr_cross_platform=False,
-    ),
-    Case(
-        name="integration / forge-std",
-        filter="package(=forge) & test(~forge_std)",
-        n_partitions=1,
         pr_cross_platform=False,
     ),
     Case(
@@ -129,7 +123,7 @@ def main():
 
                 obj = Expanded(
                     name=name,
-                    os=target.os_id,
+                    runner_label=target.runner_label,
                     target=target.target,
                     svm_target_platform=target.svm_target_platform,
                     flags=flags,

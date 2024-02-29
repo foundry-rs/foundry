@@ -16,7 +16,6 @@ use crate::{
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
-use solang_parser::pt::ImportPath;
 use std::{fmt::Write, str::FromStr};
 use thiserror::Error;
 
@@ -78,6 +77,13 @@ struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
     if_stmt_single_line: Option<bool>,
+}
+
+impl Context {
+    /// Returns true if the current function context is the constructor
+    pub(crate) fn is_constructor_function(&self) -> bool {
+        self.function.as_ref().map_or(false, |f| matches!(f.ty, FunctionTy::Constructor))
+    }
 }
 
 /// A Solidity formatter
@@ -521,8 +527,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
             .count();
         let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
-        write!(self.buf(), " * ")?;
-        self.write_comment_line(comment, &line[to_skip..])?;
+        write!(self.buf(), " *")?;
+        let content = &line[to_skip..];
+        if !content.trim().is_empty() {
+            write!(self.buf(), " ")?;
+            self.write_comment_line(comment, &line[to_skip..])?;
+        }
         self.write_whitespace_separator(true)?;
         Ok(())
     }
@@ -3047,6 +3057,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.visit_list("", args, None, Some(loc.end()), false)?
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
+                // here we need to find out if this attribute belongs to the constructor because the
+                // modifier need to include the trailing parenthesis
+                // This is very ambiguous because the modifier can either by an inherited contract
+                // or a modifier here: e.g.: This is valid constructor:
+                // `constructor() public  Ownable() OnlyOwner {}`
+                let is_constructor = self.context.is_constructor_function();
+                // we can't make any decisions here regarding trailing `()` because we'd need to
+                // find out if the `base` is a solidity modifier or an
+                // interface/contract therefor we we its raw content.
+
+                // we can however check if the contract `is` the `base`, this however also does
+                // not cover all cases
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
                     contract.base.iter().any(|contract_base| {
                         contract_base
@@ -3060,6 +3082,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
                 if is_contract_base {
                     base.visit(self)?;
+                } else if is_constructor {
+                    // This is ambiguous because the modifier can either by an inherited
+                    // contract modifiers with empty parenthesis are
+                    // valid, but not required so we make the assumption
+                    // here that modifiers are lowercase
+                    let mut base_or_modifier =
+                        self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
+                    let is_lowercase =
+                        base_or_modifier.content.chars().next().map_or(false, |c| c.is_lowercase());
+                    if is_lowercase && base_or_modifier.content.ends_with("()") {
+                        base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
+                    }
+
+                    self.write_chunk(&base_or_modifier)?;
                 } else {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
@@ -3110,6 +3146,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         })?;
 
         if base.args.is_none() || base.args.as_ref().unwrap().is_empty() {
+            // This is ambiguous because the modifier can either by an inherited contract or a
+            // modifier
             if self.context.function.is_some() {
                 name.content.push_str("()");
             }

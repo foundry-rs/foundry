@@ -2,7 +2,7 @@
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function};
-use alloy_primitives::{hex, Address, Log};
+use alloy_primitives::{hex, Address, LogData};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use foundry_config::Chain;
@@ -19,6 +19,23 @@ where
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
         .collect::<Result<Vec<_>>>()?;
     func.abi_encode_input(params.as_slice()).map_err(Into::into)
+}
+
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and encode them using the packed encoding.
+pub fn encode_function_args_packed<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
+        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(|v| v.abi_encode_packed())
+        .collect();
+
+    Ok(params.concat())
 }
 
 /// Decodes the calldata of the function
@@ -98,7 +115,7 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
 /// proper indexed parameters. Otherwise, it returns the original event.
-pub fn get_indexed_event(mut event: Event, raw_log: &Log) -> Event {
+pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
     if !event.anonymous && raw_log.topics().len() > 1 {
         let indexed_params = raw_log.topics().len() - 1;
         let num_inputs = event.inputs.len();
@@ -216,7 +233,8 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log = Log::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
+        let log =
+            LogData::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);
@@ -237,7 +255,7 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log = Log::new_unchecked(
+        let log = LogData::new_unchecked(
             vec![event.selector(), param0, B256::from_slice(&param1), param2],
             vec![].into(),
         );

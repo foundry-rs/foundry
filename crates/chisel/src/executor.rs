@@ -10,7 +10,6 @@ use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
-use foundry_common::types::ToEthers;
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
@@ -18,6 +17,7 @@ use foundry_evm::{
 };
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
+use tracing::debug;
 use yansi::Paint;
 
 const USIZE_MAX_AS_U256: U256 = U256::from_limbs([usize::MAX as u64, 0, 0, 0]);
@@ -30,6 +30,8 @@ impl SessionSource {
     ///
     /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
     /// the [ChiselResult].
+    ///
+    /// Returns an error if compilation fails.
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
@@ -125,35 +127,41 @@ impl SessionSource {
     ///
     /// ### Returns
     ///
-    /// If the input is valid `Ok((formatted_output, continue))` where:
+    /// If the input is valid `Ok((continue, formatted_output))` where:
     /// - `continue` is true if the input should be appended to the source
-    /// - `formatted_output` is the formatted value
+    /// - `formatted_output` is the formatted value, if any
     pub async fn inspect(&self, input: &str) -> Result<(bool, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line) {
+        let mut source = match self.clone_with_new_line(line.clone()) {
             Ok((source, _)) => source,
-            Err(_) => return Ok((true, None)),
+            Err(err) => {
+                debug!(%err, "failed to build new source");
+                return Ok((true, None))
+            }
         };
 
         let mut source_without_inspector = self.clone();
 
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
-        let (mut res, has_inspector) = match source.execute().await {
-            Ok((_, res)) => (res, true),
-            Err(e) => match source_without_inspector.execute().await {
-                Ok((_, res)) => (res, false),
-                Err(_) => {
-                    if self.config.foundry_config.verbosity >= 3 {
-                        eprintln!("Could not inspect: {e}");
+        let (mut res, err) = match source.execute().await {
+            Ok((_, res)) => (res, None),
+            Err(err) => {
+                debug!(?err, %input, "execution failed");
+                match source_without_inspector.execute().await {
+                    Ok((_, res)) => (res, Some(err)),
+                    Err(_) => {
+                        if self.config.foundry_config.verbosity >= 3 {
+                            eprintln!("Could not inspect: {err}");
+                        }
+                        return Ok((true, None))
                     }
-                    return Ok((true, None))
                 }
-            },
+            }
         };
 
         // If abi-encoding the input failed, check whether it is an event
-        if !has_inspector {
+        if let Some(err) = err {
             let generated_output = source_without_inspector
                 .generated_output
                 .as_ref()
@@ -170,6 +178,12 @@ impl SessionSource {
                 return Ok((false, Some(formatted)))
             }
 
+            // we were unable to check the event
+            if self.config.foundry_config.verbosity >= 3 {
+                eprintln!("Failed eval: {err}");
+            }
+
+            debug!(%err, %input, "failed abi encode input");
             return Ok((false, None))
         }
 
@@ -222,7 +236,7 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
+        let mut offset = stack.data().last().unwrap().to::<usize>();
         let mem_offset = &memory[offset..offset + 32];
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
@@ -291,8 +305,12 @@ impl SessionSource {
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace(true).cheatcodes(
-                    CheatsConfig::new(&self.config.foundry_config, self.config.evm_opts.clone())
-                        .into(),
+                    CheatsConfig::new(
+                        &self.config.foundry_config,
+                        self.config.evm_opts.clone(),
+                        None,
+                    )
+                    .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
@@ -751,6 +769,8 @@ impl Type {
     }
 
     /// Handle special expressions like [global variables](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
+    ///
+    /// See: <https://github.com/ethereum/solidity/blob/81268e336573721819e39fbb3fefbc9344ad176c/libsolidity/ast/Types.cpp#L4106>
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
             return self
@@ -773,7 +793,7 @@ impl Type {
                     // Array / bytes members
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
-                        "length" if ty.is_dynamic() || ty.is_array() => {
+                        "length" if ty.is_dynamic() || ty.is_array() || ty.is_fixed_bytes() => {
                             return Self::Builtin(DynSolType::Uint(256))
                         }
                         "pop" if ty.is_dynamic_array() => return ty,
@@ -800,20 +820,21 @@ impl Type {
                     match name {
                         "block" => match access {
                             "coinbase" => Some(DynSolType::Address),
-                            "basefee" | "chainid" | "difficulty" | "gaslimit" | "number" |
-                            "timestamp" => Some(DynSolType::Uint(256)),
+                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" |
+                            "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "msg" => match access {
-                            "data" => Some(DynSolType::Bytes),
                             "sender" => Some(DynSolType::Address),
-                            "sig" => Some(DynSolType::FixedBytes(4)),
+                            "gas" => Some(DynSolType::Uint(256)),
                             "value" => Some(DynSolType::Uint(256)),
+                            "data" => Some(DynSolType::Bytes),
+                            "sig" => Some(DynSolType::FixedBytes(4)),
                             _ => None,
                         },
                         "tx" => match access {
-                            "gasprice" => Some(DynSolType::Uint(256)),
                             "origin" => Some(DynSolType::Address),
+                            "gasprice" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "abi" => match access {
@@ -847,10 +868,11 @@ impl Type {
                             "name" => Some(DynSolType::String),
                             "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
                             "interfaceId" => Some(DynSolType::FixedBytes(4)),
-                            "min" | "max" => {
-                                let arg = args.unwrap().pop().flatten().unwrap();
-                                Some(arg.into_builtin().unwrap())
-                            }
+                            "min" | "max" => Some(
+                                // Either a builtin or an enum
+                                (|| args?.pop()??.into_builtin())()
+                                    .unwrap_or(DynSolType::Uint(256)),
+                            ),
                             _ => None,
                         },
                         "string" => match access {
@@ -1176,9 +1198,9 @@ impl Type {
                     Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes) | Some(DynSolType::String) => {
-                        Some(DynSolType::FixedBytes(1))
-                    }
+                    Some(DynSolType::Bytes) |
+                    Some(DynSolType::String) |
+                    Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
                     ty => ty,
                 }
             }
@@ -1217,6 +1239,10 @@ impl Type {
     #[inline]
     fn is_dynamic_array(&self) -> bool {
         matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
+    }
+
+    fn is_fixed_bytes(&self) -> bool {
+        matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
     }
 }
 
@@ -1556,6 +1582,8 @@ mod tests {
 
     #[test]
     fn test_global_vars() {
+        init_tracing();
+
         // https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables
         let global_variables = {
             use DynSolType::*;
@@ -1635,9 +1663,13 @@ mod tests {
                 ("type(C).runtimeCode", Bytes),
                 ("type(I).interfaceId", FixedBytes(4)),
                 ("type(uint256).min", Uint(256)),
+                ("type(int128).min", Int(128)),
                 ("type(int256).min", Int(256)),
                 ("type(uint256).max", Uint(256)),
+                ("type(int128).max", Int(128)),
                 ("type(int256).max", Int(256)),
+                ("type(Enum1).min", Uint(256)),
+                ("type(Enum1).max", Uint(256)),
                 // function
                 ("this.run.address", Address),
                 ("this.run.selector", FixedBytes(4)),
@@ -1698,14 +1730,16 @@ mod tests {
             s.drain_global_code();
         }
 
-        let input = input.trim_end().trim_end_matches(';').to_string() + ";";
+        *s = s.clone_with_new_line("enum Enum1 { A }".into()).unwrap().0;
+
+        let input = format!("{};", input.trim_end().trim_end_matches(';'));
         let (mut _s, _) = s.clone_with_new_line(input).unwrap();
         *s = _s.clone();
         let s = &mut _s;
 
         if let Err(e) = s.parse() {
             for err in e {
-                eprintln!("{} @ {}:{}", err.message, err.loc.start(), err.loc.end());
+                eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
             }
             let source = s.to_repl_source();
             panic!("could not parse input:\n{source}")
@@ -1736,7 +1770,6 @@ mod tests {
         ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
     }
 
-    #[track_caller]
     fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)
     where
         T: AsRef<str> + std::fmt::Display + 'a,
@@ -1747,5 +1780,14 @@ mod tests {
             let ty = get_type_ethabi(s, input, true);
             assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
         }
+    }
+
+    fn init_tracing() {
+        if std::env::var_os("RUST_LOG").is_none() {
+            std::env::set_var("RUST_LOG", "debug");
+        }
+        let _ = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
     }
 }

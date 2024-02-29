@@ -3,7 +3,7 @@ use crate::{
     inspectors::Fuzzer,
 };
 use alloy_dyn_abi::DynSolValue;
-use alloy_json_abi::JsonAbi as Abi;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, FixedBytes, U256};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -153,13 +153,18 @@ impl<'a> InvariantExecutor<'a> {
             let mut created_contracts = vec![];
 
             for current_run in 0..self.config.depth {
-                let (sender, (address, calldata)) =
-                    inputs.last().expect("to have the next randomly generated input.");
+                let (sender, (address, calldata)) = inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
-                let call_result = executor
-                    .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
-                    .expect("could not make raw evm call");
+                let call_result = if self.config.fail_on_revert && self.config.preserve_state {
+                    executor
+                        .call_raw_committing(*sender, *address, calldata.clone(), U256::ZERO)
+                        .expect("could not make raw evm call")
+                } else {
+                    executor
+                        .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
+                        .expect("could not make raw evm call")
+                };
 
                 // Collect data for fuzzing from the state changeset.
                 let mut state_changeset =
@@ -324,7 +329,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_contract_artifacts(
         &mut self,
         invariant_address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
     ) -> eyre::Result<()> {
         // targetArtifactSelectors -> (string, bytes4[])[].
         let targeted_abi = self
@@ -450,7 +455,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_contracts_and_senders(
         &self,
         invariant_address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
     ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
         let [targeted_senders, excluded_senders, selected, excluded] =
             ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"].map(
@@ -497,7 +502,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn target_interfaces(
         &self,
         invariant_address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         let interfaces = self.get_list::<(Address, Vec<String>)>(
@@ -570,7 +575,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_selectors(
         &self,
         address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         // `targetArtifactSelectors() -> (string, bytes4[])[]`.
@@ -661,19 +666,14 @@ impl<'a> InvariantExecutor<'a> {
     fn get_list<T>(
         &self,
         address: Address,
-        abi: &Abi,
+        abi: &JsonAbi,
         method_name: &str,
         f: fn(DynSolValue) -> Vec<T>,
     ) -> Vec<T> {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-            if let Ok(call_result) = self.executor.call::<_, _>(
-                CALLER,
-                address,
-                func.clone(),
-                vec![],
-                U256::ZERO,
-                Some(abi),
-            ) {
+            if let Ok(call_result) =
+                self.executor.call::<_, _>(CALLER, address, func.clone(), vec![], U256::ZERO, None)
+            {
                 return f(call_result.result)
             } else {
                 warn!(

@@ -1,7 +1,7 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use alloy_primitives::Bytes;
 use foundry_compilers::sourcemap::{SourceElement, SourceMap};
-use foundry_evm_core::utils::ICPCMap;
+use foundry_evm_core::utils::IcPcMap;
 use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
@@ -11,7 +11,7 @@ use revm::{
 pub fn find_anchors(
     bytecode: &Bytes,
     source_map: &SourceMap,
-    ic_pc_map: &ICPCMap,
+    ic_pc_map: &IcPcMap,
     item_ids: &[usize],
     items: &[CoverageItem],
 ) -> Vec<ItemAnchor> {
@@ -49,7 +49,7 @@ pub fn find_anchors(
 /// Find an anchor representing the first opcode within the given source range.
 pub fn find_anchor_simple(
     source_map: &SourceMap,
-    ic_pc_map: &ICPCMap,
+    ic_pc_map: &IcPcMap,
     item_id: usize,
     loc: &SourceLocation,
 ) -> eyre::Result<ItemAnchor> {
@@ -62,7 +62,7 @@ pub fn find_anchor_simple(
         })?;
 
     Ok(ItemAnchor {
-        instruction: *ic_pc_map.get(&instruction).ok_or_else(|| {
+        instruction: ic_pc_map.get(instruction).ok_or_else(|| {
             eyre::eyre!("We found an anchor, but we cant translate it to a program counter")
         })?,
         item_id,

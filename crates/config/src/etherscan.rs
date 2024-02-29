@@ -4,6 +4,12 @@ use crate::{
     resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
     Chain, Config, NamedChain,
 };
+use figment::{
+    providers::Env,
+    value::{Dict, Map},
+    Error, Metadata, Profile, Provider,
+};
+use inflector::Inflector;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::BTreeMap,
@@ -14,6 +20,31 @@ use std::{
 
 /// The user agent to use when querying the etherscan API.
 pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
+
+/// A [Provider] that provides Etherscan API key from the environment if it's not empty.
+///
+/// This prevents `ETHERSCAN_API_KEY=""` if it's set but empty
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub(crate) struct EtherscanEnvProvider;
+
+impl Provider for EtherscanEnvProvider {
+    fn metadata(&self) -> Metadata {
+        Env::raw().metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut dict = Dict::default();
+        let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
+        if let Some((key, value)) = env_provider.iter().next() {
+            if !value.trim().is_empty() {
+                dict.insert(key.as_str().to_string(), value.into());
+            }
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
 
 /// Errors that can occur when creating an `EtherscanConfig`
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -172,7 +203,19 @@ impl EtherscanConfig {
         let (chain, alias) = match (chain, alias) {
             // fill one with the other
             (Some(chain), None) => (Some(chain), Some(chain.to_string())),
-            (None, Some(alias)) => (alias.parse().ok(), Some(alias.into())),
+            (None, Some(alias)) => {
+                // alloy chain is parsed as kebab case
+                (
+                    alias.to_kebab_case().parse().ok().or_else(|| {
+                        // if this didn't work try to parse as json because the deserialize impl
+                        // supports more aliases
+                        serde_json::from_str::<NamedChain>(&format!("\"{alias}\""))
+                            .map(Into::into)
+                            .ok()
+                    }),
+                    Some(alias.into()),
+                )
+            }
             // leave as is
             (Some(chain), Some(alias)) => (Some(chain), Some(alias.into())),
             (None, None) => (None, None),
@@ -440,5 +483,36 @@ mod tests {
         let _ = config.into_client().unwrap();
 
         std::env::remove_var(env);
+    }
+
+    #[test]
+    fn resolve_etherscan_alias_config() {
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "blast_sepolia".to_string(),
+            EtherscanConfig {
+                chain: None,
+                url: Some("https://api.etherscan.io/api".to_string()),
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            },
+        );
+
+        let mut resolved = configs.clone().resolved();
+        let config = resolved.remove("blast_sepolia").unwrap().unwrap();
+        assert_eq!(config.chain, Some(Chain::blast_sepolia()));
+    }
+
+    #[test]
+    fn resolve_etherscan_alias() {
+        let config = EtherscanConfig {
+            chain: None,
+            url: Some("https://api.etherscan.io/api".to_string()),
+            key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+        };
+        let resolved = config.clone().resolve(Some("base_sepolia")).unwrap();
+        assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
+
+        let resolved = config.resolve(Some("base-sepolia")).unwrap();
+        assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
     }
 }

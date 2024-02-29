@@ -8,10 +8,7 @@ use crossterm::{
 };
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm_core::{
-    debug::DebugNodeFlat,
-    utils::{build_pc_ic_map, PCICMap},
-};
+use foundry_evm_core::{debug::DebugNodeFlat, utils::PcIcMap};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
@@ -50,7 +47,7 @@ pub struct Debugger {
     /// Source map of contract sources
     contracts_sources: ContractSources,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
-    pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
+    pc_ic_maps: BTreeMap<String, (PcIcMap, PcIcMap)>,
     breakpoints: Breakpoints,
 }
 
@@ -69,30 +66,15 @@ impl Debugger {
         breakpoints: Breakpoints,
     ) -> Self {
         let pc_ic_maps = contracts_sources
-            .0
-            .iter()
-            .flat_map(|(contract_name, files_sources)| {
-                files_sources.iter().filter_map(|(_, (_, contract))| {
-                    Some((
-                        contract_name.clone(),
-                        (
-                            build_pc_ic_map(
-                                SpecId::LATEST,
-                                contract.bytecode.object.as_bytes()?.as_ref(),
-                            ),
-                            build_pc_ic_map(
-                                SpecId::LATEST,
-                                contract
-                                    .deployed_bytecode
-                                    .bytecode
-                                    .as_ref()?
-                                    .object
-                                    .as_bytes()?
-                                    .as_ref(),
-                            ),
-                        ),
-                    ))
-                })
+            .entries()
+            .filter_map(|(contract_name, (_, contract))| {
+                Some((
+                    contract_name.clone(),
+                    (
+                        PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
+                        PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
+                    ),
+                ))
             })
             .collect();
         Self { debug_arena, identified_contracts, contracts_sources, pc_ic_maps, breakpoints }
@@ -112,15 +94,18 @@ impl Debugger {
 
     /// Starts the debugger TUI.
     pub fn try_run(&mut self) -> Result<ExitReason> {
+        eyre::ensure!(!self.debug_arena.is_empty(), "debug arena is empty");
+
         let backend = CrosstermBackend::new(io::stdout());
-        let mut terminal = Terminal::new(backend)?;
-        TerminalGuard::with(&mut terminal, |terminal| self.try_run_real(terminal))
+        let terminal = Terminal::new(backend)?;
+        TerminalGuard::with(terminal, |terminal| self.try_run_real(terminal))
     }
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
     fn try_run_real(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
         // Create the context.
         let mut cx = DebuggerContext::new(self);
+
         cx.init();
 
         // Create an event listener in a different thread.
@@ -129,8 +114,6 @@ impl Debugger {
             .name("event-listener".into())
             .spawn(move || Self::event_listener(tx))
             .expect("failed to spawn thread");
-
-        eyre::ensure!(!cx.debug_arena().is_empty(), "debug arena is empty");
 
         // Draw the initial state.
         cx.draw(terminal)?;
@@ -173,16 +156,16 @@ type PanicHandler = Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Se
 
 /// Handles terminal state.
 #[must_use]
-struct TerminalGuard<'a, B: Backend + io::Write> {
-    terminal: &'a mut Terminal<B>,
+struct TerminalGuard<B: Backend + io::Write> {
+    terminal: Terminal<B>,
     hook: Option<Arc<PanicHandler>>,
 }
 
-impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
-    fn with<T>(terminal: &'a mut Terminal<B>, mut f: impl FnMut(&mut Terminal<B>) -> T) -> T {
+impl<B: Backend + io::Write> TerminalGuard<B> {
+    fn with<T>(terminal: Terminal<B>, mut f: impl FnMut(&mut Terminal<B>) -> T) -> T {
         let mut guard = Self { terminal, hook: None };
         guard.setup();
-        f(guard.terminal)
+        f(&mut guard.terminal)
     }
 
     fn setup(&mut self) {
@@ -203,16 +186,21 @@ impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
 
     fn restore(&mut self) {
         if !std::thread::panicking() {
+            // Drop the current hook to guarantee that `self.hook` is the only reference to it.
             let _ = std::panic::take_hook();
+            // Restore the previous panic hook.
             let prev = self.hook.take().unwrap();
             let prev = match Arc::try_unwrap(prev) {
                 Ok(prev) => prev,
-                Err(_) => unreachable!(),
+                Err(_) => unreachable!("`self.hook` is not the only reference to the panic hook"),
             };
             std::panic::set_hook(prev);
+
+            // NOTE: Our panic handler calls this function, so we only have to call it here if we're
+            // not panicking.
+            Self::half_restore(self.terminal.backend_mut());
         }
 
-        Self::half_restore(self.terminal.backend_mut());
         let _ = self.terminal.show_cursor();
     }
 
@@ -222,7 +210,7 @@ impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
     }
 }
 
-impl<B: Backend + io::Write> Drop for TerminalGuard<'_, B> {
+impl<B: Backend + io::Write> Drop for TerminalGuard<B> {
     #[inline]
     fn drop(&mut self) {
         self.restore();

@@ -1,7 +1,11 @@
 use alloy_primitives::U256;
 use ethers_providers::{Middleware, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::{get_http_provider, runtime_client::RuntimeClient, types::ToAlloy, RpcUrl};
+use foundry_common::{
+    provider::ethers::{get_http_provider, RpcUrl},
+    runtime_client::RuntimeClient,
+    types::ToAlloy,
+};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},

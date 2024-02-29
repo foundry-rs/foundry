@@ -13,7 +13,7 @@ use time::{format_description, OffsetDateTime};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChiselSession {
     /// The `SessionSource` object that houses the REPL session.
-    pub session_source: Option<SessionSource>,
+    pub session_source: SessionSource,
     /// The current session's identifier
     pub id: Option<String>,
 }
@@ -31,9 +31,8 @@ impl ChiselSession {
     /// A new instance of [ChiselSession]
     pub fn new(config: SessionSourceConfig) -> Result<Self> {
         let solc = config.solc()?;
-
         // Return initialized ChiselSession with set solc version
-        Ok(Self { session_source: Some(SessionSource::new(solc, config)), id: None })
+        Ok(Self { session_source: SessionSource::new(solc, config), id: None })
     }
 
     /// Render the full source code for the current session.
@@ -47,11 +46,7 @@ impl ChiselSession {
     /// This function will not panic, but will return a blank string if the
     /// session's [SessionSource] is None.
     pub fn contract_source(&self) -> String {
-        if let Some(source) = &self.session_source {
-            source.to_repl_source()
-        } else {
-            String::default()
-        }
+        self.session_source.to_repl_source()
     }
 
     /// Clears the cache directory

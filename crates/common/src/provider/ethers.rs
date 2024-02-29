@@ -34,7 +34,7 @@ pub type RpcUrl = String;
 /// # Examples
 ///
 /// ```
-/// use foundry_common::get_http_provider;
+/// use foundry_common::provider::ethers::get_http_provider;
 ///
 /// let retry_provider = get_http_provider("http://localhost:8545");
 /// ```
@@ -281,7 +281,7 @@ where
                     _ => unreachable!(),
                 };
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
-                return Ok(estimator.estimate_eip1559_fees().await?)
+                return Ok(estimator.estimate_eip1559_fees().await?);
             }
             _ => {}
         }

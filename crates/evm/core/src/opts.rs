@@ -1,10 +1,13 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::{Block, TxHash};
-use ethers_providers::{Middleware, Provider};
+use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::Block;
 use eyre::WrapErr;
-use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{
+    provider::alloy::{ProviderBuilder, RpcUrl},
+    ALCHEMY_FREE_TIER_CUPS,
+};
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
@@ -49,12 +52,18 @@ pub struct EvmOpts {
     /// Enables the FFI cheatcode.
     pub ffi: bool,
 
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
+
     /// Verbosity mode of EVM output as number of occurrences.
     pub verbosity: u8,
 
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     pub memory_limit: u64,
+
+    /// Whether to enable isolation of calls.
+    pub isolate: bool,
 }
 
 impl EvmOpts {
@@ -75,7 +84,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block<TxHash>)> {
+    ) -> eyre::Result<(revm::primitives::Env, Block)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -158,7 +167,7 @@ impl EvmOpts {
     ///   - mainnet otherwise
     pub fn get_chain_id(&self) -> u64 {
         if let Some(id) = self.env.chain_id {
-            return id
+            return id;
         }
         self.get_remote_chain_id().unwrap_or(Chain::mainnet()).id()
     }
@@ -171,7 +180,7 @@ impl EvmOpts {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
-            return cups
+            return cups;
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }
@@ -185,11 +194,14 @@ impl EvmOpts {
                 return Some(Chain::mainnet());
             }
             trace!(?url, "retrieving chain via eth_chainId");
-            let provider = Provider::try_from(url.as_str())
-                .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
+            let provider = ProviderBuilder::new(url.as_str())
+                .compute_units_per_second(self.get_compute_units_per_second())
+                .build()
+                .ok()
+                .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
-                return Some(Chain::from(id.as_u64()));
+            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chain_id()) {
+                return Some(Chain::from(id.to::<u64>()));
             }
         }
 

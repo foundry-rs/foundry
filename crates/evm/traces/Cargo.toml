@@ -21,9 +21,7 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
-revm.workspace = true
-
-ethers-core.workspace = true
+revm-inspectors.workspace = true
 
 eyre = "0.6"
 futures = "0.3"
@@ -31,7 +29,6 @@ hashbrown = "0.14"
 hex.workspace = true
 itertools.workspace = true
 once_cell = "1"
-ordered-float = "4"
 serde = "1"
 tokio = { version = "1", features = ["time", "macros"] }
 tracing = "0.1"

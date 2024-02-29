@@ -2,10 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{
-    compile,
-    compile::{ProjectCompiler, SkipBuildFilter},
-};
+use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
 use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
@@ -43,36 +40,36 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
+#[command(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
     /// Print compiled contract names.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub names: bool,
 
     /// Print compiled contract sizes.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub sizes: bool,
 
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[clap(long, num_args(1..))]
+    #[arg(long, num_args(1..))]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[clap(long, conflicts_with = "silent")]
+    #[arg(long, conflicts_with = "silent")]
     #[serde(skip)]
     pub format_json: bool,
 }
@@ -90,19 +87,23 @@ impl BuildArgs {
             project = config.project()?;
         }
 
-        let filters = self.skip.unwrap_or_default();
+        let mut compiler = ProjectCompiler::new()
+            .print_names(self.names)
+            .print_sizes(self.sizes)
+            .quiet(self.format_json)
+            .bail(!self.format_json);
+        if let Some(skip) = self.skip {
+            if !skip.is_empty() {
+                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
+            }
+        }
+        let output = compiler.compile(&project)?;
 
         if self.format_json {
-            let output = compile::suppress_compile_with_filter_json(&project, filters)?;
-            let json = serde_json::to_string_pretty(&output.clone().output())?;
-            println!("{}", json);
-            Ok(output)
-        } else if self.args.silent {
-            compile::suppress_compile_with_filter(&project, filters)
-        } else {
-            let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
-            compiler.compile(&project)
+            println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
         }
+
+        Ok(output)
     }
 
     /// Returns the `Project` for the current workspace

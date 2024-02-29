@@ -16,11 +16,11 @@ path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # foundry internal
-anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
+anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-common.workspace = true
@@ -29,13 +29,24 @@ foundry-evm.workspace = true
 
 # evm support
 bytes = "1.4.0"
-# needed as documented in https://github.com/foundry-rs/foundry/pull/6358
-k256 = "=0.13.1"
+k256.workspace = true
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 trie-db = "0.23"
 hash-db = "0.15"
 memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-consensus.workspace = true
+alloy-network.workspace = true
+alloy-rlp.workspace = true
+alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
+alloy-rpc-types.workspace = true
+alloy-rpc-trace-types.workspace = true
+alloy-providers.workspace = true
+alloy-transport.workspace = true
+alloy-chains.workspace = true
+alloy-genesis.workspace = true
 
 # axum related
 axum.workspace = true
@@ -62,6 +73,7 @@ yansi = "0.5"
 tempfile = "3"
 itertools.workspace = true
 rand = "0.8"
+eyre.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
@@ -85,3 +97,4 @@ crc = "3.0.1"
 default = ["cli"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
+asm-keccak = ["alloy-primitives/asm-keccak"]

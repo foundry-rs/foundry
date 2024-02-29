@@ -5,6 +5,7 @@ use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::{MAGIC_ASSUME, MAGIC_SKIP};
 
+pub(crate) mod assert;
 pub(crate) mod expect;
 
 impl Cheatcode for assumeCall {
@@ -69,7 +70,6 @@ impl Cheatcode for skipCall {
             // Skip should not work if called deeper than at test level.
             // Since we're not returning the magic skip bytes, this will cause a test failure.
             ensure!(ccx.data.journaled_state.depth() <= 1, "`skip` can only be used at test level");
-            ccx.state.skip = true;
             Err(MAGIC_SKIP.into())
         } else {
             Ok(Default::default())

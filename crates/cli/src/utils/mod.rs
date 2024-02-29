@@ -1,9 +1,9 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::U256;
+use alloy_primitives::{utils::format_units, U256};
 use ethers_core::types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
-use foundry_common::{types::ToAlloy, units::format_units};
+use foundry_common::types::ToAlloy;
 use foundry_config::{Chain, Config};
 use std::{
     ffi::OsStr,
@@ -30,7 +30,7 @@ pub use foundry_config::utils::*;
 /// Deterministic fuzzer seed used for gas snapshots and coverage reports.
 ///
 /// The keccak256 hash of "foundry rulez"
-pub static STATIC_FUZZ_SEED: [u8; 32] = [
+pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
@@ -85,7 +85,7 @@ pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
 /// and chain.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
+pub fn get_provider(config: &Config) -> Result<foundry_common::provider::ethers::RetryProvider> {
     get_provider_builder(config)?.build()
 }
 
@@ -93,9 +93,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 /// URL and chain.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
+pub fn get_provider_builder(
+    config: &Config,
+) -> Result<foundry_common::provider::ethers::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref());
+    let mut builder = foundry_common::provider::ethers::ProviderBuilder::new(url.as_ref());
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);
@@ -475,7 +477,7 @@ impl<'a> Git<'a> {
                     output.status.code(),
                     stdout.trim(),
                     stderr.trim()
-                ))
+                ));
             }
         }
         Ok(())

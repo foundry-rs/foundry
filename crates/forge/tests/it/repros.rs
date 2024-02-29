@@ -4,11 +4,11 @@ use crate::{config::*, test_helpers::PROJECT};
 use alloy_primitives::{address, Address};
 use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
+use foundry_common::types::ToEthers;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
-    traces::{CallTraceDecoder, TraceCallData, TraceKind},
-    utils::CallKind,
+    traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},
 };
 use foundry_test_utils::Filter;
 
@@ -50,6 +50,7 @@ macro_rules! test_repro {
 }
 
 async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
+    foundry_test_utils::init_tracing();
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 
     let mut config = Config::with_root(PROJECT.root());
@@ -124,8 +125,10 @@ test_repro!(3347, false, None, |res| {
         ],
         anonymous: false,
     };
-    let raw_log =
-        RawLog { topics: test.logs[0].topics.clone(), data: test.logs[0].data.clone().to_vec() };
+    let raw_log = RawLog {
+        topics: test.logs[0].data.topics().iter().map(|t| t.to_ethers()).collect(),
+        data: test.logs[0].data.data.clone().to_vec(),
+    };
     let log = event.parse_log(raw_log).unwrap();
     assert_eq!(
         log,
@@ -192,6 +195,9 @@ test_repro!(5038);
 // https://github.com/foundry-rs/foundry/issues/5808
 test_repro!(5808);
 
+// <https://github.com/foundry-rs/foundry/issues/5929>
+test_repro!(5929);
+
 // <https://github.com/foundry-rs/foundry/issues/5935>
 test_repro!(5935);
 
@@ -245,38 +251,41 @@ test_repro!(6501, false, None, |res| {
     assert_eq!(test.status, TestStatus::Success);
     assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
 
-    let (kind, mut traces) = test.traces[1].clone();
+    let (kind, traces) = test.traces[1].clone();
+    let nodes = traces.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
-    let test_call = traces.arena.first().unwrap();
+    let test_call = nodes.first().unwrap();
     assert_eq!(test_call.idx, 0);
     assert_eq!(test_call.children, [1, 2, 3]);
     assert_eq!(test_call.trace.depth, 0);
     assert!(test_call.trace.success);
-
-    CallTraceDecoder::new().decode(&mut traces).await;
 
     let expected = [
         ("log(string)", vec!["\"a\""]),
         ("log(uint256)", vec!["1"]),
         ("log(string,uint256)", vec!["\"b\"", "2"]),
     ];
-    for (node, expected) in traces.arena[1..=3].iter().zip(expected) {
+    for (node, expected) in nodes[1..=3].iter().zip(expected) {
         let trace = &node.trace;
+        let decoded = CallTraceDecoder::new().decode_function(trace).await;
         assert_eq!(trace.kind, CallKind::StaticCall);
         assert_eq!(trace.address, HARDHAT_CONSOLE_ADDRESS);
-        assert_eq!(trace.label, Some("console".into()));
+        assert_eq!(decoded.label, Some("console".into()));
         assert_eq!(trace.depth, 1);
         assert!(trace.success);
         assert_eq!(
-            trace.data,
-            TraceCallData::Decoded {
+            decoded.func,
+            Some(DecodedCallData {
                 signature: expected.0.into(),
                 args: expected.1.into_iter().map(ToOwned::to_owned).collect(),
-            }
+            })
         );
     }
 });
+
+// https://github.com/foundry-rs/foundry/issues/6538
+test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
@@ -284,4 +293,27 @@ test_repro!(6554; |config| {
     let path = cheats_config.root.join("out/Issue6554.t.sol");
     cheats_config.fs_permissions.add(PathPermission::read_write(path));
     config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+});
+
+// https://github.com/foundry-rs/foundry/issues/6759
+test_repro!(6759);
+
+// https://github.com/foundry-rs/foundry/issues/6966
+test_repro!(6966);
+
+// https://github.com/foundry-rs/foundry/issues/6616
+test_repro!(6616);
+
+// https://github.com/foundry-rs/foundry/issues/5529
+test_repro!(5529; |config| {
+  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+  cheats_config.always_use_create_2_factory = true;
+  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+});
+
+// https://github.com/foundry-rs/foundry/issues/6634
+test_repro!(6634; |config| {
+  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+  cheats_config.always_use_create_2_factory = true;
+  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
 });

@@ -181,6 +181,7 @@ macro_rules! test_directories {
 
 test_directories! {
     ConstructorDefinition,
+    ConstructorModifierStyle,
     ContractDefinition,
     DocComments,
     EnumDefinition,
@@ -229,6 +230,7 @@ test_directories! {
     EmitStatement,
     Repros,
     BlockComments,
+    BlockCommentsFunction,
     EnumVariants,
 }
 

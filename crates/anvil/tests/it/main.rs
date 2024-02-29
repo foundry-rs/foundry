@@ -14,7 +14,9 @@ mod proof;
 mod pubsub;
 // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
 mod otterscan;
+
 mod sign;
+mod state;
 mod traces;
 mod transaction;
 mod txpool;

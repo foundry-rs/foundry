@@ -1,7 +1,6 @@
 use alloy_primitives::{hex, I256, U256};
 use alloy_sol_types::sol;
 use derive_more::Display;
-use foundry_common::types::ToEthers;
 use itertools::Itertools;
 
 // TODO: Use `UiFmt`
@@ -78,15 +77,14 @@ interface Console {
 }
 }
 
-fn format_units_int(x: &I256, decimals: &U256) -> String {
+pub fn format_units_int(x: &I256, decimals: &U256) -> String {
     let (sign, x) = x.into_sign_and_abs();
     format!("{sign}{}", format_units_uint(&x, decimals))
 }
 
-fn format_units_uint(x: &U256, decimals: &U256) -> String {
-    // TODO: rm ethers_core
-    match ethers_core::utils::format_units(x.to_ethers(), decimals.saturating_to::<u32>()) {
-        Ok(s) => s,
-        Err(_) => x.to_string(),
+pub fn format_units_uint(x: &U256, decimals: &U256) -> String {
+    match alloy_primitives::utils::Unit::new(decimals.saturating_to::<u8>()) {
+        Some(units) => alloy_primitives::utils::ParseUnits::U256(*x).format_units(units),
+        None => x.to_string(),
     }
 }

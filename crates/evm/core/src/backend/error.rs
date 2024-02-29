@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::BlockId;
+use alloy_rpc_types::BlockId;
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{
     convert::Infallible,
@@ -15,11 +15,11 @@ pub type DatabaseResult<T> = Result<T, DatabaseError>;
 pub enum DatabaseError {
     #[error("{0}")]
     Message(String),
-    #[error("no cheats available for {0}")]
+    #[error("cheatcodes are not enabled for {0}; see `vm.allowCheatcodes(address)`")]
     NoCheats(Address),
-    #[error("failed to fetch AccountInfo {0}")]
+    #[error("failed to fetch account info for {0}")]
     MissingAccount(Address),
-    #[error("code should already be loaded: {0}")]
+    #[error("missing bytecode for code hash {0}")]
     MissingCode(B256),
     #[error(transparent)]
     Recv(#[from] RecvError),

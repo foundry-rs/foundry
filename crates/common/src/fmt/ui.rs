@@ -127,13 +127,34 @@ impl UIfmt for U64 {
 
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
-        format!(
+        let Self {
+            transaction_hash,
+            transaction_index,
+            block_hash,
+            block_number,
+            from,
+            to,
+            cumulative_gas_used,
+            gas_used,
+            contract_address,
+            logs,
+            status,
+            root,
+            logs_bloom,
+            transaction_type,
+            effective_gas_price,
+            other,
+            ..
+        } = self;
+
+        let mut pretty = format!(
             "
 blockHash               {}
 blockNumber             {}
 contractAddress         {}
 cumulativeGasUsed       {}
 effectiveGasPrice       {}
+from                    {}
 gasUsed                 {}
 logs                    {}
 logsBloom               {}
@@ -142,20 +163,32 @@ status                  {}
 transactionHash         {}
 transactionIndex        {}
 type                    {}",
-            self.block_hash.pretty(),
-            self.block_number.pretty(),
-            self.contract_address.pretty(),
-            self.cumulative_gas_used.pretty(),
-            self.effective_gas_price.pretty(),
-            self.gas_used.pretty(),
-            serde_json::to_string(&self.logs).unwrap(),
-            self.logs_bloom.pretty(),
-            self.root.pretty(),
-            self.status.pretty(),
-            self.transaction_hash.pretty(),
-            self.transaction_index.pretty(),
-            self.transaction_type.pretty()
-        )
+            block_hash.pretty(),
+            block_number.pretty(),
+            contract_address.pretty(),
+            cumulative_gas_used.pretty(),
+            effective_gas_price.pretty(),
+            from.pretty(),
+            gas_used.pretty(),
+            serde_json::to_string(logs).unwrap(),
+            logs_bloom.pretty(),
+            root.pretty(),
+            status.pretty(),
+            transaction_hash.pretty(),
+            transaction_index.pretty(),
+            transaction_type.pretty()
+        );
+
+        if let Some(to) = to {
+            pretty.push_str(&format!("\nto                      {}", to.pretty()));
+        }
+
+        // additional captured fields
+        for (key, val) in other.iter() {
+            pretty.push_str(&format!("\n{}             {}", key, val));
+        }
+
+        pretty
     }
 }
 
@@ -412,6 +445,7 @@ pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String
         "nonce" => Some(block.nonce.pretty()),
         "number" => Some(block.number.pretty()),
         "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
+        "transactionsRoot" | "transactions_root" => Some(block.transactions_root.pretty()),
         "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
         "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
         "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
@@ -444,6 +478,7 @@ mixHash              {}
 nonce                {}
 number               {}
 parentHash           {}
+transactionsRoot     {}
 receiptsRoot         {}
 sealFields           {}
 sha3Uncles           {}
@@ -464,6 +499,7 @@ totalDifficulty      {}{}",
         block.nonce.pretty(),
         block.number.pretty(),
         block.parent_hash.pretty(),
+        block.transactions_root.pretty(),
         block.receipts_root.pretty(),
         block.seal_fields.pretty(),
         block.uncles_hash.pretty(),
@@ -724,6 +760,10 @@ value                0".to_string();
         assert_eq!(
             Some("0x9646252be9520f6e71339a8df9c55e4d7619deeb018d2a3f2d21fc165dde5eb5".to_string()),
             get_pretty_block_attr(&block, "parentHash")
+        );
+        assert_eq!(
+            Some("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".to_string()),
+            get_pretty_block_attr(&block, "transactionsRoot")
         );
         assert_eq!(
             Some("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".to_string()),

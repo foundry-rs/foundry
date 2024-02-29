@@ -1,15 +1,18 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{Address, I256, U256};
+use alloy_primitives::{
+    utils::{keccak256, ParseUnits, Unit},
+    Address, Bytes, Keccak256, B256, I256, U256,
+};
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    types::{transaction::eip2718::TypedTransaction, *},
-    utils::{
-        format_bytes32_string, format_units, keccak256, parse_bytes32_string, parse_units, rlp,
-        Units,
+    types::{
+        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, NameOrAddress,
+        Signature, H160, H256, U64,
     },
+    utils::rlp,
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
@@ -33,6 +36,7 @@ use std::{
 use tokio::signal::ctrl_c;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
+use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -264,7 +268,7 @@ where
             None => raw_tx,
         };
         let tx = Bytes::from(hex::decode(raw_tx)?);
-        let res = self.provider.send_raw_transaction(tx).await?;
+        let res = self.provider.send_raw_transaction(tx.0.into()).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -431,6 +435,10 @@ where
             }
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
+            }
+            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
+            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
+                "fraxtal-testnet"
             }
             "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
                 "arbitrum-mainnet"
@@ -1079,13 +1087,14 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        // first try u32 as Units assumes a string can only be "ether", "gwei"... and not a number
-        let units = match decimals.parse::<u32>() {
-            Ok(d) => Units::Other(d),
-            Err(_) => Units::try_from(decimals)?,
+        // TODO: https://github.com/alloy-rs/core/pull/461
+        let units: Unit = if let Ok(x) = decimals.parse() {
+            Unit::new(x).ok_or_else(|| eyre::eyre!("invalid unit"))?
+        } else {
+            decimals.parse()?
         };
-        let n: NumberWithBase = parse_units(value, units.as_num())?.into();
-        Ok(format!("{n}"))
+        let n = ParseUnits::parse_units(value, units)?;
+        Ok(n.to_string())
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -1234,7 +1243,6 @@ impl SimpleCast {
     /// assert_eq!(Cast::to_unit("1 wei", "wei")?, "1");
     /// assert_eq!(Cast::to_unit("1", "wei")?, "1");
     /// assert_eq!(Cast::to_unit("1ether", "wei")?, "1000000000000000000");
-    /// assert_eq!(Cast::to_unit("100 gwei", "gwei")?, "100");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
@@ -1242,31 +1250,18 @@ impl SimpleCast {
             .as_uint()
             .wrap_err("Could not convert to uint")?
             .0;
+        let unit = unit.parse().wrap_err("could not parse units")?;
+        let mut formatted = ParseUnits::U256(value).format_units(unit);
 
-        Ok(match unit {
-            "eth" | "ether" => foundry_common::units::format_units(value, 18)?
-                .trim_end_matches(".000000000000000000")
-                .to_string(),
-            "milli" | "milliether" => foundry_common::units::format_units(value, 15)?
-                .trim_end_matches(".000000000000000")
-                .to_string(),
-            "micro" | "microether" => foundry_common::units::format_units(value, 12)?
-                .trim_end_matches(".000000000000")
-                .to_string(),
-            "gwei" | "nano" | "nanoether" => foundry_common::units::format_units(value, 9)?
-                .trim_end_matches(".000000000")
-                .to_string(),
-            "mwei" | "mega" | "megaether" => foundry_common::units::format_units(value, 6)?
-                .trim_end_matches(".000000")
-                .to_string(),
-            "kwei" | "kilo" | "kiloether" => {
-                foundry_common::units::format_units(value, 3)?.trim_end_matches(".000").to_string()
+        // Trim empty fractional part.
+        if let Some(dot) = formatted.find('.') {
+            let fractional = &formatted[dot + 1..];
+            if fractional.chars().all(|c: char| c == '0') {
+                formatted = formatted[..dot].to_string();
             }
-            "wei" => {
-                foundry_common::units::format_units(value, 0)?.trim_end_matches(".0").to_string()
-            }
-            _ => eyre::bail!("invalid unit: \"{}\"", unit),
-        })
+        }
+
+        Ok(formatted)
     }
 
     /// Converts wei into an eth amount
@@ -1280,15 +1275,12 @@ impl SimpleCast {
     /// assert_eq!(Cast::from_wei("12340000005", "gwei")?, "12.340000005");
     /// assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
     /// assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
-    /// assert_eq!(Cast::from_wei("17", "")?, "0.000000000000000017");
+    /// assert_eq!(Cast::from_wei("17", "ether")?, "0.000000000000000017");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?.number().to_ethers();
-        Ok(match unit {
-            "gwei" => format_units(value, 9),
-            _ => format_units(value, 18),
-        }?)
+        let value = NumberWithBase::parse_int(value, None)?.number();
+        Ok(ParseUnits::U256(value).format_units(unit.parse()?))
     }
 
     /// Converts an eth amount into wei
@@ -1298,18 +1290,14 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::to_wei("1", "")?, "1000000000000000000");
     /// assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
     /// assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
     /// assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_wei(value: &str, unit: &str) -> Result<String> {
-        let wei = match unit {
-            "gwei" => parse_units(value, 9),
-            _ => parse_units(value, 18),
-        }?;
-        Ok(wei.to_string())
+        let unit = unit.parse().wrap_err("could not parse units")?;
+        Ok(ParseUnits::parse_units(value, unit)?.to_string())
     }
 
     /// Decodes rlp encoded list with hex data
@@ -1417,27 +1405,25 @@ impl SimpleCast {
         }
 
         let padded = format!("{s:0<64}");
-        // need to use the Debug implementation
-        Ok(format!("{:?}", H256::from_str(&padded)?))
+        Ok(padded.parse::<B256>()?.to_string())
     }
 
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
-        let formatted = format_bytes32_string(s)?;
-        Ok(hex::encode_prefixed(formatted))
+        let str_bytes: &[u8] = s.as_bytes();
+        eyre::ensure!(str_bytes.len() <= 32, "bytes32 strings must not exceed 32 bytes in length");
+
+        let mut bytes32: [u8; 32] = [0u8; 32];
+        bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
+        Ok(hex::encode_prefixed(bytes32))
     }
 
     /// Decodes string from bytes32 value
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let bytes = hex::decode(s)?;
-        if bytes.len() != 32 {
-            eyre::bail!("expected 64 byte hex-string, got {}", strip_0x(s));
-        }
-
-        let mut buffer = [0u8; 32];
-        buffer.copy_from_slice(&bytes);
-
-        Ok(parse_bytes32_string(&buffer)?.to_owned())
+        eyre::ensure!(bytes.len() == 32, "expected 32 byte hex-string");
+        let len = bytes.iter().take_while(|x| **x != 0).count();
+        Ok(std::str::from_utf8(&bytes[..len])?.into())
     }
 
     /// Decodes checksummed address from bytes32 value
@@ -1570,6 +1556,37 @@ impl SimpleCast {
         Ok(format!("0x{encoded}"))
     }
 
+    /// Performs packed ABI encoding based off of the function signature or tuple.
+    ///
+    /// # Examplez
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000012c00000000000000c8",
+    ///     Cast::abi_encode_packed("(uint128[] a, uint64 b)", &["[100, 300]", "200"]).unwrap().as_str()
+    /// );
+    ///
+    /// assert_eq!(
+    ///     "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e68656c6c6f20776f726c64",
+    ///     Cast::abi_encode_packed("foo(address a, string b)", &["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "hello world"]).unwrap().as_str()
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn abi_encode_packed(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        // If the signature is a tuple, we need to prefix it to make it a function
+        let sig =
+            if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig.to_string() };
+
+        let func = get_func(sig.as_str())?;
+        let encoded = match encode_function_args_packed(&func, args) {
+            Ok(res) => hex::encode(res),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+        };
+        Ok(format!("0x{encoded}"))
+    }
+
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
     ///
     /// # Example
@@ -1639,16 +1656,20 @@ impl SimpleCast {
             .collect::<Result<Vec<InterfaceSource>>>()
     }
 
-    /// Prints the slot number for the specified mapping type and input data
-    /// Uses abi_encode to pad the data to 32 bytes.
-    /// For value types v, slot number of v is keccak256(concat(h(v) , p)) where h is the padding
-    /// function and p is slot number of the mapping.
+    /// Prints the slot number for the specified mapping type and input data.
+    ///
+    /// For value types `v`, slot number of `v` is `keccak256(concat(h(v), p))` where `h` is the
+    /// padding function for `v`'s type, and `p` is slot number of the mapping.
+    ///
+    /// See [the Solidity documentation](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays)
+    /// for more details.
     ///
     /// # Example
     ///
     /// ```
     /// # use cast::SimpleCast as Cast;
     ///
+    /// // Value types.
     /// assert_eq!(
     ///     Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5", "2").unwrap().as_str(),
     ///     "0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb"
@@ -1657,13 +1678,48 @@ impl SimpleCast {
     ///     Cast::index("uint256", "42", "6").unwrap().as_str(),
     ///     "0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1"
     /// );
+    ///
+    /// // Strings and byte arrays.
+    /// assert_eq!(
+    ///     Cast::index("string", "hello", "1").unwrap().as_str(),
+    ///     "0x8404bb4d805e9ca2bd5dd5c43a107e935c8ec393caa7851b353b3192cd5379ae"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
-        let sig = format!("x({from_type},uint256)");
-        let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
-        let location: String = Self::keccak(&encoded)?;
-        Ok(location)
+        let mut hasher = Keccak256::new();
+
+        let v_ty = DynSolType::parse(from_type).wrap_err("Could not parse type")?;
+        let v = v_ty.coerce_str(from_value).wrap_err("Could not parse value")?;
+        match v_ty {
+            // For value types, `h` pads the value to 32 bytes in the same way as when storing the
+            // value in memory.
+            DynSolType::Bool |
+            DynSolType::Int(_) |
+            DynSolType::Uint(_) |
+            DynSolType::FixedBytes(_) |
+            DynSolType::Address |
+            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+
+            // For strings and byte arrays, `h(k)` is just the unpadded data.
+            DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
+
+            DynSolType::Array(..) |
+            DynSolType::FixedArray(..) |
+            DynSolType::Tuple(..) |
+            DynSolType::CustomStruct { .. } => {
+                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
+            }
+        }
+
+        let p = DynSolType::Uint(256)
+            .coerce_str(slot_number)
+            .wrap_err("Could not parse slot number")?;
+        let p = p.as_word().unwrap();
+        hasher.update(p);
+
+        let location = hasher.finalize();
+        Ok(location.to_string())
     }
 
     /// Converts ENS names to their namehash representation
@@ -1739,14 +1795,10 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
-        let hash = match data.as_bytes() {
-            // 0x prefix => read as hex data
-            [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?),
-            // No 0x prefix => read as text
-            _ => keccak256(data),
-        };
-
-        Ok(format!("{:?}", H256(hash)))
+        // Hex-decode if data starts with 0x.
+        let hash =
+            if data.starts_with("0x") { keccak256(hex::decode(data)?) } else { keccak256(data) };
+        Ok(hash.to_string())
     }
 
     /// Performs the left shift operation (<<) on a number
@@ -1939,6 +1991,27 @@ impl SimpleCast {
             Some((_nonce, selector, signature)) => Ok((selector, signature)),
             None => eyre::bail!("No selector found"),
         }
+    }
+
+    /// Extracts function selectors and arguments from bytecode
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
+    /// let selectors = Cast::extract_selectors(bytecode)?;
+    /// assert_eq!(selectors, vec![("0x2125b65b".to_string(), "uint32,address,uint224".to_string())]);
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn extract_selectors(bytecode: &str) -> Result<Vec<(String, String)>> {
+        let code = hex::decode(strip_0x(bytecode))?;
+        let s = evmole::function_selectors(&code, 0);
+
+        Ok(s.iter()
+            .map(|s| (hex::encode_prefixed(s), evmole::function_arguments(&code, s, 0)))
+            .collect())
     }
 
     /// Decodes a raw EIP2718 transaction payload
