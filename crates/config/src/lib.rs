@@ -1521,8 +1521,12 @@ impl Config {
         if !chain_path.exists() {
             return Ok(blocks)
         }
-        for block in chain_path.read_dir()?.flatten().filter(|x| x.file_type().unwrap().is_dir()) {
-            let filepath = block.path().join("storage.json");
+        for block in chain_path.read_dir()?.flatten() {
+            let filepath = if block.file_type()?.is_dir() {
+                block.path().join("storage.json")
+            } else {
+                block.path()
+            };
             blocks.push((
                 block.file_name().to_string_lossy().into_owned(),
                 fs::metadata(filepath)?.len(),
