@@ -289,7 +289,7 @@ impl ContractSources {
         let mut sources = ContractSources::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
-                let abs_path = root.join(&id.path);
+                let abs_path = root.join(&id.source);
                 let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
