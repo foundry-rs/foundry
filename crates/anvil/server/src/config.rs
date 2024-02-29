@@ -13,7 +13,6 @@ pub struct ServerConfig {
             long,
             help = "Set the CORS allow_origin",
             default_value = "*",
-            name = "allow-origin",
             value_name = "ALLOW_ORIGIN"
         )
     )]

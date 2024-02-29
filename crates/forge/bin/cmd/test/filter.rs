@@ -34,7 +34,7 @@ pub struct FilterArgs {
 
     /// Only run tests in source files that do not match the specified glob pattern.
     #[arg(
-        name = "no-match-path",
+        id = "no-match-path",
         long = "no-match-path",
         visible_alias = "nmp",
         value_name = "GLOB"

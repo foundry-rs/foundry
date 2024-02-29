@@ -83,7 +83,7 @@ pub struct NodeArgs {
     pub hardfork: Option<Hardfork>,
 
     /// Block time in seconds for interval mining.
-    #[arg(short, long, visible_alias = "blockTime", name = "block-time", value_name = "SECONDS")]
+    #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS")]
     pub block_time: Option<u64>,
 
     /// Writes output of `anvil` as json to user-specified file.
@@ -372,13 +372,13 @@ pub struct AnvilEvmArgs {
     /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
     ///
     /// Default value 45000
-    #[arg(long = "timeout", name = "timeout", help_heading = "Fork config", requires = "fork_url")]
+    #[arg(id = "timeout", long = "timeout", help_heading = "Fork config", requires = "fork_url")]
     pub fork_request_timeout: Option<u64>,
 
     /// Number of retry requests for spurious networks (timed out requests)
     ///
     /// Default value 5
-    #[arg(long = "retries", name = "retries", help_heading = "Fork config", requires = "fork_url")]
+    #[arg(id = "retries", long = "retries", help_heading = "Fork config", requires = "fork_url")]
     pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.

@@ -32,7 +32,7 @@ pub struct SendTxArgs {
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
-    #[arg(name = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
 
     /// The number of confirmations until the receipt is fetched.

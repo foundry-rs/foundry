@@ -421,7 +421,7 @@ pub enum CastSubcommand {
         confirmations: usize,
 
         /// Exit immediately if the transaction was not found.
-        #[arg(long = "async", env = "CAST_ASYNC", name = "async", alias = "cast-async")]
+        #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
         cast_async: bool,
 
         /// Print as JSON.
@@ -443,7 +443,7 @@ pub enum CastSubcommand {
         raw_tx: String,
 
         /// Only print the transaction hash and exit immediately.
-        #[arg(long = "async", env = "CAST_ASYNC", name = "async", alias = "cast-async")]
+        #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
         cast_async: bool,
 
         #[command(flatten)]
