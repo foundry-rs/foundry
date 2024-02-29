@@ -1526,15 +1526,14 @@ impl Config {
             let file_name = block.file_name();
             let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else if file_type.is_file() && file_name.to_string_lossy().chars().all(char::is_numeric) {
+            } else if file_type.is_file() &&
+                file_name.to_string_lossy().chars().all(char::is_numeric)
+            {
                 block.path()
             } else {
                 continue
             };
-            blocks.push((
-                file_name.to_string_lossy().into_owned(),
-                fs::metadata(filepath)?.len(),
-            ));
+            blocks.push((file_name.to_string_lossy().into_owned(), fs::metadata(filepath)?.len()));
         }
         Ok(blocks)
     }
@@ -4567,7 +4566,11 @@ mod tests {
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
-        fn fake_block_cache_block_path_as_file(chain_path: &Path, block_number: &str, size_bytes: usize) {
+        fn fake_block_cache_block_path_as_file(
+            chain_path: &Path,
+            block_number: &str,
+            size_bytes: usize,
+        ) {
             let block_path = chain_path.join(block_number);
             let mut file = File::create(block_path).unwrap();
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
