@@ -192,8 +192,9 @@ impl BindArgs {
 
         if self.src_only {
             //We are relying on compilationTarget being present in the metadata
-            //and that it is an object with a single key { "path/to/contract.sol": "ContractName" }
-            //After parsing the metadata, we filter out the contracts that are not in the src directory
+            //and that it is an object with a single key
+            //{ "path/to/contract.sol": "ContractName" }. After parsing the metadata,
+            //we filter out the contracts that are not in the src directory
             abigens = abigens
                 .into_iter()
                 .map(|abi| {
