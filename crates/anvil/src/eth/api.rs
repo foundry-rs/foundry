@@ -1333,13 +1333,6 @@ impl EthApi {
 
         response.reward = Some(rewards);
 
-        let last_header = self
-            .backend
-            .block_by_number(newest_block)
-            .await?
-            .ok_or(FeeHistoryError::BlockNotFound(newest_block))?
-            .header;
-
         // calculate next base fee
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
@@ -1365,11 +1358,19 @@ impl EthApi {
             }
         }
 
+        // Fetch the newest header. We'll need this to calculate the next blob base fee.
+        let newest_header = self
+            .backend
+            .block_by_number(newest_block)
+            .await?
+            .ok_or(FeeHistoryError::BlockNotFound(newest_block))?
+            .header;
+
         // Same goes for the `base_fee_per_blob_gas`:
         // > "[..] includes the next block after the newest of the returned range, because this
         // > value can be derived from the newest block.
         response.base_fee_per_blob_gas.push(
-            last_header
+            newest_header
                 .excess_blob_gas
                 .map(|excess| calc_blob_gasprice(excess.to::<u64>()))
                 .map(U256::from)
