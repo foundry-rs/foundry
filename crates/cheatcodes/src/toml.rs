@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256};
 use toml::Value;
 
 // TODO: add documentation (`parse-toml`, `serialize-toml`, `write-toml) in Foundry Book
+// TODO: add comprehensive tests, including edge cases
 
 impl Cheatcode for parseTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -16,7 +17,8 @@ impl Cheatcode for parseTomlCall {
 
 impl Cheatcode for serializeTomlCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        // To allow for TOML manipulation we re-use the JSON serialization mechanism.
+        // To allow for TOML manipulation we re-use the existing JSON serialization mechanism.
+        // This avoids the need to implement a parallel implementation including cheatcodes.
         let Self { objectKey, value } = self;
         serialize_json(state, objectKey, None, value)
     }

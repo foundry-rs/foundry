@@ -1821,7 +1821,7 @@ interface Vm {
     // -------- Reading --------
 
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-toml to understand the
-    // limitations and caveats of the TOML parsing cheats.
+    // limitations and caveats of the TOML parsing cheat.
 
     /// ABI-encodes a TOML object.
     #[cheatcode(group = Toml)]
@@ -1830,7 +1830,7 @@ interface Vm {
     // -------- Writing --------
 
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/serialize-toml to understand how
-    // to use the serialization cheats.
+    // to use the serialization cheat.
 
     /// Serializes a key and value to a TOML object stored in-memory that can be later written to a file.
     /// Returns the stringified version of the specific TOML file up to that moment.
