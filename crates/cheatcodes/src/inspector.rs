@@ -31,7 +31,6 @@ use revm::{
     primitives::{BlockEnv, CreateScheme, TransactTo},
     EVMData, Inspector,
 };
-use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
@@ -177,7 +176,11 @@ pub struct Cheatcodes {
 
     /// Serialized JSON values.
     // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
-    pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
+    pub serialized_jsons: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+
+    /// Serialized TOML values.
+    /// **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
+    pub serialized_tomls: BTreeMap<String, BTreeMap<String, toml::Value>>,
 
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
