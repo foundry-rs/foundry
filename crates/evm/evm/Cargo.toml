@@ -26,7 +26,7 @@ alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitr
 alloy-sol-types.workspace = true
 alloy-rpc-types.workspace = true
 hashbrown = { version = "0.14", features = ["serde"] }
-revm = { workspace = true, default-features = false, features = [
+revm = { workspace = true, features = [
     "std",
     "serde",
     "memory_limit",
@@ -34,6 +34,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
+    "c-kzg"
 ] }
 revm-inspectors.workspace = true
 

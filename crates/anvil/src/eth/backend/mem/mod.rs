@@ -30,6 +30,7 @@ use crate::{
     NodeConfig,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
+use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::Sealable;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rlp::Decodable;
@@ -79,6 +80,7 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
+use revm::primitives::BlobExcessGasAndPrice;
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -625,6 +627,10 @@ impl Backend {
         self.fees.base_fee()
     }
 
+    pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
+        self.fees.excess_blob_gas_and_price()
+    }
+
     /// Sets the current basefee
     pub fn set_base_fee(&self, basefee: U256) {
         self.fees.set_base_fee(basefee)
@@ -858,6 +864,7 @@ impl Backend {
             cfg_env: env.cfg,
             parent_hash: storage.best_hash,
             gas_used: U256::ZERO,
+            blob_gas_used: U256::ZERO,
             enable_steps_tracing: self.enable_steps_tracing,
         };
 
@@ -885,6 +892,7 @@ impl Backend {
 
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();
+            let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
 
             let mut env = self.env.read().clone();
 
@@ -897,6 +905,7 @@ impl Backend {
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(rU256::from(1));
             env.block.basefee = current_base_fee;
+            env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
             env.block.timestamp = rU256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
@@ -917,6 +926,7 @@ impl Backend {
                     cfg_env: env.cfg.clone(),
                     parent_hash: best_hash,
                     gas_used: U256::ZERO,
+                    blob_gas_used: U256::ZERO,
                     enable_steps_tracing: self.enable_steps_tracing,
                 };
                 let executed_tx = executor.execute();
@@ -1015,12 +1025,18 @@ impl Backend {
             U256::from(header.gas_limit),
             U256::from(header.base_fee_per_gas.unwrap_or_default()),
         );
+        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+            header.excess_blob_gas.unwrap_or_default(),
+            header.blob_gas_used.unwrap_or_default(),
+        );
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
 
         // update next base fee
         self.fees.set_base_fee(U256::from(next_block_base_fee));
+        self.fees
+            .set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(next_block_excess_blob_gas));
 
         outcome
     }
@@ -1059,7 +1075,12 @@ impl Backend {
     ) -> Env {
         let TransactionRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
 
-        let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
+        let FeeDetails {
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            max_fee_per_blob_gas,
+        } = fee_details;
 
         let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
@@ -1080,6 +1101,7 @@ impl Backend {
             gas_limit: gas_limit.to::<u64>(),
             gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
+            max_fee_per_blob_gas,
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr),
                 None => TransactTo::Create(CreateScheme::Create),
@@ -1561,9 +1583,9 @@ impl Backend {
             nonce,
             base_fee_per_gas,
             withdrawals_root: _,
-            blob_gas_used: _,
-            excess_blob_gas: _,
-            parent_beacon_block_root: _,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
         } = header;
 
         AlloyBlock {
@@ -1587,9 +1609,9 @@ impl Backend {
                 nonce: Some(B64::from(nonce)),
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
                 withdrawals_root: None,
-                blob_gas_used: None,
-                excess_blob_gas: None,
-                parent_beacon_block_root: None,
+                blob_gas_used: blob_gas_used.map(U64::from),
+                excess_blob_gas: excess_blob_gas.map(U64::from),
+                parent_beacon_block_root,
             },
             size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
@@ -2384,7 +2406,8 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
-        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
+        // EIP-1559 London hard fork validation steps
+        if env.cfg.spec_id >= SpecId::LONDON {
             if tx.gas_price() < env.block.basefee && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
@@ -2397,6 +2420,49 @@ impl TransactionValidator for Backend {
                     warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
                     return Err(InvalidTransactionError::TipAboveFeeCap);
                 }
+            }
+        }
+
+        // EIP-4844 Cancun hard fork validation steps
+        if env.cfg.spec_id >= SpecId::CANCUN && tx.transaction.is_eip4844() {
+            // Light checks first: see if the blob fee cap is too low.
+            if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
+                if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
+                    if max_fee_per_blob_gas.to::<u128>() < blob_gas_and_price.blob_gasprice {
+                        warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                        return Err(InvalidTransactionError::BlobFeeCapTooLow);
+                    }
+                }
+            }
+
+            // Heavy (blob validation) checks
+            let tx = match &tx.transaction {
+                TypedTransaction::EIP4844(tx) => tx.tx().clone(),
+                // This should not happen. The transaction should explicitly be an eip 4844 tx.
+                _ => {
+                    return Err(InvalidTransactionError::BlobTransactionValidationError(
+                        alloy_consensus::BlobTransactionValidationError::NotBlobTransaction(
+                            tx.transaction.r#type().unwrap_or(u8::MAX),
+                        ),
+                    ))
+                }
+            };
+
+            let blob_count = tx.tx().blob_versioned_hashes.len();
+
+            // Ensure there are blob hashes.
+            if blob_count == 0 {
+                return Err(InvalidTransactionError::NoBlobHashes)
+            }
+
+            // Ensure the tx does not exceed the max blobs per block.
+            if blob_count > MAX_BLOBS_PER_BLOCK {
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
+            }
+
+            // Check for any blob validation errors
+            if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
+                return Err(InvalidTransactionError::BlobTransactionValidationError(err))
             }
         }
 
@@ -2456,6 +2522,14 @@ pub fn transaction_build(
             transaction.gas_price = Some(
                 base_fee.checked_add(max_priority_fee_per_gas).unwrap_or(U256::MAX).to::<U128>(),
             );
+
+            // if the tx is eip4844 we need to also add the max fee per blob gas.
+            if eth_transaction.is_eip4844() {
+                transaction.gas_price = transaction.gas_price.map(|g| {
+                    g.checked_add(U128::from(transaction.max_fee_per_blob_gas.unwrap_or_default()))
+                        .unwrap_or(U128::MAX)
+                });
+            }
         }
     } else {
         transaction.max_fee_per_gas = None;

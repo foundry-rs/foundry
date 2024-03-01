@@ -2,6 +2,7 @@
 
 use crate::eth::pool::transactions::PoolTransaction;
 use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
@@ -126,8 +127,10 @@ pub enum PoolError {
 /// Errors that can occur with `eth_feeHistory`
 #[derive(Debug, thiserror::Error)]
 pub enum FeeHistoryError {
-    #[error("Requested block range is out of bounds")]
+    #[error("requested block range is out of bounds")]
     InvalidBlockRange,
+    #[error("could not find newest block number requested: {0}")]
+    BlockNotFound(BlockNumberOrTag),
 }
 
 #[derive(Debug)]
@@ -196,7 +199,7 @@ pub enum InvalidTransactionError {
     /// Thrown when the block's `blob_gas_price` is greater than tx-specified
     /// `max_fee_per_blob_gas` after Cancun.
     #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
-    BlobGasPriceGreaterThanMax,
+    BlobFeeCapTooLow,
     /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
     /// fork.
     #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
@@ -204,6 +207,14 @@ pub enum InvalidTransactionError {
     /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
     #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
     MaxFeePerBlobGasNotSupported,
+    /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
+    #[error("`blob_hashes` are required for EIP-4844 transactions")]
+    NoBlobHashes,
+    #[error("too many blobs: have {0}, want {1}")]
+    TooManyBlobs(usize, usize),
+    /// Thrown when there's a blob validation error
+    #[error(transparent)]
+    BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -244,7 +255,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 InvalidTransactionError::AccessListNotSupported
             }
             InvalidTransaction::BlobGasPriceGreaterThanMax => {
-                InvalidTransactionError::BlobGasPriceGreaterThanMax
+                InvalidTransactionError::BlobFeeCapTooLow
             }
             InvalidTransaction::BlobVersionedHashesNotSupported => {
                 InvalidTransactionError::BlobVersionedHashesNotSupported

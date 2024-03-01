@@ -28,11 +28,12 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::primitives::Output,
+    revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxLegacy;
+use alloy_consensus::{TxEip4844Variant, TxLegacy};
 use alloy_dyn_abi::TypedData;
+use alloy_eips::calc_blob_gasprice;
 use alloy_network::{Signed, TxKind};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rlp::Decodable;
@@ -550,6 +551,10 @@ impl EthApi {
         Ok(self.backend.gas_price())
     }
 
+    pub fn excess_blob_gas_and_price(&self) -> Result<Option<BlobExcessGasAndPrice>> {
+        Ok(self.backend.excess_blob_gas_and_price())
+    }
+
     /// Returns a fee per gas that is an estimate of how much you can pay as a priority fee, or
     /// 'tip', to get a transaction included in the current block.
     ///
@@ -988,6 +993,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
         // this can be blocking for a bit, especially in forking mode
@@ -1299,6 +1305,10 @@ impl EthApi {
                 // <https://eips.ethereum.org/EIPS/eip-1559>
                 if let Some(block) = fee_history.get(&n) {
                     response.base_fee_per_gas.push(U256::from(block.base_fee));
+                    response
+                        .base_fee_per_blob_gas
+                        .push(U256::from(block.base_fee_per_blob_gas.unwrap_or(0)));
+                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
                     response.gas_used_ratio.push(block.gas_used_ratio);
 
                     // requested percentiles
@@ -1347,6 +1357,25 @@ impl EthApi {
                 response.base_fee_per_gas.push(U256::from(last_fee_per_gas as u64));
             }
         }
+
+        // Fetch the newest header. We'll need this to calculate the next blob base fee.
+        let newest_header = self
+            .backend
+            .block_by_number(newest_block)
+            .await?
+            .ok_or(FeeHistoryError::BlockNotFound(newest_block))?
+            .header;
+
+        // Same goes for the `base_fee_per_blob_gas`:
+        // > "[..] includes the next block after the newest of the returned range, because this
+        // > value can be derived from the newest block.
+        response.base_fee_per_blob_gas.push(
+            newest_header
+                .excess_blob_gas
+                .map(|excess| calc_blob_gasprice(excess.to::<u64>()))
+                .map(U256::from)
+                .unwrap_or(U256::ZERO),
+        );
 
         Ok(response)
     }
@@ -1454,6 +1483,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
@@ -2198,6 +2228,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
@@ -2473,6 +2504,7 @@ impl EthApi {
     ) -> Result<TypedTransactionRequest> {
         let chain_id = request.chain_id.map(|c| c.to::<u64>()).unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
+        let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
         let gas_limit = request.gas.map(Ok).unwrap_or_else(|| self.current_gas_limit())?;
@@ -2505,11 +2537,41 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::EIP4844(m)) => {
+                TypedTransactionRequest::EIP4844(match m {
+                    // We only accept the TxEip4844 variant which has the sidecar.
+                    TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
+                        m.tx.nonce = nonce.to::<u64>();
+                        m.tx.chain_id = chain_id;
+                        m.tx.gas_limit = gas_limit.to::<u64>();
+                        if max_fee_per_gas.is_none() {
+                            m.tx.max_fee_per_gas =
+                                self.gas_price().unwrap_or_default().to::<u128>();
+                        }
+                        if max_fee_per_blob_gas.is_none() {
+                            m.tx.max_fee_per_blob_gas = self
+                                .excess_blob_gas_and_price()
+                                .unwrap_or_default()
+                                .unwrap_or(BlobExcessGasAndPrice {
+                                    blob_gasprice: 0,
+                                    excess_blob_gas: 0,
+                                })
+                                .blob_gasprice
+                        }
+                        TxEip4844Variant::TxEip4844WithSidecar(m)
+                    }
+                    // It is not valid to receive a TxEip4844 without a sidecar, therefore
+                    // we must reject it.
+                    TxEip4844Variant::TxEip4844(_) => {
+                        return Err(BlockchainError::FailedToDecodeTransaction)
+                    }
+                })
+            }
             Some(TypedTransactionRequest::Deposit(mut m)) => {
                 m.gas_limit = gas_limit;
                 TypedTransactionRequest::Deposit(m)
             }
-            _ => return Err(BlockchainError::FailedToDecodeTransaction),
+            None => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
     }
