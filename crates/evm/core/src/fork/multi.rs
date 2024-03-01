@@ -85,28 +85,9 @@ impl MultiFork {
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
     pub fn spawn() -> Self {
         trace!(target: "fork::multi", "spawning multifork");
-
         let (fork, mut handler) = Self::new();
-        // spawn a light-weight thread with a thread-local async runtime just for
-        // sending and receiving data from the remote client(s)
-        std::thread::Builder::new()
-            .name("multi-fork-backend".into())
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime");
-
-                rt.block_on(async move {
-                    // flush cache every 60s, this ensures that long-running fork tests get their
-                    // cache flushed from time to time
-                    // NOTE: we install the interval here because the `tokio::timer::Interval`
-                    // requires a rt
-                    handler.set_flush_cache_interval(Duration::from_secs(60));
-                    handler.await
-                });
-            })
-            .expect("failed to spawn thread");
+        handler.set_flush_cache_interval(Duration::from_secs(60));
+        tokio::spawn(handler);
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
         fork
     }
