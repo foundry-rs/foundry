@@ -7,6 +7,8 @@ use toml::Value;
 
 // TODO: add documentation (`parse-toml`, `serialize-toml`, `write-toml) in Foundry Book
 // TODO: add comprehensive tests, including edge cases
+// TODO: add upstream support to `forge-std` for the proposed cheatcodes
+// TODO: make sure this is the correct way of implementing new cheatcodes, incl. specification
 
 impl Cheatcode for parseTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
