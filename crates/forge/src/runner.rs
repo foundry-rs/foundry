@@ -253,58 +253,62 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let functions: Vec<_> = self.contract.functions().collect();
-        let mut test_results = functions
-            .par_iter()
-            .filter(|&&func| func.is_test() && filter.matches_test(&func.signature()))
-            .map(|&func| {
-                let should_fail = func.is_test_fail();
-                let res = if func.is_fuzz_test() {
-                    let runner = test_options.fuzz_runner(self.name, &func.name);
-                    let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(func, should_fail, runner, setup.clone(), *fuzz_config)
-                } else {
-                    self.run_test(func, should_fail, setup.clone())
-                };
-                (func.signature(), res)
-            })
-            .collect::<BTreeMap<_, _>>();
+        // Filter out functions sequentially since it's very fast and there is no need to do it
+        // in parallel.
+        let find_timer = Instant::now();
+        let functions = self
+            .contract
+            .functions()
+            .filter(|func| func.is_test() || func.is_invariant_test())
+            .map(|func| (func.signature(), func))
+            .filter(|(sig, _func)| filter.matches_test(sig))
+            .collect::<Vec<_>>();
+        let find_time = find_timer.elapsed();
+        debug!(
+            "Found {} test functions out of {} in {:?}",
+            functions.len(),
+            self.contract.functions().count(),
+            find_time,
+        );
 
-        if has_invariants {
-            let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
-            let results: Vec<_> = functions
-                .par_iter()
-                .filter(|&&func| func.is_invariant_test() && filter.matches_test(&func.signature()))
-                .map(|&func| {
+        let identified_contracts =
+            has_invariants.then(|| load_contracts(setup.traces.clone(), known_contracts));
+        let test_results = functions
+            .into_par_iter()
+            .map(|(sig, func)| {
+                let setup = setup.clone();
+                let should_fail = func.is_test_fail();
+                let res = if func.is_invariant_test() {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
-                    let res = self.run_invariant_test(
+                    self.run_invariant_test(
                         runner,
-                        setup.clone(),
+                        setup,
                         *invariant_config,
                         func,
                         known_contracts,
-                        &identified_contracts,
-                    );
-                    (func.signature(), res)
-                })
-                .collect();
-            test_results.extend(results);
-        }
+                        identified_contracts.as_ref().unwrap(),
+                    )
+                } else if func.is_fuzz_test() {
+                    let runner = test_options.fuzz_runner(self.name, &func.name);
+                    let fuzz_config = test_options.fuzz_config(self.name, &func.name);
+                    self.run_fuzz_test(func, should_fail, runner, setup, *fuzz_config)
+                } else {
+                    self.run_test(func, should_fail, setup)
+                };
+                (sig, res)
+            })
+            .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        if !test_results.is_empty() {
-            let successful =
-                test_results.iter().filter(|(_, tst)| tst.status == TestStatus::Success).count();
-            info!(
-                duration = ?duration,
-                "done. {}/{} successful",
-                successful,
-                test_results.len()
-            );
-        }
-
-        SuiteResult::new(duration, test_results, warnings)
+        let suite_result = SuiteResult::new(duration, test_results, warnings);
+        info!(
+            duration=?suite_result.duration,
+            "done. {}/{} successful",
+            suite_result.passed(),
+            suite_result.test_results.len()
+        );
+        suite_result
     }
 
     /// Runs a single test
