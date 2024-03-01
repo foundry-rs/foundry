@@ -494,9 +494,11 @@ contract TransientTest is Test {
 forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
     prj.wipe_contracts();
 
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
     prj.add_test(
         "Contract.t.sol",
-        r#"pragma solidity 0.8.24;
+        &r#"pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract C is Test {}
@@ -511,13 +513,14 @@ contract GasWaster {
 
 contract GasLimitTest is Test {
     function test() public {
-        vm.createSelectFork("mainnet");
+        vm.createSelectFork("<rpc>");
         
         GasWaster waster = new GasWaster();
         waster.waste();
     }
 }
-   "#,
+   "#
+        .replace("<rpc>", &endpoint),
     )
     .unwrap();
 
