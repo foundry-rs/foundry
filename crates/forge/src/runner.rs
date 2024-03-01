@@ -260,8 +260,7 @@ impl<'a> ContractRunner<'a> {
         let functions = self
             .contract
             .functions()
-            .map(|func| (func.signature(), func))
-            .filter(|(sig, func)| is_matching_test(func, || filter.matches_test(sig)))
+            .filter(|func| is_matching_test(func, filter))
             .collect::<Vec<_>>();
         let find_time = find_timer.elapsed();
         debug!(
@@ -274,8 +273,10 @@ impl<'a> ContractRunner<'a> {
         let identified_contracts =
             has_invariants.then(|| load_contracts(setup.traces.clone(), known_contracts));
         let test_results = functions
-            .into_par_iter()
-            .map(|(sig, func)| {
+            .par_iter()
+            .map(|&func| {
+                let sig = func.signature();
+
                 let setup = setup.clone();
                 let should_fail = func.is_test_fail();
                 let res = if func.is_invariant_test() {
@@ -298,6 +299,7 @@ impl<'a> ContractRunner<'a> {
                     debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
                 };
+
                 (sig, res)
             })
             .collect::<BTreeMap<_, _>>();

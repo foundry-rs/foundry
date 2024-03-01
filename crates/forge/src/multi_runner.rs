@@ -66,9 +66,12 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    /// Returns the number of matching tests
-    pub fn matching_test_function_count(&self, filter: &dyn TestFilter) -> usize {
-        self.matching_test_functions(filter).count()
+    /// Returns an iterator over all contracts that match the filter.
+    pub fn matching_contracts<'a>(
+        &'a self,
+        filter: &'a dyn TestFilter,
+    ) -> impl Iterator<Item = (&ArtifactId, &(JsonAbi, Bytes, Vec<Bytes>))> {
+        self.contracts.iter().filter(|&(id, (abi, _, _))| matches_contract(id, abi, filter))
     }
 
     /// Returns all test functions matching the filter
@@ -76,47 +79,22 @@ impl MultiContractRunner {
         &'a self,
         filter: &'a dyn TestFilter,
     ) -> impl Iterator<Item = &Function> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, (abi, _, _))| {
-                abi.functions().filter(|func| filter.matches_test(&func.signature()))
-            })
-    }
-
-    /// Get an iterator over all test contract functions that matches the filter path and contract
-    /// name
-    fn filtered_tests<'a>(&'a self, filter: &'a dyn TestFilter) -> impl Iterator<Item = &Function> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
+        self.matching_contracts(filter)
             .flat_map(|(_, (abi, _, _))| abi.functions())
-    }
-
-    /// Get all test names matching the filter
-    pub fn get_tests(&self, filter: &dyn TestFilter) -> Vec<String> {
-        self.filtered_tests(filter)
-            .map(|func| func.name.clone())
-            .filter(|name| name.is_test())
-            .collect()
+            .filter(|func| is_matching_test(func, filter))
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+        self.matching_contracts(filter)
             .map(|(id, (abi, _, _))| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let tests = abi
                     .functions()
-                    .filter(|func| func.name.is_test())
-                    .filter(|func| filter.matches_test(&func.signature()))
+                    .filter(|func| is_matching_test(func, filter))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
-
                 (source, name, tests)
             })
             .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
@@ -170,14 +148,10 @@ impl MultiContractRunner {
             })
             .spec(self.evm_spec)
             .gas_limit(self.evm_opts.gas_limit())
-            .build(self.env.clone(), db.clone());
+            .build(self.env.clone(), db);
 
         let find_timer = Instant::now();
-        let contracts = self
-            .contracts
-            .iter()
-            .filter(|&(id, (abi, ..))| matches_contract(id, abi, filter))
-            .collect::<Vec<_>>();
+        let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
         let find_time = find_timer.elapsed();
         debug!(
             "Found {} test contracts out of {} in {:?}",
@@ -389,11 +363,12 @@ impl MultiContractRunnerBuilder {
 
 fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
     (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
-        abi.functions()
-            .any(|func| is_matching_test(func, || filter.matches_test(&func.signature())))
+        abi.functions().any(|func| is_matching_test(func, filter))
 }
 
 /// Returns `true` if the function is a test function that matches the given filter.
-pub(crate) fn is_matching_test(func: &Function, match_sig: impl FnOnce() -> bool) -> bool {
-    (func.is_test() || func.is_invariant_test()) && match_sig()
+pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
+    // Avoid calculating the signature if possible.
+    (func.is_test() || func.is_invariant_test()) &&
+        (filter.matches_test(&func.name) || filter.matches_test(&func.signature()))
 }

@@ -20,7 +20,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
-    shell,
+    shell, TestFunctionExt,
 };
 use foundry_config::{
     figment,
@@ -257,7 +257,7 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let num_filtered = runner.matching_test_function_count(filter);
+        let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered == 0 {
             println!();
             if filter.is_empty() {
@@ -272,7 +272,12 @@ impl TestArgs {
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
-                    let candidates = runner.get_tests(filter);
+                    // Filter contracts but not test functions.
+                    let candidates = runner
+                        .matching_contracts(filter)
+                        .flat_map(|(_, (abi, _, _))| abi.functions())
+                        .filter(|func| func.is_test() || func.is_invariant_test())
+                        .map(|f| &f.name);
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                         println!("\nDid you mean `{suggestion}`?");
                     }
