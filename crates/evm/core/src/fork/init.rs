@@ -17,6 +17,7 @@ pub async fn environment<P: TempProvider>(
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Address,
+    disable_block_gas_limit: bool,
 ) -> eyre::Result<(Env, Block)> {
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
@@ -55,6 +56,7 @@ pub async fn environment<P: TempProvider>(
     // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
     // is a contract. So we disable the check by default.
     cfg.disable_eip3607 = true;
+    cfg.disable_block_gas_limit = disable_block_gas_limit;
 
     let mut env = Env {
         cfg,
