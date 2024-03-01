@@ -19,7 +19,7 @@ pub struct MakeTxArgs {
     /// The destination of the transaction.
     ///
     /// If not provided, you must use `cast mktx --create`.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -29,16 +29,16 @@ pub struct MakeTxArgs {
     args: Vec<String>,
 
     /// Reuse the latest nonce for the sender account.
-    #[clap(long, conflicts_with = "nonce")]
+    #[arg(long, conflicts_with = "nonce")]
     resend: bool,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Option<MakeTxSubcommands>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 
@@ -83,7 +83,7 @@ impl MakeTxArgs {
         let api_key = config.get_etherscan_api_key(Some(chain));
 
         // Retrieve the signer, and bail if it can't be constructed.
-        let signer = eth.wallet.signer(chain.id()).await?;
+        let signer = eth.wallet.signer().await?;
         let from = signer.address();
 
         tx::validate_from_address(eth.wallet.from, from.to_alloy())?;

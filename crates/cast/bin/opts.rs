@@ -383,7 +383,7 @@ pub enum CastSubcommand {
     },
 
     /// Build and sign a transaction.
-    #[clap(name = "mktx", visible_alias = "m")]
+    #[command(name = "mktx", visible_alias = "m")]
     MakeTx(MakeTxArgs),
 
     /// Calculate the ENS namehash of a name.
