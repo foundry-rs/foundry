@@ -29,10 +29,11 @@ impl ScriptArgs {
     }
 
     /// Executes the script
-    pub async fn run_script(mut self) -> Result<()> {
+    pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let state = self.preprocess()
+        let state = self
+            .preprocess()
             .await?
             .compile()?
             .link()?
@@ -47,14 +48,6 @@ impl ScriptArgs {
             state.run_debugger()?;
         }
 
-        let mut verify = VerifyBundle::new(
-            &state.script_config.config.project()?,
-            &state.script_config.config,
-            state.build_data.get_flattened_contracts(false),
-            state.args.retry,
-            state.args.verifier.clone(),
-        );
-
         let state = if state.args.resume || (state.args.verify && !state.args.broadcast) {
             state.resume().await?
         } else {
@@ -63,7 +56,6 @@ impl ScriptArgs {
             } else {
                 state.show_traces().await?;
             }
-            verify.known_contracts = state.build_data.get_flattened_contracts(false);
             state.args.check_contract_sizes(
                 &state.execution_result,
                 &state.build_data.highlevel_known_contracts,
@@ -83,12 +75,20 @@ impl ScriptArgs {
             state.bundle().await?
         };
 
-        if !state.args.broadcast {
+        if !state.args.broadcast && !state.args.resume {
             shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             return Ok(());
         }
 
+        if state.args.verify {
+            state.verify_preflight_check()?;
+        }
+
         let state = state.wait_for_pending().await?.broadcast().await?;
+
+        if state.args.verify {
+            state.verify().await?;
+        }
 
         Ok(())
     }

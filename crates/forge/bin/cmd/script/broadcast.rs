@@ -23,6 +23,7 @@ use foundry_common::{
     shell,
     types::{ToAlloy, ToEthers},
 };
+use foundry_config::Config;
 use foundry_wallets::WalletSigner;
 use futures::{future::join_all, StreamExt};
 use std::{
@@ -182,6 +183,12 @@ impl BundledState {
                     .map(|tx| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
             })
             .collect::<HashSet<_>>();
+
+        if required_addresses.contains(&Config::DEFAULT_SENDER) {
+            eyre::bail!(
+                "You seem to be using Foundry's default sender. Be sure to set your own --sender."
+            );
+        }
 
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses)

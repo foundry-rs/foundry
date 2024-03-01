@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
 use foundry_common::{provider::ethers::try_get_http_provider, shell};
+use foundry_compilers::artifacts::Libraries;
 
 use super::{
     execute::PreSimulationState,
@@ -18,7 +19,7 @@ impl PreSimulationState {
             args,
             script_config,
             script_wallets,
-            build_data,
+            mut build_data,
             execution_data,
             execution_result: _,
             execution_artifacts,
@@ -61,6 +62,11 @@ impl PreSimulationState {
                     eyre::bail!(err.wrap_err("If you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation."))
                 }
             };
+
+            // We might have predeployed libraries from the broadcasting, so we need to
+            // relink the contracts with them, since their mapping is
+            // not included in the solc cache files.
+            build_data = build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
 
             ScriptSequenceKind::Single(seq)
         };

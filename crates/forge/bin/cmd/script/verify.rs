@@ -1,10 +1,50 @@
 use alloy_primitives::Address;
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use eyre::Result;
+use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
+
+use super::{broadcast::BroadcastedState, simulate::BundledState};
+
+impl BundledState {
+    pub fn verify_preflight_check(&self) -> Result<()> {
+        for sequence in self.sequence.iter_sequences() {
+            if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
+                self.script_config
+                    .config
+                    .get_etherscan_api_key(Some(sequence.chain.into()))
+                    .is_none()
+            {
+                eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl BroadcastedState {
+    pub async fn verify(self) -> Result<()> {
+        let Self { args, script_config, build_data, mut sequence, .. } = self;
+
+        let verify = VerifyBundle::new(
+            &script_config.config.project()?,
+            &script_config.config,
+            build_data.get_flattened_contracts(false),
+            args.retry,
+            args.verifier,
+        );
+
+        for sequence in sequence.iter_sequeneces_mut() {
+            sequence.verify_contracts(&script_config.config, verify.clone()).await?;
+        }
+
+        Ok(())
+    }
+}
 
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
 #[derive(Clone)]
