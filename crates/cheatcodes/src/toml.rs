@@ -1,37 +1,42 @@
 //! Implementations of [`Toml`](crate::Group::Toml) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Address, B256, I256};
-use std::collections::BTreeMap;
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{Address, B256};
 use toml::Value;
 
 impl Cheatcode for parseTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
-        parse_toml(toml, "$")
+        parse_toml(toml)
     }
 }
 
-impl Cheatcode for serializeTomlCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {}
-}
-
 impl Cheatcode for writeTomlCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {}
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { toml, path } = self;
+        let toml = toml::from_str(toml).unwrap_or_else(|_| Value::String(toml.to_owned()));
+        let toml_string =
+            toml::to_string_pretty(&toml).map_err(|e| fmt_err!("failed serializing TOML: {e}"))?;
+        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
+    }
 }
 
-fn parse_toml(toml: &str, path: &str) -> Result {
-    let value = parse_toml_str(toml)?;
-    let sol = toml_to_sol(&value)?;
-    Ok(encode(sol))
+fn parse_toml(toml: &str) -> Result {
+    let toml = parse_toml_str(toml)?;
+    let sol = toml_to_sol(&toml)?;
+    Ok(sol.abi_encode())
 }
 
 fn parse_toml_str(toml: &str) -> Result<Value> {
     toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
 }
 
-pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
+fn toml_to_sol(toml: &Value) -> Result<DynSolValue> {
+    Ok(value_to_token(toml)?)
+}
+
+fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Boolean(boolean) => Ok(DynSolValue::Bool(*boolean)),
         Value::Integer(integer) => {
