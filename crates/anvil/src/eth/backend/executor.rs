@@ -134,7 +134,6 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let mut receipts = Vec::new();
         let mut bloom = Bloom::default();
         let mut cumulative_gas_used = U256::ZERO;
-        let mut cumulative_blob_gas_used = None;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
         let gas_limit = self.block_env.gas_limit;
@@ -151,6 +150,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         let is_cancun = self.cfg_env.spec_id >= SpecId::CANCUN;
         let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
+        let mut cumulative_blob_gas_used = if is_cancun { Some(0) } else { None };
 
         for tx in self.into_iter() {
             let tx = match tx {

@@ -1583,7 +1583,7 @@ impl Backend {
             nonce,
             base_fee_per_gas,
             withdrawals_root: _,
-            blob_gas_used: _,
+            blob_gas_used,
             excess_blob_gas,
             parent_beacon_block_root,
         } = header;
@@ -1609,7 +1609,7 @@ impl Backend {
                 nonce: Some(B64::from(nonce)),
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
                 withdrawals_root: None,
-                blob_gas_used: None,
+                blob_gas_used: blob_gas_used.map(U64::from),
                 excess_blob_gas: excess_blob_gas.map(U64::from),
                 parent_beacon_block_root,
             },
