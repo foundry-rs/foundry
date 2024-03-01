@@ -261,7 +261,7 @@ impl<'a> ContractRunner<'a> {
             .contract
             .functions()
             .map(|func| (func.signature(), func))
-            .filter(|(sig, func)| is_matching_test(func, || filter.matches_test(&sig)))
+            .filter(|(sig, func)| is_matching_test(func, || filter.matches_test(sig)))
             .collect::<Vec<_>>();
         let find_time = find_timer.elapsed();
         debug!(
