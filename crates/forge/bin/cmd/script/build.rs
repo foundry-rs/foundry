@@ -1,6 +1,9 @@
 use super::{ScriptArgs, ScriptConfig};
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, OptionExt, Result};
+use forge::{
+    inspectors::cheatcodes::ScriptWallets,
+};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
@@ -19,22 +22,24 @@ use std::str::FromStr;
 pub struct PreprocessedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
 }
 
 impl PreprocessedState {
     pub fn compile(self) -> Result<CompiledState> {
-        let project = self.script_config.config.project()?;
-        let filters = self.args.opts.skip.clone().unwrap_or_default();
+        let Self { args, script_config, script_wallets } = self;
+        let project = script_config.config.project()?;
+        let filters = args.opts.skip.clone().unwrap_or_default();
 
-        let mut target_name = self.args.target_contract.clone();
+        let mut target_name = args.target_contract.clone();
 
         // If we've received correct path, use it as target_path
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
-        let target_path = if let Ok(path) = dunce::canonicalize(&self.args.path) {
+        let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
             Ok::<_, eyre::Report>(Some(path))
         } else {
-            let contract = ContractInfo::from_str(&self.args.path)?;
+            let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
                 Ok(Some(dunce::canonicalize(path)?))
@@ -49,8 +54,8 @@ impl PreprocessedState {
             compile::compile_target_with_filter(
                 &target_path,
                 &project,
-                self.args.opts.args.silent,
-                self.args.verify,
+                args.opts.args.silent,
+                args.verify,
                 filters,
             )
         } else if !project.paths.has_input_files() {
@@ -111,9 +116,10 @@ impl PreprocessedState {
         let linker = Linker::new(project.root(), contracts);
 
         Ok(CompiledState {
-            args: self.args,
-            script_config: self.script_config,
-            build_data: BuildData { sources, linker, target },
+            args,
+            script_config,
+            script_wallets,
+            build_data: BuildData { linker, target, sources },
         })
     }
 }
@@ -209,22 +215,26 @@ impl LinkedBuildData {
 pub struct CompiledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: BuildData,
 }
 
 impl CompiledState {
     pub fn link(self) -> Result<LinkedState> {
-        let sender = self.script_config.evm_opts.sender;
-        let nonce = self.script_config.sender_nonce;
-        let known_libraries = self.script_config.config.libraries_with_remappings()?;
-        let build_data = self.build_data.link(known_libraries, sender, nonce)?;
+        let Self { args, script_config, script_wallets, build_data } = self;
 
-        Ok(LinkedState { args: self.args, script_config: self.script_config, build_data })
+        let sender = script_config.evm_opts.sender;
+        let nonce = script_config.sender_nonce;
+        let known_libraries = script_config.config.libraries_with_remappings()?;
+        let build_data = build_data.link(known_libraries, sender, nonce)?;
+
+        Ok(LinkedState { args, script_config, script_wallets, build_data })
     }
 }
 
 pub struct LinkedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
 }

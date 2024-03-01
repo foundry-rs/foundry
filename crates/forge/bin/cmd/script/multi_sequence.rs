@@ -1,23 +1,13 @@
-use super::{
-    receipts,
-    sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR},
-    verify::VerifyBundle,
-    ScriptArgs,
-};
-use alloy_primitives::Address;
-use eyre::{ContextCompat, Report, Result, WrapErr};
+use super::sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR};
+use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
-use foundry_common::{fs, provider::ethers::get_http_provider};
-use foundry_compilers::{artifacts::Libraries, ArtifactId};
+use foundry_common::fs;
+use foundry_compilers::ArtifactId;
 use foundry_config::Config;
-use foundry_wallets::WalletSigner;
-use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 /// Holds the sequences of multiple chain deployments.
@@ -130,7 +120,7 @@ impl MultiChainSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> Result<()> {
+    pub fn save(&mut self, silent: bool) -> Result<()> {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
         self.timestamp = now().as_secs();
@@ -163,72 +153,6 @@ impl MultiChainSequence {
 
         println!("\nTransactions saved to: {}\n", self.path.display());
         println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
-
-        Ok(())
-    }
-}
-
-impl ScriptArgs {
-    /// Given a [`MultiChainSequence`] with multiple sequences of different chains, it executes them
-    /// all in parallel. Supports `--resume` and `--verify`.
-    pub async fn multi_chain_deployment(
-        &self,
-        deployments: &mut MultiChainSequence,
-        libraries: Libraries,
-        config: &Config,
-        verify: VerifyBundle,
-        signers: &HashMap<Address, WalletSigner>,
-    ) -> Result<()> {
-        if !libraries.is_empty() {
-            eyre::bail!("Libraries are currently not supported on multi deployment setups.");
-        }
-
-        if self.verify {
-            for sequence in &deployments.deployments {
-                sequence.verify_preflight_check(config, &verify)?;
-            }
-        }
-
-        if self.resume {
-            trace!(target: "script", "resuming multi chain deployment");
-
-            let futs = deployments
-                .deployments
-                .iter_mut()
-                .map(|sequence| async move {
-                    let rpc_url = sequence.rpc_url().unwrap();
-                    let provider = Arc::new(get_http_provider(rpc_url));
-                    receipts::wait_for_pending(provider, sequence).await
-                })
-                .collect::<Vec<_>>();
-
-            let errors =
-                join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
-
-            if !errors.is_empty() {
-                return Err(eyre::eyre!("{errors:?}"));
-            }
-        }
-
-        trace!(target: "script", "broadcasting multi chain deployments");
-
-        let mut results: Vec<Result<(), Report>> = Vec::new();
-
-        for sequence in deployments.deployments.iter_mut() {
-            let rpc_url = sequence.rpc_url().unwrap().to_string();
-            let result = match self.send_transactions(sequence, &rpc_url, signers).await {
-                Ok(_) if self.verify => sequence.verify_contracts(config, verify.clone()).await,
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            };
-            results.push(result);
-        }
-
-        let errors = results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
-
-        if !errors.is_empty() {
-            return Err(eyre::eyre!("{errors:?}"));
-        }
 
         Ok(())
     }

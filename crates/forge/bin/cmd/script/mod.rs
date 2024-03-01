@@ -50,9 +50,10 @@ mod broadcast;
 mod build;
 mod cmd;
 mod execute;
-mod multi;
+mod multi_sequence;
 mod providers;
 mod receipts;
+mod resume;
 mod runner;
 mod sequence;
 mod simulate;
@@ -403,16 +404,10 @@ pub struct ScriptConfig {
     pub missing_rpc: bool,
     /// Should return some debug information
     pub debug: bool,
-    /// Container for wallets needed through script execution
-    pub script_wallets: ScriptWallets,
 }
 
 impl ScriptConfig {
-    pub async fn new(
-        config: Config,
-        evm_opts: EvmOpts,
-        script_wallets: ScriptWallets,
-    ) -> Result<Self> {
+    pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             forge::next_nonce(evm_opts.sender, fork_url, None).await?
         } else {
@@ -427,7 +422,6 @@ impl ScriptConfig {
             total_rpcs: HashSet::new(),
             missing_rpc: false,
             debug: false,
-            script_wallets,
         })
     }
 
@@ -504,7 +498,18 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
         Ok(())
     }
 
-    async fn get_runner(&mut self, cheatcodes: bool) -> Result<ScriptRunner> {
+    async fn get_runner(&mut self) -> Result<ScriptRunner> {
+        self._get_runner(None).await
+    }
+
+    async fn get_runner_with_cheatcodes(
+        &mut self,
+        script_wallets: ScriptWallets,
+    ) -> Result<ScriptRunner> {
+        self._get_runner(Some(script_wallets)).await
+    }
+
+    async fn _get_runner(&mut self, script_wallets: Option<ScriptWallets>) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = self.evm_opts.evm_env().await?;
 
@@ -531,7 +536,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
-        if cheatcodes {
+        if let Some(script_wallets) = script_wallets {
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(self.debug)
@@ -539,7 +544,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
-                            Some(self.script_wallets.clone()),
+                            Some(script_wallets),
                         )
                         .into(),
                     )

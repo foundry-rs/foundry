@@ -1,14 +1,25 @@
 use super::{
-    artifacts::ArtifactInfo, build::LinkedBuildData, execute::{ExecutionArtifacts, ExecutionData, PreSimulationState}, multi::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner, sequence::{ScriptSequence, ScriptSequenceKind}, transaction::TransactionWithMetadata, ScriptArgs, ScriptConfig
+    artifacts::ArtifactInfo,
+    build::LinkedBuildData,
+    execute::{ExecutionArtifacts, ExecutionData, PreSimulationState},
+    multi_sequence::MultiChainSequence,
+    providers::ProvidersManager,
+    runner::ScriptRunner,
+    sequence::{ScriptSequence, ScriptSequenceKind},
+    transaction::TransactionWithMetadata,
+    ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{utils::format_units, Address, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use eyre::{Context, Result};
-use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::render_trace_arena};
+use forge::{
+    inspectors::cheatcodes::{BroadcastableTransactions, ScriptWallets},
+    traces::render_trace_arena,
+};
 use foundry_cli::utils::has_different_gas_calc;
 use foundry_common::{
-    get_contract_name, provider::alloy::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
+    get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
 };
 use futures::future::join_all;
 use parking_lot::RwLock;
@@ -38,6 +49,7 @@ impl PreSimulationState {
         Ok(FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
+            script_wallets: self.script_wallets,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
@@ -195,7 +207,7 @@ impl PreSimulationState {
             .map(|rpc| async {
                 let mut script_config = self.script_config.clone();
                 script_config.evm_opts.fork_url = Some(rpc.clone());
-                let runner = script_config.get_runner(false).await?;
+                let runner = script_config.get_runner().await?;
                 Ok((rpc.clone(), runner))
             })
             .collect::<Vec<_>>();
@@ -221,6 +233,7 @@ impl PreSimulationState {
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_artifacts: ExecutionArtifacts,
@@ -361,6 +374,7 @@ impl FilledTransactionsState {
         Ok(BundledState {
             args: self.args,
             script_config: self.script_config,
+            script_wallets: self.script_wallets,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
@@ -391,14 +405,9 @@ impl FilledTransactionsState {
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_artifacts: ExecutionArtifacts,
     pub sequence: ScriptSequenceKind,
-}
-
-impl BundledState {
-    pub async fn wait_for_pending(self) -> Result<()> {
-        Ok(())
-    }
 }

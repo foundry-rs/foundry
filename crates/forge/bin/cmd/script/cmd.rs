@@ -1,13 +1,9 @@
-use super::{
-    multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyBundle, ScriptArgs,
-    ScriptConfig,
-};
+use super::{verify::VerifyBundle, ScriptArgs, ScriptConfig};
 use crate::cmd::script::{
     build::{LinkedBuildData, PreprocessedState},
     receipts,
 };
 use alloy_primitives::Address;
-use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
 use forge::inspectors::cheatcodes::ScriptWallets;
@@ -17,27 +13,27 @@ use foundry_compilers::artifacts::Libraries;
 use std::sync::Arc;
 
 impl ScriptArgs {
-    /// Executes the script
-    pub async fn run_script(mut self) -> Result<()> {
-        trace!(target: "script", "executing script command");
-
+    async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
             ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         }
 
-        let mut script_config = ScriptConfig::new(config, evm_opts, script_wallets).await?;
+        let script_config = ScriptConfig::new(config, evm_opts).await?;
 
-        if script_config.evm_opts.fork_url.is_none() {
-            // if not forking, then ignore any pre-deployed library addresses
-            script_config.config.libraries = Default::default();
-        }
+        Ok(PreprocessedState { args: self, script_config, script_wallets })
+    }
 
-        let state = PreprocessedState { args: self.clone(), script_config };
-        let state = state
+    /// Executes the script
+    pub async fn run_script(mut self) -> Result<()> {
+        trace!(target: "script", "executing script command");
+
+        let state = self.preprocess()
+            .await?
             .compile()?
             .link()?
             .prepare_execution()
@@ -47,29 +43,28 @@ impl ScriptArgs {
             .prepare_simulation()
             .await?;
 
+        if state.args.debug {
+            state.run_debugger()?;
+        }
+
         let mut verify = VerifyBundle::new(
             &state.script_config.config.project()?,
             &state.script_config.config,
             state.build_data.get_flattened_contracts(false),
-            self.retry,
-            self.verifier.clone(),
+            state.args.retry,
+            state.args.verifier.clone(),
         );
 
-        if self.resume || (self.verify && !self.broadcast) {
-            return self.resume_deployment(state.script_config, state.build_data, verify).await;
-        }
-
-        if self.debug {
-            state.run_debugger()
+        let state = if state.args.resume || (state.args.verify && !state.args.broadcast) {
+            state.resume().await?
         } else {
-            if self.json {
+            if state.args.json {
                 state.show_json()?;
             } else {
                 state.show_traces().await?;
             }
-
             verify.known_contracts = state.build_data.get_flattened_contracts(false);
-            self.check_contract_sizes(
+            state.args.check_contract_sizes(
                 &state.execution_result,
                 &state.build_data.highlevel_known_contracts,
             )?;
@@ -85,13 +80,20 @@ impl ScriptArgs {
                 return Ok(());
             }
 
-            let state = state.bundle().await?;
+            state.bundle().await?
+        };
 
-            self.handle_broadcastable_transactions(state, verify).await
+        if !state.args.broadcast {
+            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            return Ok(());
         }
+
+        let state = state.wait_for_pending().await?.broadcast().await?;
+
+        Ok(())
     }
 
-    /// Resumes the deployment and/or verification of the script.
+    /*/// Resumes the deployment and/or verification of the script.
     async fn resume_deployment(
         &mut self,
         script_config: ScriptConfig,
@@ -122,9 +124,9 @@ impl ScriptArgs {
         .map_err(|err| {
             eyre::eyre!("{err}\n\nIf you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation.")
         })
-    }
+    }*/
 
-    /// Resumes the deployment and/or verification of a single RPC script.
+    /*/// Resumes the deployment and/or verification of a single RPC script.
     async fn resume_single_deployment(
         &mut self,
         script_config: ScriptConfig,
@@ -190,11 +192,11 @@ impl ScriptArgs {
         }
 
         Ok(())
-    }
+    }*/
 
     /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
     /// `--sender`
-    fn maybe_load_private_key(&mut self) -> Result<Option<Address>> {
+    fn maybe_load_private_key(&self) -> Result<Option<Address>> {
         let maybe_sender = self
             .wallets
             .private_keys()?

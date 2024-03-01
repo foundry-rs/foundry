@@ -1,6 +1,7 @@
 use super::{
     build::{CompiledState, LinkedBuildData, LinkedState},
     runner::ScriptRunner,
+    simulate::BundledState,
     JsonResult, NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_dyn_abi::FunctionExt;
@@ -11,7 +12,7 @@ use async_recursion::async_recursion;
 use eyre::Result;
 use forge::{
     decode::{decode_console_logs, RevertDecoder},
-    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions, ScriptWallets},
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
@@ -38,6 +39,7 @@ pub struct ExecutionData {
 pub struct PreExecutionState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
 }
@@ -45,20 +47,23 @@ pub struct PreExecutionState {
 impl LinkedState {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
-        let ContractBytecodeSome { abi, bytecode, .. } = self.build_data.get_target_contract()?;
+        let Self { args, script_config, script_wallets, build_data } = self;
+
+        let ContractBytecodeSome { abi, bytecode, .. } = build_data.get_target_contract()?;
 
         let bytecode = bytecode.into_bytes().ok_or_else(|| {
             eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
         })?;
 
-        let (func, calldata) = self.args.get_method_and_calldata(&abi)?;
+        let (func, calldata) = args.get_method_and_calldata(&abi)?;
 
         ensure_clean_constructor(&abi)?;
 
         Ok(PreExecutionState {
-            args: self.args,
-            script_config: self.script_config,
-            build_data: self.build_data,
+            args,
+            script_config,
+            script_wallets,
+            build_data,
             execution_data: ExecutionData { func, calldata, bytecode, abi },
         })
     }
@@ -67,6 +72,7 @@ impl LinkedState {
 pub struct ExecutedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -75,7 +81,8 @@ pub struct ExecutedState {
 impl PreExecutionState {
     #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
-        let mut runner = self.script_config.get_runner(true).await?;
+        let mut runner =
+            self.script_config.get_runner_with_cheatcodes(self.script_wallets.clone()).await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
 
         // If we have a new sender from execution, we need to use it to deploy libraries and relink
@@ -87,6 +94,7 @@ impl PreExecutionState {
             let state = CompiledState {
                 args: self.args,
                 script_config: self.script_config,
+                script_wallets: self.script_wallets,
                 build_data: self.build_data.build_data,
             };
 
@@ -123,6 +131,7 @@ impl PreExecutionState {
         Ok(ExecutedState {
             args: self.args,
             script_config: self.script_config,
+            script_wallets: self.script_wallets,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: result,
@@ -218,6 +227,7 @@ impl ExecutedState {
         Ok(PreSimulationState {
             args: self.args,
             script_config: self.script_config,
+            script_wallets: self.script_wallets,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: self.execution_result,
@@ -302,6 +312,7 @@ impl ExecutedState {
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,

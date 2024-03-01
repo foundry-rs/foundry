@@ -1,4 +1,4 @@
-use super::{multi::MultiChainSequence, NestedValue};
+use super::{multi_sequence::MultiChainSequence, NestedValue};
 use crate::cmd::{
     init::get_commit_hash,
     script::{
@@ -32,17 +32,31 @@ pub enum ScriptSequenceKind {
 }
 
 impl ScriptSequenceKind {
-    pub fn save(&mut self) -> Result<()> {
+    pub fn save(&mut self, silent: bool) -> Result<()> {
         match self {
-            ScriptSequenceKind::Single(sequence) => sequence.save(),
-            ScriptSequenceKind::Multi(sequence) => sequence.save(),
+            ScriptSequenceKind::Single(sequence) => sequence.save(silent),
+            ScriptSequenceKind::Multi(sequence) => sequence.save(silent),
+        }
+    }
+
+    pub fn iter_sequences(&self) -> impl Iterator<Item = &ScriptSequence> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence).iter(),
+            ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter(),
+        }
+    }
+
+    pub fn iter_sequeneces_mut(&mut self) -> impl Iterator<Item = &mut ScriptSequence> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence).iter_mut(),
+            ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter_mut(),
         }
     }
 }
 
 impl Drop for ScriptSequenceKind {
     fn drop(&mut self) {
-        self.save().expect("could not save deployment sequence");
+        self.save(false).expect("could not save deployment sequence");
     }
 }
 
@@ -64,6 +78,8 @@ pub struct ScriptSequence {
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
+    /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
+    pub multi: bool,
     pub commit: Option<String>,
 }
 
@@ -125,6 +141,7 @@ impl ScriptSequence {
             libraries: vec![],
             chain,
             commit,
+            multi: is_multi,
         })
     }
 
@@ -162,10 +179,10 @@ impl ScriptSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> Result<()> {
+    pub fn save(&mut self, silent: bool) -> Result<()> {
         self.sort_receipts();
 
-        if self.transactions.is_empty() {
+        if self.multi || self.transactions.is_empty() {
             return Ok(())
         }
 
@@ -190,8 +207,13 @@ impl ScriptSequence {
         //../run-[timestamp].json
         fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
 
-        shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
-        shell::println(format!("Sensitive values saved to: {}\n", self.sensitive_path.display()))?;
+        if !silent {
+            shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
+            shell::println(format!(
+                "Sensitive values saved to: {}\n",
+                self.sensitive_path.display()
+            ))?;
+        }
 
         Ok(())
     }
@@ -373,8 +395,8 @@ impl ScriptSequence {
     }
 
     /// Returns the first RPC URL of this sequence.
-    pub fn rpc_url(&self) -> Option<&str> {
-        self.transactions.front().map(|tx| tx.rpc.as_str())
+    pub fn rpc_url(&self) -> &str {
+        self.transactions.front().expect("empty sequence").rpc.as_str()
     }
 
     /// Returns the list of the transactions without the metadata.
