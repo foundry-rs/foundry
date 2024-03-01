@@ -159,18 +159,20 @@ impl MultiContractRunner {
 
         // The DB backend that serves all the data, each test must get its own instance.
         let db = Backend::spawn(self.fork.take()).await;
-        let executor_builder = ExecutorBuilder::new()
-            .inspectors(|stack| {
-                stack
-                    .cheatcodes(self.cheats_config.clone())
-                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
-                    .debug(self.debug)
-                    .coverage(self.coverage)
-                    .enable_isolation(self.isolation)
-            })
-            .spec(self.evm_spec)
-            .gas_limit(self.evm_opts.gas_limit());
-        let make_executor = || executor_builder.clone().build(self.env.clone(), db.clone());
+        let make_executor = || {
+            ExecutorBuilder::new()
+                .inspectors(|stack| {
+                    stack
+                        .cheatcodes(self.cheats_config.clone())
+                        .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                        .debug(self.debug)
+                        .coverage(self.coverage)
+                        .enable_isolation(self.isolation)
+                })
+                .spec(self.evm_spec)
+                .gas_limit(self.evm_opts.gas_limit())
+                .build(self.env.clone(), db.clone())
+        };
 
         let find_timer = Instant::now();
         let contracts = self
