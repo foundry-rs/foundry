@@ -147,7 +147,7 @@ impl MultiContractRunner {
     pub async fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
         trace!("running all tests");
 
-        // The DB backend that serves all the data, each test must get its own instance.
+        // The DB backend that serves all the data.
         let db = Backend::spawn(self.fork.take()).await;
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {

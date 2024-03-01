@@ -421,7 +421,7 @@ impl<'a> ContractRunner<'a> {
 
         // Record test execution time
         let duration = start.elapsed();
-        debug!(?duration, gas, reverted, should_fail, success);
+        trace!(?duration, gas, reverted, should_fail, success);
 
         TestResult {
             status: match success {
@@ -678,7 +678,7 @@ impl<'a> ContractRunner<'a> {
 
         // Record test execution time
         let duration = start.elapsed();
-        debug!(?duration, success = %result.success);
+        trace!(?duration, success = %result.success);
 
         TestResult {
             status: match result.success {
