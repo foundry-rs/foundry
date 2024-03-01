@@ -26,7 +26,7 @@ use std::{
 ///
 /// This is merely a wrapper for [`Project::compile()`] which also prints to stdout depending on its
 /// settings.
-#[must_use = "this builder does nothing unless you call a `compile*` method"]
+#[must_use = "ProjectCompiler does nothing unless you call a `compile*` method"]
 pub struct ProjectCompiler {
     /// Whether we are going to verify the contracts after compilation.
     verify: Option<bool>,

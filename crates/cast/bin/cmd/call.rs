@@ -140,9 +140,7 @@ impl CallArgs {
                     let (env, fork, chain) =
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-                    let mut executor =
-                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
-                            .await;
+                    let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
                     let trace = match executor.deploy(
                         sender,
@@ -175,9 +173,7 @@ impl CallArgs {
                     let (env, fork, chain) =
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-                    let mut executor =
-                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
-                            .await;
+                    let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
                     let (tx, _) = builder.build();
 

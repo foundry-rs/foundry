@@ -120,8 +120,8 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub async fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
-        self.test_iter(filter).await.collect()
+    pub fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
+        self.test_iter(filter).collect()
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -129,12 +129,12 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub async fn test_iter(
+    pub fn test_iter(
         &mut self,
         filter: &dyn TestFilter,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx).await;
+        self.test(filter, tx);
         rx.into_iter()
     }
 
@@ -144,11 +144,11 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub async fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
+    pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = Backend::spawn(self.fork.take()).await;
+        let db = Backend::spawn(self.fork.take());
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack

@@ -51,7 +51,7 @@ pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 
 /// External test builder
 #[derive(Clone, Debug)]
-#[must_use = "call run()"]
+#[must_use = "ExtTester does nothing unless you `run` it"]
 pub struct ExtTester {
     pub org: &'static str,
     pub name: &'static str,

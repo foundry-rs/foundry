@@ -14,8 +14,8 @@ use foundry_test_utils::Filter;
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
-    let mut runner = runner().await;
-    let result = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let result = runner.test_collect(&filter);
     let suite_result: &SuiteResult =
         result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
     let test_result: &TestResult =
@@ -35,9 +35,9 @@ async fn inline_config_run_invariant() {
     const ROOT: &str = "inline/InvariantInlineConf.t.sol";
 
     let filter = Filter::new(".*", ".*", ".*inline/InvariantInlineConf.t.sol");
-    let mut runner = runner().await;
+    let mut runner = runner();
     runner.test_options = default_test_options();
-    let result = runner.test_collect(&filter).await;
+    let result = runner.test_collect(&filter);
 
     let suite_result_1 = result.get(&format!("{ROOT}:InvariantInlineConf")).expect("Result exists");
     let suite_result_2 =

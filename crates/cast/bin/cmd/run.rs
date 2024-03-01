@@ -121,8 +121,7 @@ impl RunArgs {
 
         let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-        let mut executor =
-            TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug).await;
+        let mut executor = TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug);
 
         env.block.number = U256::from(tx_block_number);
 

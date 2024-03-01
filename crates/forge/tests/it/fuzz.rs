@@ -11,8 +11,8 @@ async fn test_fuzz() {
     let filter = Filter::new(".*", ".*", ".*fuzz/")
         .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)")
         .exclude_paths("invariant");
-    let mut runner = runner().await;
-    let suite_result = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
 
@@ -48,8 +48,8 @@ async fn test_successful_fuzz_cases() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzPositive")
         .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
         .exclude_paths("invariant");
-    let mut runner = runner().await;
-    let suite_result = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
 
@@ -78,12 +78,12 @@ async fn test_successful_fuzz_cases() {
 #[ignore]
 async fn test_fuzz_collection() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol");
-    let mut runner = runner().await;
+    let mut runner = runner();
     runner.test_options.invariant.depth = 100;
     runner.test_options.invariant.runs = 1000;
     runner.test_options.fuzz.runs = 1000;
     runner.test_options.fuzz.seed = Some(U256::from(6u32));
-    let results = runner.test_collect(&filter).await;
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
