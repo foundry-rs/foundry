@@ -157,9 +157,9 @@ impl MultiContractRunner {
     pub async fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
         trace!("running all tests");
 
-        // the db backend that serves all the data, each contract gets its own instance
+        // The DB backend that serves all the data, each test must get its own instance.
         let db = Backend::spawn(self.fork.take()).await;
-        let executor = ExecutorBuilder::new()
+        let executor_builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
                     .cheatcodes(self.cheats_config.clone())
@@ -169,8 +169,8 @@ impl MultiContractRunner {
                     .enable_isolation(self.isolation)
             })
             .spec(self.evm_spec)
-            .gas_limit(self.evm_opts.gas_limit())
-            .build(self.env.clone(), db);
+            .gas_limit(self.evm_opts.gas_limit());
+        let make_executor = || executor_builder.clone().build(self.env.clone(), db.clone());
 
         let find_timer = Instant::now();
         let contracts = self
@@ -188,8 +188,8 @@ impl MultiContractRunner {
 
         contracts.par_iter().for_each_with(tx, |tx, &(id, (abi, deploy_code, libs))| {
             let identifier = id.identifier();
-            let result =
-                self.run_tests(&identifier, abi, executor.clone(), deploy_code, libs, filter);
+            let executor = make_executor();
+            let result = self.run_tests(&identifier, abi, executor, deploy_code, libs, filter);
             let _ = tx.send((identifier, result));
         })
     }
