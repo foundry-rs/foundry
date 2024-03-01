@@ -20,7 +20,7 @@ async fn test_cheats_local() {
 
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
-    let runner = runner_with_config(config).await;
+    let runner = runner_with_config(config);
 
     TestConfig::with_filter(runner, filter).run().await;
 }

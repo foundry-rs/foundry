@@ -9,8 +9,8 @@ use std::{collections::BTreeMap, env};
 #[tokio::test(flavor = "multi_thread")]
 async fn test_core() {
     let filter = Filter::new(".*", ".*", ".*core");
-    let mut runner = runner().await;
-    let results = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
@@ -79,8 +79,8 @@ async fn test_core() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_linking() {
     let filter = Filter::new(".*", ".*", ".*linking");
-    let mut runner = runner().await;
-    let results = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
@@ -113,8 +113,8 @@ async fn test_linking() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_logs() {
     let filter = Filter::new(".*", ".*", ".*logs");
-    let mut runner = runner().await;
-    let results = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
@@ -678,8 +678,8 @@ async fn test_env_vars() {
     env::remove_var(env_var_key);
 
     let filter = Filter::new("testSetEnv", ".*", ".*");
-    let mut runner = runner().await;
-    let _ = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let _ = runner.test_collect(&filter);
 
     assert_eq!(env::var(env_var_key).unwrap(), env_var_val);
 }
@@ -687,8 +687,8 @@ async fn test_env_vars() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_doesnt_run_abstract_contract() {
     let filter = Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str());
-    let mut runner = runner().await;
-    let results = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
     assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
     assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
 }
@@ -696,8 +696,8 @@ async fn test_doesnt_run_abstract_contract() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace() {
     let filter = Filter::new(".*", ".*", ".*trace");
-    let mut runner = tracing_runner().await;
-    let suite_result = runner.test_collect(&filter).await;
+    let mut runner = tracing_runner();
+    let suite_result = runner.test_collect(&filter);
 
     // TODO: This trace test is very basic - it is probably a good candidate for snapshot
     // testing.

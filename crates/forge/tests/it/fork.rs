@@ -16,8 +16,8 @@ async fn test_cheats_fork_revert() {
         ".*",
         &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
     );
-    let mut runner = runner().await;
-    let suite_result = runner.test_collect(&filter).await;
+    let mut runner = runner();
+    let suite_result = runner.test_collect(&filter);
     assert_eq!(suite_result.len(), 1);
 
     for (_, SuiteResult { test_results, .. }) in suite_result {
@@ -38,7 +38,7 @@ async fn test_cheats_fork() {
     let runner = runner_with_config(config);
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
-    TestConfig::with_filter(runner.await, filter).run().await;
+    TestConfig::with_filter(runner, filter).run().await;
 }
 
 /// Executes eth_getLogs cheatcode
@@ -49,7 +49,7 @@ async fn test_get_logs_fork() {
     let runner = runner_with_config(config);
     let filter = Filter::new("testEthGetLogs", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
-    TestConfig::with_filter(runner.await, filter).run().await;
+    TestConfig::with_filter(runner, filter).run().await;
 }
 
 /// Executes rpc cheatcode
@@ -60,7 +60,7 @@ async fn test_rpc_fork() {
     let runner = runner_with_config(config);
     let filter = Filter::new("testRpc", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
-    TestConfig::with_filter(runner.await, filter).run().await;
+    TestConfig::with_filter(runner, filter).run().await;
 }
 
 /// Tests that we can launch in forking mode
@@ -85,12 +85,12 @@ async fn test_launch_fork_ws() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transact_fork() {
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
-    TestConfig::filter(filter).await.run().await;
+    TestConfig::filter(filter).run().await;
 }
 
 /// Tests that we can create the same fork (provider,block) concurretnly in different tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_create_same_fork() {
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}ForkSame"));
-    TestConfig::filter(filter).await.run().await;
+    TestConfig::filter(filter).run().await;
 }

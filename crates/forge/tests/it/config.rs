@@ -31,8 +31,8 @@ impl TestConfig {
         Self::with_filter(runner, Filter::matches_all())
     }
 
-    pub async fn filter(filter: Filter) -> Self {
-        Self::with_filter(runner().await, filter)
+    pub fn filter(filter: Filter) -> Self {
+        Self::with_filter(runner(), filter)
     }
 
     pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
@@ -55,8 +55,8 @@ impl TestConfig {
     }
 
     /// Executes the test runner
-    pub async fn test(&mut self) -> BTreeMap<String, SuiteResult> {
-        self.runner.test_collect(&self.filter).await
+    pub fn test(&mut self) -> BTreeMap<String, SuiteResult> {
+        self.runner.test_collect(&self.filter)
     }
 
     pub async fn run(&mut self) {
@@ -69,7 +69,7 @@ impl TestConfig {
     ///    * filter matched 0 test cases
     ///    * a test results deviates from the configured `should_fail` setting
     pub async fn try_run(&mut self) -> eyre::Result<()> {
-        let suite_result = self.test().await;
+        let suite_result = self.test();
         if suite_result.is_empty() {
             eyre::bail!("empty test result");
         }
@@ -127,20 +127,20 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 }
 
 /// Builds a non-tracing runner
-pub async fn runner() -> MultiContractRunner {
+pub fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
-    runner_with_config(config).await
+    runner_with_config(config)
 }
 
 /// Builds a non-tracing runner
-pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
+pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
     config.allow_paths.push(manifest_root().to_path_buf());
 
     let root = &PROJECT.paths.root;
     let opts = &*EVM_OPTS;
-    let env = opts.evm_env().await.expect("could not instantiate fork environment");
+    let env = opts.local_evm_env();
     let output = COMPILED.clone();
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
@@ -150,16 +150,11 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
 }
 
 /// Builds a tracing runner
-pub async fn tracing_runner() -> MultiContractRunner {
+pub fn tracing_runner() -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
     opts.verbosity = 5;
     base_runner()
-        .build(
-            &PROJECT.paths.root,
-            (*COMPILED).clone(),
-            EVM_OPTS.evm_env().await.expect("Could not instantiate fork environment"),
-            opts,
-        )
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.local_evm_env(), opts)
         .unwrap()
 }
 
