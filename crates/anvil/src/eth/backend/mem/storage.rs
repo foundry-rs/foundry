@@ -438,7 +438,7 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::Address;
     use foundry_evm::{
         backend::MemDb,
         revm::{

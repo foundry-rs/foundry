@@ -139,6 +139,7 @@ pub fn test_opts() -> TestOptions {
             },
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18u32),
+            preserve_state: false,
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")
@@ -178,7 +179,7 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     let output = COMPILED.clone();
     base_runner()
         .with_test_options(test_opts())
-        .with_cheats_config(CheatsConfig::new(&config, opts.clone()))
+        .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
         .sender(config.sender)
         .build(root, output, env, opts.clone())
         .unwrap()

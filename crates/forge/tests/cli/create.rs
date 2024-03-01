@@ -129,98 +129,87 @@ forgetest!(can_create_oracle_on_mumbai, |prj, cmd| {
 });
 
 // tests that we can deploy the template contract
-forgetest_async!(
-    #[serial_test::serial]
-    can_create_template_contract,
-    |prj, cmd| {
-        foundry_test_utils::util::initialize(prj.root());
+forgetest_async!(can_create_template_contract, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let rpc = handle.http_endpoint();
-        let wallet = handle.dev_wallets().next().unwrap();
-        let pk = hex::encode(wallet.signer().to_bytes());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.signer().to_bytes());
 
-        // explicitly byte code hash for consistent checks
-        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-        prj.write_config(config);
+    // explicitly byte code hash for consistent checks
+    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+    prj.write_config(config);
 
-        cmd.forge_fuse().args([
-            "create",
-            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--rpc-url",
-            rpc.as_str(),
-            "--private-key",
-            pk.as_str(),
-        ]);
+    cmd.forge_fuse().args([
+        "create",
+        format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+    ]);
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_template_contract.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_create_template_contract.stdout"),
+    );
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_template_contract-2nd.stdout"),
-        );
-    }
-);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_create_template_contract-2nd.stdout"),
+    );
+});
 
 // tests that we can deploy the template contract
-forgetest_async!(
-    #[serial_test::serial]
-    can_create_using_unlocked,
-    |prj, cmd| {
-        foundry_test_utils::util::initialize(prj.root());
+forgetest_async!(can_create_using_unlocked, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let rpc = handle.http_endpoint();
-        let dev = handle.dev_accounts().next().unwrap();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let dev = handle.dev_accounts().next().unwrap();
 
-        // explicitly byte code hash for consistent checks
-        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-        prj.write_config(config);
+    // explicitly byte code hash for consistent checks
+    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+    prj.write_config(config);
 
-        cmd.forge_fuse().args([
-            "create",
-            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--rpc-url",
-            rpc.as_str(),
-            "--from",
-            format!("{dev:?}").as_str(),
-            "--unlocked",
-        ]);
+    cmd.forge_fuse().args([
+        "create",
+        format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+        "--rpc-url",
+        rpc.as_str(),
+        "--from",
+        format!("{dev:?}").as_str(),
+        "--unlocked",
+    ]);
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_using_unlocked.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_create_using_unlocked.stdout"),
+    );
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
-        );
-    }
-);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
+    );
+});
 
 // tests that we can deploy with constructor args
-forgetest_async!(
-    #[serial_test::serial]
-    can_create_with_constructor_args,
-    |prj, cmd| {
-        foundry_test_utils::util::initialize(prj.root());
+forgetest_async!(can_create_with_constructor_args, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let rpc = handle.http_endpoint();
-        let wallet = handle.dev_wallets().next().unwrap();
-        let pk = hex::encode(wallet.signer().to_bytes());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.signer().to_bytes());
 
-        // explicitly byte code hash for consistent checks
-        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-        prj.write_config(config);
+    // explicitly byte code hash for consistent checks
+    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+    prj.write_config(config);
 
-        prj.add_source(
-            "ConstructorContract",
-            r#"
+    prj.add_source(
+        "ConstructorContract",
+        r#"
 contract ConstructorContract {
     string public name;
 
@@ -229,28 +218,28 @@ contract ConstructorContract {
     }
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.forge_fuse().args([
-            "create",
-            "./src/ConstructorContract.sol:ConstructorContract",
-            "--rpc-url",
-            rpc.as_str(),
-            "--private-key",
-            pk.as_str(),
-            "--constructor-args",
-            "My Constructor",
-        ]);
+    cmd.forge_fuse().args([
+        "create",
+        "./src/ConstructorContract.sol:ConstructorContract",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+        "--constructor-args",
+        "My Constructor",
+    ]);
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_with_constructor_args.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_create_with_constructor_args.stdout"),
+    );
 
-        prj.add_source(
-            "TupleArrayConstructorContract",
-            r#"
+    prj.add_source(
+        "TupleArrayConstructorContract",
+        r#"
 struct Point {
     uint256 x;
     uint256 y;
@@ -260,46 +249,42 @@ contract TupleArrayConstructorContract {
     constructor(Point[] memory _points) {}
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.forge_fuse().args([
-            "create",
-            "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
-            "--rpc-url",
-            rpc.as_str(),
-            "--private-key",
-            pk.as_str(),
-            "--constructor-args",
-            "[(1,2), (2,3), (3,4)]",
-        ]);
+    cmd.forge_fuse().args([
+        "create",
+        "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+        "--constructor-args",
+        "[(1,2), (2,3), (3,4)]",
+    ]);
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_with_tuple_constructor_args.stdout"),
-        );
-    }
-);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_create_with_tuple_constructor_args.stdout"),
+    );
+});
 
 // <https://github.com/foundry-rs/foundry/issues/6332>
-forgetest_async!(
-    #[serial_test::serial]
-    can_create_and_call,
-    |prj, cmd| {
-        foundry_test_utils::util::initialize(prj.root());
+forgetest_async!(can_create_and_call, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let rpc = handle.http_endpoint();
-        let wallet = handle.dev_wallets().next().unwrap();
-        let pk = hex::encode(wallet.signer().to_bytes());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.signer().to_bytes());
 
-        // explicitly byte code hash for consistent checks
-        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-        prj.write_config(config);
+    // explicitly byte code hash for consistent checks
+    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+    prj.write_config(config);
 
-        prj.add_source(
-            "UniswapV2Swap",
-            r#"
+    prj.add_source(
+        "UniswapV2Swap",
+        r#"
 contract UniswapV2Swap {
 
     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
@@ -308,19 +293,18 @@ contract UniswapV2Swap {
 
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.forge_fuse().args([
-            "create",
-            "./src/UniswapV2Swap.sol:UniswapV2Swap",
-            "--rpc-url",
-            rpc.as_str(),
-            "--private-key",
-            pk.as_str(),
-        ]);
+    cmd.forge_fuse().args([
+        "create",
+        "./src/UniswapV2Swap.sol:UniswapV2Swap",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+    ]);
 
-        let (stdout, _) = cmd.output_lossy();
-        assert!(stdout.contains("Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3"));
-    }
-);
+    let (stdout, _) = cmd.output_lossy();
+    assert!(stdout.contains("Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3"));
+});

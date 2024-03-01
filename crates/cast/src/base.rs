@@ -1,7 +1,5 @@
-use alloy_primitives::{Sign, I256, U256};
-use ethers_core::utils::ParseUnits;
+use alloy_primitives::{utils::ParseUnits, Sign, I256, U256};
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use std::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult, UpperHex},
@@ -281,8 +279,8 @@ impl From<I256> for NumberWithBase {
 impl From<ParseUnits> for NumberWithBase {
     fn from(value: ParseUnits) -> Self {
         match value {
-            ParseUnits::U256(val) => val.to_alloy().into(),
-            ParseUnits::I256(val) => val.to_alloy().into(),
+            ParseUnits::U256(val) => val.into(),
+            ParseUnits::I256(val) => val.into(),
         }
     }
 }

@@ -796,6 +796,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable the default create2 deployer
+    #[must_use]
+    pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
+        self.disable_default_create2_deployer = yes;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -1081,7 +1088,7 @@ latest block number: {latest_block}"
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
-            total_difficulty: block.total_difficulty.unwrap_or_default(),
+            total_difficulty: block.header.total_difficulty.unwrap_or_default(),
         };
 
         (ForkedDatabase::new(backend, block_chain_db), config)

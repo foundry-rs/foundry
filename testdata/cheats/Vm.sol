@@ -16,7 +16,7 @@ interface Vm {
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
     struct ChainInfo { uint256 forkId; uint256 chainId; }
-    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; }
+    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;

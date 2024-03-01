@@ -87,11 +87,7 @@ impl EtherscanIdentifier {
         for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
             let (artifact_id, file_id, bytecode) = results?;
-            sources
-                .0
-                .entry(artifact_id.clone().name)
-                .or_default()
-                .insert(file_id, (metadata.source_code(), bytecode));
+            sources.insert(&artifact_id, file_id, metadata.source_code(), bytecode);
         }
 
         Ok(sources)
@@ -103,7 +99,7 @@ impl TraceIdentifier for EtherscanIdentifier {
     where
         A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
     {
-        trace!(target: "etherscanidentifier", "identify {:?} addresses", addresses.size_hint().1);
+        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         let Some(client) = self.client.clone() else {
             // no client was configured

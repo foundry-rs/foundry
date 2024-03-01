@@ -117,7 +117,9 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
                         )?;
                     }
                     // Statements are not in the LCOV format
-                    CoverageItemKind::Statement => (),
+                    CoverageItemKind::Statement => {
+                        writeln!(self.destination, "DA:{line},{hits}")?;
+                    }
                 }
             }
 

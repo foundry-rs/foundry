@@ -153,13 +153,18 @@ impl<'a> InvariantExecutor<'a> {
             let mut created_contracts = vec![];
 
             for current_run in 0..self.config.depth {
-                let (sender, (address, calldata)) =
-                    inputs.last().expect("to have the next randomly generated input.");
+                let (sender, (address, calldata)) = inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
-                let call_result = executor
-                    .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
-                    .expect("could not make raw evm call");
+                let call_result = if self.config.fail_on_revert && self.config.preserve_state {
+                    executor
+                        .call_raw_committing(*sender, *address, calldata.clone(), U256::ZERO)
+                        .expect("could not make raw evm call")
+                } else {
+                    executor
+                        .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
+                        .expect("could not make raw evm call")
+                };
 
                 // Collect data for fuzzing from the state changeset.
                 let mut state_changeset =
@@ -666,14 +671,9 @@ impl<'a> InvariantExecutor<'a> {
         f: fn(DynSolValue) -> Vec<T>,
     ) -> Vec<T> {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-            if let Ok(call_result) = self.executor.call::<_, _>(
-                CALLER,
-                address,
-                func.clone(),
-                vec![],
-                U256::ZERO,
-                Some(abi),
-            ) {
+            if let Ok(call_result) =
+                self.executor.call::<_, _>(CALLER, address, func.clone(), vec![], U256::ZERO, None)
+            {
                 return f(call_result.result)
             } else {
                 warn!(

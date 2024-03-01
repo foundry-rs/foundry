@@ -1,13 +1,14 @@
 use crate::{
-    eth::{subscription::SubscriptionId, transaction::EthTransactionRequest},
+    eth::subscription::SubscriptionId,
     types::{EvmMineOptions, Forking, Index},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_trace_types::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
+    request::TransactionRequest,
     state::StateOverride,
-    BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
+    BlockId, BlockNumberOrTag as BlockNumber, Filter,
 };
 
 pub mod block;
@@ -142,7 +143,7 @@ pub enum EthRequest {
     EthSign(Address, Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
-    EthSignTransaction(Box<EthTransactionRequest>),
+    EthSignTransaction(Box<TransactionRequest>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
@@ -157,27 +158,27 @@ pub enum EthRequest {
     EthSignTypedDataV4(Address, alloy_dyn_abi::TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
-    EthSendTransaction(Box<EthTransactionRequest>),
+    EthSendTransaction(Box<TransactionRequest>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
     EthSendRawTransaction(Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_call"))]
     EthCall(
-        CallRequest,
+        TransactionRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(
-        CallRequest,
+        TransactionRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_estimateGas"))]
     EthEstimateGas(
-        CallRequest,
+        TransactionRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
@@ -271,7 +272,7 @@ pub enum EthRequest {
     /// geth's `debug_traceCall`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
     DebugTraceCall(
-        CallRequest,
+        TransactionRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
     ),
@@ -596,7 +597,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
     )]
-    EthSendUnsignedTransaction(Box<EthTransactionRequest>),
+    EthSendUnsignedTransaction(Box<TransactionRequest>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
@@ -1451,7 +1452,7 @@ true}]}"#;
     #[test]
     fn test_eth_call() {
         let req = r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;
-        let _req = serde_json::from_str::<CallRequest>(req).unwrap();
+        let _req = serde_json::from_str::<TransactionRequest>(req).unwrap();
 
         let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();

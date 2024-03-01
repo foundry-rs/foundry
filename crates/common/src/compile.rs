@@ -2,10 +2,10 @@
 
 use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, ContractBytecodeSome},
+    artifacts::{BytecodeObject, CompactContractBytecode, ContractBytecodeSome},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -271,9 +271,76 @@ impl ProjectCompiler {
     }
 }
 
-/// Map over artifacts contract sources name -> file_id -> (source, contract)
+/// Contract source code and bytecode.
 #[derive(Clone, Debug, Default)]
-pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
+pub struct ContractSources {
+    /// Map over artifacts' contract names -> vector of file IDs
+    pub ids_by_name: HashMap<String, Vec<u32>>,
+    /// Map over file_id -> (source code, contract)
+    pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
+}
+
+impl ContractSources {
+    /// Collects the contract sources and artifacts from the project compile output.
+    pub fn from_project_output(
+        output: &ProjectCompileOutput,
+        root: &Path,
+    ) -> Result<ContractSources> {
+        let mut sources = ContractSources::default();
+        for (id, artifact) in output.artifact_ids() {
+            if let Some(file_id) = artifact.id {
+                let abs_path = root.join(&id.source);
+                let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
+                    format!("failed to read artifact source file for `{}`", id.identifier())
+                })?;
+                let compact = CompactContractBytecode {
+                    abi: artifact.abi.clone(),
+                    bytecode: artifact.bytecode.clone(),
+                    deployed_bytecode: artifact.deployed_bytecode.clone(),
+                };
+                let contract = compact_to_contract(compact)?;
+                sources.insert(&id, file_id, source_code, contract);
+            } else {
+                warn!(id = id.identifier(), "source not found");
+            }
+        }
+        Ok(sources)
+    }
+
+    /// Inserts a contract into the sources.
+    pub fn insert(
+        &mut self,
+        artifact_id: &ArtifactId,
+        file_id: u32,
+        source: String,
+        bytecode: ContractBytecodeSome,
+    ) {
+        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
+        self.sources_by_id.insert(file_id, (source, bytecode));
+    }
+
+    /// Returns the source for a contract by file ID.
+    pub fn get(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
+        self.sources_by_id.get(&id)
+    }
+
+    /// Returns all sources for a contract by name.
+    pub fn get_sources(
+        &self,
+        name: &str,
+    ) -> Option<impl Iterator<Item = (u32, &(String, ContractBytecodeSome))>> {
+        self.ids_by_name
+            .get(name)
+            .map(|ids| ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))))
+    }
+
+    /// Returns all (name, source) pairs.
+    pub fn entries(&self) -> impl Iterator<Item = (String, &(String, ContractBytecodeSome))> {
+        self.ids_by_name.iter().flat_map(|(name, ids)| {
+            ids.iter().filter_map(|id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
+        })
+    }
+}
 
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;

@@ -138,6 +138,7 @@ async fn test_send_value_raw_deposit_transaction() {
     let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
     assert_eq!(receipt.from, from_addr);
     assert_eq!(receipt.to, Some(to_addr));
+    assert_eq!(receipt.other.get_deserialized::<u64>("depositNonce").unwrap().unwrap(), 0);
 
     // the recipient should have received the value
     let balance = provider.get_balance(to_addr, None).await.unwrap();

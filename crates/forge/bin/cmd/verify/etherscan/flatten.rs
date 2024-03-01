@@ -80,7 +80,7 @@ impl EtherscanFlattenedSource {
         if out.has_error() {
             let mut o = AggregatedCompilerOutput::default();
             o.extend(version, out);
-            let diags = o.diagnostics(&[], Default::default());
+            let diags = o.diagnostics(&[], &[], Default::default());
 
             eyre::bail!(
                 "\

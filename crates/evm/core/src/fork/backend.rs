@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_providers::provider::TempProvider;
-use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag, Transaction};
+use alloy_rpc_types::{Block, BlockId, Transaction};
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::{
@@ -196,8 +196,7 @@ where
         let fut = Box::pin(async move {
             let balance = provider.get_balance(address, block_id);
             let nonce = provider.get_transaction_count(address, block_id);
-            let code =
-                provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
+            let code = provider.get_code_at(address, block_id);
             let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
             (resp, address)
         });
@@ -683,16 +682,19 @@ mod tests {
     };
     use foundry_common::provider::alloy::get_http_provider;
     use foundry_config::{Config, NamedChain};
-    use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
-    const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
+    use std::{collections::BTreeSet, path::PathBuf};
+
+    const ENDPOINT: Option<&str> = option_env!("ETH_RPC_URL");
 
     #[tokio::test(flavor = "multi_thread")]
     async fn shared_backend() {
-        let provider = get_http_provider(ENDPOINT);
+        let Some(endpoint) = ENDPOINT else { return };
+
+        let provider = get_http_provider(endpoint);
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: Default::default(),
-            hosts: BTreeSet::from([ENDPOINT.to_string()]),
+            hosts: BTreeSet::from([endpoint.to_string()]),
         };
 
         let db = BlockchainDb::new(meta, None);
@@ -738,7 +740,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
-        let provider = get_http_provider(ENDPOINT);
+        let Some(endpoint) = ENDPOINT else { return };
+
+        let provider = get_http_provider(endpoint);
 
         let block_num = provider.get_block_number().await.unwrap();
 
@@ -746,11 +750,11 @@ mod tests {
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
         evm_opts.fork_block_number = Some(block_num);
 
-        let (env, _block) = evm_opts.fork_evm_env(ENDPOINT).await.unwrap();
+        let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();
 
         let fork = CreateFork {
             enable_caching: true,
-            url: ENDPOINT.to_string(),
+            url: endpoint.to_string(),
             env: env.clone(),
             evm_opts,
         };

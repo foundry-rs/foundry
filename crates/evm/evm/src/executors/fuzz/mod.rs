@@ -1,12 +1,12 @@
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::MAGIC_ASSUME,
-    decode::{self, decode_console_logs},
+    decode::{decode_console_logs, RevertDecoder},
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
@@ -60,7 +60,7 @@ impl FuzzedExecutor {
         func: &Function,
         address: Address,
         should_fail: bool,
-        errors: Option<&JsonAbi>,
+        rd: &RevertDecoder,
     ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
@@ -130,7 +130,7 @@ impl FuzzedExecutor {
                     let call_res = _counterexample.1.result.clone();
                     *counterexample.borrow_mut() = _counterexample;
                     // HACK: we have to use an empty string here to denote `None`
-                    let reason = decode::maybe_decode_revert(&call_res, errors, Some(status));
+                    let reason = rd.maybe_decode(&call_res, Some(status));
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
             }
