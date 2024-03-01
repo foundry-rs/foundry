@@ -1,6 +1,7 @@
 //! The Forge test runner.
 
 use crate::{
+    multi_runner::is_matching_test,
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
@@ -40,7 +41,7 @@ pub struct ContractRunner<'a> {
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
-    pub code: Bytes,
+    pub code: &'a Bytes,
     /// The test contract's ABI
     pub contract: &'a JsonAbi,
     /// Revert decoder. Contains all known errors.
@@ -59,7 +60,7 @@ impl<'a> ContractRunner<'a> {
         name: &'a str,
         executor: Executor,
         contract: &'a JsonAbi,
-        code: Bytes,
+        code: &'a Bytes,
         initial_balance: U256,
         sender: Option<Address>,
         revert_decoder: &'a RevertDecoder,
@@ -185,7 +186,7 @@ impl<'a> ContractRunner<'a> {
     pub fn run_tests(
         mut self,
         filter: &dyn TestFilter,
-        test_options: TestOptions,
+        test_options: &TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
         info!("starting tests");
@@ -259,9 +260,7 @@ impl<'a> ContractRunner<'a> {
         let functions = self
             .contract
             .functions()
-            .filter(|func| func.is_test() || func.is_invariant_test())
-            .map(|func| (func.signature(), func))
-            .filter(|(sig, _func)| filter.matches_test(sig))
+            .filter(|func| is_matching_test(func, filter))
             .collect::<Vec<_>>();
         let find_time = find_timer.elapsed();
         debug!(
@@ -274,8 +273,10 @@ impl<'a> ContractRunner<'a> {
         let identified_contracts =
             has_invariants.then(|| load_contracts(setup.traces.clone(), known_contracts));
         let test_results = functions
-            .into_par_iter()
-            .map(|(sig, func)| {
+            .par_iter()
+            .map(|&func| {
+                let sig = func.signature();
+
                 let setup = setup.clone();
                 let should_fail = func.is_test_fail();
                 let res = if func.is_invariant_test() {
@@ -290,12 +291,15 @@ impl<'a> ContractRunner<'a> {
                         identified_contracts.as_ref().unwrap(),
                     )
                 } else if func.is_fuzz_test() {
+                    debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
                     self.run_fuzz_test(func, should_fail, runner, setup, *fuzz_config)
                 } else {
+                    debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
                 };
+
                 (sig, res)
             })
             .collect::<BTreeMap<_, _>>();
@@ -417,7 +421,7 @@ impl<'a> ContractRunner<'a> {
 
         // Record test execution time
         let duration = start.elapsed();
-        debug!(?duration, gas, reverted, should_fail, success);
+        trace!(?duration, gas, reverted, should_fail, success);
 
         TestResult {
             status: match success {
@@ -674,7 +678,7 @@ impl<'a> ContractRunner<'a> {
 
         // Record test execution time
         let duration = start.elapsed();
-        debug!(?duration, success = %result.success);
+        trace!(?duration, success = %result.success);
 
         TestResult {
             status: match result.success {

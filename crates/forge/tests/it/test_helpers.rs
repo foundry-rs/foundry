@@ -1,11 +1,12 @@
 //! Test helpers for Forge integration tests.
 
 use alloy_primitives::U256;
+use forge::{TestOptions, TestOptionsBuilder};
 use foundry_compilers::{
     artifacts::{Libraries, Settings},
     Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
-use foundry_config::Config;
+use foundry_config::{Config, FuzzConfig, FuzzDictionaryConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     executors::{Executor, FuzzedExecutor},
@@ -53,7 +54,7 @@ pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
         write.write_all(b"1").unwrap();
         out = project.compile();
         drop(write);
-    };
+    }
 
     let out = out.unwrap();
     if out.has_compiler_errors() {
@@ -79,6 +80,40 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     ..Default::default()
 });
 
+pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
+    TestOptionsBuilder::default()
+        .fuzz(FuzzConfig {
+            runs: 256,
+            max_test_rejects: 65536,
+            seed: None,
+            dictionary: FuzzDictionaryConfig {
+                include_storage: true,
+                include_push_bytes: true,
+                dictionary_weight: 40,
+                max_fuzz_dictionary_addresses: 10_000,
+                max_fuzz_dictionary_values: 10_000,
+            },
+        })
+        .invariant(InvariantConfig {
+            runs: 256,
+            depth: 15,
+            fail_on_revert: false,
+            call_override: false,
+            dictionary: FuzzDictionaryConfig {
+                dictionary_weight: 80,
+                include_storage: true,
+                include_push_bytes: true,
+                max_fuzz_dictionary_addresses: 10_000,
+                max_fuzz_dictionary_values: 10_000,
+            },
+            shrink_sequence: true,
+            shrink_run_limit: 2usize.pow(18u32),
+            preserve_state: false,
+        })
+        .build(&COMPILED, &PROJECT.paths.root)
+        .expect("Config loaded")
+});
+
 pub fn fuzz_executor<DB: DatabaseRef>(executor: Executor) -> FuzzedExecutor {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
@@ -86,6 +121,6 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: Executor) -> FuzzedExecutor {
         executor,
         proptest::test_runner::TestRunner::new(cfg),
         CALLER,
-        crate::config::test_opts().fuzz,
+        TEST_OPTS.fuzz,
     )
 }

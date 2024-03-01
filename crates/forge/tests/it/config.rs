@@ -1,13 +1,12 @@
 //! Test config.
 
-use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
+use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT, TEST_OPTS};
 use forge::{
     result::{SuiteResult, TestStatus},
-    MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder,
 };
 use foundry_config::{
-    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
-    InvariantConfig, RpcEndpoint, RpcEndpoints,
+    fs_permissions::PathPermission, Config, FsPermissions, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{
     decode::decode_console_logs,
@@ -25,7 +24,6 @@ pub struct TestConfig {
     pub runner: MultiContractRunner,
     pub should_fail: bool,
     pub filter: Filter,
-    pub opts: TestOptions,
 }
 
 impl TestConfig {
@@ -39,7 +37,7 @@ impl TestConfig {
 
     pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
         init_tracing();
-        Self { runner, should_fail: false, filter, opts: test_opts() }
+        Self { runner, should_fail: false, filter }
     }
 
     pub fn evm_spec(mut self, spec: SpecId) -> Self {
@@ -58,7 +56,7 @@ impl TestConfig {
 
     /// Executes the test runner
     pub async fn test(&mut self) -> BTreeMap<String, SuiteResult> {
-        self.runner.test_collect(&self.filter, self.opts.clone()).await
+        self.runner.test_collect(&self.filter).await
     }
 
     pub async fn run(&mut self) {
@@ -110,41 +108,6 @@ impl TestConfig {
     }
 }
 
-/// Returns the [`TestOptions`] used by the tests.
-pub fn test_opts() -> TestOptions {
-    TestOptionsBuilder::default()
-        .fuzz(FuzzConfig {
-            runs: 256,
-            max_test_rejects: 65536,
-            seed: None,
-            dictionary: FuzzDictionaryConfig {
-                include_storage: true,
-                include_push_bytes: true,
-                dictionary_weight: 40,
-                max_fuzz_dictionary_addresses: 10_000,
-                max_fuzz_dictionary_values: 10_000,
-            },
-        })
-        .invariant(InvariantConfig {
-            runs: 256,
-            depth: 15,
-            fail_on_revert: false,
-            call_override: false,
-            dictionary: FuzzDictionaryConfig {
-                dictionary_weight: 80,
-                include_storage: true,
-                include_push_bytes: true,
-                max_fuzz_dictionary_addresses: 10_000,
-                max_fuzz_dictionary_values: 10_000,
-            },
-            shrink_sequence: true,
-            shrink_run_limit: 2usize.pow(18u32),
-            preserve_state: false,
-        })
-        .build(&COMPILED, &PROJECT.paths.root)
-        .expect("Config loaded")
-}
-
 pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // need to check here where we're executing the test from, if in `forge` we need to also allow
@@ -158,7 +121,9 @@ pub fn manifest_root() -> &'static Path {
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
     init_tracing();
-    MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
+    MultiContractRunnerBuilder::default()
+        .sender(EVM_OPTS.sender)
+        .with_test_options(TEST_OPTS.clone())
 }
 
 /// Builds a non-tracing runner
@@ -178,7 +143,6 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     let env = opts.evm_env().await.expect("could not instantiate fork environment");
     let output = COMPILED.clone();
     base_runner()
-        .with_test_options(test_opts())
         .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
         .sender(config.sender)
         .build(root, output, env, opts.clone())

@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     result,
     str::FromStr,
+    time::Instant,
 };
 
 /// Builder type to configure how to compile a project.
@@ -185,7 +186,7 @@ impl ProjectCompiler {
         let output = foundry_compilers::report::with_scoped(&reporter, || {
             tracing::debug!("compiling project");
 
-            let timer = std::time::Instant::now();
+            let timer = Instant::now();
             let r = f();
             let elapsed = timer.elapsed();
 

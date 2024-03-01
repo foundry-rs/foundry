@@ -11,17 +11,13 @@ use foundry_test_utils::Filter;
 /// Executes reverting fork test
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork_revert() {
+    let filter = Filter::new(
+        "testNonExistingContractRevert",
+        ".*",
+        &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
+    );
     let mut runner = runner().await;
-    let suite_result = runner
-        .test_collect(
-            &Filter::new(
-                "testNonExistingContractRevert",
-                ".*",
-                &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
-            ),
-            test_opts(),
-        )
-        .await;
+    let suite_result = runner.test_collect(&filter).await;
     assert_eq!(suite_result.len(), 1);
 
     for (_, SuiteResult { test_results, .. }) in suite_result {
