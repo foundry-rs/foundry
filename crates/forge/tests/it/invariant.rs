@@ -1,6 +1,6 @@
 //! Invariant tests.
 
-use crate::config::*;
+use crate::{config::*, test_helpers::TEST_OPTS};
 use alloy_primitives::U256;
 use forge::{fuzz::CounterExample, result::TestStatus, TestOptions};
 use foundry_test_utils::Filter;
@@ -8,14 +8,9 @@ use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)");
     let mut runner = runner().await;
-
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
-            test_opts(),
-        )
-        .await;
+    let results = runner.test_collect(&filter).await;
 
     assert_multiple(
         &results,
@@ -148,18 +143,10 @@ async fn test_invariant() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_override() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol");
     let mut runner = runner().await;
-
-    let mut opts = test_opts();
-    opts.invariant.call_override = true;
-    runner.test_options = opts.clone();
-
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol"),
-            opts,
-        )
-        .await;
+    runner.test_options.invariant.call_override = true;
+    let results = runner.test_collect(&filter).await;
 
     assert_multiple(
         &results,
@@ -172,20 +159,12 @@ async fn test_invariant_override() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_fail_on_revert() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol");
     let mut runner = runner().await;
-
-    let mut opts = test_opts();
-    opts.invariant.fail_on_revert = true;
-    opts.invariant.runs = 1;
-    opts.invariant.depth = 10;
-    runner.test_options = opts.clone();
-
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol"),
-            opts,
-        )
-        .await;
+    runner.test_options.invariant.fail_on_revert = true;
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 10;
+    let results = runner.test_collect(&filter).await;
 
     assert_multiple(
         &results,
@@ -205,19 +184,11 @@ async fn test_invariant_fail_on_revert() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_invariant_storage() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol");
     let mut runner = runner().await;
-
-    let mut opts = test_opts();
-    opts.invariant.depth = 100 + (50 * cfg!(windows) as u32);
-    opts.fuzz.seed = Some(U256::from(6u32));
-    runner.test_options = opts.clone();
-
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol"),
-            opts,
-        )
-        .await;
+    runner.test_options.invariant.depth = 100 + (50 * cfg!(windows) as u32);
+    runner.test_options.fuzz.seed = Some(U256::from(6u32));
+    let results = runner.test_collect(&filter).await;
 
     assert_multiple(
         &results,
@@ -236,18 +207,10 @@ async fn test_invariant_storage() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
     let mut runner = runner().await;
-
-    let mut opts = test_opts();
-    opts.fuzz.seed = Some(U256::from(119u32));
-    runner.test_options = opts.clone();
-
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol"),
-            opts,
-        )
-        .await;
+    runner.test_options.fuzz.seed = Some(U256::from(119u32));
+    let results = runner.test_collect(&filter).await;
 
     let results =
         results.values().last().expect("`InvariantInnerContract.t.sol` should be testable.");
@@ -287,7 +250,7 @@ async fn test_invariant_shrink() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_assert_shrink() {
-    let mut opts = test_opts();
+    let mut opts = TEST_OPTS.clone();
     opts.fuzz.seed = Some(U256::from(119u32));
 
     // ensure assert and require shrinks to same sequence of 3 or less
@@ -296,18 +259,14 @@ async fn test_invariant_assert_shrink() {
 }
 
 async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
+    let filter = Filter::new(
+        ".*",
+        contract_pattern,
+        ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
+    );
     let mut runner = runner().await;
     runner.test_options = opts.clone();
-    let results = runner
-        .test_collect(
-            &Filter::new(
-                ".*",
-                contract_pattern,
-                ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
-            ),
-            opts,
-        )
-        .await;
+    let results = runner.test_collect(&filter).await;
     let results = results.values().last().expect("`InvariantShrinkWithAssert` should be testable.");
 
     let result = results
@@ -333,18 +292,11 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_preserve_state() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol");
     let mut runner = runner().await;
-
-    // should not fail with default options
-    let mut opts = test_opts();
-    opts.invariant.fail_on_revert = true;
-    runner.test_options = opts.clone();
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol"),
-            opts,
-        )
-        .await;
+    // Should not fail with default options.
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter).await;
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -354,17 +306,9 @@ async fn test_invariant_preserve_state() {
     );
 
     // same test should revert when preserve state enabled
-    let mut opts = test_opts();
-    opts.invariant.fail_on_revert = true;
-    opts.invariant.preserve_state = true;
-    runner.test_options = opts.clone();
-
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol"),
-            opts,
-        )
-        .await;
+    runner.test_options.invariant.fail_on_revert = true;
+    runner.test_options.invariant.preserve_state = true;
+    let results = runner.test_collect(&filter).await;
     assert_multiple(
         &results,
         BTreeMap::from([(

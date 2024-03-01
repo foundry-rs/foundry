@@ -1,6 +1,7 @@
 //! The Forge test runner.
 
 use crate::{
+    multi_runner::is_matching_test,
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
@@ -40,7 +41,7 @@ pub struct ContractRunner<'a> {
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
-    pub code: Bytes,
+    pub code: &'a Bytes,
     /// The test contract's ABI
     pub contract: &'a JsonAbi,
     /// Revert decoder. Contains all known errors.
@@ -59,7 +60,7 @@ impl<'a> ContractRunner<'a> {
         name: &'a str,
         executor: Executor,
         contract: &'a JsonAbi,
-        code: Bytes,
+        code: &'a Bytes,
         initial_balance: U256,
         sender: Option<Address>,
         revert_decoder: &'a RevertDecoder,
@@ -185,7 +186,7 @@ impl<'a> ContractRunner<'a> {
     pub fn run_tests(
         mut self,
         filter: &dyn TestFilter,
-        test_options: TestOptions,
+        test_options: &TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
         info!("starting tests");
@@ -259,9 +260,8 @@ impl<'a> ContractRunner<'a> {
         let functions = self
             .contract
             .functions()
-            .filter(|func| func.is_test() || func.is_invariant_test())
             .map(|func| (func.signature(), func))
-            .filter(|(sig, _func)| filter.matches_test(sig))
+            .filter(|(sig, func)| is_matching_test(func, || filter.matches_test(&sig)))
             .collect::<Vec<_>>();
         let find_time = find_timer.elapsed();
         debug!(
