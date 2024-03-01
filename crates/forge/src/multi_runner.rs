@@ -74,7 +74,7 @@ impl MultiContractRunner {
         self.contracts.iter().filter(|&(id, (abi, _, _))| matches_contract(id, abi, filter))
     }
 
-    /// Returns all test functions matching the filter
+    /// Returns an iterator over all test functions that match the filter.
     pub fn matching_test_functions<'a>(
         &'a self,
         filter: &'a dyn TestFilter,
@@ -82,6 +82,18 @@ impl MultiContractRunner {
         self.matching_contracts(filter)
             .flat_map(|(_, (abi, _, _))| abi.functions())
             .filter(|func| is_matching_test(func, filter))
+    }
+
+    /// Returns an iterator over all test functions in contracts that match the filter.
+    pub fn all_test_functions<'a>(
+        &'a self,
+        filter: &'a dyn TestFilter,
+    ) -> impl Iterator<Item = &Function> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
+            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .filter(|func| func.is_test() || func.is_invariant_test())
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
