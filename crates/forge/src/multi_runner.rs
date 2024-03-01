@@ -380,7 +380,5 @@ fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> 
 
 /// Returns `true` if the function is a test function that matches the given filter.
 pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
-    // Avoid calculating the signature if possible.
-    (func.is_test() || func.is_invariant_test()) &&
-        (filter.matches_test(&func.name) || filter.matches_test(&func.signature()))
+    (func.is_test() || func.is_invariant_test()) && filter.matches_test(&func.signature())
 }
