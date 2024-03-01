@@ -159,20 +159,18 @@ impl MultiContractRunner {
 
         // The DB backend that serves all the data, each test must get its own instance.
         let db = Backend::spawn(self.fork.take()).await;
-        let make_executor = || {
-            ExecutorBuilder::new()
-                .inspectors(|stack| {
-                    stack
-                        .cheatcodes(self.cheats_config.clone())
-                        .trace(self.evm_opts.verbosity >= 3 || self.debug)
-                        .debug(self.debug)
-                        .coverage(self.coverage)
-                        .enable_isolation(self.isolation)
-                })
-                .spec(self.evm_spec)
-                .gas_limit(self.evm_opts.gas_limit())
-                .build(self.env.clone(), db.clone())
-        };
+        let executor = ExecutorBuilder::new()
+            .inspectors(|stack| {
+                stack
+                    .cheatcodes(self.cheats_config.clone())
+                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                    .debug(self.debug)
+                    .coverage(self.coverage)
+                    .enable_isolation(self.isolation)
+            })
+            .spec(self.evm_spec)
+            .gas_limit(self.evm_opts.gas_limit())
+            .build(self.env.clone(), db.clone());
 
         let find_timer = Instant::now();
         let contracts = self
@@ -190,7 +188,7 @@ impl MultiContractRunner {
 
         contracts.par_iter().for_each_with(tx, |tx, &(id, (abi, deploy_code, libs))| {
             let identifier = id.identifier();
-            let executor = make_executor();
+            let executor = executor.clone();
             let result = self.run_tests(&identifier, abi, executor, deploy_code, libs, filter);
             let _ = tx.send((identifier, result));
         })
@@ -397,5 +395,5 @@ fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> 
 
 /// Returns `true` if the function is a test function that matches the given filter.
 pub(crate) fn is_matching_test(func: &Function, match_sig: impl FnOnce() -> bool) -> bool {
-    (func.is_test() || func.is_fuzz_test() || func.is_invariant_test()) && match_sig()
+    (func.is_test() || func.is_invariant_test()) && match_sig()
 }

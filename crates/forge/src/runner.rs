@@ -290,10 +290,12 @@ impl<'a> ContractRunner<'a> {
                         identified_contracts.as_ref().unwrap(),
                     )
                 } else if func.is_fuzz_test() {
+                    debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
                     self.run_fuzz_test(func, should_fail, runner, setup, *fuzz_config)
                 } else {
+                    debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
                 };
                 (sig, res)
