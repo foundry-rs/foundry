@@ -200,7 +200,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
-            .with_test_options(test_options.clone())
+            .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
 
@@ -215,7 +215,7 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let outcome = self.run_tests(runner, config, verbosity, &filter, test_options).await?;
+        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
             // There is only one test.
@@ -250,7 +250,6 @@ impl TestArgs {
         config: Config,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
-        test_options: TestOptions,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -258,7 +257,7 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let num_filtered = runner.matching_test_function_count(filter);
+        let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered == 0 {
             println!();
             if filter.is_empty() {
@@ -273,7 +272,8 @@ impl TestArgs {
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
-                    let candidates = runner.get_tests(filter);
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                         println!("\nDid you mean `{suggestion}`?");
                     }
@@ -289,7 +289,7 @@ impl TestArgs {
         }
 
         if self.json {
-            let results = runner.test_collect(filter, test_options).await;
+            let results = runner.test_collect(filter);
             println!("{}", serde_json::to_string(&results)?);
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -303,9 +303,9 @@ impl TestArgs {
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
-        let handle = tokio::task::spawn({
+        let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            async move { runner.test(&filter, tx, test_options).await }
+            move || runner.test(&filter, tx)
         });
 
         let mut gas_report =

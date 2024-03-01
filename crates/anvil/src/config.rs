@@ -796,6 +796,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable the default create2 deployer
+    #[must_use]
+    pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
+        self.disable_default_create2_deployer = yes;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
