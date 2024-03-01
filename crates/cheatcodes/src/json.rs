@@ -446,7 +446,7 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
 /// object, so that the user can use that as a value to a new invocation of the same function with a
 /// new object key. This enables the user to reuse the same function to crate arbitrarily complex
 /// object structures (JSON).
-fn serialize_json(
+pub(super) fn serialize_json(
     state: &mut Cheatcodes,
     object_key: &str,
     value_key: Option<&str>,
