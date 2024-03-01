@@ -195,6 +195,7 @@ impl TransactionWithMetadata {
         decoder: &CallTraceDecoder,
     ) -> Result<()> {
         self.opcode = CallKind::Call;
+        self.contract_address = Some(target);
 
         let Some(data) = self.transaction.data() else { return Ok(()) };
         if data.len() < SELECTOR_LEN {
@@ -211,10 +212,6 @@ impl TransactionWithMetadata {
             decoder.functions.get(selector).and_then(|v| v.first())
         };
         if let Some(function) = function {
-            if self.contract_address.is_none() {
-                self.contract_name = decoder.contracts.get(&target).cloned();
-            }
-
             self.function = Some(function.signature());
 
             let values = function.abi_decode_input(data, false).map_err(|e| {
@@ -229,13 +226,7 @@ impl TransactionWithMetadata {
             self.arguments = Some(values.iter().map(format_token_raw).collect());
         }
 
-        self.contract_address = Some(target);
-
         Ok(())
-    }
-
-    pub fn set_tx(&mut self, tx: TypedTransaction) {
-        self.transaction = tx;
     }
 
     pub fn change_type(&mut self, is_legacy: bool) {

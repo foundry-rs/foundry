@@ -12,7 +12,7 @@ use super::{
 use alloy_primitives::{utils::format_units, Address, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
-use eyre::{Context, Result};
+use eyre::{Context, OptionExt, Result};
 use forge::{
     inspectors::cheatcodes::{BroadcastableTransactions, ScriptWallets},
     traces::render_trace_arena,
@@ -248,8 +248,16 @@ impl FilledTransactionsState {
     /// Each transaction will be added with the correct transaction type and gas estimation.
     pub async fn bundle(self) -> Result<BundledState> {
         // User might be using both "in-code" forks and `--fork-url`.
-        let last_rpc = &self.transactions.back().expect("exists; qed").rpc;
+        let last_rpc = &self
+            .transactions
+            .back()
+            .ok_or_eyre("No onchain transactions generated in script")?
+            .rpc;
         let is_multi_deployment = self.transactions.iter().any(|tx| &tx.rpc != last_rpc);
+
+        if is_multi_deployment && !self.build_data.libraries.is_empty() {
+            eyre::bail!("Multi-chain deployment is not supported with libraries.");
+        }
 
         let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
 
@@ -318,6 +326,7 @@ impl FilledTransactionsState {
                 &self.script_config.config,
                 self.args.broadcast,
                 is_multi_deployment,
+                self.build_data.libraries.clone(),
             )?;
 
             sequences.push(sequence);

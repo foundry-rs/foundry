@@ -1,10 +1,9 @@
 use super::{
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData},
-    receipts::{self, clear_pendings},
-    sequence::{ScriptSequence, ScriptSequenceKind},
+    receipts,
+    sequence::ScriptSequenceKind,
     simulate::BundledState,
-    verify::VerifyBundle,
     ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
@@ -166,6 +165,8 @@ impl BundledState {
         let errors =
             join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
+        self.sequence.save(true)?;
+
         if !errors.is_empty() {
             return Err(eyre::eyre!("{errors:?}"));
         }
@@ -293,7 +294,7 @@ impl BundledState {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let mut index = 0;
+                let mut index = already_broadcasted;
 
                 for (batch_number, batch) in
                     transactions.chunks(batch_size).map(|f| f.to_vec()).enumerate()
@@ -322,10 +323,13 @@ impl BundledState {
                         let mut buffer = futures::stream::iter(pending_transactions).buffered(7);
 
                         while let Some(tx_hash) = buffer.next().await {
-                            let tx_hash = tx_hash?;
+                            let tx_hash = tx_hash.wrap_err("Failed to send transaction")?;
                             sequence.add_pending(index, tx_hash);
 
-                            update_progress!(pb, (index + already_broadcasted));
+                            // Checkpoint save
+                            sequence.save(true)?;
+
+                            update_progress!(pb, index - already_broadcasted);
                             index += 1;
                         }
 

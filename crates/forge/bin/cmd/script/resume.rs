@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
-use foundry_common::{provider::ethers::try_get_http_provider, shell};
+use foundry_common::provider::ethers::try_get_http_provider;
 use foundry_compilers::artifacts::Libraries;
 
 use super::{
@@ -66,7 +66,8 @@ impl PreSimulationState {
             // We might have predeployed libraries from the broadcasting, so we need to
             // relink the contracts with them, since their mapping is
             // not included in the solc cache files.
-            build_data = build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
+            build_data =
+                build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
 
             ScriptSequenceKind::Single(seq)
         };

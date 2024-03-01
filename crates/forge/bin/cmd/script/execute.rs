@@ -1,7 +1,6 @@
 use super::{
     build::{CompiledState, LinkedBuildData, LinkedState},
     runner::ScriptRunner,
-    simulate::BundledState,
     JsonResult, NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_dyn_abi::FunctionExt;
@@ -81,8 +80,10 @@ pub struct ExecutedState {
 impl PreExecutionState {
     #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
-        let mut runner =
-            self.script_config.get_runner_with_cheatcodes(self.script_wallets.clone()).await?;
+        let mut runner = self
+            .script_config
+            .get_runner_with_cheatcodes(self.script_wallets.clone(), self.args.debug)
+            .await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
 
         // If we have a new sender from execution, we need to use it to deploy libraries and relink
@@ -213,12 +214,6 @@ impl ExecutedState {
 
         if let Some(txs) = self.execution_result.transactions.as_ref() {
             self.script_config.collect_rpcs(txs);
-        }
-
-        if self.execution_result.transactions.as_ref().map_or(true, |txs| txs.is_empty()) &&
-            self.args.broadcast
-        {
-            eyre::bail!("No onchain transactions generated in script");
         }
 
         self.script_config.check_multi_chain_constraints(&self.build_data.libraries)?;

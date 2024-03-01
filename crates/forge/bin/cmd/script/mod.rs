@@ -402,8 +402,6 @@ pub struct ScriptConfig {
     pub total_rpcs: HashSet<RpcUrl>,
     /// If true, one of the transactions did not have a rpc
     pub missing_rpc: bool,
-    /// Should return some debug information
-    pub debug: bool,
 }
 
 impl ScriptConfig {
@@ -421,7 +419,6 @@ impl ScriptConfig {
             backends: HashMap::new(),
             total_rpcs: HashSet::new(),
             missing_rpc: false,
-            debug: false,
         })
     }
 
@@ -499,17 +496,22 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
     }
 
     async fn get_runner(&mut self) -> Result<ScriptRunner> {
-        self._get_runner(None).await
+        self._get_runner(None, false).await
     }
 
     async fn get_runner_with_cheatcodes(
         &mut self,
         script_wallets: ScriptWallets,
+        debug: bool,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some(script_wallets)).await
+        self._get_runner(Some(script_wallets), debug).await
     }
 
-    async fn _get_runner(&mut self, script_wallets: Option<ScriptWallets>) -> Result<ScriptRunner> {
+    async fn _get_runner(
+        &mut self,
+        script_wallets: Option<ScriptWallets>,
+        debug: bool,
+    ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = self.evm_opts.evm_env().await?;
 
@@ -539,7 +541,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
         if let Some(script_wallets) = script_wallets {
             builder = builder.inspectors(|stack| {
                 stack
-                    .debug(self.debug)
+                    .debug(debug)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config,

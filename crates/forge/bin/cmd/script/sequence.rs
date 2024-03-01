@@ -118,6 +118,7 @@ impl ScriptSequence {
         config: &Config,
         broadcasted: bool,
         is_multi: bool,
+        libraries: Libraries,
     ) -> Result<Self> {
         let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
@@ -130,6 +131,15 @@ impl ScriptSequence {
 
         let commit = get_commit_hash(&config.__root.0);
 
+        let libraries = libraries
+            .libs
+            .iter()
+            .flat_map(|(file, libs)| {
+                libs.iter()
+                    .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
+            })
+            .collect();
+
         Ok(ScriptSequence {
             transactions,
             returns,
@@ -138,7 +148,7 @@ impl ScriptSequence {
             path,
             sensitive_path,
             timestamp: now().as_secs(),
-            libraries: vec![],
+            libraries,
             chain,
             commit,
             multi: is_multi,
@@ -236,17 +246,6 @@ impl ScriptSequence {
 
     pub fn remove_pending(&mut self, tx_hash: TxHash) {
         self.pending.retain(|element| element != &tx_hash);
-    }
-
-    pub fn add_libraries(&mut self, libraries: Libraries) {
-        self.libraries = libraries
-            .libs
-            .iter()
-            .flat_map(|(file, libs)| {
-                libs.iter()
-                    .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
-            })
-            .collect();
     }
 
     /// Gets paths in the formats
