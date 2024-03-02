@@ -27,7 +27,7 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let state = self
+        let pre_simulation = self
             .preprocess()
             .await?
             .compile()?
@@ -39,29 +39,33 @@ impl ScriptArgs {
             .prepare_simulation()
             .await?;
 
-        if state.args.debug {
-            state.run_debugger()?;
+        if pre_simulation.args.debug {
+            pre_simulation.run_debugger()?;
         }
 
-        let state = if state.args.resume || (state.args.verify && !state.args.broadcast) {
-            state.resume().await?
+        // Move from `PreSimulationState` to `BundledState` either by resuming or simulating
+        // transactions.
+        let bundled = if pre_simulation.args.resume ||
+            (pre_simulation.args.verify && !pre_simulation.args.broadcast)
+        {
+            pre_simulation.resume().await?
         } else {
-            if state.args.json {
-                state.show_json()?;
+            if pre_simulation.args.json {
+                pre_simulation.show_json()?;
             } else {
-                state.show_traces().await?;
+                pre_simulation.show_traces().await?;
             }
-            state.args.check_contract_sizes(
-                &state.execution_result,
-                &state.build_data.highlevel_known_contracts,
+            pre_simulation.args.check_contract_sizes(
+                &pre_simulation.execution_result,
+                &pre_simulation.build_data.highlevel_known_contracts,
             )?;
 
-            if state.script_config.missing_rpc {
+            if pre_simulation.script_config.missing_rpc {
                 shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 return Ok(());
             }
 
-            let state = state.fill_metadata().await?;
+            let state = pre_simulation.fill_metadata().await?;
 
             if state.transactions.is_empty() {
                 return Ok(());
@@ -70,19 +74,19 @@ impl ScriptArgs {
             state.bundle().await?
         };
 
-        if !state.args.broadcast && !state.args.resume {
+        if !bundled.args.broadcast && !bundled.args.resume {
             shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             return Ok(());
         }
 
-        if state.args.verify {
-            state.verify_preflight_check()?;
+        if bundled.args.verify {
+            bundled.verify_preflight_check()?;
         }
 
-        let state = state.wait_for_pending().await?.broadcast().await?;
+        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
 
-        if state.args.verify {
-            state.verify().await?;
+        if broadcasted.args.verify {
+            broadcasted.verify().await?;
         }
 
         Ok(())
