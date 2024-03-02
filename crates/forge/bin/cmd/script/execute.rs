@@ -103,30 +103,24 @@ impl PreExecutionState {
         }
 
         // Add library deployment transactions to broadcastable transactions list.
-        if let Some(txs) = &mut result.transactions {
-            let mut library_txs = self
-                .build_data
-                .predeploy_libraries
-                .iter()
-                .enumerate()
-                .map(|(i, bytes)| BroadcastableTransaction {
-                    rpc: self.script_config.evm_opts.fork_url.clone(),
-                    transaction: TransactionRequest {
-                        from: Some(self.script_config.evm_opts.sender),
-                        input: Some(bytes.clone()).into(),
-                        nonce: Some(U64::from(self.script_config.sender_nonce + i as u64)),
-                        ..Default::default()
-                    },
-                })
-                .collect::<VecDeque<_>>();
-
-            for tx in txs.iter() {
-                library_txs.push_back(BroadcastableTransaction {
-                    rpc: tx.rpc.clone(),
-                    transaction: tx.transaction.clone(),
-                });
-            }
-            *txs = library_txs;
+        if let Some(txs) = result.transactions.take() {
+            result.transactions = Some(
+                self.build_data
+                    .predeploy_libraries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bytes)| BroadcastableTransaction {
+                        rpc: self.script_config.evm_opts.fork_url.clone(),
+                        transaction: TransactionRequest {
+                            from: Some(self.script_config.evm_opts.sender),
+                            input: Some(bytes.clone()).into(),
+                            nonce: Some(U64::from(self.script_config.sender_nonce + i as u64)),
+                            ..Default::default()
+                        },
+                    })
+                    .chain(txs)
+                    .collect(),
+            );
         }
 
         Ok(ExecutedState {

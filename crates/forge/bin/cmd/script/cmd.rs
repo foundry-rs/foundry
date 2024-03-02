@@ -43,6 +43,12 @@ impl ScriptArgs {
             pre_simulation.run_debugger()?;
         }
 
+        if pre_simulation.args.json {
+            pre_simulation.show_json()?;
+        } else {
+            pre_simulation.show_traces().await?;
+        }
+
         // Move from `PreSimulationState` to `BundledState` either by resuming or simulating
         // transactions.
         let bundled = if pre_simulation.args.resume ||
@@ -50,11 +56,6 @@ impl ScriptArgs {
         {
             pre_simulation.resume().await?
         } else {
-            if pre_simulation.args.json {
-                pre_simulation.show_json()?;
-            } else {
-                pre_simulation.show_traces().await?;
-            }
             pre_simulation.args.check_contract_sizes(
                 &pre_simulation.execution_result,
                 &pre_simulation.build_data.highlevel_known_contracts,

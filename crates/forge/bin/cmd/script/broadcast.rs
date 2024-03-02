@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 
-async fn estimate_gas<T>(
+pub async fn estimate_gas<T>(
     tx: &mut TypedTransaction,
     provider: &Provider<T>,
     estimate_multiplier: u64,
@@ -219,20 +219,19 @@ impl BundledState {
             let already_broadcasted = sequence.receipts.len();
 
             if already_broadcasted < sequence.transactions.len() {
-                let chain = provider.get_chainid().await?.as_u64();
-
                 // We only wait for a transaction receipt before sending the next transaction, if
                 // there is more than one signer. There would be no way of assuring
                 // their order otherwise. Or if the chain does not support batched
                 // transactions (eg. Arbitrum).
-                let sequential_broadcast =
-                    send_kind.signers_count() != 1 || self.args.slow || !has_batch_support(chain);
+                let sequential_broadcast = send_kind.signers_count() != 1 ||
+                    self.args.slow ||
+                    !has_batch_support(sequence.chain);
 
                 // Make a one-time gas price estimation
                 let (gas_price, eip1559_fees) = match self.args.with_gas_price {
                     None => match sequence.transactions.front().unwrap().typed_tx() {
                         TypedTransaction::Eip1559(_) => {
-                            let mut fees = estimate_eip1559_fees(&provider, Some(chain))
+                            let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
                                 .await
                                 .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
@@ -263,7 +262,7 @@ impl BundledState {
 
                         let mut tx = tx.clone();
 
-                        tx.set_chain_id(chain);
+                        tx.set_chain_id(sequence.chain);
 
                         if let Some(gas_price) = gas_price {
                             tx.set_gas_price(gas_price);

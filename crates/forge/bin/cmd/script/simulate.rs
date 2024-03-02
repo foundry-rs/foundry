@@ -1,3 +1,5 @@
+use crate::cmd::script::broadcast::estimate_gas;
+
 use super::{
     artifacts::ArtifactInfo,
     build::LinkedBuildData,
@@ -296,7 +298,13 @@ impl FilledTransactionsState {
                     // for chains where `has_different_gas_calc` returns true,
                     // we await each transaction before broadcasting the next
                     // one.
-                    if let Err(err) = self.estimate_gas(typed_tx, &provider_info.provider).await {
+                    if let Err(err) = estimate_gas(
+                        typed_tx,
+                        &provider_info.provider,
+                        self.args.gas_estimate_multiplier,
+                    )
+                    .await
+                    {
                         trace!("gas estimation failed: {err}");
 
                         // Restore gas value, since `estimate_gas` will remove it.
@@ -389,25 +397,6 @@ impl FilledTransactionsState {
             execution_artifacts: self.execution_artifacts,
             sequence,
         })
-    }
-
-    async fn estimate_gas<T>(&self, tx: &mut TypedTransaction, provider: &Provider<T>) -> Result<()>
-    where
-        T: JsonRpcClient,
-    {
-        // if already set, some RPC endpoints might simply return the gas value that is already
-        // set in the request and omit the estimate altogether, so we remove it here
-        let _ = tx.gas_mut().take();
-
-        tx.set_gas(
-            provider
-                .estimate_gas(tx, None)
-                .await
-                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
-                self.args.gas_estimate_multiplier /
-                100,
-        );
-        Ok(())
     }
 }
 
