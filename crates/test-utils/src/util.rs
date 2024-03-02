@@ -444,6 +444,12 @@ impl TestProject {
         &self.paths().artifacts
     }
 
+    /// Removes the project's cache and artifacts directory.
+    pub fn clear(&self) {
+        self.clear_cache();
+        self.clear_artifacts();
+    }
+
     /// Removes this project's cache file.
     pub fn clear_cache(&self) {
         let _ = fs::remove_file(self.cache());
