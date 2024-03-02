@@ -10,7 +10,6 @@ use std::{
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
-use tower::Service;
 
 use super::{
     retry::{RateLimitRetryPolicy, RetryPolicy},
@@ -65,7 +64,7 @@ impl<S> tower::layer::Layer<S> for RetryBackoffLayer {
 }
 
 /// An Alloy Tower Service that is responsible for retrying requests based on the
-/// error type. See [TransportError] and [RetryWithPolicyLayer].
+/// error type. See [TransportError] and [RateLimitRetryPolicy].
 #[derive(Debug, Clone)]
 pub struct RetryBackoffService<S> {
     /// The inner service
@@ -85,7 +84,7 @@ pub struct RetryBackoffService<S> {
 }
 
 // impl tower service
-impl Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
+impl tower::Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
