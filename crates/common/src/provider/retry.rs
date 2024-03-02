@@ -3,7 +3,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_transport::{TransportError, TransportErrorKind};
 use serde::Deserialize;
 
-/// [RetryPolicy] defines logic for which [JsonRpcClient::Error] instances should
+/// [RetryPolicy] defines logic for which [TransportError] instances should
 /// the client retry the request and try to recover from.
 pub trait RetryPolicy: Send + Sync + std::fmt::Debug {
     /// Whether to retry the request based on the given `error`
@@ -52,6 +52,7 @@ impl RetryPolicy for RateLimitRetryPolicy {
         }
     }
 
+    /// Provides a backoff hint if the error response contains it
     fn backoff_hint(&self, error: &TransportError) -> Option<std::time::Duration> {
         if let TransportError::ErrorResp(resp) = error {
             let data = resp.try_data_as::<serde_json::Value>();

@@ -25,7 +25,6 @@ pub enum InnerTransport {
     Http(Http<reqwest::Client>),
     /// WebSocket transport
     Ws(PubSubFrontend),
-    // TODO: IPC
     /// IPC transport
     Ipc(PubSubFrontend),
 }
@@ -177,7 +176,6 @@ impl RuntimeTransport {
         let client =
             client_builder.build().map_err(RuntimeTransportError::HttpConstructionError)?;
 
-        // todo: retry tower layer
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
 
@@ -271,7 +269,7 @@ impl tower::Service<RequestPacket> for RuntimeTransport {
     }
 }
 
-impl Service<RequestPacket> for &RuntimeTransport {
+impl tower::Service<RequestPacket> for &RuntimeTransport {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
@@ -297,7 +295,6 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     let auth = JwtAuth::new(secret, None, None);
     let token = auth.generate_token()?;
 
-    // Essentially unrolled ethers-rs new_with_auth to accommodate the custom timeout
     let auth = Authorization::Bearer(token);
 
     Ok(auth)
