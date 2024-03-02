@@ -11,22 +11,22 @@ foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 #[derive(Clone, Debug, Parser)]
 pub struct ConfigArgs {
     /// Print only a basic set of the currently set config values.
-    #[clap(long)]
+    #[arg(long)]
     basic: bool,
 
     /// Print currently set config values as JSON.
-    #[clap(long)]
+    #[arg(long)]
     json: bool,
 
     /// Attempt to fix any configuration warnings.
-    #[clap(long)]
+    #[arg(long)]
     fix: bool,
 
     // support nested build arguments
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: BuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 }
 

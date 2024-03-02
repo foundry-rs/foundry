@@ -30,31 +30,31 @@ use tokio::time::{Instant, Interval};
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
     /// Port number to listen on.
-    #[clap(long, short, default_value = "8545", value_name = "NUM")]
+    #[arg(long, short, default_value = "8545", value_name = "NUM")]
     pub port: u16,
 
     /// Number of dev accounts to generate and configure.
-    #[clap(long, short, default_value = "10", value_name = "NUM")]
+    #[arg(long, short, default_value = "10", value_name = "NUM")]
     pub accounts: u64,
 
     /// The balance of every dev account in Ether.
-    #[clap(long, default_value = "10000", value_name = "NUM")]
+    #[arg(long, default_value = "10000", value_name = "NUM")]
     pub balance: u64,
 
     /// The timestamp of the genesis block.
-    #[clap(long, value_name = "NUM")]
+    #[arg(long, value_name = "NUM")]
     pub timestamp: Option<u64>,
 
     /// BIP39 mnemonic phrase used for generating accounts.
     /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used
-    #[clap(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
+    #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
     pub mnemonic: Option<String>,
 
     /// Automatically generates a BIP39 mnemonic phrase, and derives accounts from it.
     /// Cannot be used with other `mnemonic` options
     /// You can specify the number of words you want in the mnemonic.
     /// [default: 12]
-    #[clap(long, conflicts_with_all = &["mnemonic", "mnemonic_seed"], default_missing_value = "12", num_args(0..=1))]
+    #[arg(long, conflicts_with_all = &["mnemonic", "mnemonic_seed"], default_missing_value = "12", num_args(0..=1))]
     pub mnemonic_random: Option<usize>,
 
     /// Generates a BIP39 mnemonic phrase from a given seed
@@ -62,40 +62,40 @@ pub struct NodeArgs {
     ///
     /// CAREFUL: this is NOT SAFE and should only be used for testing.
     /// Never use the private keys generated in production.
-    #[clap(long = "mnemonic-seed-unsafe", conflicts_with_all = &["mnemonic", "mnemonic_random"])]
+    #[arg(long = "mnemonic-seed-unsafe", conflicts_with_all = &["mnemonic", "mnemonic_random"])]
     pub mnemonic_seed: Option<u64>,
 
     /// Sets the derivation path of the child key to be derived.
     ///
     /// [default: m/44'/60'/0'/0/]
-    #[clap(long)]
+    #[arg(long)]
     pub derivation_path: Option<String>,
 
     /// Don't print anything on startup and don't print logs
-    #[clap(long)]
+    #[arg(long)]
     pub silent: bool,
 
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
-    #[clap(long, value_parser = Hardfork::from_str)]
+    #[arg(long, value_parser = Hardfork::from_str)]
     pub hardfork: Option<Hardfork>,
 
     /// Block time in seconds for interval mining.
-    #[clap(short, long, visible_alias = "blockTime", name = "block-time", value_name = "SECONDS")]
+    #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS")]
     pub block_time: Option<u64>,
 
     /// Writes output of `anvil` as json to user-specified file.
-    #[clap(long, value_name = "OUT_FILE")]
+    #[arg(long, value_name = "OUT_FILE")]
     pub config_out: Option<String>,
 
     /// Disable auto and interval mining, and mine on demand instead.
-    #[clap(long, visible_alias = "no-mine", conflicts_with = "block-time")]
+    #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
     /// The hosts the server will listen on.
-    #[clap(
+    #[arg(
         long,
         value_name = "IP_ADDR",
         env = "ANVIL_IP_ADDR",
@@ -106,18 +106,18 @@ pub struct NodeArgs {
     pub host: Vec<IpAddr>,
 
     /// How transactions are sorted in the mempool.
-    #[clap(long, default_value = "fees")]
+    #[arg(long, default_value = "fees")]
     pub order: TransactionOrder,
 
     /// Initialize the genesis block with the given `genesis.json` file.
-    #[clap(long, value_name = "PATH", value_parser= read_genesis_file)]
+    #[arg(long, value_name = "PATH", value_parser= read_genesis_file)]
     pub init: Option<Genesis>,
 
     /// This is an alias for both --load-state and --dump-state.
     ///
     /// It initializes the chain with the state and block environment stored at the file, if it
     /// exists, and dumps the chain's state on exit.
-    #[clap(
+    #[arg(
         long,
         value_name = "PATH",
         value_parser = StateFile::parse,
@@ -132,17 +132,17 @@ pub struct NodeArgs {
     /// Interval in seconds at which the state and block environment is to be dumped to disk.
     ///
     /// See --state and --dump-state
-    #[clap(short, long, value_name = "SECONDS")]
+    #[arg(short, long, value_name = "SECONDS")]
     pub state_interval: Option<u64>,
 
     /// Dump the state and block environment of chain on exit to the given file.
     ///
     /// If the value is a directory, the state will be written to `<VALUE>/state.json`.
-    #[clap(long, value_name = "PATH", conflicts_with = "init")]
+    #[arg(long, value_name = "PATH", conflicts_with = "init")]
     pub dump_state: Option<PathBuf>,
 
     /// Initialize the chain from a previously saved state snapshot.
-    #[clap(
+    #[arg(
         long,
         value_name = "PATH",
         value_parser = SerializableState::parse,
@@ -150,22 +150,22 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
-    #[clap(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
+    #[arg(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
     /// Don't keep full chain history.
     /// If a number argument is specified, at most this number of states is kept in memory.
-    #[clap(long)]
+    #[arg(long)]
     pub prune_history: Option<Option<usize>>,
 
     /// Number of blocks with transactions to keep in memory.
-    #[clap(long)]
+    #[arg(long)]
     pub transaction_block_keeper: Option<usize>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub evm_opts: AnvilEvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub server_config: ServerConfig,
 }
 
@@ -229,6 +229,7 @@ impl NodeArgs {
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_optimism(self.evm_opts.optimism)
+            .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -344,12 +345,12 @@ impl NodeArgs {
 
 /// Anvil's EVM related arguments.
 #[derive(Clone, Debug, Parser)]
-#[clap(next_help_heading = "EVM options")]
+#[command(next_help_heading = "EVM options")]
 pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, add a block number like `http://localhost:8545@1400000` or use the `--fork-block-number` argument.
-    #[clap(
+    #[arg(
         long,
         short,
         visible_alias = "rpc-url",
@@ -361,7 +362,7 @@ pub struct AnvilEvmArgs {
     /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
     ///
     /// See --fork-url.
-    #[clap(
+    #[arg(
         long = "fork-header",
         value_name = "HEADERS",
         help_heading = "Fork config",
@@ -372,35 +373,25 @@ pub struct AnvilEvmArgs {
     /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
     ///
     /// Default value 45000
-    #[clap(
-        long = "timeout",
-        name = "timeout",
-        help_heading = "Fork config",
-        requires = "fork_url"
-    )]
+    #[arg(id = "timeout", long = "timeout", help_heading = "Fork config", requires = "fork_url")]
     pub fork_request_timeout: Option<u64>,
 
     /// Number of retry requests for spurious networks (timed out requests)
     ///
     /// Default value 5
-    #[clap(
-        long = "retries",
-        name = "retries",
-        help_heading = "Fork config",
-        requires = "fork_url"
-    )]
+    #[arg(id = "retries", long = "retries", help_heading = "Fork config", requires = "fork_url")]
     pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
+    #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
+    #[arg(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
     pub fork_retry_backoff: Option<u64>,
 
     /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
@@ -408,7 +399,7 @@ pub struct AnvilEvmArgs {
     /// You still must pass both `--fork-url` and `--fork-block-number`, and already have your
     /// required state cached on disk, anything missing locally would be fetched from the
     /// remote.
-    #[clap(
+    #[arg(
         long,
         help_heading = "Fork config",
         value_name = "CHAIN",
@@ -422,7 +413,7 @@ pub struct AnvilEvmArgs {
     ///
     /// See --fork-url.
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(
+    #[arg(
         long,
         requires = "fork_url",
         alias = "cups",
@@ -437,7 +428,7 @@ pub struct AnvilEvmArgs {
     ///
     /// See --fork-url.
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(
+    #[arg(
         long,
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
@@ -453,15 +444,15 @@ pub struct AnvilEvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", help_heading = "Fork config")]
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
 
     /// The block gas limit.
-    #[clap(long, alias = "block-gas-limit", help_heading = "Environment config")]
+    #[arg(long, alias = "block-gas-limit", help_heading = "Environment config")]
     pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
-    #[clap(
+    #[arg(
         long,
         value_name = "DISABLE_GAS_LIMIT",
         help_heading = "Environment config",
@@ -472,15 +463,15 @@ pub struct AnvilEvmArgs {
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
-    #[clap(long, value_name = "CODE_SIZE", help_heading = "Environment config")]
+    #[arg(long, value_name = "CODE_SIZE", help_heading = "Environment config")]
     pub code_size_limit: Option<usize>,
 
     /// The gas price.
-    #[clap(long, help_heading = "Environment config")]
+    #[arg(long, help_heading = "Environment config")]
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
-    #[clap(
+    #[arg(
         long,
         visible_alias = "base-fee",
         value_name = "FEE",
@@ -489,20 +480,24 @@ pub struct AnvilEvmArgs {
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, alias = "chain", help_heading = "Environment config")]
+    #[arg(long, alias = "chain", help_heading = "Environment config")]
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
-    #[clap(long, visible_alias = "tracing")]
+    #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
     /// Enable autoImpersonate on startup
-    #[clap(long, visible_alias = "auto-impersonate")]
+    #[arg(long, visible_alias = "auto-impersonate")]
     pub auto_impersonate: bool,
 
     /// Run an Optimism chain
-    #[clap(long, visible_alias = "optimism")]
+    #[arg(long, visible_alias = "optimism")]
     pub optimism: bool,
+
+    /// Disable the default create2 deployer
+    #[arg(long, visible_alias = "no-create2")]
+    pub disable_default_create2_deployer: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

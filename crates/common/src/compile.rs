@@ -19,13 +19,14 @@ use std::{
     path::{Path, PathBuf},
     result,
     str::FromStr,
+    time::Instant,
 };
 
 /// Builder type to configure how to compile a project.
 ///
 /// This is merely a wrapper for [`Project::compile()`] which also prints to stdout depending on its
 /// settings.
-#[must_use = "this builder does nothing unless you call a `compile*` method"]
+#[must_use = "ProjectCompiler does nothing unless you call a `compile*` method"]
 pub struct ProjectCompiler {
     /// Whether we are going to verify the contracts after compilation.
     verify: Option<bool>,
@@ -185,7 +186,7 @@ impl ProjectCompiler {
         let output = foundry_compilers::report::with_scoped(&reporter, || {
             tracing::debug!("compiling project");
 
-            let timer = std::time::Instant::now();
+            let timer = Instant::now();
             let r = f();
             let elapsed = timer.elapsed();
 
@@ -289,7 +290,7 @@ impl ContractSources {
         let mut sources = ContractSources::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
-                let abs_path = root.join(&id.path);
+                let abs_path = root.join(&id.source);
                 let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;

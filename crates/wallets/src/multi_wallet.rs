@@ -89,10 +89,10 @@ macro_rules! create_hw_wallets {
 /// 6. Private Keys (interactively via secure prompt)
 /// 7. AWS KMS
 #[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
+#[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
     /// The sender accounts.
-    #[clap(
+    #[arg(
         long,
         short = 'a',
         help_heading = "Wallet options - raw",
@@ -106,7 +106,7 @@ pub struct MultiWalletOpts {
     /// Open an interactive prompt to enter your private key.
     ///
     /// Takes a value for the number of keys to enter.
-    #[clap(
+    #[arg(
         long,
         short,
         help_heading = "Wallet options - raw",
@@ -116,12 +116,12 @@ pub struct MultiWalletOpts {
     pub interactives: u32,
 
     /// Use the provided private keys.
-    #[clap(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
+    #[arg(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
     #[builder(default = "None")]
     pub private_keys: Option<Vec<String>>,
 
     /// Use the provided private key.
-    #[clap(
+    #[arg(
         long,
         help_heading = "Wallet options - raw",
         conflicts_with = "private_keys",
@@ -131,19 +131,19 @@ pub struct MultiWalletOpts {
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrases of mnemonic files at the specified paths.
-    #[clap(long, alias = "mnemonic-paths", help_heading = "Wallet options - raw")]
+    #[arg(long, alias = "mnemonic-paths", help_heading = "Wallet options - raw")]
     #[builder(default = "None")]
     pub mnemonics: Option<Vec<String>>,
 
     /// Use a BIP39 passphrases for the mnemonic.
-    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
+    #[arg(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     #[builder(default = "None")]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
     /// The wallet derivation path.
     ///
     /// Works with both --mnemonic-path and hardware wallets.
-    #[clap(
+    #[arg(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
         help_heading = "Wallet options - raw",
@@ -155,7 +155,7 @@ pub struct MultiWalletOpts {
     /// Use the private key from the given mnemonic index.
     ///
     /// Can be used with --mnemonics, --ledger, --aws and --trezor.
-    #[clap(
+    #[arg(
         long,
         conflicts_with = "hd_paths",
         help_heading = "Wallet options - raw",
@@ -165,7 +165,7 @@ pub struct MultiWalletOpts {
     pub mnemonic_indexes: Option<Vec<u32>>,
 
     /// Use the keystore in the given folder or file.
-    #[clap(
+    #[arg(
         long = "keystore",
         visible_alias = "keystores",
         help_heading = "Wallet options - keystore",
@@ -176,7 +176,7 @@ pub struct MultiWalletOpts {
     pub keystore_paths: Option<Vec<String>>,
 
     /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
-    #[clap(
+    #[arg(
         long = "account",
         visible_alias = "accounts",
         help_heading = "Wallet options - keystore",
@@ -190,7 +190,7 @@ pub struct MultiWalletOpts {
     /// The keystore password.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password",
         help_heading = "Wallet options - keystore",
         requires = "keystore_paths",
@@ -202,7 +202,7 @@ pub struct MultiWalletOpts {
     /// The keystore password file path.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password-file",
         help_heading = "Wallet options - keystore",
         requires = "keystore_paths",
@@ -213,15 +213,15 @@ pub struct MultiWalletOpts {
     pub keystore_password_files: Option<Vec<String>>,
 
     /// Use a Ledger hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
     /// Use a Trezor hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - remote")]
+    #[arg(long, help_heading = "Wallet options - remote")]
     pub aws: bool,
 }
 

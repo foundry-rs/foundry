@@ -17,11 +17,11 @@ pub struct RemoveArgs {
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
     /// Override the up-to-date check.
-    #[clap(short, long)]
+    #[arg(short, long)]
     force: bool,
 }
 impl_figment_convert_basic!(RemoveArgs);

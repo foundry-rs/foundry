@@ -32,7 +32,7 @@ macro_rules! test_repro {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
             async fn [< issue_ $issue_number >]() {
-                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test().await;
+                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test();
                 $e
             }
         }
@@ -60,7 +60,7 @@ async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) 
         config.sender = sender;
     }
 
-    let runner = runner_with_config(config).await;
+    let runner = runner_with_config(config);
     TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
 

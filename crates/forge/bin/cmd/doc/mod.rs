@@ -16,13 +16,13 @@ pub struct DocArgs {
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
     /// The doc's output path.
     ///
     /// By default, it is the `docs/` in project root.
-    #[clap(
+    #[arg(
         long,
         short,
         value_hint = ValueHint::DirPath,
@@ -31,32 +31,32 @@ pub struct DocArgs {
     out: Option<PathBuf>,
 
     /// Build the `mdbook` from generated files.
-    #[clap(long, short)]
+    #[arg(long, short)]
     build: bool,
 
     /// Serve the documentation.
-    #[clap(long, short)]
+    #[arg(long, short)]
     serve: bool,
 
     /// Open the documentation in a browser after serving.
-    #[clap(long, requires = "serve")]
+    #[arg(long, requires = "serve")]
     open: bool,
 
     /// Hostname for serving documentation.
-    #[clap(long, requires = "serve")]
+    #[arg(long, requires = "serve")]
     hostname: Option<String>,
 
     /// Port for serving documentation.
-    #[clap(long, short, requires = "serve")]
+    #[arg(long, short, requires = "serve")]
     port: Option<usize>,
 
     /// The relative path to the `hardhat-deploy` or `forge-deploy` artifact directory. Leave blank
     /// for default.
-    #[clap(long)]
+    #[arg(long)]
     deployments: Option<Option<PathBuf>>,
 
     /// Whether to create docs for external libraries.
-    #[clap(long, short)]
+    #[arg(long, short)]
     include_libraries: bool,
 }
 
