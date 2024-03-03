@@ -33,6 +33,8 @@ pub struct InvariantConfig {
     /// Applies only when `fail_on_revert` set to true. Use it with caution, introduces performance
     /// penalty.
     pub preserve_state: bool,
+    /// Whether to show invariant test progress (as completed percentage and completed/total runs).
+    pub show_progress: bool,
 }
 
 impl Default for InvariantConfig {
@@ -46,6 +48,7 @@ impl Default for InvariantConfig {
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18_u32),
             preserve_state: false,
+            show_progress: false,
         }
     }
 }

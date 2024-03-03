@@ -196,6 +196,7 @@ include_storage = true
 include_push_bytes = true
 shrink_sequence = true
 preserve_state = false
+show_progress = false
 
 [fmt]
 line_length = 100

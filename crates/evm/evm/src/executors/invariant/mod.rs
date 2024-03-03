@@ -38,6 +38,8 @@ use foundry_evm_fuzz::strategies::CalldataFuzzDictionary;
 mod funcs;
 pub use funcs::{assert_invariants, replay_run};
 
+pub mod report;
+
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation = (
     EvmFuzzState,
@@ -109,6 +111,8 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!("Invariant test function should have no inputs"))
         }
 
+        report::add_runs(self.config.runs);
+
         let (fuzz_state, targeted_contracts, strat, calldata_fuzz_dictionary) =
             self.prepare_fuzzing(&invariant_contract)?;
 
@@ -151,6 +155,8 @@ impl<'a> InvariantExecutor<'a> {
 
             // Before each run, we must reset the backend state.
             let mut executor = self.executor.clone();
+
+            report::complete_run();
 
             // Used for stat reports (eg. gas usage).
             let mut fuzz_runs = Vec::with_capacity(self.config.depth as usize);
