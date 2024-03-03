@@ -222,6 +222,7 @@ impl FromStr for SolidityErrorCode {
             "missing-receive-ether" => SolidityErrorCode::PayableNoReceiveEther,
             "same-varname" => SolidityErrorCode::DeclarationSameNameAsAnother,
             "constructor-visibility" => SolidityErrorCode::VisibilityForConstructorIsIgnored,
+            "transient-storage" => SolidityErrorCode::TransientStorageUsed,
             _ => return Err(format!("Unknown variant {s}")),
         };
 
@@ -247,6 +248,7 @@ impl From<u64> for SolidityErrorCode {
             3420 => SolidityErrorCode::PragmaSolidity,
             5740 => SolidityErrorCode::Unreachable,
             2462 => SolidityErrorCode::VisibilityForConstructorIsIgnored,
+            2394 => SolidityErrorCode::TransientStorageUsed,
             other => SolidityErrorCode::Other(other),
         }
     }
