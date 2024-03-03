@@ -1,6 +1,7 @@
 //! The Forge test runner.
 
 use crate::{
+    multi_runner::is_matching_test,
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
@@ -40,7 +41,7 @@ pub struct ContractRunner<'a> {
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
-    pub code: Bytes,
+    pub code: &'a Bytes,
     /// The test contract's ABI
     pub contract: &'a JsonAbi,
     /// Revert decoder. Contains all known errors.
@@ -59,7 +60,7 @@ impl<'a> ContractRunner<'a> {
         name: &'a str,
         executor: Executor,
         contract: &'a JsonAbi,
-        code: Bytes,
+        code: &'a Bytes,
         initial_balance: U256,
         sender: Option<Address>,
         revert_decoder: &'a RevertDecoder,
@@ -185,7 +186,7 @@ impl<'a> ContractRunner<'a> {
     pub fn run_tests(
         mut self,
         filter: &dyn TestFilter,
-        test_options: TestOptions,
+        test_options: &TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
         info!("starting tests");
@@ -253,58 +254,65 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let functions: Vec<_> = self.contract.functions().collect();
-        let mut test_results = functions
-            .par_iter()
-            .filter(|&&func| func.is_test() && filter.matches_test(&func.signature()))
-            .map(|&func| {
-                let should_fail = func.is_test_fail();
-                let res = if func.is_fuzz_test() {
-                    let runner = test_options.fuzz_runner(self.name, &func.name);
-                    let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(func, should_fail, runner, setup.clone(), *fuzz_config)
-                } else {
-                    self.run_test(func, should_fail, setup.clone())
-                };
-                (func.signature(), res)
-            })
-            .collect::<BTreeMap<_, _>>();
+        // Filter out functions sequentially since it's very fast and there is no need to do it
+        // in parallel.
+        let find_timer = Instant::now();
+        let functions = self
+            .contract
+            .functions()
+            .filter(|func| is_matching_test(func, filter))
+            .collect::<Vec<_>>();
+        let find_time = find_timer.elapsed();
+        debug!(
+            "Found {} test functions out of {} in {:?}",
+            functions.len(),
+            self.contract.functions().count(),
+            find_time,
+        );
 
-        if has_invariants {
-            let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
-            let results: Vec<_> = functions
-                .par_iter()
-                .filter(|&&func| func.is_invariant_test() && filter.matches_test(&func.signature()))
-                .map(|&func| {
+        let identified_contracts =
+            has_invariants.then(|| load_contracts(setup.traces.clone(), known_contracts));
+        let test_results = functions
+            .par_iter()
+            .map(|&func| {
+                let sig = func.signature();
+
+                let setup = setup.clone();
+                let should_fail = func.is_test_fail();
+                let res = if func.is_invariant_test() {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
-                    let res = self.run_invariant_test(
+                    self.run_invariant_test(
                         runner,
-                        setup.clone(),
+                        setup,
                         *invariant_config,
                         func,
                         known_contracts,
-                        &identified_contracts,
-                    );
-                    (func.signature(), res)
-                })
-                .collect();
-            test_results.extend(results);
-        }
+                        identified_contracts.as_ref().unwrap(),
+                    )
+                } else if func.is_fuzz_test() {
+                    debug_assert!(func.is_test());
+                    let runner = test_options.fuzz_runner(self.name, &func.name);
+                    let fuzz_config = test_options.fuzz_config(self.name, &func.name);
+                    self.run_fuzz_test(func, should_fail, runner, setup, *fuzz_config)
+                } else {
+                    debug_assert!(func.is_test());
+                    self.run_test(func, should_fail, setup)
+                };
+
+                (sig, res)
+            })
+            .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        if !test_results.is_empty() {
-            let successful =
-                test_results.iter().filter(|(_, tst)| tst.status == TestStatus::Success).count();
-            info!(
-                duration = ?duration,
-                "done. {}/{} successful",
-                successful,
-                test_results.len()
-            );
-        }
-
-        SuiteResult::new(duration, test_results, warnings)
+        let suite_result = SuiteResult::new(duration, test_results, warnings);
+        info!(
+            duration=?suite_result.duration,
+            "done. {}/{} successful",
+            suite_result.passed(),
+            suite_result.test_results.len()
+        );
+        suite_result
     }
 
     /// Runs a single test
@@ -386,6 +394,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
+                        duration: start.elapsed(),
                         ..Default::default()
                     }
                 }
@@ -397,6 +406,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
+                        duration: start.elapsed(),
                         ..Default::default()
                     }
                 }
@@ -410,13 +420,8 @@ impl<'a> ContractRunner<'a> {
         );
 
         // Record test execution time
-        debug!(
-            duration = ?start.elapsed(),
-            gas,
-            reverted,
-            should_fail,
-            success,
-        );
+        let duration = start.elapsed();
+        trace!(?duration, gas, reverted, should_fail, success);
 
         TestResult {
             status: match success {
@@ -433,6 +438,7 @@ impl<'a> ContractRunner<'a> {
             labeled_addresses,
             debug: debug_arena,
             breakpoints,
+            duration,
         }
     }
 
@@ -452,6 +458,7 @@ impl<'a> ContractRunner<'a> {
         let TestSetup { address, logs, traces, labeled_addresses, coverage, .. } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
+        let start = Instant::now();
         if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
             self.sender,
             address,
@@ -468,6 +475,7 @@ impl<'a> ContractRunner<'a> {
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
                 coverage,
+                duration: start.elapsed(),
                 ..Default::default()
             }
         };
@@ -495,6 +503,7 @@ impl<'a> ContractRunner<'a> {
                     traces,
                     labeled_addresses,
                     kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
+                    duration: start.elapsed(),
                     ..Default::default()
                 }
             }
@@ -542,12 +551,6 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
-        let kind = TestKind::Invariant {
-            runs: cases.len(),
-            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
-            reverts,
-        };
-
         TestResult {
             status: match success {
                 true => TestStatus::Success,
@@ -557,10 +560,15 @@ impl<'a> ContractRunner<'a> {
             counterexample,
             decoded_logs: decode_console_logs(&logs),
             logs,
-            kind,
+            kind: TestKind::Invariant {
+                runs: cases.len(),
+                calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+                reverts,
+            },
             coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
+            duration: start.elapsed(),
             ..Default::default() // TODO collect debug traces on the last run or error
         }
     }
@@ -612,6 +620,7 @@ impl<'a> ContractRunner<'a> {
                 debug,
                 breakpoints,
                 coverage,
+                duration: start.elapsed(),
                 ..Default::default()
             }
         }
@@ -668,10 +677,8 @@ impl<'a> ContractRunner<'a> {
         coverage = merge_coverages(coverage, result.coverage);
 
         // Record test execution time
-        debug!(
-            duration = ?start.elapsed(),
-            success = %result.success
-        );
+        let duration = start.elapsed();
+        trace!(?duration, success = %result.success);
 
         TestResult {
             status: match result.success {
@@ -688,6 +695,7 @@ impl<'a> ContractRunner<'a> {
             labeled_addresses,
             debug,
             breakpoints,
+            duration,
         }
     }
 }

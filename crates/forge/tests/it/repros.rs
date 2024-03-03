@@ -32,7 +32,7 @@ macro_rules! test_repro {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
             async fn [< issue_ $issue_number >]() {
-                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test().await;
+                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test();
                 $e
             }
         }
@@ -60,7 +60,7 @@ async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) 
         config.sender = sender;
     }
 
-    let runner = runner_with_config(config).await;
+    let runner = runner_with_config(config);
     TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
 
@@ -306,6 +306,13 @@ test_repro!(6616);
 
 // https://github.com/foundry-rs/foundry/issues/5529
 test_repro!(5529; |config| {
+  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+  cheats_config.always_use_create_2_factory = true;
+  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+});
+
+// https://github.com/foundry-rs/foundry/issues/6634
+test_repro!(6634; |config| {
   let mut cheats_config = config.runner.cheats_config.as_ref().clone();
   cheats_config.always_use_create_2_factory = true;
   config.runner.cheats_config = std::sync::Arc::new(cheats_config);

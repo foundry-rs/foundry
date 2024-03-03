@@ -35,7 +35,7 @@ pub struct CreateArgs {
     contract: ContractInfo,
 
     /// The constructor arguments.
-    #[clap(
+    #[arg(
         long,
         num_args(1..),
         conflicts_with = "constructor_args_path",
@@ -44,7 +44,7 @@ pub struct CreateArgs {
     constructor_args: Vec<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(
+    #[arg(
         long,
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
@@ -52,37 +52,37 @@ pub struct CreateArgs {
     constructor_args_path: Option<PathBuf>,
 
     /// Print the deployment information as JSON.
-    #[clap(long, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     json: bool,
 
     /// Verify contract after creation.
-    #[clap(long)]
+    #[arg(long)]
     verify: bool,
 
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
-    #[clap(long, requires = "from")]
+    #[arg(long, requires = "from")]
     unlocked: bool,
 
     /// Prints the standard json compiler input if `--verify` is provided.
     ///
     /// The standard json compiler input can be used to manually submit contract verification in
     /// the browser.
-    #[clap(long, requires = "verify")]
+    #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: verify::VerifierArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     retry: RetryArgs,
 }
 

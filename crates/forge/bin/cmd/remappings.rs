@@ -12,10 +12,10 @@ pub struct RemappingArgs {
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
     /// Pretty-print the remappings, grouping each of them by context.
-    #[clap(long)]
+    #[arg(long)]
     pretty: bool,
 }
 impl_figment_convert_basic!(RemappingArgs);

@@ -18,7 +18,6 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    compact_to_contract,
     compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
     shell,
@@ -33,7 +32,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use regex::Regex;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel};
+use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -49,7 +48,7 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
-#[clap(next_help_heading = "Test options")]
+#[command(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Run a test in the debugger.
     ///
@@ -66,58 +65,58 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "TEST_FUNCTION")]
+    #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
     /// Print a gas report.
-    #[clap(long, env = "FORGE_GAS_REPORT")]
+    #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
     /// Exit with code 0 even if a test fails.
-    #[clap(long, env = "FORGE_ALLOW_FAILURE")]
+    #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
     /// Stop running tests after the first failure.
-    #[clap(long)]
+    #[arg(long)]
     pub fail_fast: bool,
 
     /// The Etherscan (or equivalent) API key.
-    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
     /// List tests instead of running them.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long)]
+    #[arg(long)]
     pub fuzz_seed: Option<U256>,
 
-    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     filter: FilterArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub watch: WatchArgs,
 
     /// Print test summary table.
-    #[clap(long, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     pub summary: bool,
 
     /// Print detailed test summary table.
-    #[clap(long, help_heading = "Display options", requires = "summary")]
+    #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 }
 
@@ -142,6 +141,11 @@ impl TestArgs {
     pub async fn execute_tests(self) -> Result<TestOutcome> {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // Explicitly enable isolation for gas reports for more correct gas accounting
+        if self.gas_report {
+            evm_opts.isolate = true;
+        }
 
         // Set up the project.
         let mut project = config.project()?;
@@ -196,7 +200,8 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
-            .with_test_options(test_options.clone())
+            .with_test_options(test_options)
+            .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
 
         if let Some(debug_test_pattern) = &self.debug {
@@ -210,30 +215,18 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let outcome = self.run_tests(runner, config, verbosity, &filter, test_options).await?;
+        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
-            let mut sources = ContractSources::default();
-            for (id, artifact) in output_clone.unwrap().into_artifacts() {
-                // Sources are only required for the debugger, but it *might* mean that there's
-                // something wrong with the build and/or artifacts.
-                if let Some(source) = artifact.source_file() {
-                    let path = source
-                        .ast
-                        .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
-                        .absolute_path;
-                    let abs_path = project.root().join(&path);
-                    let source_code = fs::read_to_string(abs_path)?;
-                    let contract = artifact.clone().into_contract_bytecode();
-                    let source_contract = compact_to_contract(contract)?;
-                    sources.insert(&id, source.id, source_code, source_contract);
-                }
-            }
-
             // There is only one test.
             let Some(test) = outcome.into_tests_cloned().next() else {
                 return Err(eyre::eyre!("no tests were executed"));
             };
+
+            let sources = ContractSources::from_project_output(
+                output_clone.as_ref().unwrap(),
+                project.root(),
+            )?;
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -257,7 +250,6 @@ impl TestArgs {
         config: Config,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
-        test_options: TestOptions,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -265,7 +257,7 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let num_filtered = runner.matching_test_function_count(filter);
+        let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered == 0 {
             println!();
             if filter.is_empty() {
@@ -280,7 +272,8 @@ impl TestArgs {
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
-                    let candidates = runner.get_tests(filter);
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                         println!("\nDid you mean `{suggestion}`?");
                     }
@@ -296,7 +289,7 @@ impl TestArgs {
         }
 
         if self.json {
-            let results = runner.test_collect(filter, test_options).await;
+            let results = runner.test_collect(filter);
             println!("{}", serde_json::to_string(&results)?);
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -309,9 +302,10 @@ impl TestArgs {
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle = tokio::task::spawn({
+        let timer = Instant::now();
+        let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            async move { runner.test(&filter, tx, test_options).await }
+            move || runner.test(&filter, tx)
         });
 
         let mut gas_report =
@@ -432,6 +426,7 @@ impl TestArgs {
                 break;
             }
         }
+        let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
 
@@ -442,7 +437,7 @@ impl TestArgs {
         }
 
         if !outcome.results.is_empty() {
-            shell::println(outcome.summary())?;
+            shell::println(outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
@@ -528,7 +523,7 @@ fn list(
             }
         }
     }
-    Ok(TestOutcome::new(BTreeMap::new(), false))
+    Ok(TestOutcome::empty(false))
 }
 
 #[cfg(test)]

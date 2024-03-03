@@ -614,15 +614,12 @@ contract Foo {
 });
 
 // test that `forge snapshot` commands work
-forgetest!(
-    #[serial_test::serial]
-    can_check_snapshot,
-    |prj, cmd| {
-        prj.insert_ds_test();
+forgetest!(can_check_snapshot, |prj, cmd| {
+    prj.insert_ds_test();
 
-        prj.add_source(
-            "ATest.t.sol",
-            r#"
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -630,20 +627,18 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.arg("snapshot");
+    cmd.arg("snapshot");
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_check_snapshot.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
+    );
 
-        cmd.arg("--check");
-        let _ = cmd.output();
-    }
-);
+    cmd.arg("--check");
+    let _ = cmd.output();
+});
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
@@ -1561,7 +1556,7 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
-    prj.clear_cache();
+    prj.clear();
 
     // only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
@@ -1578,8 +1573,6 @@ forgetest_init!(can_build_skip_contracts, |prj, cmd| {
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
-    prj.clear_cache();
-
     prj.add_test(
         "Foo",
         r"
@@ -1590,6 +1583,7 @@ function test_run() external {}
     .unwrap();
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
+    prj.clear();
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),

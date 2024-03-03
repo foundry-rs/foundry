@@ -51,7 +51,7 @@ pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 
 /// External test builder
 #[derive(Clone, Debug)]
-#[must_use = "call run()"]
+#[must_use = "ExtTester does nothing unless you `run` it"]
 pub struct ExtTester {
     pub org: &'static str,
     pub name: &'static str,
@@ -442,6 +442,12 @@ impl TestProject {
     /// Returns the path to the project's artifacts directory.
     pub fn artifacts(&self) -> &PathBuf {
         &self.paths().artifacts
+    }
+
+    /// Removes the project's cache and artifacts directory.
+    pub fn clear(&self) {
+        self.clear_cache();
+        self.clear_artifacts();
     }
 
     /// Removes this project's cache file.
@@ -1054,7 +1060,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
         // elapsed time
-        "(?:finished)? ?in .*?s",
+        r"(?:finished)? ?in .*?s(?: \(.*?s CPU time\))?",
         // file paths
         r"-->.*\.sol",
         r"Location(.|\n)*\.rs(.|\n)*Backtrace",

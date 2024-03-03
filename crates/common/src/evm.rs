@@ -39,33 +39,33 @@ pub type Breakpoints = HashMap<char, (Address, usize)>;
 /// # }
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
+#[command(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, see --fork-block-number.
-    #[clap(long, short, visible_alias = "rpc-url", value_name = "URL")]
+    #[arg(long, short, visible_alias = "rpc-url", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "BLOCK")]
+    #[arg(long, requires = "fork_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Number of retries.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "RETRIES")]
+    #[arg(long, requires = "fork_url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "BACKOFF")]
+    #[arg(long, requires = "fork_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -76,27 +76,27 @@ pub struct EvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
     /// The initial balance of deployed test contracts.
-    #[clap(long, value_name = "BALANCE")]
+    #[arg(long, value_name = "BALANCE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_balance: Option<U256>,
 
     /// The address which will be executing tests.
-    #[clap(long, value_name = "ADDRESS")]
+    #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
 
     /// Enable the FFI cheatcode.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub ffi: bool,
 
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub always_use_create_2_factory: bool,
 
@@ -109,7 +109,7 @@ pub struct EvmArgs {
     /// - 3: Print execution traces for failing tests
     /// - 4: Print execution traces for all tests, and setup traces for failing tests
     /// - 5: Print execution and setup traces for all tests
-    #[clap(long, short, verbatim_doc_comment, action = ArgAction::Count)]
+    #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count)]
     #[serde(skip)]
     pub verbosity: u8,
 
@@ -118,7 +118,7 @@ pub struct EvmArgs {
     /// default value: 330
     ///
     /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(
+    #[arg(
         long,
         requires = "fork_url",
         alias = "cups",
@@ -130,7 +130,7 @@ pub struct EvmArgs {
     /// Disables rate limiting for this node's provider.
     ///
     /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(
+    #[arg(
         long,
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
@@ -141,9 +141,16 @@ pub struct EvmArgs {
     pub no_rpc_rate_limit: bool,
 
     /// All ethereum environment related arguments
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
+
+    /// Whether to enable isolation of calls.
+    /// In isolation mode all top-level calls are executed as a separate transaction in a separate
+    /// EVM context, enabling more precise gas accounting and transaction state changes.
+    #[arg(long)]
+    #[serde(skip)]
+    pub isolate: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -164,6 +171,10 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.isolate {
+            dict.insert("isolate".to_string(), self.isolate.into());
         }
 
         if self.always_use_create_2_factory {
@@ -191,66 +202,66 @@ impl Provider for EvmArgs {
 
 /// Configures the executor environment during tests.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Executor environment config")]
+#[command(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
     /// The block gas limit.
-    #[clap(long, value_name = "GAS_LIMIT")]
+    #[arg(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
-    #[clap(long, value_name = "CODE_SIZE")]
+    #[arg(long, value_name = "CODE_SIZE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
 
     /// The chain name or EIP-155 chain ID.
-    #[clap(long, visible_alias = "chain-id", value_name = "CHAIN")]
+    #[arg(long, visible_alias = "chain-id", value_name = "CHAIN")]
     #[serde(rename = "chain_id", skip_serializing_if = "Option::is_none", serialize_with = "id")]
     pub chain: Option<Chain>,
 
     /// The gas price.
-    #[clap(long, value_name = "GAS_PRICE")]
+    #[arg(long, value_name = "GAS_PRICE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
-    #[clap(long, visible_alias = "base-fee", value_name = "FEE")]
+    #[arg(long, visible_alias = "base-fee", value_name = "FEE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The transaction origin.
-    #[clap(long, value_name = "ADDRESS")]
+    #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_origin: Option<Address>,
 
     /// The coinbase of the block.
-    #[clap(long, value_name = "ADDRESS")]
+    #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_coinbase: Option<Address>,
 
     /// The timestamp of the block.
-    #[clap(long, value_name = "TIMESTAMP")]
+    #[arg(long, value_name = "TIMESTAMP")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_timestamp: Option<u64>,
 
     /// The block number.
-    #[clap(long, value_name = "BLOCK")]
+    #[arg(long, value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_number: Option<u64>,
 
     /// The block difficulty.
-    #[clap(long, value_name = "DIFFICULTY")]
+    #[arg(long, value_name = "DIFFICULTY")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_difficulty: Option<u64>,
 
     /// The block prevrandao value. NOTE: Before merge this field was mix_hash.
-    #[clap(long, value_name = "PREVRANDAO")]
+    #[arg(long, value_name = "PREVRANDAO")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
-    #[clap(long, value_name = "GAS_LIMIT")]
+    #[arg(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 
@@ -258,7 +269,7 @@ pub struct EnvArgs {
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     ///
     /// The default is 128MiB.
-    #[clap(long, value_name = "MEMORY_LIMIT")]
+    #[arg(long, value_name = "MEMORY_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,
 }

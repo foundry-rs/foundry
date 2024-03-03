@@ -8,8 +8,9 @@ use std::{collections::BTreeMap, env};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_core() {
-    let mut runner = runner().await;
-    let results = runner.test_collect(&Filter::new(".*", ".*", ".*core"), test_opts()).await;
+    let filter = Filter::new(".*", ".*", ".*core");
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
@@ -77,8 +78,9 @@ async fn test_core() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_linking() {
-    let mut runner = runner().await;
-    let results = runner.test_collect(&Filter::new(".*", ".*", ".*linking"), test_opts()).await;
+    let filter = Filter::new(".*", ".*", ".*linking");
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
@@ -110,8 +112,9 @@ async fn test_linking() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_logs() {
-    let mut runner = runner().await;
-    let results = runner.test_collect(&Filter::new(".*", ".*", ".*logs"), test_opts()).await;
+    let filter = Filter::new(".*", ".*", ".*logs");
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
@@ -670,38 +673,31 @@ async fn test_logs() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_env_vars() {
-    let mut runner = runner().await;
-
-    // test `setEnv` first, and confirm that it can correctly set environment variables,
-    // so that we can use it in subsequent `env*` tests
-    let _ = runner.test_collect(&Filter::new("testSetEnv", ".*", ".*"), test_opts()).await;
     let env_var_key = "_foundryCheatcodeSetEnvTestKey";
     let env_var_val = "_foundryCheatcodeSetEnvTestVal";
-    let res = env::var(env_var_key);
-    assert!(
-        res.is_ok() && res.unwrap() == env_var_val,
-        "Test `testSetEnv` did not pass as expected.
-Reason: `setEnv` failed to set an environment variable `{env_var_key}={env_var_val}`"
-    );
+    env::remove_var(env_var_key);
+
+    let filter = Filter::new("testSetEnv", ".*", ".*");
+    let mut runner = runner();
+    let _ = runner.test_collect(&filter);
+
+    assert_eq!(env::var(env_var_key).unwrap(), env_var_val);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_doesnt_run_abstract_contract() {
-    let mut runner = runner().await;
-    let results = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()),
-            test_opts(),
-        )
-        .await;
+    let filter = Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str());
+    let mut runner = runner();
+    let results = runner.test_collect(&filter);
     assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
     assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace() {
-    let mut runner = tracing_runner().await;
-    let suite_result = runner.test_collect(&Filter::new(".*", ".*", ".*trace"), test_opts()).await;
+    let filter = Filter::new(".*", ".*", ".*trace");
+    let mut runner = tracing_runner();
+    let suite_result = runner.test_collect(&filter);
 
     // TODO: This trace test is very basic - it is probably a good candidate for snapshot
     // testing.
