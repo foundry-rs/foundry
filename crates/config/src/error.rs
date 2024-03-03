@@ -134,6 +134,8 @@ pub enum SolidityErrorCode {
     Unreachable,
     /// Missing pragma solidity
     PragmaSolidity,
+    /// Uses transient opcodes
+    TransientStorageUsed,
     /// All other error codes
     Other(u64),
 }
@@ -162,6 +164,7 @@ impl SolidityErrorCode {
             SolidityErrorCode::PragmaSolidity => "pragma-solidity",
             SolidityErrorCode::Other(code) => return Err(*code),
             SolidityErrorCode::VisibilityForConstructorIsIgnored => "constructor-visibility",
+            SolidityErrorCode::TransientStorageUsed => "transient-storage",
         };
         Ok(s)
     }
@@ -185,6 +188,7 @@ impl From<SolidityErrorCode> for u64 {
             SolidityErrorCode::PragmaSolidity => 3420,
             SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes => 3860,
             SolidityErrorCode::VisibilityForConstructorIsIgnored => 2462,
+            SolidityErrorCode::TransientStorageUsed => 2394,
             SolidityErrorCode::Other(code) => code,
         }
     }
