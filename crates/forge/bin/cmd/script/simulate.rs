@@ -1,4 +1,4 @@
-use crate::cmd::script::broadcast::estimate_gas;
+use crate::cmd::{init::get_commit_hash, script::broadcast::estimate_gas};
 
 use super::{
     artifacts::ArtifactInfo,
@@ -12,14 +12,12 @@ use super::{
     ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{utils::format_units, Address, U256};
-use ethers_core::types::transaction::eip2718::TypedTransaction;
-use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     inspectors::cheatcodes::{BroadcastableTransactions, ScriptWallets},
     traces::render_trace_arena,
 };
-use foundry_cli::utils::has_different_gas_calc;
+use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
     get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
 };
@@ -325,16 +323,10 @@ impl FilledTransactionsState {
                 }
             }
 
-            let sequence = ScriptSequence::new(
-                new_sequence,
-                self.execution_artifacts.returns.clone(),
-                &self.args.sig,
-                &self.build_data.build_data.target,
-                provider_info.chain,
-                &self.script_config.config,
-                self.args.broadcast,
+            let sequence = self.create_sequence(
                 is_multi_deployment,
-                self.build_data.libraries.clone(),
+                provider_info.chain,
+                new_sequence,
             )?;
 
             sequences.push(sequence);
@@ -396,6 +388,50 @@ impl FilledTransactionsState {
             execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
             sequence,
+        })
+    }
+
+    fn create_sequence(
+        &self,
+        multi: bool,
+        chain: u64,
+        transactions: VecDeque<TransactionWithMetadata>,
+    ) -> Result<ScriptSequence> {
+        let paths = if multi {
+            None
+        } else {
+            Some(ScriptSequence::get_paths(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                chain,
+                self.args.broadcast,
+            )?)
+        };
+
+        let commit = get_commit_hash(&self.script_config.config.__root.0);
+
+        let libraries = self
+            .build_data
+            .libraries
+            .libs
+            .iter()
+            .flat_map(|(file, libs)| {
+                libs.iter()
+                    .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
+            })
+            .collect();
+
+        Ok(ScriptSequence {
+            transactions,
+            returns: self.execution_artifacts.returns.clone(),
+            receipts: vec![],
+            pending: vec![],
+            paths,
+            timestamp: now().as_secs(),
+            libraries,
+            chain,
+            commit,
         })
     }
 }

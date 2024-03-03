@@ -25,7 +25,7 @@ use foundry_common::{
 use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::Config;
 use foundry_debugger::Debugger;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use yansi::Paint;
 
 pub struct ExecutionData {

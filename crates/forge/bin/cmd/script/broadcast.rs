@@ -59,7 +59,7 @@ pub async fn send_transaction(
     kind: SendTransactionKind<'_>,
     sequential_broadcast: bool,
     is_fixed_gas_limit: bool,
-    skip_simulation: bool,
+    estimate_via_rpc: bool,
     estimate_multiplier: u64,
 ) -> Result<TxHash> {
     let from = tx.from().expect("no sender");
@@ -75,9 +75,7 @@ pub async fn send_transaction(
 
     // Chains which use `eth_estimateGas` are being sent sequentially and require their
     // gas to be re-estimated right before broadcasting.
-    if !is_fixed_gas_limit &&
-        (has_different_gas_calc(provider.get_chainid().await?.as_u64()) || skip_simulation)
-    {
+    if !is_fixed_gas_limit && estimate_via_rpc {
         estimate_gas(&mut tx, &provider, estimate_multiplier).await?;
     }
 
@@ -219,14 +217,6 @@ impl BundledState {
             let already_broadcasted = sequence.receipts.len();
 
             if already_broadcasted < sequence.transactions.len() {
-                // We only wait for a transaction receipt before sending the next transaction, if
-                // there is more than one signer. There would be no way of assuring
-                // their order otherwise. Or if the chain does not support batched
-                // transactions (eg. Arbitrum).
-                let sequential_broadcast = send_kind.signers_count() != 1 ||
-                    self.args.slow ||
-                    !has_batch_support(sequence.chain);
-
                 // Make a one-time gas price estimation
                 let (gas_price, eip1559_fees) = match self.args.with_gas_price {
                     None => match sequence.transactions.front().unwrap().typed_tx() {
@@ -288,6 +278,18 @@ impl BundledState {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
+                let estimate_via_rpc =
+                    has_different_gas_calc(sequence.chain) || self.args.skip_simulation;
+
+                // We only wait for a transaction receipt before sending the next transaction, if
+                // there is more than one signer. There would be no way of assuring
+                // their order otherwise.
+                // Or if the chain does not support batched transactions (eg. Arbitrum).
+                // Or if we need to invoke eth_estimateGas before sending transactions.
+                let sequential_broadcast = estimate_via_rpc ||
+                    send_kind.signers_count() != 1 ||
+                    !has_batch_support(sequence.chain);
+
                 let pb = init_progress!(transactions, "txes");
 
                 // We send transactions and wait for receipts in batches of 100, since some networks
@@ -312,7 +314,7 @@ impl BundledState {
                             kind,
                             sequential_broadcast,
                             is_fixed_gas_limit,
-                            self.args.skip_simulation,
+                            estimate_via_rpc,
                             self.args.gas_estimate_multiplier,
                         );
                         pending_transactions.push(tx_hash);

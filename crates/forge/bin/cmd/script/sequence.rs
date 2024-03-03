@@ -16,13 +16,13 @@ use foundry_common::{
     types::{ToAlloy, ToEthers},
     SELECTOR_LEN,
 };
-use foundry_compilers::{artifacts::Libraries, ArtifactId};
+use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufWriter, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 use yansi::Paint;
 
@@ -72,14 +72,12 @@ pub struct ScriptSequence {
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
     #[serde(skip)]
-    pub path: PathBuf,
-    #[serde(skip)]
-    pub sensitive_path: PathBuf,
+    /// Contains paths to the sequence files
+    /// None if sequence should not be saved to disk (e.g. part of a multi-chain sequence)
+    pub paths: Option<(PathBuf, PathBuf)>,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
-    /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
-    pub multi: bool,
     pub commit: Option<String>,
 }
 
@@ -108,53 +106,6 @@ impl From<&mut ScriptSequence> for SensitiveScriptSequence {
 }
 
 impl ScriptSequence {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        transactions: VecDeque<TransactionWithMetadata>,
-        returns: HashMap<String, NestedValue>,
-        sig: &str,
-        target: &ArtifactId,
-        chain: u64,
-        config: &Config,
-        broadcasted: bool,
-        is_multi: bool,
-        libraries: Libraries,
-    ) -> Result<Self> {
-        let (path, sensitive_path) = ScriptSequence::get_paths(
-            &config.broadcast,
-            &config.cache_path,
-            sig,
-            target,
-            chain,
-            broadcasted && !is_multi,
-        )?;
-
-        let commit = get_commit_hash(&config.__root.0);
-
-        let libraries = libraries
-            .libs
-            .iter()
-            .flat_map(|(file, libs)| {
-                libs.iter()
-                    .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
-            })
-            .collect();
-
-        Ok(ScriptSequence {
-            transactions,
-            returns,
-            receipts: vec![],
-            pending: vec![],
-            path,
-            sensitive_path,
-            timestamp: now().as_secs(),
-            libraries,
-            chain,
-            commit,
-            multi: is_multi,
-        })
-    }
-
     /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
@@ -163,14 +114,8 @@ impl ScriptSequence {
         chain_id: u64,
         broadcasted: bool,
     ) -> Result<Self> {
-        let (path, sensitive_path) = ScriptSequence::get_paths(
-            &config.broadcast,
-            &config.cache_path,
-            sig,
-            target,
-            chain_id,
-            broadcasted,
-        )?;
+        let (path, sensitive_path) =
+            ScriptSequence::get_paths(config, sig, target, chain_id, broadcasted)?;
 
         let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
@@ -182,8 +127,7 @@ impl ScriptSequence {
 
         script_sequence.fill_sensitive(&sensitive_script_sequence);
 
-        script_sequence.path = path;
-        script_sequence.sensitive_path = sensitive_path;
+        script_sequence.paths = Some((path, sensitive_path));
 
         Ok(script_sequence)
     }
@@ -192,9 +136,13 @@ impl ScriptSequence {
     pub fn save(&mut self, silent: bool) -> Result<()> {
         self.sort_receipts();
 
-        if self.multi || self.transactions.is_empty() {
+        if self.transactions.is_empty() {
             return Ok(())
         }
+
+        let Some((path, sensitive_path)) = self.paths.clone() else {
+            return Ok(())
+        };
 
         self.timestamp = now().as_secs();
         let ts_name = format!("run-{}.json", self.timestamp);
@@ -203,25 +151,25 @@ impl ScriptSequence {
 
         // broadcast folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
+        let mut writer = BufWriter::new(fs::create_file(&path)?);
         serde_json::to_writer_pretty(&mut writer, &self)?;
         writer.flush()?;
         //../run-[timestamp].json
-        fs::copy(&self.path, self.path.with_file_name(&ts_name))?;
+        fs::copy(&path, path.with_file_name(&ts_name))?;
 
         // cache folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
+        let mut writer = BufWriter::new(fs::create_file(&sensitive_path)?);
         serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
         writer.flush()?;
         //../run-[timestamp].json
-        fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
+        fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
 
         if !silent {
-            shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
+            shell::println(format!("\nTransactions saved to: {}\n", path.display()))?;
             shell::println(format!(
                 "Sensitive values saved to: {}\n",
-                self.sensitive_path.display()
+                sensitive_path.display()
             ))?;
         }
 
@@ -252,15 +200,14 @@ impl ScriptSequence {
     /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
     /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
     pub fn get_paths(
-        broadcast: &Path,
-        cache: &Path,
+        config: &Config,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = broadcast.to_path_buf();
-        let mut cache = cache.to_path_buf();
+        let mut broadcast = config.broadcast.to_path_buf();
+        let mut cache = config.cache_path.to_path_buf();
         let mut common = PathBuf::new();
 
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
