@@ -44,7 +44,7 @@ use self::error::FailedInvariantCaseData;
 type InvariantPreparation = (
     EvmFuzzState,
     FuzzRunIdentifiedContracts,
-    BoxedStrategy<Vec<BasicTxDetails>>,
+    BoxedStrategy<BasicTxDetails>,
     CalldataFuzzDictionary,
 );
 
