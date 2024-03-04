@@ -30,8 +30,7 @@ pub struct InvariantConfig {
     pub shrink_run_limit: usize,
     /// If set to true then VM state is committed and available for next call
     /// Useful for handlers that use cheatcodes as roll or warp
-    /// Applies only when `fail_on_revert` set to true. Use it with caution, introduces performance
-    /// penalty.
+    /// Use it with caution, introduces performance penalty.
     pub preserve_state: bool,
 }
 
