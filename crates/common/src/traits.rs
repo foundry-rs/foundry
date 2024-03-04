@@ -17,6 +17,10 @@ pub trait TestFilter: Send + Sync {
     fn matches_path(&self, path: &Path) -> bool;
 }
 
+pub trait CoverageFilter: Send + Sync {
+    fn matches_file_path(&self, path: &Path) -> bool;
+}
+
 /// Extension trait for `Function`.
 pub trait TestFunctionExt {
     /// Returns whether this function should be executed as invariant test.

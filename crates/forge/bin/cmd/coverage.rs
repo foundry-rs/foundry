@@ -19,7 +19,7 @@ use foundry_cli::{
     p_println,
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_common::{compile::ProjectCompiler, CoverageFilter, evm::EvmArgs, fs};
 use foundry_compilers::{
     artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
     sourcemap::SourceMap,
@@ -28,6 +28,8 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
+use std::ops::Deref;
+use std::sync::Arc;
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
@@ -56,10 +58,10 @@ pub struct CoverageArgs {
     ///
     /// If not specified, the report will be stored in the root of the project.
     #[arg(
-        long,
-        short,
-        value_hint = ValueHint::FilePath,
-        value_name = "PATH"
+    long,
+    short,
+    value_hint = ValueHint::FilePath,
+    value_name = "PATH"
     )]
     report_file: Option<PathBuf>,
 
@@ -117,11 +119,11 @@ impl CoverageArgs {
 
             // print warning message
             let msg = Paint::yellow(concat!(
-                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
+            "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
                  which can result in inaccurate source mappings.\n",
-                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
-                "See more: https://github.com/foundry-rs/foundry/issues/3357",
+            "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+            "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+            "See more: https://github.com/foundry-rs/foundry/issues/3357",
             ));
             p_println!(!self.opts.silent => "{msg}");
 
@@ -162,7 +164,7 @@ impl CoverageArgs {
 
             // Filter out dependencies
             if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
-                continue
+                continue;
             }
 
             if let Some(ast) = source_file.ast.take() {
@@ -255,7 +257,7 @@ impl CoverageArgs {
                     )
                 })?,
             )?
-            .analyze()?;
+                .analyze()?;
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_analysis
                 .contract_items
                 .iter()
@@ -311,9 +313,10 @@ impl CoverageArgs {
 
         // Run tests
         let known_contracts = runner.known_contracts.clone();
-        let filter = self.filter;
+        let filter = Arc::new(self.filter.clone().merge_with_config(&config).args().to_owned());
+        let filter_ref_clone = filter.clone();
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle = tokio::task::spawn(async move { runner.test(&filter, tx).await });
+        let handle = tokio::task::spawn(async move { runner.test(filter_ref_clone.deref(), tx).await });
 
         // Add hit data to the coverage report
         let data = rx
@@ -352,6 +355,9 @@ impl CoverageArgs {
             }
         }
 
+        // Filter out the ignored files from the report
+        report.filter_out_ignored_sources(filter.deref());
+
         // Output final report
         for report_kind in self.report {
             match report_kind {
@@ -359,10 +365,10 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     if let Some(report_file) = self.report_file {
                         return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
-                            .report(&report)
+                            .report(&report);
                     } else {
                         return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                            .report(&report)
+                            .report(&report);
                     }
                 }
                 CoverageReportKind::Bytecode => {

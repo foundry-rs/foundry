@@ -236,6 +236,9 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
+    /// Only show coverage for files that do not match the specified glob pattern.
+    #[serde(rename = "no_coverage_path", with = "from_opt_glob")]
+    pub path_pattern_ignore_coverage: Option<globset::Glob>,
     /// Configuration for fuzz testing
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
@@ -1870,6 +1873,7 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
+            path_pattern_ignore_coverage: None,
             fuzz: Default::default(),
             invariant: Default::default(),
             always_use_create_2_factory: false,
