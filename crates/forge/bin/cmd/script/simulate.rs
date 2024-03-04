@@ -323,11 +323,8 @@ impl FilledTransactionsState {
                 }
             }
 
-            let sequence = self.create_sequence(
-                is_multi_deployment,
-                provider_info.chain,
-                new_sequence,
-            )?;
+            let sequence =
+                self.create_sequence(is_multi_deployment, provider_info.chain, new_sequence)?;
 
             sequences.push(sequence);
 

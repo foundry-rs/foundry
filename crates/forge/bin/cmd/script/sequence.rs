@@ -140,9 +140,7 @@ impl ScriptSequence {
             return Ok(())
         }
 
-        let Some((path, sensitive_path)) = self.paths.clone() else {
-            return Ok(())
-        };
+        let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
 
         self.timestamp = now().as_secs();
         let ts_name = format!("run-{}.json", self.timestamp);
@@ -167,10 +165,7 @@ impl ScriptSequence {
 
         if !silent {
             shell::println(format!("\nTransactions saved to: {}\n", path.display()))?;
-            shell::println(format!(
-                "Sensitive values saved to: {}\n",
-                sensitive_path.display()
-            ))?;
+            shell::println(format!("Sensitive values saved to: {}\n", sensitive_path.display()))?;
         }
 
         Ok(())
