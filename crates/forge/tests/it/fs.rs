@@ -8,7 +8,7 @@ use foundry_test_utils::Filter;
 async fn test_fs_disabled() {
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::none("./")]);
-    let runner = runner_with_config(config).await;
+    let runner = runner_with_config(config);
     let filter = Filter::new(".*", ".*", ".*fs/Disabled");
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -19,5 +19,5 @@ async fn test_fs_default() {
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
     let runner = runner_with_config(config);
     let filter = Filter::new(".*", ".*", ".*fs/Default");
-    TestConfig::with_filter(runner.await, filter).run().await;
+    TestConfig::with_filter(runner, filter).run().await;
 }

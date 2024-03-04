@@ -8,16 +8,11 @@ use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fuzz() {
-    let mut runner = runner().await;
-
-    let suite_result = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/")
-                .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)")
-                .exclude_paths("invariant"),
-            test_opts(),
-        )
-        .await;
+    let filter = Filter::new(".*", ".*", ".*fuzz/")
+        .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)")
+        .exclude_paths("invariant");
+    let mut runner = runner();
+    let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
 
@@ -27,15 +22,17 @@ async fn test_fuzz() {
                 "testPositive(uint256)" |
                 "testPositive(int256)" |
                 "testSuccessfulFuzz(uint128,uint128)" |
-                "testToStringFuzz(bytes32)" => assert!(
-                    result.status == TestStatus::Success,
+                "testToStringFuzz(bytes32)" => assert_eq!(
+                    result.status,
+                    TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
                     result.decoded_logs.join("\n")
                 ),
-                _ => assert!(
-                    result.status == TestStatus::Failure,
+                _ => assert_eq!(
+                    result.status,
+                    TestStatus::Failure,
                     "Test {} did not fail as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
@@ -48,16 +45,11 @@ async fn test_fuzz() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_successful_fuzz_cases() {
-    let mut runner = runner().await;
-
-    let suite_result = runner
-        .test_collect(
-            &Filter::new(".*", ".*", ".*fuzz/FuzzPositive")
-                .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
-                .exclude_paths("invariant"),
-            test_opts(),
-        )
-        .await;
+    let filter = Filter::new(".*", ".*", ".*fuzz/FuzzPositive")
+        .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
+        .exclude_paths("invariant");
+    let mut runner = runner();
+    let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
 
@@ -66,8 +58,9 @@ async fn test_successful_fuzz_cases() {
             match test_name.as_str() {
                 "testSuccessChecker(uint256)" |
                 "testSuccessChecker2(int256)" |
-                "testSuccessChecker3(uint32)" => assert!(
-                    result.status == TestStatus::Success,
+                "testSuccessChecker3(uint32)" => assert_eq!(
+                    result.status,
+                    TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
@@ -84,17 +77,13 @@ async fn test_successful_fuzz_cases() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_fuzz_collection() {
-    let mut runner = runner().await;
-
-    let mut opts = test_opts();
-    opts.invariant.depth = 100;
-    opts.invariant.runs = 1000;
-    opts.fuzz.runs = 1000;
-    opts.fuzz.seed = Some(U256::from(6u32));
-    runner.test_options = opts.clone();
-
-    let results =
-        runner.test_collect(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), opts).await;
+    let filter = Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol");
+    let mut runner = runner();
+    runner.test_options.invariant.depth = 100;
+    runner.test_options.invariant.runs = 1000;
+    runner.test_options.fuzz.runs = 1000;
+    runner.test_options.fuzz.seed = Some(U256::from(6u32));
+    let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
