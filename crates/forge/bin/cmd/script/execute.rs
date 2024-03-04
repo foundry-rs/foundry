@@ -8,6 +8,7 @@ use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes, U64};
 use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
+use ethers_providers::Middleware;
 use eyre::Result;
 use forge::{
     decode::{decode_console_logs, RevertDecoder},
@@ -20,12 +21,15 @@ use forge::{
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
+    provider::ethers::{get_http_provider, RpcUrl},
     shell, ContractsByArtifact,
 };
 use foundry_compilers::artifacts::ContractBytecodeSome;
-use foundry_config::Config;
+use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
-use std::collections::HashMap;
+use futures::future::join_all;
+use itertools::Itertools;
+use std::collections::{HashMap, HashSet};
 use yansi::Paint;
 
 pub struct ExecutionData {
@@ -200,18 +204,29 @@ impl PreExecutionState {
 }
 
 impl ExecutedState {
-    pub async fn prepare_simulation(mut self) -> Result<PreSimulationState> {
+    pub async fn prepare_simulation(self) -> Result<PreSimulationState> {
         let returns = self.get_returns()?;
 
         let known_contracts = self.build_data.get_flattened_contracts(true);
         let decoder = self.build_trace_decoder(&known_contracts)?;
 
-        if let Some(txs) = self.execution_result.transactions.as_ref() {
-            self.script_config.collect_rpcs(txs);
-        }
+        let txs = self.execution_result.transactions.clone().unwrap_or_default();
+        let rpc_data = RpcData::from_transactions(&txs);
 
-        self.script_config.check_multi_chain_constraints(&self.build_data.libraries)?;
-        self.script_config.check_shanghai_support().await?;
+        if rpc_data.is_multi_chain() {
+            shell::eprintln(format!(
+                "{}",
+                Paint::yellow(
+                    "Multi chain deployment is still under development. Use with caution."
+                )
+            ))?;
+            if !self.build_data.libraries.is_empty() {
+                eyre::bail!(
+                    "Multi chain deployment does not support library linking at the moment."
+                )
+            }
+        }
+        rpc_data.check_shanghai_support().await?;
 
         Ok(PreSimulationState {
             args: self.args,
@@ -220,7 +235,7 @@ impl ExecutedState {
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: self.execution_result,
-            execution_artifacts: ExecutionArtifacts { known_contracts, decoder, returns },
+            execution_artifacts: ExecutionArtifacts { known_contracts, decoder, returns, rpc_data },
         })
     }
 
@@ -308,10 +323,58 @@ pub struct PreSimulationState {
     pub execution_artifacts: ExecutionArtifacts,
 }
 
+pub struct RpcData {
+    /// Unique list of rpc urls present
+    pub total_rpcs: HashSet<RpcUrl>,
+    /// If true, one of the transactions did not have a rpc
+    pub missing_rpc: bool,
+}
+
+impl RpcData {
+    fn from_transactions(txs: &BroadcastableTransactions) -> Self {
+        let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
+        let total_rpcs =
+            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
+
+        Self { total_rpcs, missing_rpc }
+    }
+
+    pub fn is_multi_chain(&self) -> bool {
+        self.total_rpcs.len() > 1 || (self.missing_rpc && self.total_rpcs.len() > 0)
+    }
+
+    async fn check_shanghai_support(&self) -> Result<()> {
+        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
+            let provider = get_http_provider(rpc);
+            let id = provider.get_chainid().await.ok()?;
+            let id_u64: u64 = id.try_into().ok()?;
+            NamedChain::try_from(id_u64).ok()
+        });
+
+        let chains = join_all(chain_ids).await;
+        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
+        if iter.clone().any(|(s, _)| !s) {
+            let msg = format!(
+                "\
+EIP-3855 is not supported in one or more of the RPCs used.
+Unsupported Chain IDs: {}.
+Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
+                iter.filter(|(supported, _)| !supported)
+                    .map(|(_, chain)| *chain as u64)
+                    .format(", ")
+            );
+            shell::println(Paint::yellow(msg))?;
+        }
+        Ok(())
+    }
+}
+
 pub struct ExecutionArtifacts {
     pub known_contracts: ContractsByArtifact,
     pub decoder: CallTraceDecoder,
     pub returns: HashMap<String, NestedValue>,
+    pub rpc_data: RpcData,
 }
 
 impl PreSimulationState {

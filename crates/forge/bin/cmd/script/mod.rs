@@ -5,7 +5,6 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers_providers::{Http, Middleware};
 use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     backend::Backend,
@@ -23,26 +22,21 @@ use foundry_common::{
     provider::ethers::RpcUrl,
     shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
-use foundry_compilers::{
-    artifacts::{ContractBytecodeSome, Libraries},
-    ArtifactId,
-};
+use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
 use foundry_config::{
     figment,
     figment::{
         value::{Dict, Map},
         Metadata, Profile, Provider,
     },
-    Config, NamedChain,
+    Config,
 };
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, inspectors::cheatcodes::BroadcastableTransactions,
 };
 use foundry_wallets::MultiWalletOpts;
-use futures::future;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use yansi::Paint;
 
 mod artifacts;
@@ -398,10 +392,6 @@ pub struct ScriptConfig {
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
-    /// Unique list of rpc urls present
-    pub total_rpcs: HashSet<RpcUrl>,
-    /// If true, one of the transactions did not have a rpc
-    pub missing_rpc: bool,
 }
 
 impl ScriptConfig {
@@ -412,14 +402,7 @@ impl ScriptConfig {
             // dapptools compatibility
             1
         };
-        Ok(Self {
-            config,
-            evm_opts,
-            sender_nonce,
-            backends: HashMap::new(),
-            total_rpcs: HashSet::new(),
-            missing_rpc: false,
-        })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::new() })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -430,68 +413,6 @@ impl ScriptConfig {
             1
         };
         self.evm_opts.sender = sender;
-        Ok(())
-    }
-
-    fn collect_rpcs(&mut self, txs: &BroadcastableTransactions) {
-        self.missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-
-        self.total_rpcs
-            .extend(txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>());
-
-        if let Some(rpc) = &self.evm_opts.fork_url {
-            self.total_rpcs.insert(rpc.clone());
-        }
-    }
-
-    fn has_multiple_rpcs(&self) -> bool {
-        self.total_rpcs.len() > 1
-    }
-
-    /// Certain features are disabled for multi chain deployments, and if tried, will return
-    /// error. [library support]
-    fn check_multi_chain_constraints(&self, libraries: &Libraries) -> Result<()> {
-        if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
-            shell::eprintln(format!(
-                "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
-            ))?;
-            if !libraries.libs.is_empty() {
-                eyre::bail!(
-                    "Multi chain deployment does not support library linking at the moment."
-                )
-            }
-        }
-        Ok(())
-    }
-
-    /// Checks if the RPCs used point to chains that support EIP-3855.
-    /// If not, warns the user.
-    async fn check_shanghai_support(&self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = ethers_providers::Provider::<Http>::try_from(rpc).ok()?;
-            let id = provider.get_chainid().await.ok()?;
-            let id_u64: u64 = id.try_into().ok()?;
-            NamedChain::try_from(id_u64).ok()
-        });
-
-        let chains = future::join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
-        if iter.clone().any(|(s, _)| !s) {
-            let msg = format!(
-                "\
-EIP-3855 is not supported in one or more of the RPCs used.
-Unsupported Chain IDs: {}.
-Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
-For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
-                iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
-                    .format(", ")
-            );
-            shell::println(Paint::yellow(msg))?;
-        }
         Ok(())
     }
 

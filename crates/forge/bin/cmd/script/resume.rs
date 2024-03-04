@@ -25,7 +25,7 @@ impl PreSimulationState {
             execution_artifacts,
         } = self;
 
-        let sequence = if args.multi {
+        let sequence = if args.multi || execution_artifacts.rpc_data.is_multi_chain() {
             ScriptSequenceKind::Multi(MultiChainSequence::load(
                 &script_config.config,
                 &args.sig,

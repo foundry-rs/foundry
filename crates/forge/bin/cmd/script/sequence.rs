@@ -32,10 +32,10 @@ pub enum ScriptSequenceKind {
 }
 
 impl ScriptSequenceKind {
-    pub fn save(&mut self, silent: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         match self {
-            ScriptSequenceKind::Single(sequence) => sequence.save(silent),
-            ScriptSequenceKind::Multi(sequence) => sequence.save(silent),
+            ScriptSequenceKind::Single(sequence) => sequence.save(silent, save_ts),
+            ScriptSequenceKind::Multi(sequence) => sequence.save(silent, save_ts),
         }
     }
 
@@ -56,7 +56,7 @@ impl ScriptSequenceKind {
 
 impl Drop for ScriptSequenceKind {
     fn drop(&mut self) {
-        self.save(false).expect("could not save deployment sequence");
+        self.save(false, true).expect("could not save deployment sequence");
     }
 }
 
@@ -133,7 +133,9 @@ impl ScriptSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self, silent: bool) -> Result<()> {
+    /// `save_ts` should be set to true for checkpoint updates, which might happen many times and
+    /// could result in us saving many identical files.
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.sort_receipts();
 
         if self.transactions.is_empty() {
@@ -152,16 +154,20 @@ impl ScriptSequence {
         let mut writer = BufWriter::new(fs::create_file(&path)?);
         serde_json::to_writer_pretty(&mut writer, &self)?;
         writer.flush()?;
-        //../run-[timestamp].json
-        fs::copy(&path, path.with_file_name(&ts_name))?;
+        if save_ts {
+            //../run-[timestamp].json
+            fs::copy(&path, path.with_file_name(&ts_name))?;
+        }
 
         // cache folder writes
         //../run-latest.json
         let mut writer = BufWriter::new(fs::create_file(&sensitive_path)?);
         serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
         writer.flush()?;
-        //../run-[timestamp].json
-        fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
+        if save_ts {
+            //../run-[timestamp].json
+            fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
+        }
 
         if !silent {
             shell::println(format!("\nTransactions saved to: {}\n", path.display()))?;

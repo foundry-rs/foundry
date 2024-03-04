@@ -120,7 +120,7 @@ impl MultiChainSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self, silent: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
         self.timestamp = now().as_secs();
@@ -133,11 +133,13 @@ impl MultiChainSequence {
         serde_json::to_writer_pretty(&mut writer, &self)?;
         writer.flush()?;
 
-        //../Contract-[timestamp]/run.json
-        let path = self.path.to_string_lossy();
-        let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
-        fs::create_dir_all(file.parent().unwrap())?;
-        fs::copy(&self.path, &file)?;
+        if save_ts {
+            //../Contract-[timestamp]/run.json
+            let path = self.path.to_string_lossy();
+            let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
+            fs::create_dir_all(file.parent().unwrap())?;
+            fs::copy(&self.path, &file)?;
+        }
 
         // cache writes
         //../Contract-latest/run.json
@@ -145,11 +147,13 @@ impl MultiChainSequence {
         serde_json::to_writer_pretty(&mut writer, &sensitive_sequence)?;
         writer.flush()?;
 
-        //../Contract-[timestamp]/run.json
-        let path = self.sensitive_path.to_string_lossy();
-        let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
-        fs::create_dir_all(file.parent().unwrap())?;
-        fs::copy(&self.sensitive_path, &file)?;
+        if save_ts {
+            //../Contract-[timestamp]/run.json
+            let path = self.sensitive_path.to_string_lossy();
+            let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
+            fs::create_dir_all(file.parent().unwrap())?;
+            fs::copy(&self.sensitive_path, &file)?;
+        }
 
         if !silent {
             println!("\nTransactions saved to: {}\n", self.path.display());

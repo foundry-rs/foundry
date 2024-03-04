@@ -61,7 +61,7 @@ impl ScriptArgs {
                 &pre_simulation.build_data.highlevel_known_contracts,
             )?;
 
-            if pre_simulation.script_config.missing_rpc {
+            if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
                 shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 return Ok(());
             }

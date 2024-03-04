@@ -163,7 +163,7 @@ impl BundledState {
         let errors =
             join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
-        self.sequence.save(true)?;
+        self.sequence.save(true, false)?;
 
         if !errors.is_empty() {
             return Err(eyre::eyre!("{errors:?}"));
@@ -287,6 +287,7 @@ impl BundledState {
                 // Or if the chain does not support batched transactions (eg. Arbitrum).
                 // Or if we need to invoke eth_estimateGas before sending transactions.
                 let sequential_broadcast = estimate_via_rpc ||
+                    self.args.slow ||
                     send_kind.signers_count() != 1 ||
                     !has_batch_support(sequence.chain);
 
@@ -328,21 +329,21 @@ impl BundledState {
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
-                            sequence.save(true)?;
+                            sequence.save(true, false)?;
 
                             update_progress!(pb, index - already_broadcasted);
                             index += 1;
                         }
 
                         // Checkpoint save
-                        sequence.save(true)?;
+                        sequence.save(true, false)?;
 
                         shell::println("##\nWaiting for receipts.")?;
                         receipts::clear_pendings(provider.clone(), sequence, None).await?;
                     }
 
                     // Checkpoint save
-                    sequence.save(true)?;
+                    sequence.save(true, false)?;
                 }
             }
 

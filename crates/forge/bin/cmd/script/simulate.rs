@@ -195,13 +195,14 @@ impl PreSimulationState {
     /// Build the multiple runners from different forks.
     async fn build_runners(&self) -> Result<HashMap<RpcUrl, ScriptRunner>> {
         if !shell::verbosity().is_silent() {
-            let n = self.script_config.total_rpcs.len();
+            let n = self.execution_artifacts.rpc_data.total_rpcs.len();
             let s = if n != 1 { "s" } else { "" };
             println!("\n## Setting up {n} EVM{s}.");
         }
 
         let futs = self
-            .script_config
+            .execution_artifacts
+            .rpc_data
             .total_rpcs
             .iter()
             .map(|rpc| async {
