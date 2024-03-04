@@ -15,6 +15,7 @@ use etherscan::EtherscanVerificationProvider;
 pub mod provider;
 use provider::VerificationProvider;
 
+pub mod bytecode;
 mod sourcify;
 
 /// Verification provider arguments

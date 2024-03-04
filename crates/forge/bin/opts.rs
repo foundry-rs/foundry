@@ -17,7 +17,7 @@ use crate::cmd::{
     script::ScriptArgs,
     selectors::SelectorsSubcommands,
     snapshot, test, tree, update,
-    verify::{VerifyArgs, VerifyCheckArgs},
+    verify::{bytecode::VerifyBytecodeArgs, VerifyArgs, VerifyCheckArgs},
 };
 use clap::{Parser, Subcommand, ValueHint};
 use std::path::PathBuf;
@@ -167,6 +167,10 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Verify the deployed bytecode against its source.
+    #[clap(visible_alias = "vb")]
+    VerifyBytecode(VerifyBytecodeArgs),
 }
 
 #[cfg(test)]
