@@ -1,5 +1,5 @@
 use super::fuzz_param_from_state;
-use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
+use crate::invariant::ArtifactFilters;
 use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
@@ -251,10 +251,8 @@ pub fn collect_created_contracts(
     project_contracts: &ContractsByArtifact,
     setup_contracts: &ContractsByAddress,
     artifact_filters: &ArtifactFilters,
-    targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.lock();
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
@@ -262,12 +260,8 @@ pub fn collect_created_contracts(
                     if let Some((artifact, (abi, _))) =
                         project_contracts.find_by_code(&code.original_bytes())
                     {
-                        if let Some(functions) =
-                            artifact_filters.get_targeted_functions(artifact, abi)?
-                        {
+                        if artifact_filters.get_targeted_functions(artifact, abi)?.is_some() {
                             created_contracts.push(*address);
-                            writable_targeted
-                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
                         }
                     }
                 }
