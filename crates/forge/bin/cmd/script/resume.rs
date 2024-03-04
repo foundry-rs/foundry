@@ -69,7 +69,7 @@ impl PreSimulationState {
                     build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
 
                 ScriptSequenceKind::Single(seq)
-            },
+            }
             0 => eyre::bail!("No RPC URLs"),
         };
 
