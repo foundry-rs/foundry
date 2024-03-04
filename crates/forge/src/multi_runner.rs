@@ -26,6 +26,7 @@ use std::{
     fmt::Debug,
     path::Path,
     sync::{mpsc, Arc},
+    time::Instant,
 };
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (JsonAbi, Bytes, Vec<Bytes>)>;
@@ -65,57 +66,47 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    /// Returns the number of matching tests
-    pub fn matching_test_function_count(&self, filter: &dyn TestFilter) -> usize {
-        self.matching_test_functions(filter).count()
+    /// Returns an iterator over all contracts that match the filter.
+    pub fn matching_contracts<'a>(
+        &'a self,
+        filter: &'a dyn TestFilter,
+    ) -> impl Iterator<Item = (&ArtifactId, &(JsonAbi, Bytes, Vec<Bytes>))> {
+        self.contracts.iter().filter(|&(id, (abi, _, _))| matches_contract(id, abi, filter))
     }
 
-    /// Returns all test functions matching the filter
+    /// Returns an iterator over all test functions that match the filter.
     pub fn matching_test_functions<'a>(
+        &'a self,
+        filter: &'a dyn TestFilter,
+    ) -> impl Iterator<Item = &Function> {
+        self.matching_contracts(filter)
+            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .filter(|func| is_matching_test(func, filter))
+    }
+
+    /// Returns an iterator over all test functions in contracts that match the filter.
+    pub fn all_test_functions<'a>(
         &'a self,
         filter: &'a dyn TestFilter,
     ) -> impl Iterator<Item = &Function> {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, (abi, _, _))| {
-                abi.functions().filter(|func| filter.matches_test(&func.signature()))
-            })
-    }
-
-    /// Get an iterator over all test contract functions that matches the filter path and contract
-    /// name
-    fn filtered_tests<'a>(&'a self, filter: &'a dyn TestFilter) -> impl Iterator<Item = &Function> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, (abi, _, _))| abi.functions())
-    }
-
-    /// Get all test names matching the filter
-    pub fn get_tests(&self, filter: &dyn TestFilter) -> Vec<String> {
-        self.filtered_tests(filter)
-            .map(|func| func.name.clone())
-            .filter(|name| name.is_test())
-            .collect()
+            .filter(|func| func.is_test() || func.is_invariant_test())
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+        self.matching_contracts(filter)
             .map(|(id, (abi, _, _))| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let tests = abi
                     .functions()
-                    .filter(|func| func.name.is_test())
-                    .filter(|func| filter.matches_test(&func.signature()))
+                    .filter(|func| is_matching_test(func, filter))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
-
                 (source, name, tests)
             })
             .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
@@ -129,12 +120,8 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub async fn test_collect(
-        &mut self,
-        filter: &dyn TestFilter,
-        test_options: TestOptions,
-    ) -> BTreeMap<String, SuiteResult> {
-        self.test_iter(filter, test_options).await.collect()
+    pub fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
+        self.test_iter(filter).collect()
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -142,13 +129,12 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub async fn test_iter(
+    pub fn test_iter(
         &mut self,
         filter: &dyn TestFilter,
-        test_options: TestOptions,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, test_options).await;
+        self.test(filter, tx);
         rx.into_iter()
     }
 
@@ -158,50 +144,40 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub async fn test(
-        &mut self,
-        filter: &dyn TestFilter,
-        stream_result: mpsc::Sender<(String, SuiteResult)>,
-        test_options: TestOptions,
-    ) {
+    pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
         trace!("running all tests");
 
-        // the db backend that serves all the data, each contract gets its own instance
-        let db = Backend::spawn(self.fork.take()).await;
-
-        self.contracts
-            .par_iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
-            .for_each_with(stream_result, |stream_result, (id, (abi, deploy_code, libs))| {
-                let executor = ExecutorBuilder::new()
-                    .inspectors(|stack| {
-                        stack
-                            .cheatcodes(self.cheats_config.clone())
-                            .trace(self.evm_opts.verbosity >= 3 || self.debug)
-                            .debug(self.debug)
-                            .coverage(self.coverage)
-                            .enable_isolation(self.isolation)
-                    })
-                    .spec(self.evm_spec)
-                    .gas_limit(self.evm_opts.gas_limit())
-                    .build(self.env.clone(), db.clone());
-                let identifier = id.identifier();
-                trace!(contract=%identifier, "start executing all tests in contract");
-
-                let result = self.run_tests(
-                    &identifier,
-                    abi,
-                    executor,
-                    deploy_code.clone(),
-                    libs,
-                    filter,
-                    test_options.clone(),
-                );
-                trace!(contract=?identifier, "executed all tests in contract");
-
-                let _ = stream_result.send((identifier, result));
+        // The DB backend that serves all the data.
+        let db = Backend::spawn(self.fork.take());
+        let executor = ExecutorBuilder::new()
+            .inspectors(|stack| {
+                stack
+                    .cheatcodes(self.cheats_config.clone())
+                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                    .debug(self.debug)
+                    .coverage(self.coverage)
+                    .enable_isolation(self.isolation)
             })
+            .spec(self.evm_spec)
+            .gas_limit(self.evm_opts.gas_limit())
+            .build(self.env.clone(), db);
+
+        let find_timer = Instant::now();
+        let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
+        let find_time = find_timer.elapsed();
+        debug!(
+            "Found {} test contracts out of {} in {:?}",
+            contracts.len(),
+            self.contracts.len(),
+            find_time,
+        );
+
+        contracts.par_iter().for_each_with(tx, |tx, &(id, (abi, deploy_code, libs))| {
+            let identifier = id.identifier();
+            let executor = executor.clone();
+            let result = self.run_tests(&identifier, abi, executor, deploy_code, libs, filter);
+            let _ = tx.send((identifier, result));
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -210,20 +186,17 @@ impl MultiContractRunner {
         name: &str,
         contract: &JsonAbi,
         executor: Executor,
-        deploy_code: Bytes,
+        deploy_code: &Bytes,
         libs: &[Bytes],
         filter: &dyn TestFilter,
-        test_options: TestOptions,
     ) -> SuiteResult {
-        let span = info_span!("run_tests");
-        if !span.is_disabled() {
-            if enabled!(tracing::Level::TRACE) {
-                span.record("contract", name);
-            } else {
-                span.record("contract", get_contract_name(name));
-            }
+        let mut span_name = name;
+        if !enabled!(tracing::Level::TRACE) {
+            span_name = get_contract_name(span_name);
         }
-        let _guard = span.enter();
+        let _guard = info_span!("run_tests", name = span_name).entered();
+
+        debug!("start executing all tests in contract");
 
         let runner = ContractRunner::new(
             name,
@@ -236,7 +209,11 @@ impl MultiContractRunner {
             libs,
             self.debug,
         );
-        runner.run_tests(filter, test_options, Some(&self.known_contracts))
+        let r = runner.run_tests(filter, &self.test_options, Some(&self.known_contracts));
+
+        debug!(duration=?r.duration, "executed all tests in contract");
+
+        r
     }
 }
 
@@ -394,4 +371,14 @@ impl MultiContractRunnerBuilder {
             isolation: self.isolation,
         })
     }
+}
+
+fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
+    (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
+        abi.functions().any(|func| is_matching_test(func, filter))
+}
+
+/// Returns `true` if the function is a test function that matches the given filter.
+pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
+    (func.is_test() || func.is_invariant_test()) && filter.matches_test(&func.signature())
 }

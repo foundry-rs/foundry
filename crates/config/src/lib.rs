@@ -1901,6 +1901,7 @@ impl Default for Config {
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
                 SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
+                SolidityErrorCode::TransientStorageUsed,
             ],
             ignored_file_paths: vec![],
             deny_warnings: false,
