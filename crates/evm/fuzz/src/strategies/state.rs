@@ -150,6 +150,21 @@ pub fn collect_state_from_call(
 ) {
     let mut state = state.write();
 
+    // Insert log topics and data.
+    for log in logs {
+        for topic in log.topics() {
+            state.values_mut().insert(topic.0);
+        }
+        let chunks = log.data.data.chunks_exact(32);
+        let rem = chunks.remainder();
+        for chunk in chunks {
+            state.values_mut().insert(chunk.try_into().unwrap());
+        }
+        if !rem.is_empty() {
+            state.values_mut().insert(B256::right_padding_from(rem).0);
+        }
+    }
+
     for (address, account) in state_changeset {
         // Insert basic account information
         state.values_mut().insert(address.into_word().into());
@@ -182,23 +197,6 @@ pub fn collect_state_from_call(
                     state.values_mut().insert(B256::from(above_value).0);
                 }
             }
-        } else {
-            return;
-        }
-    }
-
-    // Insert log topics and data.
-    for log in logs {
-        for topic in log.topics() {
-            state.values_mut().insert(topic.0);
-        }
-        let chunks = log.data.data.chunks_exact(32);
-        let rem = chunks.remainder();
-        for chunk in chunks {
-            state.values_mut().insert(chunk.try_into().unwrap());
-        }
-        if !rem.is_empty() {
-            state.values_mut().insert(B256::right_padding_from(rem).0);
         }
     }
 }
