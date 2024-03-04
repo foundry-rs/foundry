@@ -29,7 +29,8 @@ struct InvariantProgress {
 /// Reporter of the invariant test progress, set as a global reporter.
 /// The number of invariant runs are incremented prior of each test execution.
 /// Completed runs are incremented on each test execution.
-/// Status is displayed in terminal as a spinner message on a thread that polls progress every 100ms.
+/// Status is displayed in terminal as a spinner message on a thread that polls progress every
+/// 100ms.
 #[derive(Clone)]
 pub struct InvariantRunsReporter {
     inner: Arc<Mutex<InvariantProgress>>,
