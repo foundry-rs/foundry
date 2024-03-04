@@ -5540,7 +5540,7 @@
     },
     {
       "func": {
-        "id": "parseToml",
+        "id": "parseToml_0",
         "description": "ABI-encodes a TOML object.",
         "declaration": "function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);",
         "visibility": "external",
@@ -5552,6 +5552,26 @@
           33,
           81,
           240
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseToml_1",
+        "description": "ABI-encodes a TOML object at `key`.",
+        "declaration": "function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseToml(string,string)",
+        "selector": "0x37736e08",
+        "selectorBytes": [
+          55,
+          115,
+          110,
+          8
         ]
       },
       "group": "toml",
@@ -6540,26 +6560,6 @@
     },
     {
       "func": {
-        "id": "serializeToml",
-        "description": "Serializes a key and value to a TOML object stored in-memory that can be later written to a file.\nReturns the stringified version of the specific TOML file up to that moment.",
-        "declaration": "function serializeToml(string calldata objectKey, string calldata value) external returns (string memory toml);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "serializeToml(string,string)",
-        "selector": "0xb542ac89",
-        "selectorBytes": [
-          181,
-          66,
-          172,
-          137
-        ]
-      },
-      "group": "toml",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "serializeUint_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);",
@@ -7540,9 +7540,9 @@
     },
     {
       "func": {
-        "id": "writeToml",
-        "description": "Write a serialized TOML object to a file. If the file exists, it will be overwritten.",
-        "declaration": "function writeToml(string calldata toml, string calldata path) external;",
+        "id": "writeToml_0",
+        "description": "Write a serialized TOML object after JSON conversion to a file. If the file exists, it will be overwritten.",
+        "declaration": "function writeToml(string calldata json, string calldata path) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "writeToml(string,string)",
@@ -7552,6 +7552,26 @@
           134,
           91,
           167
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeToml_1",
+        "description": "Write a serialized TOML object after JSON conversion to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.",
+        "declaration": "function writeToml(string calldata json, string calldata path, string calldata valueKey) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeToml(string,string,string)",
+        "selector": "0x51ac6a33",
+        "selectorBytes": [
+          81,
+          172,
+          106,
+          51
         ]
       },
       "group": "toml",

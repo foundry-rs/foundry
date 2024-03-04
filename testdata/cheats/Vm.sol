@@ -275,6 +275,7 @@ interface Vm {
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
+    function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
     function prank(address msgSender) external;
@@ -324,7 +325,6 @@ interface Vm {
     function serializeJson(string calldata objectKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string[] calldata values) external returns (string memory json);
-    function serializeToml(string calldata objectKey, string calldata value) external returns (string memory toml);
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256[] calldata values) external returns (string memory json);
     function setEnv(string calldata name, string calldata value) external;
@@ -374,5 +374,6 @@ interface Vm {
     function writeJson(string calldata json, string calldata path) external;
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
     function writeLine(string calldata path, string calldata data) external;
-    function writeToml(string calldata toml, string calldata path) external;
+    function writeToml(string calldata json, string calldata path) external;
+    function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 }

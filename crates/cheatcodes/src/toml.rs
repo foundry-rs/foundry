@@ -1,117 +1,100 @@
 //! Implementations of [`Toml`](crate::Group::Toml) cheatcodes.
 
-use crate::{json::serialize_json, Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
-use toml::Value;
+use serde_json::Value as JsonValue;
+use toml::Value as TomlValue;
 
-// TODO: add documentation (`parse-toml`, `serialize-toml`, `write-toml) in Foundry Book
+// TODO: add documentation (`parse-toml`, `write-toml) in Foundry Book
 // TODO: add comprehensive tests, including edge cases
 // TODO: add upstream support to `forge-std` for the proposed cheatcodes
-// TODO: make sure this is the correct way of implementing new cheatcodes, incl. specification
-// TODO: make sure serialization and deserialization is correct
 
-impl Cheatcode for parseTomlCall {
+impl Cheatcode for parseToml_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
-        parse_toml(toml)
+        let toml = parse_toml_str(toml)?;
+        let json = toml_to_json(toml)?;
+        let json_string = serde_json::to_string(&json)?;
+        parse_json(json_string, "$")
     }
 }
 
-impl Cheatcode for serializeTomlCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        // To allow for TOML manipulation we re-use the existing JSON serialization mechanism.
-        // This avoids the need to implement a parallel implementation including cheatcodes.
-        let Self { objectKey, value } = self;
-        serialize_json(state, objectKey, None, value)
+impl Cheatcode for parseToml_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { toml, key } = self;
+        let toml = parse_toml_str(toml)?;
+        let json = toml_to_json(toml)?;
+        let json_string = serde_json::to_string(&json)?;
+        parse_json(json_string, key)
     }
 }
 
-impl Cheatcode for writeTomlCall {
+impl Cheatcode for writeToml_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, path } = self;
         let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
-        let json_string = serde_json::to_string_pretty(&json)?;
-        super::fs::write_file(state, path.as_ref(), json_string.as_bytes())
-
-        // let toml = toml::from_str(toml).unwrap_or_else(|_| Value::String(toml.to_owned()));
-        // let toml_string =
-        //     toml::to_string_pretty(&toml).map_err(|e| fmt_err!("failed serializing TOML: {e}"))?;
-        // super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
+        let toml = json_to_toml(json)?;
+        let toml_string = toml::to_string_pretty(&toml)?;
+        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
 }
 
-fn parse_toml(toml: &str) -> Result {
-    let toml = parse_toml_str(toml)?;
-    let sol = value_to_token(&toml)?;
+impl Cheatcode for writeToml_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { json, path, valueKey } = self;
+        let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
 
-    // Double `abi_encode` is intentional
-    let bytes = sol.abi_encode();
-    Ok(bytes.abi_encode())
+        let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let data_s = fs::read_to_string(data_path)?;
+        let data = serde_json::from_str(&data_s)?;
+        let value =
+            jsonpath_lib::replace_with(data, &canonicalize_json_path(valueKey), &mut |_| {
+                Some(json.clone())
+            })?;
+
+        // TODO: deduplicate
+
+        let toml = json_to_toml(value)?;
+        let toml_string = toml::to_string_pretty(&toml)?;
+        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
+    }
 }
 
-fn parse_toml_str(toml: &str) -> Result<Value> {
+fn parse_toml_str(toml: &str) -> Result<TomlValue> {
     toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
 }
 
-fn value_to_token(value: &Value) -> Result<DynSolValue> {
+/// Convert a TOML value to a JSON value.
+fn toml_to_json(value: TomlValue) -> Result<JsonValue> {
     match value {
-        Value::Boolean(boolean) => Ok(DynSolValue::Bool(*boolean)),
-        Value::Integer(integer) => {
-            let s = integer.to_string();
-
-            if let Ok(n) = s.parse() {
-                return Ok(DynSolValue::Uint(n, 256));
-            }
-
-            if let Ok(n) = s.parse() {
-                return Ok(DynSolValue::Int(n, 256));
-            }
-
-            Err(fmt_err!("unsupported TOML integer: {integer}"))
+        TomlValue::String(s) => Ok(JsonValue::String(s)),
+        TomlValue::Float(f) => {}
+        TomlValue::Integer(i) => {}
+        TomlValue::Boolean(b) => Ok(JsonValue::Bool(b)),
+        TomlValue::Datetime(d) => Ok(JsonValue::String(d.to_string())),
+        TomlValue::Array(a) => {
+            Ok(JsonValue::Array(a.into_iter().map(|v| toml_to_json(v).unwrap()).collect()))
         }
-        Value::Float(float) => {
-            // Check if the number has decimal digits because the EVM does not support floating
-            // point math
-            if float.fract() == 0.0 {
-                let s = float.to_string();
+        TomlValue::Table(t) => Ok(JsonValue::Object(
+            t.into_iter().map(|(k, v)| (k, toml_to_json(v).unwrap())).collect(),
+        )),
+    }
+}
 
-                if s.contains('e') {
-                    if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Uint(n, 256));
-                    }
-                    if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Int(n, 256));
-                    }
-                }
-            }
-
-            Err(fmt_err!("unsupported TOML float: {float}"))
+/// Convert a JSON value to a TOML value.
+fn json_to_toml(value: JsonValue) -> Result<TomlValue> {
+    match value {
+        JsonValue::Null => {}
+        JsonValue::Bool(b) => Ok(TomlValue::Boolean(b)),
+        JsonValue::Number(n) => {}
+        JsonValue::String(s) => Ok(TomlValue::String(s)),
+        JsonValue::Array(a) => {
+            Ok(TomlValue::Array(a.into_iter().map(|v| json_to_toml(v).unwrap()).collect()))
         }
-        Value::Datetime(datetime) => Err(fmt_err!("unsupported TOML datetime: {datetime}")),
-        Value::Array(array) => {
-            array.iter().map(value_to_token).collect::<Result<_>>().map(DynSolValue::Array)
-        }
-        Value::Table(table) => {
-            table.values().map(value_to_token).collect::<Result<_>>().map(DynSolValue::Tuple)
-        }
-        Value::String(string) => {
-            if let Some(mut val) = string.strip_prefix("0x") {
-                let s;
-                if val.len() % 2 != 0 {
-                    s = format!("0{}", val);
-                    val = &s[..];
-                }
-                let bytes = hex::decode(val)?;
-                Ok(match bytes.len() {
-                    20 => DynSolValue::Address(Address::from_slice(&bytes)),
-                    32 => DynSolValue::FixedBytes(B256::from_slice(&bytes), 32),
-                    _ => DynSolValue::Bytes(bytes),
-                })
-            } else {
-                Ok(DynSolValue::String(string.to_owned()))
-            }
-        }
+        JsonValue::Object(o) => Ok(TomlValue::Table(
+            o.into_iter().map(|(k, v)| (k, json_to_toml(v).unwrap())).collect(),
+        )),
     }
 }

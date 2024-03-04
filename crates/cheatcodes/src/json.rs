@@ -318,7 +318,7 @@ fn parse_json_str(json: &str) -> Result<Value> {
 fn json_to_sol(json: &[&Value]) -> Result<Vec<DynSolValue>> {
     let mut sol = Vec::with_capacity(json.len());
     for value in json {
-        sol.push(value_to_token(value)?);
+        sol.push(json_value_to_token(value)?);
     }
     Ok(sol)
 }
@@ -359,12 +359,12 @@ fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
 #[instrument(target = "cheatcodes", level = "trace", ret)]
-pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
+pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
         Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),
         Value::Array(array) => {
-            array.iter().map(value_to_token).collect::<Result<_>>().map(DynSolValue::Array)
+            array.iter().map(json_value_to_token).collect::<Result<_>>().map(DynSolValue::Array)
         }
         value @ Value::Object(_) => {
             // See: [#3647](https://github.com/foundry-rs/foundry/pull/3647)
@@ -372,7 +372,7 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
                 serde_json::from_value(value.clone()).unwrap();
             ordered_object
                 .values()
-                .map(value_to_token)
+                .map(json_value_to_token)
                 .collect::<Result<_>>()
                 .map(DynSolValue::Tuple)
         }
@@ -446,7 +446,7 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
 /// object, so that the user can use that as a value to a new invocation of the same function with a
 /// new object key. This enables the user to reuse the same function to crate arbitrarily complex
 /// object structures (JSON).
-pub(super) fn serialize_json(
+fn serialize_json(
     state: &mut Cheatcodes,
     object_key: &str,
     value_key: Option<&str>,

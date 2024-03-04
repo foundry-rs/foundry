@@ -1827,22 +1827,23 @@ interface Vm {
     #[cheatcode(group = Toml)]
     function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
 
-    // -------- Writing --------
-
-    // NOTE: Please read https://book.getfoundry.sh/cheatcodes/serialize-toml to understand how
-    // to use the serialization cheat.
-
-    /// Serializes a key and value to a TOML object stored in-memory that can be later written to a file.
-    /// Returns the stringified version of the specific TOML file up to that moment.
+    /// ABI-encodes a TOML object at `key`.
     #[cheatcode(group = Toml)]
-    function serializeToml(string calldata objectKey, string calldata value) external returns (string memory toml);
+    function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
+
+    // -------- Writing --------
 
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/write-toml to understand how
     // to use the TOML writing cheat.
 
-    /// Write a serialized TOML object to a file. If the file exists, it will be overwritten.
+    /// Write a serialized TOML object after JSON conversion to a file. If the file exists, it will be overwritten.
     #[cheatcode(group = Toml)]
-    function writeToml(string calldata toml, string calldata path) external;
+    function writeToml(string calldata json, string calldata path) external;
+
+    /// Write a serialized TOML object after JSON conversion to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
+    #[cheatcode(group = Toml)]
+    function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 
     // -------- Key Management --------
 
