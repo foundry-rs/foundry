@@ -209,7 +209,9 @@ impl BundledState {
             SendTransactionsKind::Raw(signers)
         };
 
-        for sequence in self.sequence.iter_sequeneces_mut() {
+        for i in 0..self.sequence.sequences_len() {
+            let mut sequence = self.sequence.get_sequence_mut(i).unwrap();
+
             let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
             let already_broadcasted = sequence.receipts.len();
 
@@ -326,21 +328,23 @@ impl BundledState {
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
-                            sequence.save(true, false)?;
+                            self.sequence.save(true, false)?;
+                            sequence = self.sequence.get_sequence_mut(i).unwrap();
 
                             update_progress!(pb, index - already_broadcasted);
                             index += 1;
                         }
 
                         // Checkpoint save
-                        sequence.save(true, false)?;
+                        self.sequence.save(true, false)?;
+                        sequence = self.sequence.get_sequence_mut(i).unwrap();
 
                         shell::println("##\nWaiting for receipts.")?;
                         receipts::clear_pendings(provider.clone(), sequence, None).await?;
                     }
-
                     // Checkpoint save
-                    sequence.save(true, false)?;
+                    self.sequence.save(true, false)?;
+                    sequence = self.sequence.get_sequence_mut(i).unwrap();
                 }
             }
 

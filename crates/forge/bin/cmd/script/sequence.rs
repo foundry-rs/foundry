@@ -52,6 +52,26 @@ impl ScriptSequenceKind {
             ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter_mut(),
         }
     }
+
+    pub fn sequences_len(&self) -> usize {
+        match self {
+            ScriptSequenceKind::Single(_) => 1,
+            ScriptSequenceKind::Multi(sequence) => sequence.deployments.len(),
+        }
+    }
+
+    pub fn get_sequence_mut(&mut self, index: usize) -> Option<&mut ScriptSequence> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => {
+                if index == 0 {
+                    Some(sequence)
+                } else {
+                    None
+                }
+            }
+            ScriptSequenceKind::Multi(sequence) => sequence.deployments.get_mut(index),
+        }
+    }
 }
 
 impl Drop for ScriptSequenceKind {
