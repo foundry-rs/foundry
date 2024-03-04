@@ -58,7 +58,7 @@ impl PreSimulationState {
                         false,
                     )?,
                     Err(err) => {
-                        eyre::bail!(err.wrap_err("If you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation."))
+                        eyre::bail!(err.wrap_err("Failed to resume the script."))
                     }
                 };
 
