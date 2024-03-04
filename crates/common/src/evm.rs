@@ -272,6 +272,10 @@ pub struct EnvArgs {
     #[arg(long, value_name = "MEMORY_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,
+
+    /// Whether to disable the block gas limit checks.
+    #[arg(long, visible_alias = "no-gas-limit")]
+    pub disable_block_gas_limit: bool,
 }
 
 impl EvmArgs {

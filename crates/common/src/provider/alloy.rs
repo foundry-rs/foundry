@@ -203,18 +203,6 @@ impl ProviderBuilder {
         self
     }
 
-    /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
-    /// interval.
-    pub async fn connect(self) -> Result<RetryProvider> {
-        let provider = self.build()?;
-        // todo: port poll interval hint
-        /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-        }) {
-            provider = provider.interval(blocktime / 2);
-            }*/
-        Ok(provider)
-    }
-
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let ProviderBuilder {
