@@ -1,4 +1,4 @@
-use super::{InvariantFailures, InvariantFuzzError};
+use super::{error::FailedInvariantCaseData, InvariantFailures, InvariantFuzzError};
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -50,7 +50,7 @@ pub fn assert_invariants(
     if is_err {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.error.is_none() {
-            invariant_failures.error = Some(InvariantFuzzError::new(
+            let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 Some(func),
                 calldata,
@@ -58,7 +58,8 @@ pub fn assert_invariants(
                 &inner_sequence,
                 shrink_sequence,
                 shrink_run_limit,
-            ));
+            );
+            invariant_failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data));
             return None
         }
     }

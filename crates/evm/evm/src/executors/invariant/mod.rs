@@ -9,7 +9,7 @@ use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
 use foundry_evm_core::{
-    constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     utils::{get_function, StateChangeset},
 };
 use foundry_evm_fuzz::{
@@ -37,9 +37,11 @@ pub use error::{InvariantFailures, InvariantFuzzError, InvariantFuzzTestResult};
 mod funcs;
 pub use funcs::{assert_invariants, replay_run};
 
+use self::error::FailedInvariantCaseData;
+
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation =
-    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>);
+    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<BasicTxDetails>);
 
 /// Enriched results of an invariant run check.
 ///
@@ -137,7 +139,9 @@ impl<'a> InvariantExecutor<'a> {
         // during the run. We need another proptest runner to query for random
         // values.
         let branch_runner = RefCell::new(self.runner.clone());
-        let _ = self.runner.run(&strat, |mut inputs| {
+        let _ = self.runner.run(&strat, |first_input| {
+            let mut inputs = vec![first_input];
+
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if self.config.fail_on_revert && failures.borrow().reverts > 0 {
                 return Err(TestCaseError::fail("Revert occurred."))
@@ -152,7 +156,10 @@ impl<'a> InvariantExecutor<'a> {
             // Created contracts during a run.
             let mut created_contracts = vec![];
 
-            for current_run in 0..self.config.depth {
+            let mut current_run = 0;
+            let mut assume_rejects_counter = 0;
+
+            while current_run < self.config.depth {
                 let (sender, (address, calldata)) = inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
@@ -166,65 +173,77 @@ impl<'a> InvariantExecutor<'a> {
                         .expect("could not make raw evm call")
                 };
 
-                // Collect data for fuzzing from the state changeset.
-                let mut state_changeset =
-                    call_result.state_changeset.to_owned().expect("no changesets");
+                if call_result.result.as_ref() == MAGIC_ASSUME {
+                    inputs.pop();
+                    assume_rejects_counter += 1;
+                    if assume_rejects_counter > self.config.max_assume_rejects {
+                        failures.borrow_mut().error = Some(InvariantFuzzError::MaxAssumeRejects(
+                            self.config.max_assume_rejects,
+                        ));
+                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
+                    }
+                } else {
+                    // Collect data for fuzzing from the state changeset.
+                    let mut state_changeset =
+                        call_result.state_changeset.to_owned().expect("no changesets");
 
-                collect_data(
-                    &mut state_changeset,
-                    sender,
-                    &call_result,
-                    fuzz_state.clone(),
-                    &self.config.dictionary,
-                );
-
-                if let Err(error) = collect_created_contracts(
-                    &state_changeset,
-                    self.project_contracts,
-                    self.setup_contracts,
-                    &self.artifact_filters,
-                    targeted_contracts.clone(),
-                    &mut created_contracts,
-                ) {
-                    warn!(target: "forge::test", "{error}");
-                }
-
-                // Commit changes to the database.
-                executor.backend.commit(state_changeset.clone());
-
-                fuzz_runs.push(FuzzCase {
-                    calldata: calldata.clone(),
-                    gas: call_result.gas_used,
-                    stipend: call_result.stipend,
-                });
-
-                let RichInvariantResults { success: can_continue, call_result: call_results } =
-                    can_continue(
-                        &invariant_contract,
-                        call_result,
-                        &executor,
-                        &inputs,
-                        &mut failures.borrow_mut(),
-                        &targeted_contracts,
-                        state_changeset,
-                        self.config.fail_on_revert,
-                        self.config.shrink_sequence,
-                        self.config.shrink_run_limit,
+                    collect_data(
+                        &mut state_changeset,
+                        sender,
+                        &call_result,
+                        fuzz_state.clone(),
+                        &self.config.dictionary,
                     );
 
-                if !can_continue || current_run == self.config.depth - 1 {
-                    *last_run_calldata.borrow_mut() = inputs.clone();
-                }
+                    if let Err(error) = collect_created_contracts(
+                        &state_changeset,
+                        self.project_contracts,
+                        self.setup_contracts,
+                        &self.artifact_filters,
+                        targeted_contracts.clone(),
+                        &mut created_contracts,
+                    ) {
+                        warn!(target: "forge::test", "{error}");
+                    }
 
-                if !can_continue {
-                    break
-                }
+                    // Commit changes to the database.
+                    executor.backend.commit(state_changeset.clone());
 
-                *last_call_results.borrow_mut() = call_results;
+                    fuzz_runs.push(FuzzCase {
+                        calldata: calldata.clone(),
+                        gas: call_result.gas_used,
+                        stipend: call_result.stipend,
+                    });
+
+                    let RichInvariantResults { success: can_continue, call_result: call_results } =
+                        can_continue(
+                            &invariant_contract,
+                            call_result,
+                            &executor,
+                            &inputs,
+                            &mut failures.borrow_mut(),
+                            &targeted_contracts,
+                            state_changeset,
+                            self.config.fail_on_revert,
+                            self.config.shrink_sequence,
+                            self.config.shrink_run_limit,
+                        );
+
+                    if !can_continue || current_run == self.config.depth - 1 {
+                        *last_run_calldata.borrow_mut() = inputs.clone();
+                    }
+
+                    if !can_continue {
+                        break
+                    }
+
+                    *last_call_results.borrow_mut() = call_results;
+                    current_run += 1;
+                }
 
                 // Generates the next call from the run using the recently updated
                 // dictionary.
-                inputs.extend(
+                inputs.push(
                     strat
                         .new_tree(&mut branch_runner.borrow_mut())
                         .map_err(|_| TestCaseError::Fail("Could not generate case".into()))?
@@ -760,7 +779,7 @@ fn can_continue(
         failures.reverts += 1;
         // If fail on revert is set, we must return immediately.
         if fail_on_revert {
-            let error = InvariantFuzzError::new(
+            let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 None,
                 calldata,
@@ -769,8 +788,8 @@ fn can_continue(
                 shrink_sequence,
                 shrink_run_limit,
             );
-
-            failures.revert_reason = Some(error.revert_reason.clone());
+            failures.revert_reason = Some(case_data.revert_reason.clone());
+            let error = InvariantFuzzError::Revert(case_data);
             failures.error = Some(error);
 
             return RichInvariantResults::new(false, None)

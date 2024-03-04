@@ -51,10 +51,10 @@ pub fn invariant_strat(
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
     dictionary_weight: u32,
-) -> impl Strategy<Value = Vec<BasicTxDetails>> {
+) -> impl Strategy<Value = BasicTxDetails> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    generate_call(fuzz_state, senders, contracts, dictionary_weight).prop_map(|x| vec![x])
+    generate_call(fuzz_state, senders, contracts, dictionary_weight)
 }
 
 /// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated

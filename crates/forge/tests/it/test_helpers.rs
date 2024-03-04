@@ -109,6 +109,7 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18u32),
             preserve_state: false,
+            max_assume_rejects: 65536,
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")

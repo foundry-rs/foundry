@@ -25,7 +25,7 @@ use foundry_evm::{
     fuzz::{invariant::InvariantContract, CounterExample},
     traces::{load_contracts, TraceKind},
 };
-use proptest::test_runner::{TestError, TestRunner};
+use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -513,26 +513,28 @@ impl<'a> ContractRunner<'a> {
         let mut logs = logs.clone();
         let mut traces = traces.clone();
         let success = error.is_none();
-        let reason = error
-            .as_ref()
-            .and_then(|err| (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone()));
+        let reason = error.as_ref().and_then(|err| err.revert_reason());
         let mut coverage = coverage.clone();
         match error {
             // If invariants were broken, replay the error to collect logs and traces
-            Some(error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. }) => {
-                match error.replay(
-                    self.executor.clone(),
-                    known_contracts,
-                    identified_contracts.clone(),
-                    &mut logs,
-                    &mut traces,
-                ) {
-                    Ok(c) => counterexample = c,
-                    Err(err) => {
-                        error!(%err, "Failed to replay invariant error");
-                    }
-                };
-            }
+            Some(error) => match error {
+                InvariantFuzzError::BrokenInvariant(case_data) |
+                InvariantFuzzError::Revert(case_data) => {
+                    match case_data.replay(
+                        self.executor.clone(),
+                        known_contracts,
+                        identified_contracts.clone(),
+                        &mut logs,
+                        &mut traces,
+                    ) {
+                        Ok(c) => counterexample = c,
+                        Err(err) => {
+                            error!(%err, "Failed to replay invariant error");
+                        }
+                    };
+                }
+                _ => {}
+            },
 
             // If invariants ran successfully, replay the last run to collect logs and
             // traces.

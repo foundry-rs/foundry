@@ -137,6 +137,10 @@ async fn test_invariant() {
                 "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
                 vec![("invariant_preserve_state()", true, None, None, None)],
             ),
+            (
+                "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
+                vec![("invariant_dummy()", true, None, None, None)],
+            ),
         ]),
     );
 }
@@ -317,6 +321,43 @@ async fn test_invariant_preserve_state() {
                 "invariant_preserve_state()",
                 false,
                 Some("EvmError: Revert".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_assume_does_not_revert() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAssume.t.sol");
+    let mut runner = runner();
+    // Should not treat vm.assume as revert.
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
+            vec![("invariant_dummy()", true, None, None, None)],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_assume_respects_restrictions() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAssume.t.sol");
+    let mut runner = runner();
+    runner.test_options.invariant.max_assume_rejects = 1;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
+            vec![(
+                "invariant_dummy()",
+                false,
+                Some("The `vm.assume` cheatcode rejected too many inputs (1 allowed)".into()),
                 None,
                 None,
             )],
