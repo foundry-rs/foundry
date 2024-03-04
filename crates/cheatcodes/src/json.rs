@@ -280,7 +280,7 @@ impl Cheatcode for writeJson_1Call {
     }
 }
 
-fn parse_json(json: &str, path: &str) -> Result {
+pub(super) fn parse_json(json: &str, path: &str) -> Result {
     let value = parse_json_str(json)?;
     let selected = select(&value, path)?;
     let sol = json_to_sol(&selected)?;
@@ -345,7 +345,7 @@ fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
 
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: <https://goessner.net/articles/JsonPath/>
-fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
+pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
     if !path.starts_with('$') {
         format!("${path}").into()
     } else {
