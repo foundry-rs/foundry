@@ -168,6 +168,7 @@ impl BundledState {
         Ok(self)
     }
 
+    /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState> {
         let required_addresses = self
             .sequence

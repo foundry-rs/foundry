@@ -16,7 +16,108 @@ use foundry_compilers::{
 use foundry_linking::{LinkOutput, Linker};
 use std::str::FromStr;
 
+/// Container for the compiled contracts.
+pub struct BuildData {
+    /// Linker which can be used to link contracts, owns [ArtifactContracts] map.
+    pub linker: Linker,
+    /// Id of target contract artifact.
+    pub target: ArtifactId,
+    /// Source files of the contracts. Used by debugger.
+    pub sources: ContractSources,
+}
+
+impl BuildData {
+    /// Links the build data with given libraries, using sender and nonce to compute addresses of
+    /// missing libraries.
+    pub fn link(
+        self,
+        known_libraries: Libraries,
+        sender: Address,
+        nonce: u64,
+    ) -> Result<LinkedBuildData> {
+        let link_output =
+            self.linker.link_with_nonce_or_address(known_libraries, sender, nonce, &self.target)?;
+
+        LinkedBuildData::new(link_output, self)
+    }
+
+    /// Links the build data with the given libraries. Expects supplied libraries set being enough
+    /// to fully link target contract.
+    pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
+        let link_output =
+            self.linker.link_with_nonce_or_address(libraries, Address::ZERO, 0, &self.target)?;
+
+        if !link_output.libs_to_deploy.is_empty() {
+            eyre::bail!("incomplete libraries set");
+        }
+
+        LinkedBuildData::new(link_output, self)
+    }
+}
+
+/// Container for the linked contracts and their dependencies
+pub struct LinkedBuildData {
+    /// Original build data, might be used to relink this object with different libraries.
+    pub build_data: BuildData,
+    /// Known fully linked contracts.
+    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+    /// Libraries used to link the contracts.
+    pub libraries: Libraries,
+    /// Libraries that need to be deployed by sender before script execution.
+    pub predeploy_libraries: Vec<Bytes>,
+}
+
+impl LinkedBuildData {
+    pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
+        let highlevel_known_contracts = build_data
+            .linker
+            .get_linked_artifacts(&link_output.libraries)?
+            .iter()
+            .filter_map(|(id, contract)| {
+                ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
+                    .ok()
+                    .map(|tc| (id.clone(), tc))
+            })
+            .filter(|(_, tc)| tc.bytecode.object.is_non_empty_bytecode())
+            .collect();
+
+        Ok(Self {
+            build_data,
+            highlevel_known_contracts,
+            libraries: link_output.libraries,
+            predeploy_libraries: link_output.libs_to_deploy,
+        })
+    }
+
+    /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
+    pub fn get_flattened_contracts(&self, deployed_code: bool) -> ContractsByArtifact {
+        ContractsByArtifact(
+            self.highlevel_known_contracts
+                .iter()
+                .filter_map(|(id, c)| {
+                    let bytecode = if deployed_code {
+                        c.deployed_bytecode.bytes()
+                    } else {
+                        c.bytecode.bytes()
+                    };
+                    bytecode.cloned().map(|code| (id.clone(), (c.abi.clone(), code.into())))
+                })
+                .collect(),
+        )
+    }
+
+    /// Fetches target bytecode from linked contracts.
+    pub fn get_target_contract(&self) -> Result<ContractBytecodeSome> {
+        self.highlevel_known_contracts
+            .get(&self.build_data.target)
+            .cloned()
+            .ok_or_eyre("target not found in linked artifacts")
+    }
+}
+
 impl PreprocessedState {
+    /// Parses user input and compiles the contracts depending on script target.
+    /// After compilation, finds exact [ArtifactId] of the target contract.
     pub fn compile(self) -> Result<CompiledState> {
         let Self { args, script_config, script_wallets } = self;
         let project = script_config.config.project()?;
@@ -115,95 +216,8 @@ impl PreprocessedState {
     }
 }
 
-pub struct BuildData {
-    pub linker: Linker,
-    pub target: ArtifactId,
-    pub sources: ContractSources,
-}
-
-impl BuildData {
-    /// Links the build data with given libraries, sender and nonce.
-    pub fn link(
-        self,
-        known_libraries: Libraries,
-        sender: Address,
-        nonce: u64,
-    ) -> Result<LinkedBuildData> {
-        let link_output =
-            self.linker.link_with_nonce_or_address(known_libraries, sender, nonce, &self.target)?;
-
-        LinkedBuildData::new(link_output, self)
-    }
-
-    /// Links the build data with the given libraries.
-    pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        let link_output =
-            self.linker.link_with_nonce_or_address(libraries, Address::ZERO, 0, &self.target)?;
-
-        if !link_output.libs_to_deploy.is_empty() {
-            eyre::bail!("incomplete libraries set");
-        }
-
-        LinkedBuildData::new(link_output, self)
-    }
-}
-
-pub struct LinkedBuildData {
-    pub build_data: BuildData,
-    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-    pub libraries: Libraries,
-    pub predeploy_libraries: Vec<Bytes>,
-}
-
-impl LinkedBuildData {
-    pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
-        let highlevel_known_contracts = build_data
-            .linker
-            .get_linked_artifacts(&link_output.libraries)?
-            .iter()
-            .filter_map(|(id, contract)| {
-                ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
-                    .ok()
-                    .map(|tc| (id.clone(), tc))
-            })
-            .filter(|(_, tc)| tc.bytecode.object.is_non_empty_bytecode())
-            .collect();
-
-        Ok(Self {
-            build_data,
-            highlevel_known_contracts,
-            libraries: link_output.libraries,
-            predeploy_libraries: link_output.libs_to_deploy,
-        })
-    }
-
-    /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
-    pub fn get_flattened_contracts(&self, deployed_code: bool) -> ContractsByArtifact {
-        ContractsByArtifact(
-            self.highlevel_known_contracts
-                .iter()
-                .filter_map(|(id, c)| {
-                    let bytecode = if deployed_code {
-                        c.deployed_bytecode.bytes()
-                    } else {
-                        c.bytecode.bytes()
-                    };
-                    bytecode.cloned().map(|code| (id.clone(), (c.abi.clone(), code.into())))
-                })
-                .collect(),
-        )
-    }
-
-    /// Fetches target bytecode from linked contracts.
-    pub fn get_target_contract(&self) -> Result<ContractBytecodeSome> {
-        self.highlevel_known_contracts
-            .get(&self.build_data.target)
-            .cloned()
-            .ok_or_eyre("target not found in linked artifacts")
-    }
-}
-
 impl CompiledState {
+    /// Uses provided sender address to compute library addresses and link contracts with them.
     pub fn link(self) -> Result<LinkedState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 

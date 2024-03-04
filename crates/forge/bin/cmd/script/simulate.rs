@@ -52,6 +52,10 @@ impl PreSimulationState {
         })
     }
 
+    /// Builds separate runners and environments for each RPC used in script and executes all
+    /// transactions in those environments.
+    ///
+    /// Collects gas usage and metadata for each transaction.
     pub async fn onchain_simulation(
         &self,
         transactions: BroadcastableTransactions,
@@ -161,6 +165,7 @@ impl PreSimulationState {
         Ok(final_txs)
     }
 
+    /// Build mapping from contract address to its ABI, code and contract name.
     fn build_address_to_abi_map<'a>(
         &self,
         contracts: &'a ContractsByArtifact,
@@ -187,20 +192,18 @@ impl PreSimulationState {
             .collect()
     }
 
-    /// Build the multiple runners from different forks.
+    /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
     async fn build_runners(&self) -> Result<HashMap<RpcUrl, ScriptRunner>> {
+        let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
         if !shell::verbosity().is_silent() {
-            let n = self.execution_artifacts.rpc_data.total_rpcs.len();
+            let n = rpcs.len();
             let s = if n != 1 { "s" } else { "" };
             println!("\n## Setting up {n} EVM{s}.");
         }
 
-        let futs = self
-            .execution_artifacts
-            .rpc_data
-            .total_rpcs
-            .iter()
-            .map(|rpc| async {
+        let futs = rpcs
+            .into_iter()
+            .map(|rpc| async move {
                 let mut script_config = self.script_config.clone();
                 script_config.evm_opts.fork_url = Some(rpc.clone());
                 let runner = script_config.get_runner().await?;
@@ -211,6 +214,8 @@ impl PreSimulationState {
         join_all(futs).await.into_iter().collect()
     }
 
+    /// If simulation is disabled, converts transactions into [TransactionWithMetadata] type
+    /// skipping metadata filling.
     fn no_simulation(
         &self,
         transactions: BroadcastableTransactions,
@@ -368,12 +373,15 @@ impl FilledTransactionsState {
         })
     }
 
+    /// Creates a [ScriptSequence] object from the given transactions.
     fn create_sequence(
         &self,
         multi: bool,
         chain: u64,
         transactions: VecDeque<TransactionWithMetadata>,
     ) -> Result<ScriptSequence> {
+        // Paths are set to None for multi-chain sequences parts, because they don't need to be
+        // saved to a separate file.
         let paths = if multi {
             None
         } else {

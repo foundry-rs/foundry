@@ -32,15 +32,21 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use yansi::Paint;
 
+/// Container for data we need for execution which can only be obtained after linking stage.
 pub struct ExecutionData {
+    /// Function to call.
     pub func: Function,
+    /// Calldata to pass to the target contract.
     pub calldata: Bytes,
+    /// Bytecode of the target contract.
     pub bytecode: Bytes,
+    /// ABI of the target contract.
     pub abi: JsonAbi,
 }
 
 impl LinkedState {
     /// Given linked and compiled artifacts, prepares data we need for execution.
+    /// This includes the function to call and the calldata to pass to it.
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 
@@ -65,6 +71,8 @@ impl LinkedState {
 }
 
 impl PreExecutionState {
+    /// Executes the script and returns the state after execution.
+    /// Might require executing script twice in cases when we determine sender from execution.
     #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
@@ -78,7 +86,7 @@ impl PreExecutionState {
         if let Some(new_sender) = self.maybe_new_sender(result.transactions.as_ref())? {
             self.script_config.update_sender(new_sender).await?;
 
-            // Rollback to linking state to relink contracts with the new sender.
+            // Rollback to rerun linking with the new sender.
             let state = CompiledState {
                 args: self.args,
                 script_config: self.script_config,
@@ -120,6 +128,7 @@ impl PreExecutionState {
         })
     }
 
+    /// Executes the script using the provided runner and returns the [ScriptResult].
     pub async fn execute_with_runner(&self, runner: &mut ScriptRunner) -> Result<ScriptResult> {
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
@@ -156,6 +165,10 @@ impl PreExecutionState {
         Ok(setup_result)
     }
 
+    /// It finds the deployer from the running script and uses it to predeploy libraries.
+    ///
+    /// If there are multiple candidate addresses, it skips everything and lets `--sender` deploy
+    /// them instead.
     fn maybe_new_sender(
         &self,
         transactions: Option<&BroadcastableTransactions>,
@@ -186,7 +199,72 @@ impl PreExecutionState {
     }
 }
 
+/// Container for information about RPC-endpoints used during script execution.
+pub struct RpcData {
+    /// Unique list of rpc urls present.
+    pub total_rpcs: HashSet<RpcUrl>,
+    /// If true, one of the transactions did not have a rpc.
+    pub missing_rpc: bool,
+}
+
+impl RpcData {
+    /// Iterates over script transactions and collects RPC urls.
+    fn from_transactions(txs: &BroadcastableTransactions) -> Self {
+        let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
+        let total_rpcs =
+            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
+
+        Self { total_rpcs, missing_rpc }
+    }
+
+    /// Returns true if script might be multi-chain.
+    /// Returns false positive in case when missing rpc is the same as the only rpc present.
+    pub fn is_multi_chain(&self) -> bool {
+        self.total_rpcs.len() > 1 || (self.missing_rpc && !self.total_rpcs.is_empty())
+    }
+
+    /// Checks if all RPCs support EIP-3855. Prints a warning if not.
+    async fn check_shanghai_support(&self) -> Result<()> {
+        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
+            let provider = get_http_provider(rpc);
+            let id = provider.get_chainid().await.ok()?;
+            let id_u64: u64 = id.try_into().ok()?;
+            NamedChain::try_from(id_u64).ok()
+        });
+
+        let chains = join_all(chain_ids).await;
+        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
+        if iter.clone().any(|(s, _)| !s) {
+            let msg = format!(
+                "\
+EIP-3855 is not supported in one or more of the RPCs used.
+Unsupported Chain IDs: {}.
+Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
+                iter.filter(|(supported, _)| !supported)
+                    .map(|(_, chain)| *chain as u64)
+                    .format(", ")
+            );
+            shell::println(Paint::yellow(msg))?;
+        }
+        Ok(())
+    }
+}
+
+/// Container for data being collected after execution.
+pub struct ExecutionArtifacts {
+    /// Mapping from contract to its runtime code.
+    pub known_contracts: ContractsByArtifact,
+    /// Trace decoder used to decode traces.
+    pub decoder: CallTraceDecoder,
+    /// Return values from the execution result.
+    pub returns: HashMap<String, NestedValue>,
+    /// Information about RPC endpoints used during script execution.
+    pub rpc_data: RpcData,
+}
+
 impl ExecutedState {
+    /// Collects the data we need for simulation and various post-execution tasks.
     pub async fn prepare_simulation(self) -> Result<PreSimulationState> {
         let returns = self.get_returns()?;
 
@@ -222,6 +300,7 @@ impl ExecutedState {
         })
     }
 
+    /// Builds [CallTraceDecoder] from the execution result and known contracts.
     fn build_trace_decoder(
         &self,
         known_contracts: &ContractsByArtifact,
@@ -258,6 +337,7 @@ impl ExecutedState {
         Ok(decoder)
     }
 
+    /// Collects the return values from the execution result.
     fn get_returns(&self) -> Result<HashMap<String, NestedValue>> {
         let mut returns = HashMap::new();
         let returned = &self.execution_result.returned;
@@ -294,62 +374,6 @@ impl ExecutedState {
 
         Ok(returns)
     }
-}
-
-pub struct RpcData {
-    /// Unique list of rpc urls present
-    pub total_rpcs: HashSet<RpcUrl>,
-    /// If true, one of the transactions did not have a rpc
-    pub missing_rpc: bool,
-}
-
-impl RpcData {
-    fn from_transactions(txs: &BroadcastableTransactions) -> Self {
-        let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-        let total_rpcs =
-            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
-
-        Self { total_rpcs, missing_rpc }
-    }
-
-    /// Returns true if script might be multi-chain.
-    /// Returns false positive in case when missing rpc is the same as the only rpc present.
-    pub fn is_multi_chain(&self) -> bool {
-        self.total_rpcs.len() > 1 || (self.missing_rpc && !self.total_rpcs.is_empty())
-    }
-
-    async fn check_shanghai_support(&self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = get_http_provider(rpc);
-            let id = provider.get_chainid().await.ok()?;
-            let id_u64: u64 = id.try_into().ok()?;
-            NamedChain::try_from(id_u64).ok()
-        });
-
-        let chains = join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
-        if iter.clone().any(|(s, _)| !s) {
-            let msg = format!(
-                "\
-EIP-3855 is not supported in one or more of the RPCs used.
-Unsupported Chain IDs: {}.
-Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
-For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
-                iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
-                    .format(", ")
-            );
-            shell::println(Paint::yellow(msg))?;
-        }
-        Ok(())
-    }
-}
-
-pub struct ExecutionArtifacts {
-    pub known_contracts: ContractsByArtifact,
-    pub decoder: CallTraceDecoder,
-    pub returns: HashMap<String, NestedValue>,
-    pub rpc_data: RpcData,
 }
 
 impl PreSimulationState {
