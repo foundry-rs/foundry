@@ -1,9 +1,6 @@
-use super::{ScriptArgs, ScriptConfig};
+use super::states::{CompiledState, LinkedState, PreprocessedState};
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, OptionExt, Result};
-use forge::{
-    inspectors::cheatcodes::ScriptWallets,
-};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
@@ -18,12 +15,6 @@ use foundry_compilers::{
 };
 use foundry_linking::{LinkOutput, Linker};
 use std::str::FromStr;
-
-pub struct PreprocessedState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-}
 
 impl PreprocessedState {
     pub fn compile(self) -> Result<CompiledState> {
@@ -212,13 +203,6 @@ impl LinkedBuildData {
     }
 }
 
-pub struct CompiledState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: BuildData,
-}
-
 impl CompiledState {
     pub fn link(self) -> Result<LinkedState> {
         let Self { args, script_config, script_wallets, build_data } = self;
@@ -230,11 +214,4 @@ impl CompiledState {
 
         Ok(LinkedState { args, script_config, script_wallets, build_data })
     }
-}
-
-pub struct LinkedState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: LinkedBuildData,
 }

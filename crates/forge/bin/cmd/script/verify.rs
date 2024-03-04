@@ -7,7 +7,7 @@ use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
 
-use super::{broadcast::BroadcastedState, simulate::BundledState};
+use super::states::{BroadcastedState, BundledState};
 
 impl BundledState {
     pub fn verify_preflight_check(&self) -> Result<()> {

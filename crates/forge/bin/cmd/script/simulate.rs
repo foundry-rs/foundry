@@ -2,21 +2,16 @@ use crate::cmd::{init::get_commit_hash, script::broadcast::estimate_gas};
 
 use super::{
     artifacts::ArtifactInfo,
-    build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData, PreSimulationState},
     multi_sequence::MultiChainSequence,
     providers::ProvidersManager,
     runner::ScriptRunner,
     sequence::{ScriptSequence, ScriptSequenceKind},
+    states::{BundledState, FilledTransactionsState, PreSimulationState},
     transaction::TransactionWithMetadata,
-    ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{utils::format_units, Address, U256};
-use eyre::{Context, OptionExt, Result};
-use forge::{
-    inspectors::cheatcodes::{BroadcastableTransactions, ScriptWallets},
-    traces::render_trace_arena,
-};
+use eyre::{Context, Result};
+use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::render_trace_arena};
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
     get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
@@ -231,16 +226,6 @@ impl PreSimulationState {
     }
 }
 
-pub struct FilledTransactionsState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TransactionWithMetadata>,
-}
-
 impl FilledTransactionsState {
     /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
     /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
@@ -248,13 +233,7 @@ impl FilledTransactionsState {
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
     pub async fn bundle(self) -> Result<BundledState> {
-        // User might be using both "in-code" forks and `--fork-url`.
-        let last_rpc = &self
-            .transactions
-            .back()
-            .ok_or_eyre("No onchain transactions generated in script")?
-            .rpc;
-        let is_multi_deployment = self.transactions.iter().any(|tx| &tx.rpc != last_rpc);
+        let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
@@ -432,14 +411,4 @@ impl FilledTransactionsState {
             commit,
         })
     }
-}
-
-pub struct BundledState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_artifacts: ExecutionArtifacts,
-    pub sequence: ScriptSequenceKind,
 }

@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use ethers_providers::Middleware;
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use foundry_common::provider::ethers::try_get_http_provider;
 use foundry_compilers::artifacts::Libraries;
 
 use super::{
-    execute::PreSimulationState,
     multi_sequence::MultiChainSequence,
     sequence::{ScriptSequence, ScriptSequenceKind},
-    simulate::BundledState,
+    states::{BundledState, PreSimulationState},
 };
 
 impl PreSimulationState {
@@ -25,51 +24,53 @@ impl PreSimulationState {
             execution_artifacts,
         } = self;
 
-        let sequence = if args.multi || execution_artifacts.rpc_data.is_multi_chain() {
-            ScriptSequenceKind::Multi(MultiChainSequence::load(
+        if execution_artifacts.rpc_data.missing_rpc {
+            eyre::bail!("Missing `--fork-url` field.")
+        }
+
+        let sequence = match execution_artifacts.rpc_data.total_rpcs.len() {
+            2.. => ScriptSequenceKind::Multi(MultiChainSequence::load(
                 &script_config.config,
                 &args.sig,
                 &build_data.build_data.target,
-            )?)
-        } else {
-            let fork_url = script_config
-                .evm_opts
-                .fork_url
-                .as_deref()
-                .ok_or_eyre("Missing `--fork-url` field.")?;
+            )?),
+            1 => {
+                let fork_url = execution_artifacts.rpc_data.total_rpcs.iter().next().unwrap();
 
-            let provider = Arc::new(try_get_http_provider(fork_url)?);
-            let chain = provider.get_chainid().await?.as_u64();
+                let provider = Arc::new(try_get_http_provider(fork_url)?);
+                let chain = provider.get_chainid().await?.as_u64();
 
-            let seq = match ScriptSequence::load(
-                &script_config.config,
-                &args.sig,
-                &build_data.build_data.target,
-                chain,
-                args.broadcast,
-            ) {
-                Ok(seq) => seq,
-                // If the script was simulated, but there was no attempt to broadcast yet,
-                // try to read the script sequence from the `dry-run/` folder
-                Err(_) if args.broadcast => ScriptSequence::load(
+                let seq = match ScriptSequence::load(
                     &script_config.config,
                     &args.sig,
                     &build_data.build_data.target,
                     chain,
-                    false,
-                )?,
-                Err(err) => {
-                    eyre::bail!(err.wrap_err("If you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation."))
-                }
-            };
+                    args.broadcast,
+                ) {
+                    Ok(seq) => seq,
+                    // If the script was simulated, but there was no attempt to broadcast yet,
+                    // try to read the script sequence from the `dry-run/` folder
+                    Err(_) if args.broadcast => ScriptSequence::load(
+                        &script_config.config,
+                        &args.sig,
+                        &build_data.build_data.target,
+                        chain,
+                        false,
+                    )?,
+                    Err(err) => {
+                        eyre::bail!(err.wrap_err("If you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation."))
+                    }
+                };
 
-            // We might have predeployed libraries from the broadcasting, so we need to
-            // relink the contracts with them, since their mapping is
-            // not included in the solc cache files.
-            build_data =
-                build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
+                // We might have predeployed libraries from the broadcasting, so we need to
+                // relink the contracts with them, since their mapping is
+                // not included in the solc cache files.
+                build_data =
+                    build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
 
-            ScriptSequenceKind::Single(seq)
+                ScriptSequenceKind::Single(seq)
+            },
+            0 => eyre::bail!("No RPC URLs"),
         };
 
         Ok(BundledState {

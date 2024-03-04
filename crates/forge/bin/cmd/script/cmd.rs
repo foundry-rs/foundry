@@ -1,5 +1,4 @@
-use super::{ScriptArgs, ScriptConfig};
-use crate::cmd::script::build::PreprocessedState;
+use super::{states::PreprocessedState, ScriptArgs, ScriptConfig};
 use alloy_primitives::Address;
 use ethers_signers::Signer;
 use eyre::Result;
@@ -49,6 +48,16 @@ impl ScriptArgs {
             pre_simulation.show_traces().await?;
         }
 
+        if pre_simulation.execution_result.transactions.as_ref().map_or(true, |txs| txs.is_empty())
+        {
+            return Ok(());
+        }
+
+        if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
+            shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+            return Ok(());
+        }
+
         // Move from `PreSimulationState` to `BundledState` either by resuming or simulating
         // transactions.
         let bundled = if pre_simulation.args.resume ||
@@ -61,18 +70,7 @@ impl ScriptArgs {
                 &pre_simulation.build_data.highlevel_known_contracts,
             )?;
 
-            if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
-                return Ok(());
-            }
-
-            let state = pre_simulation.fill_metadata().await?;
-
-            if state.transactions.is_empty() {
-                return Ok(());
-            }
-
-            state.bundle().await?
+            pre_simulation.fill_metadata().await?.bundle().await?
         };
 
         if !bundled.args.broadcast && !bundled.args.resume {

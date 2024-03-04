@@ -51,6 +51,7 @@ mod resume;
 mod runner;
 mod sequence;
 mod simulate;
+mod states;
 pub mod transaction;
 mod verify;
 
@@ -487,7 +488,7 @@ impl ScriptConfig {
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_config::UnresolvedEnvVarError;
+    use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use std::fs;
     use tempfile::tempdir;
 

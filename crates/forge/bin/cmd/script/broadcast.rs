@@ -1,10 +1,6 @@
 use super::{
-    build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData},
     receipts,
-    sequence::ScriptSequenceKind,
-    simulate::BundledState,
-    ScriptArgs, ScriptConfig,
+    states::{BroadcastedState, BundledState},
 };
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use ethers_core::types::transaction::eip2718::TypedTransaction;
@@ -380,13 +376,4 @@ impl BundledState {
             sequence: self.sequence,
         })
     }
-}
-
-pub struct BroadcastedState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_artifacts: ExecutionArtifacts,
-    pub sequence: ScriptSequenceKind,
 }

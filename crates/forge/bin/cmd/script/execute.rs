@@ -1,7 +1,7 @@
 use super::{
-    build::{CompiledState, LinkedBuildData, LinkedState},
     runner::ScriptRunner,
-    JsonResult, NestedValue, ScriptArgs, ScriptConfig, ScriptResult,
+    states::{CompiledState, ExecutedState, LinkedState, PreExecutionState, PreSimulationState},
+    JsonResult, NestedValue, ScriptResult,
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
@@ -12,7 +12,7 @@ use ethers_providers::Middleware;
 use eyre::Result;
 use forge::{
     decode::{decode_console_logs, RevertDecoder},
-    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions, ScriptWallets},
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
@@ -39,14 +39,6 @@ pub struct ExecutionData {
     pub abi: JsonAbi,
 }
 
-pub struct PreExecutionState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-}
-
 impl LinkedState {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
@@ -70,15 +62,6 @@ impl LinkedState {
             execution_data: ExecutionData { func, calldata, bytecode, abi },
         })
     }
-}
-
-pub struct ExecutedState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult,
 }
 
 impl PreExecutionState {
@@ -313,16 +296,6 @@ impl ExecutedState {
     }
 }
 
-pub struct PreSimulationState {
-    pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
-    pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult,
-    pub execution_artifacts: ExecutionArtifacts,
-}
-
 pub struct RpcData {
     /// Unique list of rpc urls present
     pub total_rpcs: HashSet<RpcUrl>,
@@ -339,8 +312,10 @@ impl RpcData {
         Self { total_rpcs, missing_rpc }
     }
 
+    /// Returns true if script might be multi-chain.
+    /// Returns false positive in case when missing rpc is the same as the only rpc present.
     pub fn is_multi_chain(&self) -> bool {
-        self.total_rpcs.len() > 1 || (self.missing_rpc && self.total_rpcs.len() > 0)
+        self.total_rpcs.len() > 1 || (self.missing_rpc && !self.total_rpcs.is_empty())
     }
 
     async fn check_shanghai_support(&self) -> Result<()> {
