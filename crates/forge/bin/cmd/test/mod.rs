@@ -289,7 +289,7 @@ impl TestArgs {
         }
 
         if self.json {
-            let results = runner.test_collect(filter).await;
+            let results = runner.test_collect(filter);
             println!("{}", serde_json::to_string(&results)?);
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -303,9 +303,9 @@ impl TestArgs {
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
-        let handle = tokio::task::spawn({
+        let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            async move { runner.test(&filter, tx).await }
+            move || runner.test(&filter, tx)
         });
 
         let mut gas_report =

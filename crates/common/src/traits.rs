@@ -17,7 +17,9 @@ pub trait TestFilter: Send + Sync {
     fn matches_path(&self, path: &Path) -> bool;
 }
 
+/// Coverage filter.
 pub trait CoverageFilter: Send + Sync {
+    /// Returns whether the file path should be included in coverage report.
     fn matches_file_path(&self, path: &Path) -> bool;
 }
 

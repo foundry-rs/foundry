@@ -19,7 +19,7 @@ use foundry_cli::{
     p_println,
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
-use foundry_common::{compile::ProjectCompiler, CoverageFilter, evm::EvmArgs, fs};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_compilers::{
     artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
     sourcemap::SourceMap,
@@ -316,7 +316,7 @@ impl CoverageArgs {
         let filter = Arc::new(self.filter.clone().merge_with_config(&config).args().to_owned());
         let filter_ref_clone = filter.clone();
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle = tokio::task::spawn(async move { runner.test(filter_ref_clone.deref(), tx).await });
+        let handle = tokio::task::spawn_blocking(move || runner.test(filter_ref_clone.deref(), tx));
 
         // Add hit data to the coverage report
         let data = rx

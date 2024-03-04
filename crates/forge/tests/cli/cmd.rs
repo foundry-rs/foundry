@@ -1556,7 +1556,7 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
-    prj.clear_cache();
+    prj.clear();
 
     // only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
@@ -1573,8 +1573,6 @@ forgetest_init!(can_build_skip_contracts, |prj, cmd| {
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
-    prj.clear_cache();
-
     prj.add_test(
         "Foo",
         r"
@@ -1585,6 +1583,7 @@ function test_run() external {}
     .unwrap();
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
+    prj.clear();
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),

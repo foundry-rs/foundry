@@ -83,7 +83,7 @@ impl MultiFork {
     }
 
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
-    pub async fn spawn() -> Self {
+    pub fn spawn() -> Self {
         trace!(target: "fork::multi", "spawning multifork");
 
         let (fork, mut handler) = Self::new();
