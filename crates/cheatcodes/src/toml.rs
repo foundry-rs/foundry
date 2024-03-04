@@ -3,6 +3,7 @@
 use crate::{json::serialize_json, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, B256};
+use alloy_sol_types::SolValue;
 use toml::Value;
 
 // TODO: add documentation (`parse-toml`, `serialize-toml`, `write-toml) in Foundry Book
@@ -29,18 +30,29 @@ impl Cheatcode for serializeTomlCall {
 
 impl Cheatcode for writeTomlCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { toml, path } = self;
-        let toml = toml::from_str(toml).unwrap_or_else(|_| Value::String(toml.to_owned()));
-        let toml_string =
-            toml::to_string_pretty(&toml).map_err(|e| fmt_err!("failed serializing TOML: {e}"))?;
-        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
+        let Self { json, path } = self;
+        let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
+        let json_string = serde_json::to_string_pretty(&json)?;
+        super::fs::write_file(state, path.as_ref(), json_string.as_bytes())
+
+        // let toml = toml::from_str(toml).unwrap_or_else(|_| Value::String(toml.to_owned()));
+        // let toml_string =
+        //     toml::to_string_pretty(&toml).map_err(|e| fmt_err!("failed serializing TOML: {e}"))?;
+        // super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
 }
 
 fn parse_toml(toml: &str) -> Result {
-    let toml = toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+    let toml = parse_toml_str(toml)?;
     let sol = value_to_token(&toml)?;
-    Ok(sol.abi_encode())
+
+    // Double `abi_encode` is intentional
+    let bytes = sol.abi_encode();
+    Ok(bytes.abi_encode())
+}
+
+fn parse_toml_str(toml: &str) -> Result<Value> {
+    toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
 }
 
 fn value_to_token(value: &Value) -> Result<DynSolValue> {
@@ -50,11 +62,11 @@ fn value_to_token(value: &Value) -> Result<DynSolValue> {
             let s = integer.to_string();
 
             if let Ok(n) = s.parse() {
-                return Ok(DynSolValue::Uint(n, 256))
+                return Ok(DynSolValue::Uint(n, 256));
             }
 
             if let Ok(n) = s.parse() {
-                return Ok(DynSolValue::Int(n, 256))
+                return Ok(DynSolValue::Int(n, 256));
             }
 
             Err(fmt_err!("unsupported TOML integer: {integer}"))
@@ -67,10 +79,10 @@ fn value_to_token(value: &Value) -> Result<DynSolValue> {
 
                 if s.contains('e') {
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Uint(n, 256))
+                        return Ok(DynSolValue::Uint(n, 256));
                     }
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Int(n, 256))
+                        return Ok(DynSolValue::Int(n, 256));
                     }
                 }
             }

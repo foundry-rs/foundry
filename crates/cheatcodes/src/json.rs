@@ -400,18 +400,18 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
                         // used.
                         let fallback_s = f.to_string();
                         if let Ok(n) = fallback_s.parse() {
-                            return Ok(DynSolValue::Uint(n, 256))
+                            return Ok(DynSolValue::Uint(n, 256));
                         }
                         if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                            return Ok(DynSolValue::Int(n, 256))
+                            return Ok(DynSolValue::Int(n, 256));
                         }
                     }
 
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Uint(n, 256))
+                        return Ok(DynSolValue::Uint(n, 256));
                     }
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Int(n, 256))
+                        return Ok(DynSolValue::Int(n, 256));
                     }
                 }
             }
