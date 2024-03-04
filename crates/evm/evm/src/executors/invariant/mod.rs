@@ -162,7 +162,7 @@ impl<'a> InvariantExecutor<'a> {
                 let (sender, (address, calldata)) = inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
-                let call_result = if self.config.fail_on_revert && self.config.preserve_state {
+                let call_result = if self.config.preserve_state {
                     executor
                         .call_raw_committing(*sender, *address, calldata.clone(), U256::ZERO)
                         .expect("could not make raw evm call")
