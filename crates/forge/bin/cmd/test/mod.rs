@@ -142,6 +142,9 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
+        // Inline test config requires the Solc AST output.
+        config.ast = true;
+
         // Explicitly enable isolation for gas reports for more correct gas accounting
         if self.gas_report {
             evm_opts.isolate = true;
