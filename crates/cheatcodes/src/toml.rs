@@ -11,7 +11,7 @@ use crate::{
 use alloy_dyn_abi::DynSolType;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use serde_json::{Number, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
 impl Cheatcode for keyExistsTomlCall {
@@ -145,7 +145,9 @@ impl Cheatcode for writeToml_0Call {
         let Self { json, path } = self;
         let value =
             serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
-        let toml = json_to_toml(value);
+
+        let toml: TomlValue =
+            serde_json::from_value(value).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
         let toml_string = toml::to_string_pretty(&toml).expect("failed to serialize TOML");
         super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
@@ -159,21 +161,18 @@ impl Cheatcode for writeToml_1Call {
 
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         let toml_data = fs::read_to_string(data_path)?;
-        let json_data = toml_to_json(parse_toml_str(&toml_data)?);
+        let json_data: JsonValue =
+            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
         let value =
             jsonpath_lib::replace_with(json_data, &canonicalize_json_path(valueKey), &mut |_| {
                 Some(json.clone())
             })?;
 
-        let toml = json_to_toml(value);
+        let toml: TomlValue =
+            serde_json::from_value(value).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
         let toml_string = toml::to_string_pretty(&toml).expect("failed to serialize TOML");
         super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
-}
-
-/// Parse a TOML string.
-fn parse_toml_str(toml: &str) -> Result<TomlValue> {
-    toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
 }
 
 /// Parse a TOML string and return the value at the given path.
@@ -193,44 +192,6 @@ fn parse_toml_keys(toml: &str, key: &str) -> Result {
 
 /// Convert a TOML string to a JSON string.
 fn convert(toml: &str) -> Result<String> {
-    let toml = parse_toml_str(toml)?;
-    let json = toml_to_json(toml);
+    let json: JsonValue = toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
     serde_json::to_string(&json).map_err(|e| fmt_err!("failed to convert to JSON: {e}"))
-}
-
-/// Convert a TOML value to a JSON value.
-fn toml_to_json(value: TomlValue) -> JsonValue {
-    match value {
-        TomlValue::String(s) => {
-            if s == "null" {
-                JsonValue::Null
-            } else {
-                JsonValue::String(s)
-            }
-        }
-        TomlValue::Integer(i) => JsonValue::Number(Number::from(i)),
-        TomlValue::Float(f) => {
-            JsonValue::Number(Number::from_f64(f).expect("failed to convert float"))
-        }
-        TomlValue::Boolean(b) => JsonValue::Bool(b),
-        TomlValue::Array(arr) => JsonValue::Array(arr.into_iter().map(toml_to_json).collect()),
-        TomlValue::Table(table) => {
-            JsonValue::Object(table.into_iter().map(|(k, v)| (k, toml_to_json(v))).collect())
-        }
-        TomlValue::Datetime(d) => JsonValue::String(d.to_string()),
-    }
-}
-
-/// Convert a JSON value to a TOML value.
-fn json_to_toml(value: JsonValue) -> TomlValue {
-    match value {
-        JsonValue::String(s) => TomlValue::String(s),
-        JsonValue::Number(n) => TomlValue::Integer(n.as_i64().expect("failed to convert integer")),
-        JsonValue::Bool(b) => TomlValue::Boolean(b),
-        JsonValue::Array(arr) => TomlValue::Array(arr.into_iter().map(json_to_toml).collect()),
-        JsonValue::Object(obj) => {
-            TomlValue::Table(obj.into_iter().map(|(k, v)| (k, json_to_toml(v))).collect())
-        }
-        JsonValue::Null => TomlValue::String("null".to_owned()),
-    }
 }
