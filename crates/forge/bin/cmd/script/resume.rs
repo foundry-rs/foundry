@@ -28,7 +28,7 @@ impl PreSimulationState {
             }
             0 => eyre::bail!("No RPC URLs"),
         };
-        
+
         let sequence = match self.try_load_sequence(chain, false) {
             Ok(sequence) => sequence,
             Err(_) => {
