@@ -13,7 +13,6 @@ use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    inspector_handle_register,
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
@@ -768,24 +767,15 @@ impl Backend {
     }
 
     /// Executes the configured test call of the `env` without committing state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
+    pub fn inspect_ref<'a, I: Inspector<&'a mut Self>>(
+        &'a mut self,
         env: EnvWithHandlerCfg,
-        inspector: INSP,
-    ) -> eyre::Result<ResultAndState>
-    where
-        INSP: for<'a> Inspector<&'a mut Self>,
-    {
+        inspector: I,
+    ) -> eyre::Result<ResultAndState> {
         self.initialize(&env);
-
-        let mut evm = revm::Evm::builder()
-            .with_db(self)
-            .with_external_context(inspector)
-            .with_env_with_handler_cfg(env)
-            .append_handler_register(inspector_handle_register)
-            .build();
-
-        evm.transact().wrap_err("backend: failed while inspecting")
+        crate::utils::new_evm_with_inspector(self, env, inspector)
+            .transact()
+            .wrap_err("backend: failed while inspecting")
     }
 
     /// Returns true if the address is a precompile
@@ -915,7 +905,7 @@ impl Backend {
                     journaled_state,
                     fork,
                     &fork_id,
-                    NoOpInspector,
+                    &mut NoOpInspector,
                 )?;
             }
         }
@@ -1875,14 +1865,9 @@ fn commit_transaction<I: Inspector<Backend>>(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        let mut evm = revm::Evm::builder()
-            .with_db(db)
-            .with_external_context(inspector)
-            .with_env_with_handler_cfg(env)
-            .append_handler_register(inspector_handle_register)
-            .build();
-
-        evm.transact().wrap_err("backend: failed committing transaction")?
+        crate::utils::new_evm_with_inspector(db, env, inspector)
+            .transact()
+            .wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

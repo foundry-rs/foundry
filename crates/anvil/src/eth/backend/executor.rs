@@ -16,9 +16,7 @@ use anvil_core::eth::{
 use foundry_evm::{
     backend::DatabaseError,
     inspectors::{TracingInspector, TracingInspectorConfig},
-    revm,
     revm::{
-        inspector_handle_register,
         interpreter::InstructionResult,
         primitives::{
             BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
@@ -284,12 +282,8 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         }
 
         let exec_result = {
-            let mut evm = revm::Evm::builder()
-                .with_db(&mut self.db)
-                .with_external_context(&mut inspector)
-                .with_env_with_handler_cfg(env)
-                .append_handler_register(inspector_handle_register)
-                .build();
+            let mut evm =
+                foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction

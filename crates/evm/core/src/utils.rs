@@ -3,7 +3,10 @@ use alloy_primitives::{FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
 use foundry_config::NamedChain;
-use revm::primitives::{SpecId, TransactTo};
+use revm::{
+    db::WrapDatabaseRef,
+    primitives::{SpecId, TransactTo},
+};
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
@@ -92,4 +95,57 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
 pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     let refund_quotient = if SpecId::enabled(spec, SpecId::LONDON) { 5 } else { 2 };
     spent - (refunded).min(spent / refund_quotient)
+}
+
+/// Creates a new EVM with the given inspector.
+pub fn new_evm_with_inspector<'a, DB, I>(
+    db: DB,
+    env: revm::primitives::EnvWithHandlerCfg,
+    inspector: I,
+) -> revm::Evm<'a, I, DB>
+where
+    DB: revm::Database,
+    I: revm::Inspector<DB>,
+{
+    // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
+    // performance issues.
+    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
+    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
+    let mut handler = revm::Handler::new(handler_cfg);
+    handler.append_handler_register_plain(revm::inspector_handle_register);
+    revm::Evm::new(context, handler)
+}
+
+/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
+pub fn new_evm_with_inspector_ref<'a, DB, I>(
+    db: DB,
+    env: revm::primitives::EnvWithHandlerCfg,
+    inspector: I,
+) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
+where
+    DB: revm::DatabaseRef,
+    I: revm::Inspector<WrapDatabaseRef<DB>>,
+{
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_evm() {
+        let mut db = revm::db::EmptyDB::default();
+
+        let env = Box::<revm::primitives::Env>::default();
+        let spec = SpecId::LATEST;
+        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
+        let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
+
+        let mut inspector = revm::inspectors::NoOpInspector::default();
+
+        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector);
+        let result = evm.transact().unwrap();
+        assert!(result.result.is_success());
+    }
 }

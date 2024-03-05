@@ -67,18 +67,19 @@ use foundry_evm::{
     revm::{
         self,
         db::CacheDB,
-        inspector_handle_register,
         interpreter::InstructionResult,
         primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, CreateScheme, EVMError, EnvWithHandlerCfg,
-            ExecutionResult, InvalidHeader, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+            BlockEnv, CfgEnvWithHandlerCfg, CreateScheme, EnvWithHandlerCfg, ExecutionResult,
+            Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
     traces::{TracingInspector, TracingInspectorConfig},
+    utils::new_evm_with_inspector_ref,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
+use revm::primitives::ResultAndState;
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -788,22 +789,9 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
 
-        let result_and_state = {
-            let mut evm = revm::Evm::builder()
-                .with_ref_db(&*db)
-                .with_external_context(&mut inspector)
-                .with_env_with_handler_cfg(env)
-                .append_handler_register(inspector_handle_register)
-                .build();
-
-            match evm.transact() {
-                Ok(res) => res,
-                Err(e) => return Err(e.into()),
-            }
-        };
-
-        let state = result_and_state.state;
-        let (exit_reason, gas_used, out, logs) = match result_and_state.result {
+        let ResultAndState { result, state } =
+            new_evm_with_inspector_ref(&*db, env, &mut inspector).transact()?;
+        let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
             }
@@ -1107,37 +1095,10 @@ impl Backend {
     {
         let mut inspector = Inspector::default();
 
-        let result_and_state = {
-            let env = self.build_call_env(request, fee_details, block_env);
-            let mut evm = revm::Evm::builder()
-                .with_ref_db(state)
-                .with_external_context(&mut inspector)
-                .with_env_with_handler_cfg(env)
-                .append_handler_register(inspector_handle_register)
-                .build();
-
-            match evm.transact() {
-                Ok(result_and_state) => result_and_state,
-                Err(e) => match e {
-                    EVMError::Transaction(invalid_tx) => {
-                        return Err(BlockchainError::InvalidTransaction(invalid_tx.into()))
-                    }
-                    EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
-                    EVMError::Header(e) => match e {
-                        InvalidHeader::ExcessBlobGasNotSet => {
-                            return Err(BlockchainError::ExcessBlobGasNotSet)
-                        }
-                        InvalidHeader::PrevrandaoNotSet => {
-                            return Err(BlockchainError::PrevrandaoNotSet)
-                        }
-                    },
-                    EVMError::Custom(err) => return Err(BlockchainError::Message(err)),
-                },
-            }
-        };
-
-        let state = result_and_state.state;
-        let (exit_reason, gas_used, out) = match result_and_state.result {
+        let env = self.build_call_env(request, fee_details, block_env);
+        let ResultAndState { result, state } =
+            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+        let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
             }
@@ -1161,22 +1122,10 @@ impl Backend {
             let mut inspector = Inspector::default().with_steps_tracing();
             let block_number = block.number;
 
-            let result_and_state = {
-                let env = self.build_call_env(request, fee_details, block);
-                let mut evm = revm::Evm::builder()
-                    .with_ref_db(state)
-                    .with_external_context(&mut inspector)
-                    .with_env_with_handler_cfg(env)
-                    .append_handler_register(inspector_handle_register)
-                    .build();
-
-                    match evm.transact() {
-                        Ok(result_and_state) => result_and_state,
-                        Err(e) => return Err(e.into()),
-                    }
-            };
-
-            let (exit_reason, gas_used, out, ) = match result_and_state.result {
+            let env = self.build_call_env(request, fee_details, block);
+            let ResultAndState { result, state: _ } =
+                new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+            let (exit_reason, gas_used, out, ) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
                     (reason.into(), gas_used, Some(output), )
                 },
@@ -1187,10 +1136,12 @@ impl Backend {
                     (reason.into(), gas_used, None)
                 },
             };
-            let res = inspector.tracer.unwrap_or(TracingInspector::new(TracingInspectorConfig::all())).into_geth_builder().geth_traces(gas_used, match &out {
+            let tracer = inspector.tracer.unwrap_or_else(|| TracingInspector::new(TracingInspectorConfig::all()));
+            let return_value = match &out {
                 Some(out) => out.data().clone(),
                 None => Bytes::new()
-            }, opts);
+            };
+            let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
             trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
             Ok(res)
         })
@@ -1222,21 +1173,10 @@ impl Backend {
             self.precompiles(),
         );
 
-        let result_and_state = {
-            let env = self.build_call_env(request, fee_details, block_env);
-            let mut evm = revm::Evm::builder()
-                .with_ref_db(state)
-                .with_external_context(&mut tracer)
-                .with_env_with_handler_cfg(env)
-                .append_handler_register(inspector_handle_register)
-                .build();
-
-            match evm.transact() {
-                Ok(result_and_state) => result_and_state,
-                Err(e) => return Err(e.into()),
-            }
-        };
-        let (exit_reason, gas_used, out) = match result_and_state.result {
+        let env = self.build_call_env(request, fee_details, block_env);
+        let ResultAndState { result, state: _ } =
+            new_evm_with_inspector_ref(state, env, &mut tracer).transact()?;
+        let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
             }

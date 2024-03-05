@@ -12,7 +12,6 @@ use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
-    inspector_handle_register,
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
         SpecId,
@@ -55,27 +54,18 @@ impl<'a> FuzzBackendWrapper<'a> {
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
-    pub fn inspect_ref<'b, INSP>(
+    pub fn inspect_ref<'b, I: Inspector<&'b mut Self>>(
         &'b mut self,
         env: EnvWithHandlerCfg,
-        inspector: INSP,
-    ) -> eyre::Result<ResultAndState>
-    where
-        INSP: Inspector<&'b mut Self>,
-    {
+        inspector: I,
+    ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
         self.spec_id = env.handler_cfg.spec_id;
-
-        let mut evm = revm::Evm::builder()
-            .with_db(self)
-            .with_external_context(inspector)
-            .with_env_with_handler_cfg(env)
-            .append_handler_register(inspector_handle_register)
-            .build();
-
-        evm.transact().wrap_err("backend: failed while inspecting")
+        crate::utils::new_evm_with_inspector(self, env, inspector)
+            .transact()
+            .wrap_err("backend: failed while inspecting")
     }
 
     /// Returns whether there was a snapshot failure in the fuzz backend.

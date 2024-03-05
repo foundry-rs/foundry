@@ -7,7 +7,6 @@ use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
-    inspector_handle_register,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
@@ -399,7 +398,7 @@ impl InspectorStack {
 
     fn do_call_end<DB: DatabaseExt>(
         &mut self,
-        data: &mut EvmContext<DB>,
+        data: &mut EvmContext<&mut DB>,
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
@@ -437,7 +436,7 @@ impl InspectorStack {
 
     fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
         &mut self,
-        data: &mut EvmContext<DB>,
+        data: &mut EvmContext<&mut DB>,
         transact_to: TransactTo,
         caller: Address,
         input: Bytes,
@@ -483,15 +482,7 @@ impl InspectorStack {
         let env = data.env.clone();
         let env = EnvWithHandlerCfg::new_with_spec_id(env, data.spec_id());
 
-        let res = {
-            let mut evm = revm::Evm::builder()
-                .with_db(&mut data.db)
-                .with_external_context(&mut *self)
-                .with_env_with_handler_cfg(env)
-                .append_handler_register(inspector_handle_register)
-                .build();
-            evm.transact()
-        };
+        let res = crate::utils::new_evm_with_inspector(&mut *data.db, env, &mut *self).transact();
         self.in_inner_context = false;
         self.inner_context_data = None;
 
@@ -551,7 +542,10 @@ impl InspectorStack {
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
-    fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(&mut self, data: &mut EvmContext<DB>) {
+    fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(
+        &mut self,
+        data: &mut EvmContext<&mut DB>,
+    ) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
         let sender_acc = data
@@ -566,8 +560,13 @@ impl InspectorStack {
     }
 }
 
-impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
+// NOTE: `&mut DB` is required because we recurse inside of `transact_inner`.
+impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
+    fn initialize_interp(
+        &mut self,
+        interpreter: &mut Interpreter,
+        context: &mut EvmContext<&mut DB>,
+    ) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -586,7 +585,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<&mut DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
@@ -606,7 +605,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         );
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<&mut DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -625,7 +624,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         );
     }
 
-    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, context: &mut EvmContext<&mut DB>, log: &Log) {
         call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
@@ -637,7 +636,11 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
         );
     }
 
-    fn call(&mut self, data: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(
+        &mut self,
+        data: &mut EvmContext<&mut DB>,
+        call: &mut CallInputs,
+    ) -> Option<CallOutcome> {
         if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
             return {
@@ -701,7 +704,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
 
     fn call_end(
         &mut self,
-        data: &mut EvmContext<DB>,
+        data: &mut EvmContext<&mut DB>,
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
@@ -726,7 +729,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
 
     fn create(
         &mut self,
-        data: &mut EvmContext<DB>,
+        data: &mut EvmContext<&mut DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if self.in_inner_context && data.journaled_state.depth == 0 {
@@ -780,7 +783,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
 
     fn create_end(
         &mut self,
-        data: &mut EvmContext<DB>,
+        data: &mut EvmContext<&mut DB>,
         call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
