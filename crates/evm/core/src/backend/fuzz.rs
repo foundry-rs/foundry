@@ -13,8 +13,10 @@ use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
     inspector_handle_register,
-    primitives::{EnvWithHandlerCfg, SpecId},
-    primitives::{Account, AccountInfo, Bytecode, Env, HashMap as Map, ResultAndState},
+    primitives::{
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
+        SpecId,
+    },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};

@@ -1871,7 +1871,7 @@ fn commit_transaction<I: Inspector<Backend>>(
     configure_tx_env(&mut env.env, &tx);
 
     let now = Instant::now();
-    let state = {
+    let res = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
@@ -1886,7 +1886,7 @@ fn commit_transaction<I: Inspector<Backend>>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(state, journaled_state, fork);
+    apply_state_changeset(res.state, journaled_state, fork);
     Ok(())
 }
 
