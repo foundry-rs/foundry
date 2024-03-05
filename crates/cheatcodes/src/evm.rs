@@ -60,8 +60,9 @@ impl Cheatcode for loadCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
-        ccx.data.journaled_state.load_account(target, &mut ccx.data.db)?;
-        let (val, _) = ccx.data.journaled_state.sload(target, slot.into(), &mut ccx.data.db)?;
+        ccx.context.journaled_state.load_account(target, &mut ccx.context.db)?;
+        let (val, _) =
+            ccx.context.journaled_state.sload(target, slot.into(), &mut ccx.context.db)?;
         Ok(val.abi_encode())
     }
 }
@@ -84,9 +85,9 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
-        ccx.data
+        ccx.context
             .db
-            .load_allocs(&allocs, &mut ccx.data.journaled_state)
+            .load_allocs(&allocs, &mut ccx.context.journaled_state)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
@@ -109,7 +110,7 @@ impl Cheatcode for dumpStateCall {
         };
 
         let alloc = ccx
-            .data
+            .context
             .journaled_state
             .state()
             .into_iter()
@@ -214,7 +215,7 @@ impl Cheatcode for chainIdCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64 - 1");
-        ccx.data.env.cfg.chain_id = newChainId.to();
+        ccx.context.env.cfg.chain_id = newChainId.to();
         Ok(Default::default())
     }
 }
@@ -222,7 +223,7 @@ impl Cheatcode for chainIdCall {
 impl Cheatcode for coinbaseCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newCoinbase } = self;
-        ccx.data.env.block.coinbase = *newCoinbase;
+        ccx.context.env.block.coinbase = *newCoinbase;
         Ok(Default::default())
     }
 }
@@ -231,11 +232,11 @@ impl Cheatcode for difficultyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            ccx.data.spec_id() < SpecId::MERGE,
+            ccx.context.spec_id() < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.data.env.block.difficulty = *newDifficulty;
+        ccx.context.env.block.difficulty = *newDifficulty;
         Ok(Default::default())
     }
 }
@@ -243,7 +244,7 @@ impl Cheatcode for difficultyCall {
 impl Cheatcode for feeCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newBasefee } = self;
-        ccx.data.env.block.basefee = *newBasefee;
+        ccx.context.env.block.basefee = *newBasefee;
         Ok(Default::default())
     }
 }
@@ -252,11 +253,11 @@ impl Cheatcode for prevrandaoCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.data.spec_id() >= SpecId::MERGE,
+            ccx.context.spec_id() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.data.env.block.prevrandao = Some(*newPrevrandao);
+        ccx.context.env.block.prevrandao = Some(*newPrevrandao);
         Ok(Default::default())
     }
 }
@@ -264,7 +265,7 @@ impl Cheatcode for prevrandaoCall {
 impl Cheatcode for rollCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newHeight } = self;
-        ccx.data.env.block.number = *newHeight;
+        ccx.context.env.block.number = *newHeight;
         Ok(Default::default())
     }
 }
@@ -272,14 +273,14 @@ impl Cheatcode for rollCall {
 impl Cheatcode for getBlockNumberCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.data.env.block.number.abi_encode())
+        Ok(ccx.context.env.block.number.abi_encode())
     }
 }
 
 impl Cheatcode for txGasPriceCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newGasPrice } = self;
-        ccx.data.env.tx.gas_price = *newGasPrice;
+        ccx.context.env.tx.gas_price = *newGasPrice;
         Ok(Default::default())
     }
 }
@@ -287,7 +288,7 @@ impl Cheatcode for txGasPriceCall {
 impl Cheatcode for warpCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newTimestamp } = self;
-        ccx.data.env.block.timestamp = *newTimestamp;
+        ccx.context.env.block.timestamp = *newTimestamp;
         Ok(Default::default())
     }
 }
@@ -295,14 +296,14 @@ impl Cheatcode for warpCall {
 impl Cheatcode for getBlockTimestampCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.data.env.block.timestamp.abi_encode())
+        Ok(ccx.context.env.block.timestamp.abi_encode())
     }
 }
 
 impl Cheatcode for dealCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
-        let account = journaled_account(ccx.data, address)?;
+        let account = journaled_account(ccx.context, address)?;
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
@@ -314,9 +315,9 @@ impl Cheatcode for etchCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
-        ccx.data.journaled_state.load_account(*target, &mut ccx.data.db)?;
+        ccx.context.journaled_state.load_account(*target, &mut ccx.context.db)?;
         let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode)).to_checked();
-        ccx.data.journaled_state.set_code(*target, bytecode);
+        ccx.context.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }
 }
@@ -324,7 +325,7 @@ impl Cheatcode for etchCall {
 impl Cheatcode for resetNonceCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
-        let account = journaled_account(ccx.data, *account)?;
+        let account = journaled_account(ccx.context, *account)?;
         // Per EIP-161, EOA nonces start at 0, but contract nonces
         // start at 1. Comparing by code_hash instead of code
         // to avoid hitting the case where account's code is None.
@@ -339,7 +340,7 @@ impl Cheatcode for resetNonceCall {
 impl Cheatcode for setNonceCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account, newNonce } = *self;
-        let account = journaled_account(ccx.data, account)?;
+        let account = journaled_account(ccx.context, account)?;
         // nonce must increment only
         let current = account.info.nonce;
         ensure!(
@@ -355,7 +356,7 @@ impl Cheatcode for setNonceCall {
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account, newNonce } = *self;
-        let account = journaled_account(ccx.data, account)?;
+        let account = journaled_account(ccx.context, account)?;
         account.info.nonce = newNonce;
         Ok(Default::default())
     }
@@ -366,8 +367,13 @@ impl Cheatcode for storeCall {
         let Self { target, slot, value } = *self;
         ensure_not_precompile!(&target, ccx);
         // ensure the account is touched
-        let _ = journaled_account(ccx.data, target)?;
-        ccx.data.journaled_state.sstore(target, slot.into(), value.into(), &mut ccx.data.db)?;
+        let _ = journaled_account(ccx.context, target)?;
+        ccx.context.journaled_state.sstore(
+            target,
+            slot.into(),
+            value.into(),
+            &mut ccx.context.db,
+        )?;
         Ok(Default::default())
     }
 }
@@ -375,7 +381,7 @@ impl Cheatcode for storeCall {
 impl Cheatcode for coolCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target } = self;
-        if let Some(account) = ccx.data.journaled_state.state.get_mut(target) {
+        if let Some(account) = ccx.context.journaled_state.state.get_mut(target) {
             account.unmark_touch();
             account.storage.clear();
         }
@@ -386,28 +392,28 @@ impl Cheatcode for coolCall {
 impl Cheatcode for readCallersCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.data.env.tx.caller)
+        read_callers(ccx.state, &ccx.context.env.tx.caller)
     }
 }
 
 impl Cheatcode for snapshotCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, &ccx.data.env).abi_encode())
+        Ok(ccx.context.db.snapshot(&ccx.context.journaled_state, &ccx.context.env).abi_encode())
     }
 }
 
 impl Cheatcode for revertToCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.data.db.revert(
+        let result = if let Some(journaled_state) = ccx.context.db.revert(
             *snapshotId,
-            &ccx.data.journaled_state,
-            &mut ccx.data.env,
+            &ccx.context.journaled_state,
+            &mut ccx.context.env,
             RevertSnapshotAction::RevertKeep,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
-            ccx.data.journaled_state = journaled_state;
+            ccx.context.journaled_state = journaled_state;
             true
         } else {
             false
@@ -419,14 +425,14 @@ impl Cheatcode for revertToCall {
 impl Cheatcode for revertToAndDeleteCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.data.db.revert(
+        let result = if let Some(journaled_state) = ccx.context.db.revert(
             *snapshotId,
-            &ccx.data.journaled_state,
-            &mut ccx.data.env,
+            &ccx.context.journaled_state,
+            &mut ccx.context.env,
             RevertSnapshotAction::RevertRemove,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
-            ccx.data.journaled_state = journaled_state;
+            ccx.context.journaled_state = journaled_state;
             true
         } else {
             false
@@ -438,14 +444,14 @@ impl Cheatcode for revertToAndDeleteCall {
 impl Cheatcode for deleteSnapshotCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = ccx.data.db.delete_snapshot(*snapshotId);
+        let result = ccx.context.db.delete_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
 impl Cheatcode for deleteSnapshotsCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ccx.data.db.delete_snapshots();
+        ccx.context.db.delete_snapshots();
         Ok(Default::default())
     }
 }
@@ -467,7 +473,7 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     super::script::correct_sender_nonce(ccx)?;
-    let (account, _) = ccx.data.journaled_state.load_account(*address, &mut ccx.data.db)?;
+    let (account, _) = ccx.context.journaled_state.load_account(*address, &mut ccx.context.db)?;
     Ok(account.info.nonce.abi_encode())
 }
 

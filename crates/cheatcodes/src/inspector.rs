@@ -228,7 +228,7 @@ impl Cheatcodes {
         // but only if the backend is in forking mode
         context.db.ensure_cheatcode_access_forking_mode(&caller)?;
 
-        apply_dispatch(&decoded, &mut CheatsCtxt { state: self, data: context, caller })
+        apply_dispatch(&decoded, &mut CheatsCtxt { state: self, context, caller })
     }
 
     /// Determines the address of the contract and marks it as allowed

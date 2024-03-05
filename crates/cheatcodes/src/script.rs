@@ -145,10 +145,10 @@ fn broadcast<DB: DatabaseExt>(
     }
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.data.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.context.env.tx.caller),
         original_caller: ccx.caller,
-        original_origin: ccx.data.env.tx.caller,
-        depth: ccx.data.journaled_state.depth(),
+        original_origin: ccx.context.env.tx.caller,
+        depth: ccx.context.journaled_state.depth(),
         single_call,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
@@ -181,9 +181,9 @@ fn broadcast_key<DB: DatabaseExt>(
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
-    let sender = ccx.data.env.tx.caller;
+    let sender = ccx.context.env.tx.caller;
     if !ccx.state.corrected_nonce && sender != Config::DEFAULT_SENDER {
-        let account = super::evm::journaled_account(ccx.data, sender)?;
+        let account = super::evm::journaled_account(ccx.context, sender)?;
         let prev = account.info.nonce;
         account.info.nonce = prev.saturating_sub(1);
         debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");

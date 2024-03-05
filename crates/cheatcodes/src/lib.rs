@@ -112,7 +112,7 @@ pub(crate) struct CheatsCtxt<'a, 'b, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes,
     /// The EVM data.
-    pub(crate) data: &'b mut EvmContext<DB>,
+    pub(crate) context: &'b mut EvmContext<DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
 }
@@ -120,6 +120,6 @@ pub(crate) struct CheatsCtxt<'a, 'b, DB: DatabaseExt> {
 impl<DB: DatabaseExt> CheatsCtxt<'_, '_, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.data.precompiles.contains(address)
+        self.context.precompiles.contains(address)
     }
 }
