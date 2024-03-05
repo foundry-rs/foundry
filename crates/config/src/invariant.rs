@@ -32,6 +32,9 @@ pub struct InvariantConfig {
     /// Useful for handlers that use cheatcodes as roll or warp
     /// Use it with caution, introduces performance penalty.
     pub preserve_state: bool,
+    /// The maximum number of rejects via `vm.assume` which can be encountered during a single
+    /// invariant run.
+    pub max_assume_rejects: u32,
 }
 
 impl Default for InvariantConfig {
@@ -45,6 +48,7 @@ impl Default for InvariantConfig {
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18_u32),
             preserve_state: false,
+            max_assume_rejects: 65536,
         }
     }
 }

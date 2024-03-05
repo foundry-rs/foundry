@@ -53,7 +53,27 @@ pub struct InvariantFuzzTestResult {
 }
 
 #[derive(Clone, Debug)]
-pub struct InvariantFuzzError {
+pub enum InvariantFuzzError {
+    Revert(FailedInvariantCaseData),
+    BrokenInvariant(FailedInvariantCaseData),
+    MaxAssumeRejects(u32),
+}
+
+impl InvariantFuzzError {
+    pub fn revert_reason(&self) -> Option<String> {
+        match self {
+            Self::BrokenInvariant(case_data) | Self::Revert(case_data) => {
+                (!case_data.revert_reason.is_empty()).then(|| case_data.revert_reason.clone())
+            }
+            Self::MaxAssumeRejects(allowed) => Some(format!(
+                "The `vm.assume` cheatcode rejected too many inputs ({allowed} allowed)"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FailedInvariantCaseData {
     pub logs: Vec<Log>,
     pub traces: Option<CallTraceArena>,
     /// The proptest error occurred as a result of a test case.
@@ -74,7 +94,7 @@ pub struct InvariantFuzzError {
     pub shrink_run_limit: usize,
 }
 
-impl InvariantFuzzError {
+impl FailedInvariantCaseData {
     pub fn new(
         invariant_contract: &InvariantContract<'_>,
         error_func: Option<&Function>,
@@ -93,7 +113,7 @@ impl InvariantFuzzError {
             .with_abi(invariant_contract.abi)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
-        InvariantFuzzError {
+        Self {
             logs: call_result.logs,
             traces: call_result.traces,
             test_error: proptest::test_runner::TestError::Fail(
