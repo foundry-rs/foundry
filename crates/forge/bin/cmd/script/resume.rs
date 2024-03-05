@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_common::provider::ethers::try_get_http_provider;
 use foundry_compilers::artifacts::Libraries;
+use std::sync::Arc;
 
 use super::{
     multi_sequence::MultiChainSequence,
