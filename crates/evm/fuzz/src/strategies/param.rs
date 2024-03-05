@@ -1,4 +1,5 @@
 use super::state::EvmFuzzState;
+use crate::strategies::calldata::CalldataFuzzDictionary;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, FixedBytes, I256, U256};
 use arbitrary::Unstructured;
@@ -10,12 +11,32 @@ const MAX_ARRAY_LEN: usize = 256;
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
 /// Works with ABI Encoder v2 tuples.
-pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
+pub fn fuzz_param(
+    param: &DynSolType,
+    config: Option<CalldataFuzzDictionary>,
+) -> BoxedStrategy<DynSolValue> {
     let param = param.to_owned();
     match param {
-        DynSolType::Address => any::<[u8; 32]>()
-            .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
-            .boxed(),
+        DynSolType::Address => {
+            if config.is_some() {
+                let fuzz_config = config.unwrap().inner;
+                let address_dict_len = fuzz_config.addresses.len();
+                if address_dict_len > 0 {
+                    // Create strategy to return random address from configured dictionary.
+                    return any::<prop::sample::Index>()
+                        .prop_map(move |index| index.index(address_dict_len))
+                        .prop_map(move |index| {
+                            DynSolValue::Address(fuzz_config.addresses.get(index).cloned().unwrap())
+                        })
+                        .boxed()
+                }
+            }
+
+            // If no config for addresses dictionary then create unbounded addresses strategy.
+            any::<[u8; 32]>()
+                .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
+                .boxed()
+        }
         DynSolType::Int(n) => {
             let strat = super::IntStrategy::new(n, vec![]);
             let strat = strat.prop_map(move |x| DynSolValue::Int(x, n));
@@ -48,15 +69,22 @@ pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
                 )
             })
             .boxed(),
-        DynSolType::Tuple(params) => {
-            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(DynSolValue::Tuple).boxed()
+        DynSolType::Tuple(params) => params
+            .iter()
+            .map(|p| fuzz_param(p, config.clone()))
+            .collect::<Vec<_>>()
+            .prop_map(DynSolValue::Tuple)
+            .boxed(),
+        DynSolType::FixedArray(param, size) => {
+            proptest::collection::vec(fuzz_param(&param, config), size)
+                .prop_map(DynSolValue::FixedArray)
+                .boxed()
         }
-        DynSolType::FixedArray(param, size) => proptest::collection::vec(fuzz_param(&param), size)
-            .prop_map(DynSolValue::FixedArray)
-            .boxed(),
-        DynSolType::Array(param) => proptest::collection::vec(fuzz_param(&param), 0..MAX_ARRAY_LEN)
-            .prop_map(DynSolValue::Array)
-            .boxed(),
+        DynSolType::Array(param) => {
+            proptest::collection::vec(fuzz_param(&param, config), 0..MAX_ARRAY_LEN)
+                .prop_map(DynSolValue::Array)
+                .boxed()
+        }
         DynSolType::CustomStruct { .. } => panic!("unsupported type"),
     }
 }

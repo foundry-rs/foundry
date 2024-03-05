@@ -137,6 +137,10 @@ async fn test_invariant() {
                 "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
                 vec![("invariant_preserve_state()", true, None, None, None)],
             ),
+            (
+                "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
+                vec![("invariant_owner_never_changes()", true, None, None, None)],
+            ),
         ]),
     );
 }
@@ -317,6 +321,46 @@ async fn test_invariant_preserve_state() {
                 "invariant_preserve_state()",
                 false,
                 Some("EvmError: Revert".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_calldata_fuzz_dictionary_addresses() {
+    // should not fail with default options (address dict not finite)
+    let mut runner = runner();
+    let results = runner.test_collect(&Filter::new(
+        ".*",
+        ".*",
+        ".*fuzz/invariant/common/InvariantCalldataDictionary.t.sol",
+    ));
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
+            vec![("invariant_owner_never_changes()", true, None, None, None)],
+        )]),
+    );
+
+    // same test should fail when calldata address dict is bounded
+    // set address dictionary to single entry to fail fast
+    runner.test_options.invariant.dictionary.max_calldata_fuzz_dictionary_addresses = 1;
+    let results = runner.test_collect(&Filter::new(
+        ".*",
+        ".*",
+        ".*fuzz/invariant/common/InvariantCalldataDictionary.t.sol",
+    ));
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
+            vec![(
+                "invariant_owner_never_changes()",
+                false,
+                Some("<empty revert data>".into()),
                 None,
                 None,
             )],

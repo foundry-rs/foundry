@@ -176,7 +176,11 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
-            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            etherscan: EtherscanOpts {
+                key: self.eth.etherscan.key.clone(),
+                chain: Some(chain.into()),
+            },
+            rpc: Default::default(),
             flatten: false,
             force: false,
             skip_is_verified_check: true,
@@ -188,6 +192,7 @@ impl CreateArgs {
             via_ir: self.opts.via_ir,
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -326,6 +331,7 @@ impl CreateArgs {
             constructor_args_path: None,
             num_of_optimizations,
             etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            rpc: Default::default(),
             flatten: false,
             force: false,
             skip_is_verified_check: false,
@@ -337,6 +343,7 @@ impl CreateArgs {
             via_ir: self.opts.via_ir,
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await
