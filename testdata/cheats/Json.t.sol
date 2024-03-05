@@ -86,7 +86,7 @@ contract ParseJsonTest is DSTest {
 
     function test_wholeObject() public {
         // we need to make the path relative to the crate that's running tests for it (forge crate)
-        string memory path = "fixtures/Json/wholeJson.json";
+        string memory path = "fixtures/Json/whole_json.json";
         console.log(path);
         json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
@@ -100,7 +100,7 @@ contract ParseJsonTest is DSTest {
 
     function test_coercionRevert() public {
         vm._expectCheatcodeRevert("values at \".nestedObject\" must not be JSON objects");
-        uint256 number = vm.parseJsonUint(json, ".nestedObject");
+        vm.parseJsonUint(json, ".nestedObject");
     }
 
     function test_coercionUint() public {

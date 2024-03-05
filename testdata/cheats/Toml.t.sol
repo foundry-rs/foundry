@@ -86,21 +86,21 @@ contract ParseTomlTest is DSTest {
 
     function test_wholeToml() public {
         // we need to make the path relative to the crate that's running tests for it (forge crate)
-        string memory path = "fixtures/Toml/wholeToml.toml";
+        string memory path = "fixtures/Toml/whole_toml.toml";
         console.log(path);
         toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml);
         Whole memory whole = abi.decode(data, (Whole));
         assertEq(whole.str, "hai");
-        assertEq(whole.uintArray[0], 42);
-        assertEq(whole.uintArray[1], 43);
         assertEq(whole.strArray[0], "hai");
         assertEq(whole.strArray[1], "there");
+        assertEq(whole.uintArray[0], 42);
+        assertEq(whole.uintArray[1], 43);
     }
 
     function test_coercionRevert() public {
         vm._expectCheatcodeRevert("values at \".nestedObject\" must not be JSON objects");
-        uint256 number = vm.parseTomlUint(toml, ".nestedObject");
+        vm.parseTomlUint(toml, ".nestedObject");
     }
 
     function test_coercionUint() public {
@@ -228,7 +228,7 @@ contract WriteTomlTest is DSTest {
         assertTrue(!exists);
     }
 
-    function test_writeJson() public {
+    function test_writeToml() public {
         string memory json3 = "json3";
         string memory path = "fixtures/Toml/write_test.toml";
         vm.serializeUint(json3, "a", uint256(123));

@@ -110,7 +110,7 @@ pub enum Group {
     Json,
     /// Utility cheatcodes that deal with parsing values from and converting values to TOML.
     ///
-    /// Examples: `serializeToml`, `parseToml`, `writeToml`.
+    /// Examples: `parseToml`, `writeToml`.
     ///
     /// Safety: safe.
     Toml,
