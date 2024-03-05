@@ -442,7 +442,7 @@ impl InspectorStack {
         input: Bytes,
         gas_limit: u64,
         value: U256,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> (InterpreterResult, Option<Address>) {
         data.db.commit(data.journaled_state.state.clone());
 
         let nonce = data
@@ -479,10 +479,9 @@ impl InspectorStack {
         });
         self.in_inner_context = true;
 
-        let env = data.env.clone();
-        let env = EnvWithHandlerCfg::new_with_spec_id(env, data.spec_id());
-
+        let env = EnvWithHandlerCfg::new_with_spec_id(data.env.clone(), data.spec_id());
         let res = crate::utils::new_evm_with_inspector(&mut *data.db, env, &mut *self).transact();
+
         self.in_inner_context = false;
         self.inner_context_data = None;
 
@@ -493,7 +492,9 @@ impl InspectorStack {
 
         let Ok(mut res) = res else {
             // Should we match, encode and propagate error as a revert reason?
-            return (InstructionResult::Revert, None, gas, Bytes::new());
+            let result =
+                InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
+            return (result, None)
         };
 
         // Commit changes after transaction
@@ -517,7 +518,7 @@ impl InspectorStack {
             }
         }
 
-        match res.result {
+        let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
                 gas.set_refund(gas_refunded as i64);
                 gas.record_cost(gas_used);
@@ -525,17 +526,18 @@ impl InspectorStack {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
                 };
-                (reason.into(), address, gas, output.into_data())
+                (reason.into(), address, output.into_data())
             }
             ExecutionResult::Halt { reason, gas_used } => {
                 gas.record_cost(gas_used);
-                (reason.into(), None, gas, Bytes::new())
+                (reason.into(), None, Bytes::new())
             }
             ExecutionResult::Revert { gas_used, output } => {
                 gas.record_cost(gas_used);
-                (InstructionResult::Revert, None, gas, output)
+                (InstructionResult::Revert, None, output)
             }
-        }
+        };
+        (InterpreterResult { result, output, gas }, address)
     }
 
     /// Adjusts the EVM data for the inner EVM context.
@@ -647,16 +649,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
     ) -> Option<CallOutcome> {
         if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
-            return {
-                Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Continue,
-                        output: Default::default(),
-                        gas: Gas::new(call.gas_limit),
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                })
-            }
+            return None;
         }
 
         call_inspectors_adjust_depth!(
@@ -687,7 +680,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
             !self.in_inner_context &&
             data.journaled_state.depth == 1
         {
-            let (res, _, gas, output) = self.transact_inner(
+            let (result, _) = self.transact_inner(
                 data,
                 TransactTo::Call(call.contract),
                 call.context.caller,
@@ -695,12 +688,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 call.gas_limit,
                 call.transfer.value,
             );
-            return {
-                Some(CallOutcome {
-                    result: InterpreterResult { result: res, output, gas },
-                    memory_offset: call.return_memory_offset.clone(),
-                })
-            }
+            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() })
         }
 
         None
@@ -734,20 +722,11 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
     fn create(
         &mut self,
         data: &mut EvmContext<&mut DB>,
-        call: &mut CreateInputs,
+        create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
-            return {
-                Some(CreateOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Continue,
-                        output: Default::default(),
-                        gas: Gas::new(call.gas_limit),
-                    },
-                    address: None,
-                })
-            }
+            return None;
         }
 
         call_inspectors_adjust_depth!(
@@ -759,27 +738,21 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
-            |inspector| { inspector.create(data, call).map(Some) },
+            |inspector| { inspector.create(data, create).map(Some) },
             self,
             data
         );
 
         if self.enable_isolation && !self.in_inner_context && data.journaled_state.depth == 1 {
-            let (res, address, gas, output) = self.transact_inner(
+            let (result, address) = self.transact_inner(
                 data,
-                TransactTo::Create(call.scheme),
-                call.caller,
-                call.init_code.clone(),
-                call.gas_limit,
-                call.value,
+                TransactTo::Create(create.scheme),
+                create.caller,
+                create.init_code.clone(),
+                create.gas_limit,
+                create.value,
             );
-
-            return {
-                Some(CreateOutcome {
-                    result: InterpreterResult { result: res, output, gas },
-                    address,
-                })
-            }
+            return Some(CreateOutcome { result, address })
         }
 
         None
