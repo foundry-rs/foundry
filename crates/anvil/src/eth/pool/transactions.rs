@@ -1,7 +1,6 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash, U256};
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
-use foundry_common::types::ToAlloy;
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,
@@ -45,7 +44,7 @@ impl TransactionOrder {
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
             TransactionOrder::Fifo => TransactionPriority::default(),
-            TransactionOrder::Fees => TransactionPriority(tx.gas_price().to_alloy()),
+            TransactionOrder::Fees => TransactionPriority(tx.gas_price()),
         }
     }
 }
@@ -89,12 +88,12 @@ pub struct PoolTransaction {
 impl PoolTransaction {
     /// Returns the hash of this transaction
     pub fn hash(&self) -> TxHash {
-        self.pending_transaction.hash().to_alloy()
+        *self.pending_transaction.hash()
     }
 
     /// Returns the gas pric of this transaction
     pub fn gas_price(&self) -> U256 {
-        self.pending_transaction.transaction.gas_price().to_alloy()
+        self.pending_transaction.transaction.gas_price()
     }
 }
 
@@ -479,9 +478,7 @@ impl ReadyTransactions {
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price().to_alloy() <=
-                        to_remove.gas_price()
-                    {
+                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
                     } else {

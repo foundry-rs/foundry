@@ -23,15 +23,15 @@ pub struct InspectArgs {
     pub contract: ContractInfo,
 
     /// The contract artifact field to inspect.
-    #[clap(value_enum)]
+    #[arg(value_enum)]
     pub field: ContractArtifactField,
 
     /// Pretty print the selected field, if supported.
-    #[clap(long)]
+    #[arg(long)]
     pub pretty: bool,
 
     /// All build arguments are supported
-    #[clap(flatten)]
+    #[command(flatten)]
     build: CoreBuildArgs,
 }
 
@@ -184,7 +184,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
-            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            storage_type.map_or("?", |t| &t.number_of_bytes),
             &slot.contract,
         ]);
     }

@@ -25,7 +25,6 @@ pub enum InnerTransport {
     Http(Http<reqwest::Client>),
     /// WebSocket transport
     Ws(PubSubFrontend),
-    // TODO: IPC
     /// IPC transport
     Ipc(PubSubFrontend),
 }
@@ -177,7 +176,6 @@ impl RuntimeTransport {
         let client =
             client_builder.build().map_err(RuntimeTransportError::HttpConstructionError)?;
 
-        // todo: retry tower layer
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
 
@@ -202,7 +200,7 @@ impl RuntimeTransport {
     }
 
     /// Sends a request using the underlying transport.
-    /// If this is the first request, it will connect to the appropiate transport depending on the
+    /// If this is the first request, it will connect to the appropriate transport depending on the
     /// URL scheme. When sending the request, retries will be automatically handled depending
     /// on the parameters set on the [RuntimeTransport].
     /// For sending the actual request, this action is delegated down to the
@@ -211,19 +209,33 @@ impl RuntimeTransport {
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();
         Box::pin(async move {
-            if this.inner.read().await.is_none() {
-                let mut inner = this.inner.write().await;
-                *inner = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
+            let mut inner = this.inner.read().await;
+            if inner.is_none() {
+                drop(inner);
+                {
+                    let mut inner_mut = this.inner.write().await;
+                    if inner_mut.is_none() {
+                        *inner_mut =
+                            Some(this.connect().await.map_err(TransportErrorKind::custom)?);
+                    }
+                }
+                inner = this.inner.read().await;
             }
 
-            let mut inner = this.inner.write().await;
             // SAFETY: We just checked that the inner transport exists.
-            let inner_mut = inner.as_mut().expect("We should have an inner transport.");
-
-            match inner_mut {
-                InnerTransport::Http(http) => http.call(req),
-                InnerTransport::Ws(ws) => ws.call(req),
-                InnerTransport::Ipc(ipc) => ipc.call(req),
+            match inner.as_ref().expect("must've been initialized") {
+                InnerTransport::Http(http) => {
+                    let mut http = http;
+                    http.call(req)
+                }
+                InnerTransport::Ws(ws) => {
+                    let mut ws = ws;
+                    ws.call(req)
+                }
+                InnerTransport::Ipc(ipc) => {
+                    let mut ipc = ipc;
+                    ipc.call(req)
+                }
             }
             .await
         })
@@ -257,7 +269,7 @@ impl tower::Service<RequestPacket> for RuntimeTransport {
     }
 }
 
-impl Service<RequestPacket> for &RuntimeTransport {
+impl tower::Service<RequestPacket> for &RuntimeTransport {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
@@ -283,7 +295,6 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     let auth = JwtAuth::new(secret, None, None);
     let token = auth.generate_token()?;
 
-    // Essentially unrolled ethers-rs new_with_auth to accomodate the custom timeout
     let auth = Authorization::Bearer(token);
 
     Ok(auth)

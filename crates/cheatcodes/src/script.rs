@@ -2,9 +2,11 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use ethers_signers::Signer;
-use foundry_common::types::ToAlloy;
+use alloy_signer::{LocalWallet, Signer};
 use foundry_config::Config;
+use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -73,6 +75,44 @@ pub struct Broadcast {
     pub single_call: bool,
 }
 
+/// Contains context for wallet management.
+#[derive(Debug)]
+pub struct ScriptWalletsInner {
+    /// All signers in scope of the script.
+    pub multi_wallet: MultiWallet,
+    /// Optional signer provided as `--sender` flag.
+    pub provided_sender: Option<Address>,
+}
+
+/// Clonable wrapper around [ScriptWalletsInner].
+#[derive(Debug, Clone)]
+pub struct ScriptWallets {
+    /// Inner data.
+    pub inner: Arc<Mutex<ScriptWalletsInner>>,
+}
+
+impl ScriptWallets {
+    #[allow(missing_docs)]
+    pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
+        Self { inner: Arc::new(Mutex::new(ScriptWalletsInner { multi_wallet, provided_sender })) }
+    }
+
+    /// Consumes [ScriptWallets] and returns [MultiWallet].
+    ///
+    /// Panics if [ScriptWallets] is still in use.
+    pub fn into_multi_wallet(self) -> MultiWallet {
+        Arc::into_inner(self.inner)
+            .map(|m| m.into_inner().multi_wallet)
+            .unwrap_or_else(|| panic!("not all instances were dropped"))
+    }
+
+    /// Locks inner Mutex and adds a signer to the [MultiWallet].
+    pub fn add_signer(&self, private_key: impl AsRef<[u8]>) -> Result {
+        self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
+        Ok(Default::default())
+    }
+}
+
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
@@ -87,8 +127,25 @@ fn broadcast<DB: DatabaseExt>(
 
     correct_sender_nonce(ccx)?;
 
+    let mut new_origin = new_origin.cloned();
+
+    if new_origin.is_none() {
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            let mut script_wallets = script_wallets.inner.lock();
+            if let Some(provided_sender) = script_wallets.provided_sender {
+                new_origin = Some(provided_sender);
+            } else {
+                let signers = script_wallets.multi_wallet.signers()?;
+                if signers.len() == 1 {
+                    let address = signers.keys().next().unwrap();
+                    new_origin = Some(*address);
+                }
+            }
+        }
+    }
+
     let broadcast = Broadcast {
-        new_origin: *new_origin.unwrap_or(&ccx.data.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.data.env.tx.caller),
         original_caller: ccx.caller,
         original_origin: ccx.data.env.tx.caller,
         depth: ccx.data.journaled_state.depth(),
@@ -107,12 +164,15 @@ fn broadcast_key<DB: DatabaseExt>(
     private_key: &U256,
     single_call: bool,
 ) -> Result {
-    let wallet = super::utils::parse_wallet(private_key)?.with_chain_id(ccx.data.env.cfg.chain_id);
-    let new_origin = &wallet.address().to_alloy();
+    let key = super::utils::parse_private_key(private_key)?;
+    let new_origin = LocalWallet::from(key.clone()).address();
 
-    let result = broadcast(ccx, Some(new_origin), single_call);
+    let result = broadcast(ccx, Some(&new_origin), single_call);
+
     if result.is_ok() {
-        ccx.state.script_wallets.push(wallet);
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            script_wallets.add_signer(key.to_bytes())?;
+        }
     }
     result
 }

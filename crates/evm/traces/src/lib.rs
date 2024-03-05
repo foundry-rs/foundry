@@ -126,7 +126,7 @@ pub async fn render_trace_arena(
             if node.trace.kind.is_any_create() {
                 match &return_data {
                     None => {
-                        writeln!(s, "{} bytes of code", node.trace.data.len())?;
+                        writeln!(s, "{} bytes of code", node.trace.output.len())?;
                     }
                     Some(val) => {
                         writeln!(s, "{val}")?;

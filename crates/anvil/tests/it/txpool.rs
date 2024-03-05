@@ -1,5 +1,6 @@
 //! txpool related tests
 
+use crate::utils::ethers_http_provider;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
@@ -9,7 +10,7 @@ use ethers::{
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let account = provider.get_accounts().await.unwrap()[0];

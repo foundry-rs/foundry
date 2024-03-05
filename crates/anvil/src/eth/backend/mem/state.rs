@@ -1,56 +1,34 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, B256, U256 as rU256};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_rlp::Encodable;
 use alloy_rpc_types::state::StateOverride;
 use anvil_core::eth::trie::RefSecTrieDBMut;
-use ethers::utils::{rlp, rlp::RlpStream};
-use foundry_common::types::ToEthers;
 use foundry_evm::{
     backend::DatabaseError,
     hashbrown::HashMap as Map,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{AccountInfo, Bytecode, Log},
+        primitives::{AccountInfo, Bytecode},
     },
 };
 use memory_db::HashKey;
 use trie_db::TrieMut;
 
-/// Returns the log hash for all `logs`
-///
-/// The log hash is `keccak(rlp(logs[]))`, <https://github.com/ethereum/go-ethereum/blob/356bbe343a30789e77bb38f25983c8f2f2bfbb47/cmd/evm/internal/t8ntool/execution.go#L255>
-pub fn log_rlp_hash(logs: Vec<Log>) -> B256 {
-    let mut stream = RlpStream::new();
-    stream.begin_unbounded_list();
-    for log in logs {
-        let topics = log.topics.into_iter().map(|t| t.to_ethers()).collect::<Vec<_>>();
-        stream.begin_list(3);
-        stream.append(&(log.address.to_ethers()));
-        stream.append_list(&topics);
-        stream.append(&log.data.0);
-    }
-    stream.finalize_unbounded_list();
-    let out = stream.out().freeze();
-
-    let out = ethers::utils::keccak256(out);
-    B256::from_slice(out.as_slice())
-}
-
 /// Returns storage trie of an account as `HashDB`
-pub fn storage_trie_db(storage: &Map<rU256, rU256>) -> (AsHashDB, B256) {
+pub fn storage_trie_db(storage: &Map<U256, U256>) -> (AsHashDB, B256) {
     // Populate DB with full trie from entries.
     let (db, root) = {
         let mut db = <memory_db::MemoryDB<_, HashKey<_>, _>>::default();
         let mut root = Default::default();
         {
             let mut trie = RefSecTrieDBMut::new(&mut db, &mut root);
-            for (k, v) in storage.iter().filter(|(_k, v)| *v != &rU256::from(0)) {
-                let mut temp: [u8; 32] = [0; 32];
-                (*k).to_ethers().to_big_endian(&mut temp);
-                let key = B256::from(temp).to_ethers();
-                let value = rlp::encode(&(*v).to_ethers());
-                trie.insert(key.as_bytes(), value.as_ref()).unwrap();
+            for (k, v) in storage.iter().filter(|(_k, v)| *v != &U256::from(0)) {
+                let key = B256::from(*k);
+                let mut value: Vec<u8> = Vec::new();
+                U256::encode(v, &mut value);
+                trie.insert(key.as_slice(), value.as_ref()).unwrap();
             }
         }
         (db, root)
@@ -95,13 +73,14 @@ pub fn state_merkle_trie_root(accounts: &Map<Address, DbAccount>) -> B256 {
 }
 
 /// Returns the RLP for this account.
-pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<rU256, rU256>) -> Bytes {
-    let mut stream = RlpStream::new_list(4);
-    stream.append(&info.nonce);
-    stream.append(&info.balance.to_ethers());
-    stream.append(&storage_trie_db(storage).1.to_ethers());
-    stream.append(&info.code_hash.as_slice());
-    stream.out().freeze().into()
+pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<U256, U256>) -> Bytes {
+    let mut out: Vec<u8> = Vec::new();
+    let list: [&dyn Encodable; 4] =
+        [&info.nonce, &info.balance, &storage_trie_db(storage).1, &info.code_hash];
+
+    alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
+
+    out.into()
 }
 
 /// Applies the given state overrides to the state, returning a new CacheDB state

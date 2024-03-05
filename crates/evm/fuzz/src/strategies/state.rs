@@ -14,7 +14,7 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{fmt, io::Write, str::FromStr, sync::Arc};
+use std::{fmt, str::FromStr, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -150,6 +150,21 @@ pub fn collect_state_from_call(
 ) {
     let mut state = state.write();
 
+    // Insert log topics and data.
+    for log in logs {
+        for topic in log.topics() {
+            state.values_mut().insert(topic.0);
+        }
+        let chunks = log.data.data.chunks_exact(32);
+        let rem = chunks.remainder();
+        for chunk in chunks {
+            state.values_mut().insert(chunk.try_into().unwrap());
+        }
+        if !rem.is_empty() {
+            state.values_mut().insert(B256::right_padding_from(rem).0);
+        }
+    }
+
     for (address, account) in state_changeset {
         // Insert basic account information
         state.values_mut().insert(address.into_word().into());
@@ -182,22 +197,6 @@ pub fn collect_state_from_call(
                     state.values_mut().insert(B256::from(above_value).0);
                 }
             }
-        } else {
-            return;
-        }
-
-        // Insert log topics and data
-        for log in logs {
-            log.data.topics().iter().for_each(|topic| {
-                state.values_mut().insert(topic.0);
-            });
-            log.data.data.chunks(32).for_each(|chunk| {
-                let mut buffer: [u8; 32] = [0; 32];
-                let _ = (&mut buffer[..])
-                    .write(chunk)
-                    .expect("log data chunk was larger than 32 bytes");
-                state.values_mut().insert(buffer);
-            });
         }
     }
 }
@@ -259,7 +258,8 @@ pub fn collect_created_contracts(
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
                 if !code.is_empty() {
-                    if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
+                    if let Some((artifact, (abi, _))) =
+                        project_contracts.find_by_code(&code.original_bytes())
                     {
                         if let Some(functions) =
                             artifact_filters.get_targeted_functions(artifact, abi)?

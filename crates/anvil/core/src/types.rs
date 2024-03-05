@@ -26,7 +26,7 @@ impl<'de> serde::Deserialize<'de> for Forking {
             pub json_rpc_url: Option<String>,
             #[serde(
                 default,
-                deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+                deserialize_with = "crate::eth::serde_helpers::numeric::deserialize_stringified_u64_opt"
             )]
             pub block_number: Option<u64>,
         }
@@ -63,7 +63,7 @@ pub enum EvmMineOptions {
         #[cfg_attr(
             feature = "serde",
             serde(
-                deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+                deserialize_with = "crate::eth::serde_helpers::numeric::deserialize_stringified_u64_opt"
             )
         )]
         timestamp: Option<u64>,
@@ -75,7 +75,7 @@ pub enum EvmMineOptions {
     #[cfg_attr(
         feature = "serde",
         serde(
-            deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+            deserialize_with = "crate::eth::serde_helpers::numeric::deserialize_stringified_u64_opt"
         )
     )]
     Timestamp(Option<u64>),

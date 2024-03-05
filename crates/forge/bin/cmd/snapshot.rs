@@ -1,11 +1,8 @@
-use super::{
-    test,
-    test::{Test, TestOutcome},
-};
+use super::test;
 use alloy_primitives::U256;
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::result::TestKindReport;
+use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -32,7 +29,7 @@ pub struct SnapshotArgs {
     /// Output a diff against a pre-existing snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.
-    #[clap(
+    #[arg(
         conflicts_with = "snap",
         long,
         value_hint = ValueHint::FilePath,
@@ -45,7 +42,7 @@ pub struct SnapshotArgs {
     /// Outputs a diff if the snapshots do not match.
     ///
     /// By default, the comparison is done with .gas-snapshot.
-    #[clap(
+    #[arg(
         conflicts_with = "diff",
         long,
         value_hint = ValueHint::FilePath,
@@ -55,11 +52,11 @@ pub struct SnapshotArgs {
 
     // Hidden because there is only one option
     /// How to format the output.
-    #[clap(long, hide(true))]
+    #[arg(long, hide(true))]
     format: Option<Format>,
 
     /// Output file for the snapshot.
-    #[clap(
+    #[arg(
         long,
         default_value = ".gas-snapshot",
         value_hint = ValueHint::FilePath,
@@ -68,7 +65,7 @@ pub struct SnapshotArgs {
     snap: PathBuf,
 
     /// Tolerates gas deviations up to the specified percentage.
-    #[clap(
+    #[arg(
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
@@ -76,11 +73,11 @@ pub struct SnapshotArgs {
     tolerance: Option<u32>,
 
     /// All test arguments are supported
-    #[clap(flatten)]
+    #[command(flatten)]
     pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
-    #[clap(flatten)]
+    #[command(flatten)]
     config: SnapshotConfig,
 }
 
@@ -144,19 +141,19 @@ impl FromStr for Format {
 #[derive(Clone, Debug, Default, Parser)]
 struct SnapshotConfig {
     /// Sort results by gas used (ascending).
-    #[clap(long)]
+    #[arg(long)]
     asc: bool,
 
     /// Sort results by gas used (descending).
-    #[clap(conflicts_with = "asc", long)]
+    #[arg(conflicts_with = "asc", long)]
     desc: bool,
 
     /// Only include tests that used more gas that the given amount.
-    #[clap(long, value_name = "MIN_GAS")]
+    #[arg(long, value_name = "MIN_GAS")]
     min: Option<u64>,
 
     /// Only include tests that used less gas that the given amount.
-    #[clap(long, value_name = "MAX_GAS")]
+    #[arg(long, value_name = "MAX_GAS")]
     max: Option<u64>,
 }
 
@@ -175,7 +172,7 @@ impl SnapshotConfig {
         true
     }
 
-    fn apply(&self, outcome: TestOutcome) -> Vec<Test> {
+    fn apply(&self, outcome: TestOutcome) -> Vec<SuiteTestResult> {
         let mut tests = outcome
             .into_tests()
             .filter(|test| self.is_in_gas_range(test.gas_used()))
@@ -274,7 +271,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> Result<Vec<SnapshotEntry>> {
 
 /// Writes a series of tests to a snapshot file after sorting them
 fn write_to_snapshot_file(
-    tests: &[Test],
+    tests: &[SuiteTestResult],
     path: impl AsRef<Path>,
     _format: Option<Format>,
 ) -> Result<()> {
@@ -318,7 +315,7 @@ impl SnapshotDiff {
 /// Compares the set of tests with an existing snapshot
 ///
 /// Returns true all tests match
-fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
+fn check(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -352,7 +349,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) ->
 }
 
 /// Compare the set of tests with an existing snapshot
-fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> Result<()> {
+fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))

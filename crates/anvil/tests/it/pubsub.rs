@@ -1,5 +1,6 @@
 //! tests for subscriptions
 
+use crate::utils::{ethers_http_provider, ethers_ws_provider};
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
@@ -9,7 +10,7 @@ use ethers::{
     signers::Signer,
     types::{Address, Block, Filter, TransactionRequest, TxHash, ValueOrArray, U256},
 };
-use foundry_common::types::ToAlloy;
+use foundry_common::types::{ToAlloy, ToEthers};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use std::sync::Arc;
 async fn test_sub_new_heads() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 
@@ -35,9 +36,9 @@ async fn test_sub_logs_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
@@ -74,9 +75,9 @@ async fn test_sub_logs() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
@@ -112,7 +113,7 @@ async fn test_sub_logs_impersonated() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     // impersonate account
     let impersonate = Address::random();
@@ -120,7 +121,7 @@ async fn test_sub_logs_impersonated() {
     api.anvil_set_balance(impersonate.to_alloy(), funding.to_alloy()).await.unwrap();
     api.anvil_impersonate_account(impersonate.to_alloy()).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
@@ -138,7 +139,7 @@ async fn test_sub_logs_impersonated() {
 
     let tx = TransactionRequest::new().from(impersonate).to(contract.address()).data(data);
 
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
@@ -153,9 +154,9 @@ async fn test_filters_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -194,9 +195,9 @@ async fn test_filters() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -254,7 +255,7 @@ async fn test_subscriptions() {
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 

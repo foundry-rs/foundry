@@ -11,28 +11,23 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
-    genesis::Genesis,
     mem,
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
-use alloy_primitives::{hex, U256};
+use alloy_genesis::Genesis;
+use alloy_primitives::{hex, utils::Unit, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
+use alloy_signer::{
+    coins_bip39::{English, Mnemonic},
+    LocalWallet, MnemonicBuilder, Signer as AlloySigner,
+};
 use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Wallet},
-    signers::{
-        coins_bip39::{English, Mnemonic},
-        MnemonicBuilder, Signer,
-    },
-    utils::WEI_IN_ETHER,
-};
 use foundry_common::{
-    provider::alloy::ProviderBuilder, types::ToAlloy, ALCHEMY_FREE_TIER_CUPS,
-    NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::alloy::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
+    REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -43,6 +38,7 @@ use foundry_evm::{
     utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
+use rand::thread_rng;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -105,13 +101,13 @@ pub struct NodeConfig {
     /// The hardfork to use
     pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
-    pub genesis_accounts: Vec<Wallet<SigningKey>>,
+    pub genesis_accounts: Vec<LocalWallet>,
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub signer_accounts: Vec<Wallet<SigningKey>>,
+    pub signer_accounts: Vec<LocalWallet>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
     /// Disable auto, interval mining mode uns use `MiningMode::None` instead
@@ -197,8 +193,7 @@ Available Accounts
         );
         let balance = alloy_primitives::utils::format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address().to_alloy())
-                .unwrap();
+            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address()).unwrap();
         }
 
         let _ = write!(
@@ -375,7 +370,7 @@ impl Default for NodeConfig {
             genesis_timestamp: None,
             genesis_accounts,
             // 100ETH default balance
-            genesis_balance: WEI_IN_ETHER.to_alloy().saturating_mul(U256::from(100u64)),
+            genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
             no_mining: false,
             port: NODE_PORT,
@@ -417,7 +412,7 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(U256::from)))
             .unwrap_or_else(|| U256::from(INITIAL_BASE_FEE))
     }
 
@@ -462,7 +457,7 @@ impl NodeConfig {
     /// Returns the chain ID to use
     pub fn get_chain_id(&self) -> u64 {
         self.chain_id
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.chain_id()))
+            .or_else(|| self.genesis.as_ref().map(|g| g.config.chain_id))
             .unwrap_or(CHAIN_ID)
     }
 
@@ -471,10 +466,10 @@ impl NodeConfig {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
         self.genesis_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(chain_id);
+            *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
         self.signer_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(chain_id);
+            *wallet = wallet.clone().with_chain_id(Some(chain_id));
         })
     }
 
@@ -537,7 +532,7 @@ impl NodeConfig {
     /// Returns the genesis timestamp to use
     pub fn get_genesis_timestamp(&self) -> u64 {
         self.genesis_timestamp
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.timestamp))
+            .or_else(|| self.genesis.as_ref().map(|g| g.timestamp))
             .unwrap_or_else(|| duration_since_unix_epoch().as_secs())
     }
 
@@ -559,14 +554,14 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn with_genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_genesis_accounts(mut self, accounts: Vec<LocalWallet>) -> Self {
         self.genesis_accounts = accounts;
         self
     }
 
     /// Sets the signer accounts
     #[must_use]
-    pub fn with_signer_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_signer_accounts(mut self, accounts: Vec<LocalWallet>) -> Self {
         self.signer_accounts = accounts;
         self
     }
@@ -801,6 +796,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable the default create2 deployer
+    #[must_use]
+    pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
+        self.disable_default_create2_deployer = yes;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -839,13 +841,21 @@ impl NodeConfig {
 
         // if provided use all settings of `genesis.json`
         if let Some(ref genesis) = self.genesis {
-            genesis.apply(&mut env);
+            env.cfg.chain_id = genesis.config.chain_id;
+            env.block.timestamp = U256::from(genesis.timestamp);
+            if let Some(base_fee) = genesis.base_fee_per_gas {
+                env.block.basefee = U256::from(base_fee);
+            }
+            if let Some(number) = genesis.number {
+                env.block.number = U256::from(number);
+            }
+            env.block.coinbase = genesis.coinbase;
         }
 
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
-            accounts: self.genesis_accounts.iter().map(|acc| acc.address().to_alloy()).collect(),
+            accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
         };
@@ -1078,7 +1088,7 @@ latest block number: {latest_block}"
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
-            total_difficulty: block.total_difficulty.unwrap_or_default(),
+            total_difficulty: block.header.total_difficulty.unwrap_or_default(),
         };
 
         (ForkedDatabase::new(backend, block_chain_db), config)
@@ -1160,18 +1170,17 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> Vec<Wallet<SigningKey>> {
+    pub fn gen(&self) -> Vec<LocalWallet> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
-        // use the
+        // use the derivation path
         let derivation_path = self.get_derivation_path();
 
         let mut wallets = Vec::with_capacity(self.amount);
-
         for idx in 0..self.amount {
             let builder =
                 builder.clone().derivation_path(&format!("{derivation_path}{idx}")).unwrap();
-            let wallet = builder.build().unwrap().with_chain_id(self.chain_id);
+            let wallet = builder.build().unwrap().with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
         wallets

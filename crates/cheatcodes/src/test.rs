@@ -5,6 +5,7 @@ use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::{MAGIC_ASSUME, MAGIC_SKIP};
 
+pub(crate) mod assert;
 pub(crate) mod expect;
 
 impl Cheatcode for assumeCall {

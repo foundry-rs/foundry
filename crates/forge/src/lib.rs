@@ -1,13 +1,11 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::B256;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
-
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
 
@@ -146,20 +144,20 @@ impl TestOptions {
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
         // TODO: Add Options to modify the persistence
-        let cfg = proptest::test_runner::Config {
+        let config = proptest::test_runner::Config {
             failure_persistence: None,
             cases,
             max_global_rejects: self.fuzz.max_test_rejects,
             ..Default::default()
         };
 
-        if let Some(ref fuzz_seed) = self.fuzz.seed {
-            trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
-            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &B256::from(*fuzz_seed).0);
-            TestRunner::new_with_rng(cfg, rng)
+        if let Some(seed) = &self.fuzz.seed {
+            trace!(target: "forge::test", %seed, "building deterministic fuzzer");
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
+            TestRunner::new_with_rng(config, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
-            TestRunner::new(cfg)
+            TestRunner::new(config)
         }
     }
 }

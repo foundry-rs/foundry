@@ -6,10 +6,10 @@ use crate::{
     snapshot::Snapshots,
     utils::configure_tx_env,
 };
+use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
-use ethers_core::utils::GenesisAccount;
-use foundry_common::{is_known_system_sender, types::ToAlloy, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -293,24 +293,24 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Revokes cheatcode access for the given account
     ///
     /// Returns true if the `account` was previously allowed cheatcode access
-    fn revoke_cheatcode_access(&mut self, account: Address) -> bool;
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool;
 
     /// Returns `true` if the given account is allowed to execute cheatcodes
-    fn has_cheatcode_access(&self, account: Address) -> bool;
+    fn has_cheatcode_access(&self, account: &Address) -> bool;
 
     /// Ensures that `account` is allowed to execute cheatcodes
     ///
     /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
-    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), DatabaseError> {
+    fn ensure_cheatcode_access(&self, account: &Address) -> Result<(), DatabaseError> {
         if !self.has_cheatcode_access(account) {
-            return Err(DatabaseError::NoCheats(account));
+            return Err(DatabaseError::NoCheats(*account));
         }
         Ok(())
     }
 
     /// Same as [`Self::ensure_cheatcode_access()`] but only enforces it if the backend is currently
     /// in forking mode
-    fn ensure_cheatcode_access_forking_mode(&self, account: Address) -> Result<(), DatabaseError> {
+    fn ensure_cheatcode_access_forking_mode(&self, account: &Address) -> Result<(), DatabaseError> {
         if self.is_forked_mode() {
             return self.ensure_cheatcode_access(account);
         }
@@ -405,8 +405,8 @@ pub struct Backend {
 
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
-    pub async fn spawn(fork: Option<CreateFork>) -> Self {
-        Self::new(MultiFork::spawn().await, fork)
+    pub fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn(), fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -449,16 +449,11 @@ impl Backend {
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) async fn new_with_fork(
-        id: &ForkId,
-        fork: Fork,
-        journaled_state: JournaledState,
-    ) -> Self {
-        let mut backend = Self::spawn(None).await;
+    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
+        let mut backend = Self::spawn(None);
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
-
         backend
     }
 
@@ -531,7 +526,7 @@ impl Backend {
         // toggle the previous sender
         if let Some(current) = self.inner.test_contract_address.take() {
             self.remove_persistent_account(&current);
-            self.revoke_cheatcode_access(acc);
+            self.revoke_cheatcode_access(&acc);
         }
 
         self.add_persistent_account(acc);
@@ -1354,7 +1349,7 @@ impl DatabaseExt for Backend {
             }
             // Set the account's nonce and balance.
             state_acc.info.nonce = acc.nonce.unwrap_or_default();
-            state_acc.info.balance = acc.balance.to_alloy();
+            state_acc.info.balance = acc.balance;
 
             // Touch the account to ensure the loaded information persists if called in `setUp`.
             journaled_state.touch(addr);
@@ -1363,8 +1358,9 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn is_persistent(&self, acc: &Address) -> bool {
-        self.inner.persistent_accounts.contains(acc)
+    fn add_persistent_account(&mut self, account: Address) -> bool {
+        trace!(?account, "add persistent account");
+        self.inner.persistent_accounts.insert(account)
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {
@@ -1372,9 +1368,8 @@ impl DatabaseExt for Backend {
         self.inner.persistent_accounts.remove(account)
     }
 
-    fn add_persistent_account(&mut self, account: Address) -> bool {
-        trace!(?account, "add persistent account");
-        self.inner.persistent_accounts.insert(account)
+    fn is_persistent(&self, acc: &Address) -> bool {
+        self.inner.persistent_accounts.contains(acc)
     }
 
     fn allow_cheatcode_access(&mut self, account: Address) -> bool {
@@ -1382,13 +1377,13 @@ impl DatabaseExt for Backend {
         self.inner.cheatcode_access_accounts.insert(account)
     }
 
-    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
         trace!(?account, "revoke cheatcode access");
-        self.inner.cheatcode_access_accounts.remove(&account)
+        self.inner.cheatcode_access_accounts.remove(account)
     }
 
-    fn has_cheatcode_access(&self, account: Address) -> bool {
-        self.inner.cheatcode_access_accounts.contains(&account)
+    fn has_cheatcode_access(&self, account: &Address) -> bool {
+        self.inner.cheatcode_access_accounts.contains(account)
     }
 }
 
@@ -1885,8 +1880,7 @@ fn commit_transaction<I: Inspector<Backend>>(
 
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
-        let db = crate::utils::RuntimeOrHandle::new()
-            .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
+        let db = Backend::new_with_fork(fork_id, fork, journaled_state);
         evm.database(db);
 
         match evm.inspect(inspector) {

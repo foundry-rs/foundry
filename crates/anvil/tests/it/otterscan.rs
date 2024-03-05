@@ -1,7 +1,11 @@
 //! tests for otterscan endpoints
-use crate::abi::MulticallContract;
+use crate::{
+    abi::MulticallContract,
+    utils::{ethers_http_provider, ethers_ws_provider},
+};
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
+use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
@@ -12,7 +16,7 @@ use ethers::{
     abi::Address,
     prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{Bytes, TransactionRequest, U256},
+    types::{Bytes, TransactionRequest},
     utils::get_contract_address,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
@@ -41,9 +45,9 @@ async fn can_call_ots_get_api_level() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_internal_operations_contract_deploy() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -70,16 +74,18 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_internal_operations_contract_transfer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
-    //let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
-    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new()
+        .to(to.to_ethers())
+        .value(amount.to_ethers())
+        .from(from.to_ethers());
 
     let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
@@ -90,9 +96,9 @@ async fn can_call_ots_get_internal_operations_contract_transfer() {
         res[0],
         OtsInternalOperation {
             r#type: OtsInternalOperationType::Transfer,
-            from: from.to_alloy(),
-            to: to.to_alloy(),
-            value: amount.to_alloy()
+            from,
+            to,
+            value: amount
         }
     );
 }
@@ -125,8 +131,8 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -136,7 +142,7 @@ contract Contract {
     let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
-        SignerMiddleware::new(handle.ethers_http_provider(), wallets[1].clone()),
+        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
     );
     let call = contract.method::<_, ()>("deploy", ()).unwrap();
 
@@ -183,8 +189,8 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -194,7 +200,7 @@ contract Contract {
     let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
-        SignerMiddleware::new(handle.ethers_http_provider(), wallets[1].clone()),
+        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
     );
     let call = contract.method::<_, ()>("goodbye", ()).unwrap();
 
@@ -217,9 +223,9 @@ contract Contract {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_has_code() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
     api.mine_one().await;
@@ -296,8 +302,8 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
@@ -307,7 +313,7 @@ contract Contract {
     let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
-        SignerMiddleware::new(handle.ethers_http_provider(), wallets[1].clone()),
+        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
     );
     let call = contract.method::<_, ()>("run", ()).unwrap().value(1337);
     let receipt = call.send().await.unwrap().await.unwrap().unwrap();
@@ -330,7 +336,7 @@ contract Contract {
                 depth: 1,
                 from: contract.address().to_alloy(),
                 to: contract.address().to_alloy(),
-                value: U256::zero().to_alloy(),
+                value: rU256::ZERO,
                 input: Bytes::from_str("0x6a6758fe").unwrap().0.into()
             },
             OtsTrace {
@@ -338,7 +344,7 @@ contract Contract {
                 depth: 1,
                 from: contract.address().to_alloy(),
                 to: contract.address().to_alloy(),
-                value: U256::zero().to_alloy(),
+                value: rU256::ZERO,
                 input: Bytes::from_str("0x96385e39").unwrap().0.into()
             },
             OtsTrace {
@@ -346,7 +352,7 @@ contract Contract {
                 depth: 2,
                 from: contract.address().to_alloy(),
                 to: wallets[0].address().to_alloy(),
-                value: U256::from(1337).to_alloy(),
+                value: rU256::from(1337),
                 input: Bytes::from_str("0x").unwrap().0.into()
             },
             OtsTrace {
@@ -354,7 +360,7 @@ contract Contract {
                 depth: 2,
                 from: contract.address().to_alloy(),
                 to: contract.address().to_alloy(),
-                value: U256::zero().to_alloy(),
+                value: rU256::ZERO,
                 input: Bytes::from_str("0xa1325397").unwrap().0.into()
             },
         ]
@@ -385,9 +391,9 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_ws_provider();
+    let provider = ethers_ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     // deploy successfully
@@ -406,9 +412,9 @@ contract Contract {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_block_details() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
@@ -428,9 +434,9 @@ async fn can_call_ots_get_block_details() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_block_details_by_hash() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let tx = TransactionRequest::new().to(Address::random()).value(100u64);
@@ -451,9 +457,9 @@ async fn can_call_ots_get_block_details_by_hash() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_block_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     // disable automine
@@ -493,9 +499,9 @@ async fn can_call_ots_get_block_transactions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_search_transactions_before() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -529,9 +535,9 @@ async fn can_call_ots_search_transactions_before() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_search_transactions_after() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -565,10 +571,10 @@ async fn can_call_ots_search_transactions_after() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_transaction_by_sender_and_nonce() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     api.mine_one().await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
@@ -594,10 +600,10 @@ async fn can_call_ots_get_transaction_by_sender_and_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_contract_creator() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ethers_http_provider();
+    let provider = ethers_http_provider(&handle.http_endpoint());
     api.mine_one().await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let sender = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

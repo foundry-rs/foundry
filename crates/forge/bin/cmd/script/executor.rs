@@ -1,23 +1,27 @@
 use super::{
     artifacts::ArtifactInfo,
-    runner::SimulationStage,
+    runner::{ScriptRunner, SimulationStage},
     transaction::{AdditionalContract, TransactionWithMetadata},
-    *,
+    ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_primitives::{Address, Bytes, U256};
-use eyre::Result;
+use eyre::{Context, Result};
 use forge::{
     backend::Backend,
     executors::ExecutorBuilder,
     inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
-    traces::CallTraceDecoder,
+    traces::{render_trace_arena, CallTraceDecoder},
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{provider::ethers::RpcUrl, shell};
-use foundry_compilers::artifacts::CompactContractBytecode;
+use foundry_common::{get_contract_name, provider::ethers::RpcUrl, shell, ContractsByArtifact};
+use foundry_compilers::artifacts::ContractBytecodeSome;
+use foundry_evm::inspectors::cheatcodes::ScriptWallets;
 use futures::future::join_all;
 use parking_lot::RwLock;
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    sync::Arc,
+};
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -25,25 +29,24 @@ impl ScriptArgs {
     pub async fn execute(
         &self,
         script_config: &mut ScriptConfig,
-        contract: CompactContractBytecode,
+        contract: ContractBytecodeSome,
         sender: Address,
         predeploy_libraries: &[Bytes],
+        script_wallets: ScriptWallets,
     ) -> Result<ScriptResult> {
         trace!(target: "script", "start executing script");
 
-        let CompactContractBytecode { abi, bytecode, .. } = contract;
+        let ContractBytecodeSome { abi, bytecode, .. } = contract;
 
-        let abi = abi.ok_or_else(|| eyre::eyre!("no ABI found for contract"))?;
-        let bytecode = bytecode
-            .ok_or_else(|| eyre::eyre!("no bytecode found for contract"))?
-            .into_bytes()
-            .ok_or_else(|| {
-                eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
-            })?;
+        let bytecode = bytecode.into_bytes().ok_or_else(|| {
+            eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
+        })?;
 
         ensure_clean_constructor(&abi)?;
 
-        let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await?;
+        let mut runner = self
+            .prepare_runner(script_config, sender, SimulationStage::Local, Some(script_wallets))
+            .await?;
         let (address, mut result) = runner.setup(
             predeploy_libraries,
             bytecode,
@@ -67,7 +70,6 @@ impl ScriptArgs {
             result.debug = script_result.debug;
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
-            result.script_wallets.extend(script_result.script_wallets);
             result.breakpoints = script_result.breakpoints;
 
             match (&mut result.transactions, script_result.transactions) {
@@ -143,7 +145,7 @@ impl ScriptArgs {
                         tx.from
                             .expect("transaction doesn't have a `from` address at execution time"),
                         tx.to,
-                        tx.data.clone(),
+                        tx.input.clone().into_input(),
                         tx.value,
                     )
                     .wrap_err("Internal EVM error during simulation")?;
@@ -253,7 +255,7 @@ impl ScriptArgs {
                 let mut script_config = script_config.clone();
                 script_config.evm_opts.fork_url = Some(rpc.clone());
                 let runner = self
-                    .prepare_runner(&mut script_config, sender, SimulationStage::OnChain)
+                    .prepare_runner(&mut script_config, sender, SimulationStage::OnChain, None)
                     .await?;
                 Ok((rpc.clone(), runner))
             })
@@ -268,6 +270,7 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         sender: Address,
         stage: SimulationStage,
+        script_wallets: Option<ScriptWallets>,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await?;
@@ -278,7 +281,7 @@ impl ScriptArgs {
                 Some(db) => db.clone(),
                 None => {
                     let fork = script_config.evm_opts.get_fork(&script_config.config, env.clone());
-                    let backend = Backend::spawn(fork).await;
+                    let backend = Backend::spawn(fork);
                     script_config.backends.insert(url.clone(), backend.clone());
                     backend
                 }
@@ -288,7 +291,6 @@ impl ScriptArgs {
                 // no need to cache it, since there won't be any onchain simulation that we'd need
                 // to cache the backend for.
                 Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()))
-                    .await
             }
         };
 
@@ -300,9 +302,17 @@ impl ScriptArgs {
 
         if let SimulationStage::Local = stage {
             builder = builder.inspectors(|stack| {
-                stack.debug(self.debug).cheatcodes(
-                    CheatsConfig::new(&script_config.config, script_config.evm_opts.clone()).into(),
-                )
+                stack
+                    .debug(self.debug)
+                    .cheatcodes(
+                        CheatsConfig::new(
+                            &script_config.config,
+                            script_config.evm_opts.clone(),
+                            script_wallets,
+                        )
+                        .into(),
+                    )
+                    .enable_isolation(script_config.evm_opts.isolate)
             });
         }
 

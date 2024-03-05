@@ -102,6 +102,9 @@ impl Error for FoundryConfigError {
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
+    /// Warning: Visibility for constructor is ignored. If you want the contract to be
+    /// non-deployable, making it "abstract" is sufficient
+    VisibilityForConstructorIsIgnored,
     /// Warning that contract code size exceeds 24576 bytes (a limit introduced in Spurious
     /// Dragon).
     ContractExceeds24576Bytes,
@@ -131,6 +134,8 @@ pub enum SolidityErrorCode {
     Unreachable,
     /// Missing pragma solidity
     PragmaSolidity,
+    /// Uses transient opcodes
+    TransientStorageUsed,
     /// All other error codes
     Other(u64),
 }
@@ -158,6 +163,8 @@ impl SolidityErrorCode {
             SolidityErrorCode::Unreachable => "unreachable",
             SolidityErrorCode::PragmaSolidity => "pragma-solidity",
             SolidityErrorCode::Other(code) => return Err(*code),
+            SolidityErrorCode::VisibilityForConstructorIsIgnored => "constructor-visibility",
+            SolidityErrorCode::TransientStorageUsed => "transient-storage",
         };
         Ok(s)
     }
@@ -180,6 +187,8 @@ impl From<SolidityErrorCode> for u64 {
             SolidityErrorCode::Unreachable => 5740,
             SolidityErrorCode::PragmaSolidity => 3420,
             SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes => 3860,
+            SolidityErrorCode::VisibilityForConstructorIsIgnored => 2462,
+            SolidityErrorCode::TransientStorageUsed => 2394,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -212,6 +221,8 @@ impl FromStr for SolidityErrorCode {
             "virtual-interfaces" => SolidityErrorCode::InterfacesExplicitlyVirtual,
             "missing-receive-ether" => SolidityErrorCode::PayableNoReceiveEther,
             "same-varname" => SolidityErrorCode::DeclarationSameNameAsAnother,
+            "constructor-visibility" => SolidityErrorCode::VisibilityForConstructorIsIgnored,
+            "transient-storage" => SolidityErrorCode::TransientStorageUsed,
             _ => return Err(format!("Unknown variant {s}")),
         };
 
@@ -236,6 +247,8 @@ impl From<u64> for SolidityErrorCode {
             6321 => SolidityErrorCode::UnnamedReturnVariable,
             3420 => SolidityErrorCode::PragmaSolidity,
             5740 => SolidityErrorCode::Unreachable,
+            2462 => SolidityErrorCode::VisibilityForConstructorIsIgnored,
+            2394 => SolidityErrorCode::TransientStorageUsed,
             other => SolidityErrorCode::Other(other),
         }
     }

@@ -2,17 +2,18 @@
 extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
-use cast::{Cast, SimpleCast};
+use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers_core::types::{BlockId, BlockNumber::Latest};
-use ethers_providers::Middleware;
+use ethers_core::types::{BlockId, BlockNumber::Latest, NameOrAddress};
+use ethers_providers::{Middleware, Provider};
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     fmt::format_tokens,
     fs,
+    runtime_client::RuntimeClient,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
@@ -25,8 +26,9 @@ use std::time::Instant;
 
 pub mod cmd;
 pub mod opts;
+pub mod tx;
 
-use opts::{Opts, Subcommands, ToBaseArgs};
+use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -36,42 +38,42 @@ async fn main() -> Result<()> {
     utils::enable_paint();
 
     let opts = Opts::parse();
-    match opts.sub {
+    match opts.cmd {
         // Constants
-        Subcommands::MaxInt { r#type } => {
+        CastSubcommand::MaxInt { r#type } => {
             println!("{}", SimpleCast::max_int(&r#type)?);
         }
-        Subcommands::MinInt { r#type } => {
+        CastSubcommand::MinInt { r#type } => {
             println!("{}", SimpleCast::min_int(&r#type)?);
         }
-        Subcommands::MaxUint { r#type } => {
+        CastSubcommand::MaxUint { r#type } => {
             println!("{}", SimpleCast::max_int(&r#type)?);
         }
-        Subcommands::AddressZero => {
+        CastSubcommand::AddressZero => {
             println!("{:?}", Address::ZERO);
         }
-        Subcommands::HashZero => {
+        CastSubcommand::HashZero => {
             println!("{:?}", B256::ZERO);
         }
 
         // Conversions & transformations
-        Subcommands::FromUtf8 { text } => {
+        CastSubcommand::FromUtf8 { text } => {
             let value = stdin::unwrap(text, false)?;
             println!("{}", SimpleCast::from_utf8(&value));
         }
-        Subcommands::ToAscii { hexdata } => {
+        CastSubcommand::ToAscii { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
             println!("{}", SimpleCast::to_ascii(&value)?);
         }
-        Subcommands::FromFixedPoint { value, decimals } => {
+        CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
             println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?);
         }
-        Subcommands::ToFixedPoint { value, decimals } => {
+        CastSubcommand::ToFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
             println!("{}", SimpleCast::to_fixed_point(&value, &decimals)?);
         }
-        Subcommands::ConcatHex { data } => {
+        CastSubcommand::ConcatHex { data } => {
             if data.is_empty() {
                 let s = stdin::read(true)?;
                 println!("{}", SimpleCast::concat_hex(s.split_whitespace()))
@@ -79,11 +81,11 @@ async fn main() -> Result<()> {
                 println!("{}", SimpleCast::concat_hex(data))
             }
         }
-        Subcommands::FromBin => {
+        CastSubcommand::FromBin => {
             let hex = stdin::read_bytes(false)?;
             println!("{}", hex::encode_prefixed(hex));
         }
-        Subcommands::ToHexdata { input } => {
+        CastSubcommand::ToHexdata { input } => {
             let value = stdin::unwrap_line(input)?;
             let output = match value {
                 s if s.starts_with('@') => hex::encode(std::env::var(&s[1..])?),
@@ -92,91 +94,95 @@ async fn main() -> Result<()> {
             };
             println!("0x{output}");
         }
-        Subcommands::ToCheckSumAddress { address } => {
+        CastSubcommand::ToCheckSumAddress { address } => {
             let value = stdin::unwrap_line(address)?;
             println!("{}", value.to_checksum(None));
         }
-        Subcommands::ToUint256 { value } => {
+        CastSubcommand::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_uint256(&value)?);
         }
-        Subcommands::ToInt256 { value } => {
+        CastSubcommand::ToInt256 { value } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_int256(&value)?);
         }
-        Subcommands::ToUnit { value, unit } => {
+        CastSubcommand::ToUnit { value, unit } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_unit(&value, &unit)?);
         }
-        Subcommands::FromWei { value, unit } => {
+        CastSubcommand::FromWei { value, unit } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::from_wei(&value, &unit)?);
         }
-        Subcommands::ToWei { value, unit } => {
+        CastSubcommand::ToWei { value, unit } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_wei(&value, &unit)?);
         }
-        Subcommands::FromRlp { value } => {
+        CastSubcommand::FromRlp { value } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::from_rlp(value)?);
         }
-        Subcommands::ToRlp { value } => {
+        CastSubcommand::ToRlp { value } => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_rlp(&value)?);
         }
-        Subcommands::ToHex(ToBaseArgs { value, base_in }) => {
+        CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?);
         }
-        Subcommands::ToDec(ToBaseArgs { value, base_in }) => {
+        CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?);
         }
-        Subcommands::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
+        CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
             println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?);
         }
-        Subcommands::ToBytes32 { bytes } => {
+        CastSubcommand::ToBytes32 { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::to_bytes32(&value)?);
         }
-        Subcommands::FormatBytes32String { string } => {
+        CastSubcommand::FormatBytes32String { string } => {
             let value = stdin::unwrap_line(string)?;
             println!("{}", SimpleCast::format_bytes32_string(&value)?);
         }
-        Subcommands::ParseBytes32String { bytes } => {
+        CastSubcommand::ParseBytes32String { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::parse_bytes32_string(&value)?);
         }
-        Subcommands::ParseBytes32Address { bytes } => {
+        CastSubcommand::ParseBytes32Address { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::parse_bytes32_address(&value)?);
         }
 
         // ABI encoding & decoding
-        Subcommands::AbiDecode { sig, calldata, input } => {
+        CastSubcommand::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
-        Subcommands::AbiEncode { sig, args } => {
-            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        CastSubcommand::AbiEncode { sig, packed, args } => {
+            if !packed {
+                println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+            } else {
+                println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?);
+            }
         }
-        Subcommands::CalldataDecode { sig, calldata } => {
+        CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
-        Subcommands::CalldataEncode { sig, args } => {
+        CastSubcommand::CalldataEncode { sig, args } => {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
         }
-        Subcommands::Interface(cmd) => cmd.run().await?,
-        Subcommands::Bind(cmd) => cmd.run().await?,
-        Subcommands::PrettyCalldata { calldata, offline } => {
+        CastSubcommand::Interface(cmd) => cmd.run().await?,
+        CastSubcommand::Bind(cmd) => cmd.run().await?,
+        CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
-        Subcommands::Sig { sig, optimize } => {
+        CastSubcommand::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
             match optimize {
                 Some(opt) => {
@@ -192,8 +198,8 @@ async fn main() -> Result<()> {
         }
 
         // Blockchain & RPC queries
-        Subcommands::AccessList(cmd) => cmd.run().await?,
-        Subcommands::Age { block, rpc } => {
+        CastSubcommand::AccessList(cmd) => cmd.run().await?,
+        CastSubcommand::Age { block, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
@@ -201,17 +207,47 @@ async fn main() -> Result<()> {
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, ether, rpc } => {
+        CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let value = Cast::new(provider).balance(who, block).await?;
-            if ether {
-                println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
-            } else {
-                println!("{value}");
+
+            match erc20 {
+                Some(token) => {
+                    let chain = utils::get_chain(config.chain, &provider).await?;
+                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> = TxBuilder::new(
+                        &provider,
+                        NameOrAddress::Address(Address::ZERO.to_ethers()),
+                        Some(NameOrAddress::Address(token.to_ethers())),
+                        chain,
+                        true,
+                    )
+                    .await?;
+
+                    let account_addr = match who {
+                        NameOrAddress::Name(ens_name) => provider.resolve_name(&ens_name).await?,
+                        NameOrAddress::Address(addr) => addr,
+                    };
+
+                    builder
+                        .set_args(
+                            "balanceOf(address) returns (uint256)",
+                            vec![format!("{account_addr:#x}")],
+                        )
+                        .await?;
+                    let builder_output = builder.build();
+                    println!("{}", Cast::new(provider).call(builder_output, block).await?);
+                }
+                None => {
+                    let value = Cast::new(provider).balance(who, block).await?;
+                    if ether {
+                        println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
+                    } else {
+                        println!("{value}");
+                    }
+                }
             }
         }
-        Subcommands::BaseFee { block, rpc } => {
+        CastSubcommand::BaseFee { block, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
@@ -219,7 +255,7 @@ async fn main() -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Block { block, full, field, json, rpc } => {
+        CastSubcommand::Block { block, full, field, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
@@ -229,37 +265,37 @@ async fn main() -> Result<()> {
                     .await?
             );
         }
-        Subcommands::BlockNumber { rpc } => {
+        CastSubcommand::BlockNumber { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Chain { rpc } => {
+        CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).chain().await?);
         }
-        Subcommands::ChainId { rpc } => {
+        CastSubcommand::ChainId { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
-        Subcommands::Client { rpc } => {
+        CastSubcommand::Client { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", provider.client_version().await?);
         }
-        Subcommands::Code { block, who, disassemble, rpc } => {
+        CastSubcommand::Code { block, who, disassemble, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
-        Subcommands::Codesize { block, who, rpc } => {
+        CastSubcommand::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).codesize(who, block).await?);
         }
-        Subcommands::ComputeAddress { address, nonce, rpc } => {
+        CastSubcommand::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
@@ -267,10 +303,10 @@ async fn main() -> Result<()> {
             let computed = Cast::new(&provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", computed.to_checksum(None));
         }
-        Subcommands::Disassemble { bytecode } => {
+        CastSubcommand::Disassemble { bytecode } => {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
         }
-        Subcommands::Selectors { bytecode, resolve } => {
+        CastSubcommand::Selectors { bytecode, resolve } => {
             let selectors_and_args = SimpleCast::extract_selectors(&bytecode)?;
             if resolve {
                 let selectors_it = selectors_and_args.iter().map(|r| &r.0);
@@ -293,31 +329,31 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Subcommands::FindBlock(cmd) => cmd.run().await?,
-        Subcommands::GasPrice { rpc } => {
+        CastSubcommand::FindBlock(cmd) => cmd.run().await?,
+        CastSubcommand::GasPrice { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).gas_price().await?);
         }
-        Subcommands::Index { key_type, key, slot_number } => {
+        CastSubcommand::Index { key_type, key, slot_number } => {
             println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
         }
-        Subcommands::Implementation { block, who, rpc } => {
+        CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).implementation(who, block).await?);
         }
-        Subcommands::Admin { block, who, rpc } => {
+        CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).admin(who, block).await?);
         }
-        Subcommands::Nonce { block, who, rpc } => {
+        CastSubcommand::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
-        Subcommands::Proof { address, slots, rpc, block } => {
+        CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let value = provider
@@ -325,13 +361,14 @@ async fn main() -> Result<()> {
                 .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
-        Subcommands::Rpc(cmd) => cmd.run().await?,
-        Subcommands::Storage(cmd) => cmd.run().await?,
+        CastSubcommand::Rpc(cmd) => cmd.run().await?,
+        CastSubcommand::Storage(cmd) => cmd.run().await?,
 
         // Calls & transactions
-        Subcommands::Call(cmd) => cmd.run().await?,
-        Subcommands::Estimate(cmd) => cmd.run().await?,
-        Subcommands::PublishTx { raw_tx, cast_async, rpc } => {
+        CastSubcommand::Call(cmd) => cmd.run().await?,
+        CastSubcommand::Estimate(cmd) => cmd.run().await?,
+        CastSubcommand::MakeTx(cmd) => cmd.run().await?,
+        CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let cast = Cast::new(&provider);
@@ -346,7 +383,7 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
+        CastSubcommand::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
@@ -356,9 +393,9 @@ async fn main() -> Result<()> {
                     .await?
             );
         }
-        Subcommands::Run(cmd) => cmd.run().await?,
-        Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { tx_hash, field, raw, json, rpc } => {
+        CastSubcommand::Run(cmd) => cmd.run().await?,
+        CastSubcommand::SendTx(cmd) => cmd.run().await?,
+        CastSubcommand::Tx { tx_hash, field, raw, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
@@ -369,7 +406,7 @@ async fn main() -> Result<()> {
         }
 
         // 4Byte
-        Subcommands::FourByte { selector } => {
+        CastSubcommand::FourByte { selector } => {
             let selector = stdin::unwrap_line(selector)?;
             let sigs = decode_function_selector(&selector).await?;
             if sigs.is_empty() {
@@ -379,7 +416,7 @@ async fn main() -> Result<()> {
                 println!("{sig}");
             }
         }
-        Subcommands::FourByteDecode { calldata } => {
+        CastSubcommand::FourByteDecode { calldata } => {
             let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{sig}\"", i + 1));
@@ -398,7 +435,7 @@ async fn main() -> Result<()> {
                 println!("{token}");
             }
         }
-        Subcommands::FourByteEvent { topic } => {
+        CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;
             let sigs = decode_event_topic(&topic).await?;
             if sigs.is_empty() {
@@ -408,7 +445,7 @@ async fn main() -> Result<()> {
                 println!("{sig}");
             }
         }
-        Subcommands::UploadSignature { signatures } => {
+        CastSubcommand::UploadSignature { signatures } => {
             let signatures = stdin::unwrap_vec(signatures)?;
             let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
             if !abis.is_empty() {
@@ -420,11 +457,11 @@ async fn main() -> Result<()> {
         }
 
         // ENS
-        Subcommands::Namehash { name } => {
+        CastSubcommand::Namehash { name } => {
             let name = stdin::unwrap_line(name)?;
             println!("{}", SimpleCast::namehash(&name)?);
         }
-        Subcommands::LookupAddress { who, rpc, verify } => {
+        CastSubcommand::LookupAddress { who, rpc, verify } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
@@ -439,7 +476,7 @@ async fn main() -> Result<()> {
             }
             println!("{name}");
         }
-        Subcommands::ResolveName { who, rpc, verify } => {
+        CastSubcommand::ResolveName { who, rpc, verify } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
@@ -456,7 +493,7 @@ async fn main() -> Result<()> {
         }
 
         // Misc
-        Subcommands::Keccak { data } => {
+        CastSubcommand::Keccak { data } => {
             let bytes = match data {
                 Some(data) => data.into_bytes(),
                 None => stdin::read_bytes(false)?,
@@ -473,18 +510,18 @@ async fn main() -> Result<()> {
                 }
             };
         }
-        Subcommands::SigEvent { event_string } => {
+        CastSubcommand::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
             let parsed_event = get_event(&event_string)?;
             println!("{:?}", parsed_event.selector());
         }
-        Subcommands::LeftShift { value, bits, base_in, base_out } => {
+        CastSubcommand::LeftShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
-        Subcommands::RightShift { value, bits, base_in, base_out } => {
+        CastSubcommand::RightShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
-        Subcommands::EtherscanSource { address, directory, etherscan } => {
+        CastSubcommand::EtherscanSource { address, directory, etherscan } => {
             let config = Config::from(&etherscan);
             let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
@@ -498,21 +535,21 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Subcommands::Create2(cmd) => {
+        CastSubcommand::Create2(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Wallet { command } => command.run().await?,
-        Subcommands::Completions { shell } => {
+        CastSubcommand::Wallet { command } => command.run().await?,
+        CastSubcommand::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
-        Subcommands::GenerateFigSpec => clap_complete::generate(
+        CastSubcommand::GenerateFigSpec => clap_complete::generate(
             clap_complete_fig::Fig,
             &mut Opts::command(),
             "cast",
             &mut std::io::stdout(),
         ),
-        Subcommands::Logs(cmd) => cmd.run().await?,
-        Subcommands::DecodeTransaction { tx } => {
+        CastSubcommand::Logs(cmd) => cmd.run().await?,
+        CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
             let (tx, sig) = SimpleCast::decode_raw_transaction(&tx)?;
 

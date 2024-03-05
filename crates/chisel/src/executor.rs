@@ -292,10 +292,8 @@ impl SessionSource {
         let backend = match self.config.backend.take() {
             Some(backend) => backend,
             None => {
-                let backend = Backend::spawn(
-                    self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone()),
-                )
-                .await;
+                let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
+                let backend = Backend::spawn(fork);
                 self.config.backend = Some(backend.clone());
                 backend
             }
@@ -305,8 +303,12 @@ impl SessionSource {
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace(true).cheatcodes(
-                    CheatsConfig::new(&self.config.foundry_config, self.config.evm_opts.clone())
-                        .into(),
+                    CheatsConfig::new(
+                        &self.config.foundry_config,
+                        self.config.evm_opts.clone(),
+                        None,
+                    )
+                    .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
@@ -765,6 +767,8 @@ impl Type {
     }
 
     /// Handle special expressions like [global variables](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
+    ///
+    /// See: <https://github.com/ethereum/solidity/blob/81268e336573721819e39fbb3fefbc9344ad176c/libsolidity/ast/Types.cpp#L4106>
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
             return self
@@ -787,7 +791,7 @@ impl Type {
                     // Array / bytes members
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
-                        "length" if ty.is_dynamic() || ty.is_array() => {
+                        "length" if ty.is_dynamic() || ty.is_array() || ty.is_fixed_bytes() => {
                             return Self::Builtin(DynSolType::Uint(256))
                         }
                         "pop" if ty.is_dynamic_array() => return ty,
@@ -814,20 +818,21 @@ impl Type {
                     match name {
                         "block" => match access {
                             "coinbase" => Some(DynSolType::Address),
-                            "basefee" | "chainid" | "difficulty" | "gaslimit" | "number" |
-                            "timestamp" => Some(DynSolType::Uint(256)),
+                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" |
+                            "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "msg" => match access {
-                            "data" => Some(DynSolType::Bytes),
                             "sender" => Some(DynSolType::Address),
-                            "sig" => Some(DynSolType::FixedBytes(4)),
+                            "gas" => Some(DynSolType::Uint(256)),
                             "value" => Some(DynSolType::Uint(256)),
+                            "data" => Some(DynSolType::Bytes),
+                            "sig" => Some(DynSolType::FixedBytes(4)),
                             _ => None,
                         },
                         "tx" => match access {
-                            "gasprice" => Some(DynSolType::Uint(256)),
                             "origin" => Some(DynSolType::Address),
+                            "gasprice" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "abi" => match access {
@@ -861,10 +866,11 @@ impl Type {
                             "name" => Some(DynSolType::String),
                             "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
                             "interfaceId" => Some(DynSolType::FixedBytes(4)),
-                            "min" | "max" => {
-                                let arg = args.unwrap().pop().flatten().unwrap();
-                                Some(arg.into_builtin().unwrap())
-                            }
+                            "min" | "max" => Some(
+                                // Either a builtin or an enum
+                                (|| args?.pop()??.into_builtin())()
+                                    .unwrap_or(DynSolType::Uint(256)),
+                            ),
                             _ => None,
                         },
                         "string" => match access {
@@ -1190,9 +1196,9 @@ impl Type {
                     Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes) | Some(DynSolType::String) => {
-                        Some(DynSolType::FixedBytes(1))
-                    }
+                    Some(DynSolType::Bytes) |
+                    Some(DynSolType::String) |
+                    Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
                     ty => ty,
                 }
             }
@@ -1231,6 +1237,10 @@ impl Type {
     #[inline]
     fn is_dynamic_array(&self) -> bool {
         matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
+    }
+
+    fn is_fixed_bytes(&self) -> bool {
+        matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
     }
 }
 
@@ -1570,6 +1580,8 @@ mod tests {
 
     #[test]
     fn test_global_vars() {
+        init_tracing();
+
         // https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables
         let global_variables = {
             use DynSolType::*;
@@ -1649,9 +1661,13 @@ mod tests {
                 ("type(C).runtimeCode", Bytes),
                 ("type(I).interfaceId", FixedBytes(4)),
                 ("type(uint256).min", Uint(256)),
+                ("type(int128).min", Int(128)),
                 ("type(int256).min", Int(256)),
                 ("type(uint256).max", Uint(256)),
+                ("type(int128).max", Int(128)),
                 ("type(int256).max", Int(256)),
+                ("type(Enum1).min", Uint(256)),
+                ("type(Enum1).max", Uint(256)),
                 // function
                 ("this.run.address", Address),
                 ("this.run.selector", FixedBytes(4)),
@@ -1712,14 +1728,16 @@ mod tests {
             s.drain_global_code();
         }
 
-        let input = input.trim_end().trim_end_matches(';').to_string() + ";";
+        *s = s.clone_with_new_line("enum Enum1 { A }".into()).unwrap().0;
+
+        let input = format!("{};", input.trim_end().trim_end_matches(';'));
         let (mut _s, _) = s.clone_with_new_line(input).unwrap();
         *s = _s.clone();
         let s = &mut _s;
 
         if let Err(e) = s.parse() {
             for err in e {
-                eprintln!("{} @ {}:{}", err.message, err.loc.start(), err.loc.end());
+                eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
             }
             let source = s.to_repl_source();
             panic!("could not parse input:\n{source}")
@@ -1750,7 +1768,6 @@ mod tests {
         ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
     }
 
-    #[track_caller]
     fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)
     where
         T: AsRef<str> + std::fmt::Display + 'a,
@@ -1761,5 +1778,14 @@ mod tests {
             let ty = get_type_ethabi(s, input, true);
             assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
         }
+    }
+
+    fn init_tracing() {
+        if std::env::var_os("RUST_LOG").is_none() {
+            std::env::set_var("RUST_LOG", "debug");
+        }
+        let _ = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
     }
 }

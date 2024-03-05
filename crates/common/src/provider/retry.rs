@@ -1,9 +1,9 @@
 //! An utility trait for retrying requests based on the error type. See [TransportError].
 use alloy_json_rpc::ErrorPayload;
-use alloy_transport::TransportError;
+use alloy_transport::{TransportError, TransportErrorKind};
 use serde::Deserialize;
 
-/// [RetryPolicy] defines logic for which [JsonRpcClient::Error] instances should
+/// [RetryPolicy] defines logic for which [TransportError] instances should
 /// the client retry the request and try to recover from.
 pub trait RetryPolicy: Send + Sync + std::fmt::Debug {
     /// Whether to retry the request based on the given `error`
@@ -24,11 +24,17 @@ pub struct RateLimitRetryPolicy;
 impl RetryPolicy for RateLimitRetryPolicy {
     fn should_retry(&self, error: &TransportError) -> bool {
         match error {
-            TransportError::Transport(_) => true,
+            // There was a transport-level error. This is either a non-retryable error,
+            // or a server error that should be retried.
+            TransportError::Transport(err) => should_retry_transport_level_error(err),
             // The transport could not serialize the error itself. The request was malformed from
             // the start.
             TransportError::SerError(_) => false,
             TransportError::DeserError { text, .. } => {
+                if let Ok(resp) = serde_json::from_str::<ErrorPayload>(text) {
+                    return should_retry_json_rpc_error(&resp)
+                }
+
                 // some providers send invalid JSON RPC in the error case (no `id:u64`), but the
                 // text should be a `JsonRpcError`
                 #[derive(Deserialize)]
@@ -39,12 +45,14 @@ impl RetryPolicy for RateLimitRetryPolicy {
                 if let Ok(resp) = serde_json::from_str::<Resp>(text) {
                     return should_retry_json_rpc_error(&resp.error)
                 }
+
                 false
             }
             TransportError::ErrorResp(err) => should_retry_json_rpc_error(err),
         }
     }
 
+    /// Provides a backoff hint if the error response contains it
     fn backoff_hint(&self, error: &TransportError) -> Option<std::time::Duration> {
         if let TransportError::ErrorResp(resp) = error {
             let data = resp.try_data_as::<serde_json::Value>();
@@ -62,6 +70,18 @@ impl RetryPolicy for RateLimitRetryPolicy {
             }
         }
         None
+    }
+}
+
+/// Analyzes the [TransportErrorKind] and decides if the request should be retried based on the
+/// variant.
+fn should_retry_transport_level_error(error: &TransportErrorKind) -> bool {
+    match error {
+        // Missing batch response errors can be retried.
+        TransportErrorKind::MissingBatchResponse(_) => true,
+        // If the backend is gone, or there's a completely custom error, we should assume it's not
+        // retryable.
+        _ => false,
     }
 }
 
@@ -84,6 +104,12 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
         return true
     }
 
+    // quick node error `"credits limited to 6000/sec"`
+    // <https://github.com/foundry-rs/foundry/pull/6712#issuecomment-1951441240>
+    if *code == -32012 && message.contains("credits") {
+        return true
+    }
+
     // quick node rate limit error: `100/second request limit reached - reduce calls per second or
     // upgrade your account at quicknode.com` <https://github.com/foundry-rs/foundry/issues/4894>
     if *code == -32007 && message.contains("request limit reached") {
@@ -99,6 +125,7 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
             msg.contains("rate limit") ||
                 msg.contains("rate exceeded") ||
                 msg.contains("too many requests") ||
+                msg.contains("credits limited") ||
                 msg.contains("request limit")
         }
     }

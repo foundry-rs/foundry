@@ -105,6 +105,7 @@ impl VerifyBundle {
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
+                    rpc: Default::default(),
                     flatten: false,
                     force: false,
                     skip_is_verified_check: true,
@@ -114,7 +115,9 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
+                    evm_version: None,
                     show_standard_json_input: false,
+                    guess_constructor_args: false,
                 };
 
                 return Some(verify)

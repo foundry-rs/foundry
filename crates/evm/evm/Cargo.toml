@@ -37,7 +37,6 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-ethers-signers.workspace = true
 itertools.workspace = true
 
 eyre = "0.6"

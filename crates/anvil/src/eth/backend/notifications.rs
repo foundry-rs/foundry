@@ -1,7 +1,7 @@
 //! Notifications emitted from the backed
 
+use alloy_consensus::Header;
 use alloy_primitives::B256;
-use anvil_core::eth::block::Header;
 use futures::channel::mpsc::UnboundedReceiver;
 use std::sync::Arc;
 
