@@ -467,9 +467,13 @@ impl InspectorStack {
         data.env.tx.value = value;
         data.env.tx.nonce = Some(nonce);
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        // We might have modified block gas limit earlier and revm will reject tx with gas limit >
-        // block gas limit, so we adjust.
-        data.env.tx.gas_limit = std::cmp::min(gas_limit + 21000, data.env.block.gas_limit.to());
+        data.env.tx.gas_limit = gas_limit + 21000;
+        // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
+        // exceed block gas limit.
+        if !data.env.cfg.disable_block_gas_limit {
+            data.env.tx.gas_limit =
+                std::cmp::min(data.env.tx.gas_limit, data.env.block.gas_limit.to());
+        }
         data.env.tx.gas_price = U256::ZERO;
 
         self.inner_context_data = Some(InnerContextData {

@@ -85,6 +85,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         block_difficulty: 10,
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
+        disable_block_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
