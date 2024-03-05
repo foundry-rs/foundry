@@ -141,7 +141,9 @@ foundry-compilers = { version = "0.3.9", default-features = false }
 # no default features to avoid c-kzg
 revm = { version = "6.1", default-features = false }
 revm-primitives = { version = "2", default-features = false }
-revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "5d560be", features = ["serde"] }
+revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "5d560be", features = [
+    "serde",
+] }
 
 ## ethers
 ethers = { version = "2.0", default-features = false }
@@ -228,8 +230,3 @@ ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-
-#revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-#revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-#revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-#revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

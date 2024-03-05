@@ -195,7 +195,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
         inspector: &mut I,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<()>
+    where
+        Self: Sized;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -274,14 +276,20 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn add_persistent_account(&mut self, account: Address) -> bool;
 
     /// Removes persistent status from all given accounts
-    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
+    where
+        Self: Sized,
+    {
         for acc in accounts {
             self.remove_persistent_account(&acc);
         }
     }
 
     /// Extends the persistent accounts with the accounts the iterator yields.
-    fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+    fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
+    where
+        Self: Sized,
+    {
         for acc in accounts {
             self.add_persistent_account(acc);
         }
@@ -319,6 +327,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         Ok(())
     }
 }
+
+struct _ObjectSafe(dyn DatabaseExt);
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -547,7 +557,7 @@ impl Backend {
 
     /// Sets the current spec id
     pub fn set_spec_id(&mut self, spec_id: SpecId) -> &mut Self {
-        trace!("setting precompile id");
+        trace!(?spec_id, "setting spec ID");
         self.inner.spec_id = spec_id;
         self
     }

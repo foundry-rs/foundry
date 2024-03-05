@@ -426,8 +426,7 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
 
     let Some(expected) = &event_to_fill_or_check.log else {
         // Fill the event.
-        event_to_fill_or_check.log =
-            Some(RawLog::new_unchecked(log.topics().to_vec(), log.data.data.clone()));
+        event_to_fill_or_check.log = Some(log.data.clone());
         state.expected_emits.push_back(event_to_fill_or_check);
         return
     };

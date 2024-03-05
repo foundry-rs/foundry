@@ -142,7 +142,7 @@ mod tests {
         let handler_cfg = revm::primitives::HandlerCfg::new(spec);
         let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
 
-        let mut inspector = revm::inspectors::NoOpInspector::default();
+        let mut inspector = revm::inspectors::NoOpInspector;
 
         let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector);
         let result = evm.transact().unwrap();

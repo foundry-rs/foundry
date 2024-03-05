@@ -560,7 +560,11 @@ impl InspectorStack {
     }
 }
 
-// NOTE: `&mut DB` is required because we recurse inside of `transact_inner`.
+// NOTE: `&mut DB` is required because we recurse inside of `transact_inner` and we need to use the
+// same reference to the DB, otherwise there's infinite recursion and Rust fails to instatiate this
+// implementation. This currently works because internally we only use `&mut DB` anyways, but if
+// this ever needs to be changed, this can be reverted back to using just `DB`, and instead using
+// dynamic dispatch (`&mut dyn ...`) in `transact_inner`.
 impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
     fn initialize_interp(
         &mut self,
