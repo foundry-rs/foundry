@@ -1823,6 +1823,8 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-toml to understand the
     // limitations and caveats of the TOML parsing cheat.
 
+    // TODO: `keyExists` (clashing namespace), `parseJsonKeys`
+
     /// ABI-encodes a TOML object.
     #[cheatcode(group = Toml)]
     function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
@@ -1831,16 +1833,72 @@ interface Vm {
     #[cheatcode(group = Toml)]
     function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
 
+    // The following parseToml cheatcodes will do type coercion, for the type that they indicate.
+    // For example, parseTomlUint will coerce all values to a uint256. That includes stringified numbers '12.'
+    // and hex numbers '0xEF.'.
+    // Type coercion works ONLY for discrete values or arrays. That means that the key must return a value or array, not
+    // a TOML table.
+
+    /// Parses a string of TOML data at `key` and coerces it to `uint256`.
+    #[cheatcode(group = Toml)]
+    function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `int256`.
+    #[cheatcode(group = Toml)]
+    function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    /// Parses a string of TOML data at `key` and coerces it to `int256[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bool`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    /// Parses a string of TOML data at `key` and coerces it to `bool[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `address`.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    /// Parses a string of TOML data at `key` and coerces it to `address[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddressArray(string calldata toml, string calldata key)
+        external
+        pure
+        returns (address[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string`.
+    #[cheatcode(group = Toml)]
+    function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32Array(string calldata toml, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+
+
     // -------- Writing --------
 
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/write-toml to understand how
     // to use the TOML writing cheat.
 
-    /// Write a serialized TOML object after JSON conversion to a file. If the file exists, it will be overwritten.
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML to a file.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path) external;
 
-    /// Write a serialized TOML object after JSON conversion to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;

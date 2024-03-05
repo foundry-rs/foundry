@@ -288,7 +288,7 @@ pub(super) fn parse_json(json: &str, path: &str) -> Result {
     Ok(encode(sol))
 }
 
-fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
+pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
     let value = parse_json_str(json)?;
     let values = select(&value, path)?;
     ensure!(!values.is_empty(), "no matching value found at {path:?}");

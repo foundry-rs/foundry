@@ -97,6 +97,24 @@ contract ParseTomlTest is DSTest {
         assertEq(whole.strArray[0], "hai");
         assertEq(whole.strArray[1], "there");
     }
+
+    function test_coercionRevert() public {
+        vm._expectCheatcodeRevert("values at \".nestedObject\" must not be JSON objects");
+        uint256 number = vm.parseTomlUint(toml, ".nestedObject");
+    }
+
+    function test_coercionUint() public {
+        uint256 number = vm.parseTomlUint(toml, ".hexUint");
+        assertEq(number, 1231232);
+        number = vm.parseTomlUint(toml, ".stringUint");
+        assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
+        number = vm.parseTomlUint(toml, ".numberUint");
+        assertEq(number, 9223372036854775807); // TOML is limited to 64-bit integers
+        uint256[] memory numbers = vm.parseTomlUintArray(toml, ".arrayUint");
+        assertEq(numbers[0], 1231232);
+        assertEq(numbers[1], 1231232);
+        assertEq(numbers[2], 1231232);
+    }
 }
 
 contract WriteTomlTest is DSTest {
