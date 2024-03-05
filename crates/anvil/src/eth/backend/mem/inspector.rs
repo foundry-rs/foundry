@@ -84,10 +84,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-        return_memory_offset: Range<usize>,
     ) -> Option<CallOutcome> {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            if let Some(outcome) = inspector.call(context, inputs, return_memory_offset) {
+            if let Some(outcome) = inspector.call(context, inputs) {
                 return Some(outcome);
             }
         });
