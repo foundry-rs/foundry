@@ -396,15 +396,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if interpreter.current_opcode() == opcode::SELFDESTRUCT {
                 let target = try_or_continue!(interpreter.stack().peek(0));
                 // load balance of this account
-                let value = if let Ok((account, _)) =
-                    ecx.journaled_state.load_account(interpreter.contract().address, &mut ecx.db)
-                {
-                    account.info.balance
-                } else {
-                    U256::ZERO
-                };
+                let value = ecx
+                    .balance(interpreter.contract().address)
+                    .map(|(b, _)| b)
+                    .unwrap_or(U256::ZERO);
                 let account = Address::from_word(B256::from(target));
                 // get previous balance and initialized status of the target account
+                // TODO: use load_account_exists
                 let (initialized, old_balance) = if let Ok((account, _)) =
                     ecx.journaled_state.load_account(account, &mut ecx.db)
                 {
@@ -449,10 +447,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // it's not set (zero value)
                     let mut present_value = U256::ZERO;
                     // Try to load the account and the slot's present value
-                    if ecx.journaled_state.load_account(address, &mut ecx.db).is_ok() {
-                        if let Ok((previous, _)) =
-                            ecx.journaled_state.sload(address, key, &mut ecx.db)
-                        {
+                    if ecx.load_account(address).is_ok() {
+                        if let Ok((previous, _)) = ecx.sload(address, key) {
                             present_value = previous;
                         }
                     }
@@ -477,10 +473,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // Try to load the account and the slot's previous value, otherwise, assume it's
                     // not set (zero value)
                     let mut previous_value = U256::ZERO;
-                    if ecx.journaled_state.load_account(address, &mut ecx.db).is_ok() {
-                        if let Ok((previous, _)) =
-                            ecx.journaled_state.sload(address, key, &mut ecx.db)
-                        {
+                    if ecx.load_account(address).is_ok() {
+                        if let Ok((previous, _)) = ecx.sload(address, key) {
                             previous_value = previous;
                         }
                     }
@@ -516,6 +510,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         .peek(0))));
                     let balance;
                     let initialized;
+                    // TODO: use ecx.load_account
                     if let Ok((acc, _)) = ecx.journaled_state.load_account(address, &mut ecx.db) {
                         initialized = acc.info.exists();
                         balance = acc.info.balance;
@@ -830,9 +825,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static {
-                    if let Err(err) =
-                        ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
-                    {
+                    if let Err(err) = ecx.load_account(broadcast.new_origin) {
                         return Some(CallOutcome {
                             result: InterpreterResult {
                                 result: InstructionResult::Revert,
@@ -892,6 +885,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
             let old_balance;
+            // TODO: use ecx.load_account
             if let Ok((acc, _)) = ecx.journaled_state.load_account(call.contract, &mut ecx.db) {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
@@ -1046,6 +1040,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Depending on the depth the cheat was called at, there may not be any pending
                 // calls to update if execution has percolated up to a higher depth.
                 if call_access.depth == ecx.journaled_state.depth() {
+                    // TODO: use ecx.load_account
                     if let Ok((acc, _)) =
                         ecx.journaled_state.load_account(call.contract, &mut ecx.db)
                     {
@@ -1537,6 +1532,7 @@ fn apply_create2_deployer<DB: DatabaseExt>(
             }
 
             // Sanity checks for our CREATE2 deployer
+            // TODO: use ecx.load_account
             let info =
                 &ecx.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, &mut ecx.db)?.0.info;
             match &info.code {

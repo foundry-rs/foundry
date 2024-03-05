@@ -60,8 +60,8 @@ impl Cheatcode for loadCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
-        ccx.ecx.journaled_state.load_account(target, &mut ccx.ecx.db)?;
-        let (val, _) = ccx.ecx.journaled_state.sload(target, slot.into(), &mut ccx.ecx.db)?;
+        ccx.ecx.load_account(target)?;
+        let (val, _) = ccx.ecx.sload(target, slot.into())?;
         Ok(val.abi_encode())
     }
 }
@@ -314,7 +314,7 @@ impl Cheatcode for etchCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
-        ccx.ecx.journaled_state.load_account(*target, &mut ccx.ecx.db)?;
+        ccx.ecx.load_account(*target)?;
         let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode)).to_checked();
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
@@ -367,7 +367,7 @@ impl Cheatcode for storeCall {
         ensure_not_precompile!(&target, ccx);
         // ensure the account is touched
         let _ = journaled_account(ccx.ecx, target)?;
-        ccx.ecx.journaled_state.sstore(target, slot.into(), value.into(), &mut ccx.ecx.db)?;
+        ccx.ecx.sstore(target, slot.into(), value.into())?;
         Ok(Default::default())
     }
 }
@@ -524,7 +524,7 @@ pub(super) fn journaled_account<DB: DatabaseExt>(
     ecx: &mut EvmContext<DB>,
     addr: Address,
 ) -> Result<&mut Account> {
-    ecx.journaled_state.load_account(addr, &mut ecx.db)?;
+    ecx.load_account(addr)?;
     ecx.journaled_state.touch(&addr);
     Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))
 }

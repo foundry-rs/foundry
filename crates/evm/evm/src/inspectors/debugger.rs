@@ -122,7 +122,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if let Err(err) = ecx.journaled_state.load_account(inputs.caller, &mut ecx.db) {
+        if let Err(err) = ecx.load_account(inputs.caller) {
             let gas = Gas::new(inputs.gas_limit);
             return Some(CreateOutcome::new(
                 InterpreterResult {
