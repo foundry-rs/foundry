@@ -26,6 +26,7 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
+        // Drive state machine to point at which we have everything needed for simulation/resuming.
         let pre_simulation = self
             .preprocess()
             .await?
@@ -48,11 +49,14 @@ impl ScriptArgs {
             pre_simulation.show_traces().await?;
         }
 
+        // Ensure that we have transactions to simulate/broadcast, otherwise exit early to avoid
+        // hard error.
         if pre_simulation.execution_result.transactions.as_ref().map_or(true, |txs| txs.is_empty())
         {
             return Ok(());
         }
 
+        // Check if there are any missing RPCs and exit early to avoid hard error.
         if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
             shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
             return Ok(());
@@ -73,15 +77,18 @@ impl ScriptArgs {
             pre_simulation.fill_metadata().await?.bundle().await?
         };
 
-        if !bundled.args.broadcast && !bundled.args.resume {
+        // Exit early in case user didn't provide any broadcast/verify related flags.
+        if !bundled.args.broadcast && !bundled.args.resume && !bundled.args.verify {
             shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             return Ok(());
         }
 
+        // Exit early if something is wrong with verification options.
         if bundled.args.verify {
             bundled.verify_preflight_check()?;
         }
 
+        // Wait for pending txes and broadcast others.
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
 
         if broadcasted.args.verify {

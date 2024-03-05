@@ -72,6 +72,27 @@ impl ScriptSequenceKind {
             ScriptSequenceKind::Multi(sequence) => sequence.deployments.get_mut(index),
         }
     }
+
+    /// Updates underlying sequence paths to not be under /dry-run directory.
+    pub fn update_paths_to_broadcasted(
+        &mut self,
+        config: &Config,
+        sig: &str,
+        target: &ArtifactId,
+    ) -> Result<()> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => {
+                sequence.paths =
+                    Some(ScriptSequence::get_paths(config, sig, target, sequence.chain, false)?);
+            }
+            ScriptSequenceKind::Multi(sequence) => {
+                (sequence.path, sequence.sensitive_path) =
+                    MultiChainSequence::get_paths(config, sig, target, false)?;
+            }
+        };
+
+        Ok(())
+    }
 }
 
 impl Drop for ScriptSequenceKind {
@@ -132,10 +153,10 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
-        broadcasted: bool,
+        dry_run: bool,
     ) -> Result<Self> {
         let (path, sensitive_path) =
-            ScriptSequence::get_paths(config, sig, target, chain_id, broadcasted)?;
+            ScriptSequence::get_paths(config, sig, target, chain_id, dry_run)?;
 
         let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
@@ -225,7 +246,7 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
-        broadcasted: bool,
+        dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
         let mut broadcast = config.broadcast.to_path_buf();
         let mut cache = config.cache_path.to_path_buf();
@@ -234,7 +255,7 @@ impl ScriptSequence {
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         common.push(target_fname);
         common.push(chain_id.to_string());
-        if !broadcasted {
+        if dry_run {
             common.push(DRY_RUN_DIR);
         }
 

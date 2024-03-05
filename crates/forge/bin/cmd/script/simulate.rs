@@ -358,7 +358,7 @@ impl FilledTransactionsState {
                 &self.args.sig,
                 &self.build_data.build_data.target,
                 &self.script_config.config,
-                self.args.broadcast,
+                !self.args.broadcast,
             )?)
         };
 
@@ -390,7 +390,7 @@ impl FilledTransactionsState {
                 &self.args.sig,
                 &self.build_data.build_data.target,
                 chain,
-                self.args.broadcast,
+                !self.args.broadcast,
             )?)
         };
 

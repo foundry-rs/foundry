@@ -13,65 +13,65 @@ use super::{
 
 impl PreSimulationState {
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
-    pub async fn resume(self) -> Result<BundledState> {
+    pub async fn resume(mut self) -> Result<BundledState> {
+        if self.execution_artifacts.rpc_data.missing_rpc {
+            eyre::bail!("Missing `--fork-url` field.")
+        }
+
+        let chain = match self.execution_artifacts.rpc_data.total_rpcs.len() {
+            2.. => None,
+            1 => {
+                let fork_url = self.execution_artifacts.rpc_data.total_rpcs.iter().next().unwrap();
+
+                let provider = Arc::new(try_get_http_provider(fork_url)?);
+                Some(provider.get_chainid().await?.as_u64())
+            }
+            0 => eyre::bail!("No RPC URLs"),
+        };
+        
+        let sequence = match self.try_load_sequence(chain, false) {
+            Ok(sequence) => sequence,
+            Err(_) => {
+                // If the script was simulated, but there was no attempt to broadcast yet,
+                // try to read the script sequence from the `dry-run/` folder
+                let mut sequence = self.try_load_sequence(chain, true)?;
+
+                // If sequence was in /dry-run, Update its paths so it is not saved into /dry-run
+                // this time as we are about to broadcast it.
+                sequence.update_paths_to_broadcasted(
+                    &self.script_config.config,
+                    &self.args.sig,
+                    &self.build_data.build_data.target,
+                )?;
+
+                sequence.save(true, true)?;
+                sequence
+            }
+        };
+
+        match sequence {
+            ScriptSequenceKind::Single(ref seq) => {
+                // We might have predeployed libraries from the broadcasting, so we need to
+                // relink the contracts with them, since their mapping is not included in the solc
+                // cache files.
+                self.build_data = self
+                    .build_data
+                    .build_data
+                    .link_with_libraries(Libraries::parse(&seq.libraries)?)?;
+            }
+            // Library linking is not supported for multi-chain sequences
+            ScriptSequenceKind::Multi(_) => {}
+        }
+
         let Self {
             args,
             script_config,
             script_wallets,
-            mut build_data,
+            build_data,
             execution_data,
             execution_result: _,
             execution_artifacts,
         } = self;
-
-        if execution_artifacts.rpc_data.missing_rpc {
-            eyre::bail!("Missing `--fork-url` field.")
-        }
-
-        let sequence = match execution_artifacts.rpc_data.total_rpcs.len() {
-            2.. => ScriptSequenceKind::Multi(MultiChainSequence::load(
-                &script_config.config,
-                &args.sig,
-                &build_data.build_data.target,
-            )?),
-            1 => {
-                let fork_url = execution_artifacts.rpc_data.total_rpcs.iter().next().unwrap();
-
-                let provider = Arc::new(try_get_http_provider(fork_url)?);
-                let chain = provider.get_chainid().await?.as_u64();
-
-                let seq = match ScriptSequence::load(
-                    &script_config.config,
-                    &args.sig,
-                    &build_data.build_data.target,
-                    chain,
-                    args.broadcast,
-                ) {
-                    Ok(seq) => seq,
-                    // If the script was simulated, but there was no attempt to broadcast yet,
-                    // try to read the script sequence from the `dry-run/` folder
-                    Err(_) if args.broadcast => ScriptSequence::load(
-                        &script_config.config,
-                        &args.sig,
-                        &build_data.build_data.target,
-                        chain,
-                        false,
-                    )?,
-                    Err(err) => {
-                        eyre::bail!(err.wrap_err("Failed to resume the script."))
-                    }
-                };
-
-                // We might have predeployed libraries from the broadcasting, so we need to
-                // relink the contracts with them, since their mapping is
-                // not included in the solc cache files.
-                build_data =
-                    build_data.build_data.link_with_libraries(Libraries::parse(&seq.libraries)?)?;
-
-                ScriptSequenceKind::Single(seq)
-            }
-            0 => eyre::bail!("No RPC URLs"),
-        };
 
         Ok(BundledState {
             args,
@@ -82,5 +82,26 @@ impl PreSimulationState {
             execution_artifacts,
             sequence,
         })
+    }
+
+    fn try_load_sequence(&self, chain: Option<u64>, dry_run: bool) -> Result<ScriptSequenceKind> {
+        if let Some(chain) = chain {
+            let sequence = ScriptSequence::load(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                chain,
+                dry_run,
+            )?;
+            Ok(ScriptSequenceKind::Single(sequence))
+        } else {
+            let sequence = MultiChainSequence::load(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                dry_run,
+            )?;
+            Ok(ScriptSequenceKind::Multi(sequence))
+        }
     }
 }

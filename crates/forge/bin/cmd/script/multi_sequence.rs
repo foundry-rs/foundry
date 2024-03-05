@@ -7,7 +7,7 @@ use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{BufWriter, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 /// Holds the sequences of multiple chain deployments.
@@ -39,15 +39,9 @@ impl MultiChainSequence {
         sig: &str,
         target: &ArtifactId,
         config: &Config,
-        broadcasted: bool,
+        dry_run: bool,
     ) -> Result<Self> {
-        let (path, sensitive_path) = MultiChainSequence::get_paths(
-            &config.broadcast,
-            &config.cache_path,
-            sig,
-            target,
-            broadcasted,
-        )?;
+        let (path, sensitive_path) = MultiChainSequence::get_paths(config, sig, target, dry_run)?;
 
         Ok(MultiChainSequence { deployments, path, sensitive_path, timestamp: now().as_secs() })
     }
@@ -56,19 +50,18 @@ impl MultiChainSequence {
     /// ./broadcast/multi/contract_filename[-timestamp]/sig.json and
     /// ./cache/multi/contract_filename[-timestamp]/sig.json
     pub fn get_paths(
-        broadcast: &Path,
-        cache: &Path,
+        config: &Config,
         sig: &str,
         target: &ArtifactId,
-        broadcasted: bool,
+        dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = broadcast.to_path_buf();
-        let mut cache = cache.to_path_buf();
+        let mut broadcast = config.broadcast.to_path_buf();
+        let mut cache = config.cache_path.to_path_buf();
         let mut common = PathBuf::new();
 
         common.push("multi");
 
-        if !broadcasted {
+        if dry_run {
             common.push(DRY_RUN_DIR);
         }
 
@@ -95,14 +88,8 @@ impl MultiChainSequence {
     }
 
     /// Loads the sequences for the multi chain deployment.
-    pub fn load(config: &Config, sig: &str, target: &ArtifactId) -> Result<Self> {
-        let (path, sensitive_path) = MultiChainSequence::get_paths(
-            &config.broadcast,
-            &config.cache_path,
-            sig,
-            target,
-            true,
-        )?;
+    pub fn load(config: &Config, sig: &str, target: &ArtifactId, dry_run: bool) -> Result<Self> {
+        let (path, sensitive_path) = MultiChainSequence::get_paths(config, sig, target, dry_run)?;
         let mut sequence: MultiChainSequence = foundry_compilers::utils::read_json_file(&path)
             .wrap_err("Multi-chain deployment not found.")?;
         let sensitive_sequence: SensitiveMultiChainSequence =
