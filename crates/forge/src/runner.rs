@@ -533,7 +533,7 @@ impl<'a> ContractRunner<'a> {
                         }
                     };
                 }
-                _ => {}
+                InvariantFuzzError::MaxAssumeRejects(_) => {}
             },
 
             // If invariants ran successfully, replay the last run to collect logs and
