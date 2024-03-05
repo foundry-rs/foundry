@@ -4880,6 +4880,26 @@
     },
     {
       "func": {
+        "id": "keyExistsToml",
+        "description": "Checks if `key` exists in a TOML table.",
+        "declaration": "function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "keyExistsToml(string,string)",
+        "selector": "0x600903ad",
+        "selectorBytes": [
+          96,
+          9,
+          3,
+          173
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "label",
         "description": "Labels an address in call traces.",
         "declaration": "function label(address account, string calldata newLabel) external;",
@@ -5841,7 +5861,7 @@
     {
       "func": {
         "id": "parseToml_0",
-        "description": "ABI-encodes a TOML object.",
+        "description": "ABI-encodes a TOML table.",
         "declaration": "function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);",
         "visibility": "external",
         "mutability": "pure",
@@ -5861,7 +5881,7 @@
     {
       "func": {
         "id": "parseToml_1",
-        "description": "ABI-encodes a TOML object at `key`.",
+        "description": "ABI-encodes a TOML table at `key`.",
         "declaration": "function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);",
         "visibility": "external",
         "mutability": "pure",

@@ -214,7 +214,19 @@ contract WriteTomlTest is DSTest {
         assertEq(decodedData.a, 123);
     }
 
-    // TODO: add `checkKeyExists` / `checkKeyDoesNotExist`
+    function test_checkKeyExists() public {
+        string memory path = "fixtures/Toml/write_complex_test.toml";
+        string memory toml = vm.readFile(path);
+        bool exists = vm.keyExistsToml(toml, ".a");
+        assertTrue(exists);
+    }
+
+    function test_checkKeyDoesNotExist() public {
+        string memory path = "fixtures/Toml/write_complex_test.toml";
+        string memory toml = vm.readFile(path);
+        bool exists = vm.keyExistsToml(toml, ".d");
+        assertTrue(!exists);
+    }
 
     function test_writeJson() public {
         string memory json3 = "json3";

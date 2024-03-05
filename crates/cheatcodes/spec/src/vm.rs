@@ -1823,13 +1823,15 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-toml to understand the
     // limitations and caveats of the TOML parsing cheat.
 
-    // TODO: `keyExists` (clashing namespace), `parseJsonKeys`
+    /// Checks if `key` exists in a TOML table.
+    #[cheatcode(group = Toml)]
+    function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
 
-    /// ABI-encodes a TOML object.
+    /// ABI-encodes a TOML table.
     #[cheatcode(group = Toml)]
     function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
 
-    /// ABI-encodes a TOML object at `key`.
+    /// ABI-encodes a TOML table at `key`.
     #[cheatcode(group = Toml)]
     function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
 

@@ -12,10 +12,7 @@ use std::{borrow::Cow, collections::BTreeMap, fmt::Write};
 impl Cheatcode for keyExistsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        let json = parse_json_str(json)?;
-        let values = select(&json, key)?;
-        let exists = !values.is_empty();
-        Ok(exists.abi_encode())
+        check_json_key_exists(json, key)
     }
 }
 
@@ -269,6 +266,13 @@ impl Cheatcode for writeJson_1Call {
         let json_string = serde_json::to_string_pretty(&value)?;
         super::fs::write_file(state, path.as_ref(), json_string.as_bytes())
     }
+}
+
+pub(super) fn check_json_key_exists(json: &str, key: &str) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, key)?;
+    let exists = !values.is_empty();
+    Ok(exists.abi_encode())
 }
 
 pub(super) fn parse_json(json: &str, path: &str) -> Result {

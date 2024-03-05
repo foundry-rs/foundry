@@ -1,7 +1,10 @@
 //! Implementations of [`Toml`](crate::Group::Toml) cheatcodes.
 
 use crate::{
-    json::{canonicalize_json_path, parse_json, parse_json_coerce, parse_json_keys},
+    json::{
+        canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
+        parse_json_keys,
+    },
     Cheatcode, Cheatcodes, Result,
     Vm::*,
 };
@@ -12,10 +15,15 @@ use serde_json::{Number, Value as JsonValue};
 use toml::Value as TomlValue;
 
 // TODO: add documentation (`parse-toml`, `write-toml) in Foundry Book
-// TODO: add comprehensive tests, including edge cases
 // TODO: add upstream support to `forge-std` for the proposed cheatcodes
 // TODO: check for redundant serialization / deserialization steps
-// TODO: check for JSON feature parity
+
+impl Cheatcode for keyExistsTomlCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { toml, key } = self;
+        check_json_key_exists(&convert(&toml)?, key)
+    }
+}
 
 impl Cheatcode for parseToml_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -154,11 +162,10 @@ impl Cheatcode for writeToml_1Call {
             serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
 
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let data_s = fs::read_to_string(data_path)?;
-        let data = toml_to_json(parse_toml_str(&data_s)?);
-
+        let toml_data = fs::read_to_string(data_path)?;
+        let json_data = toml_to_json(parse_toml_str(&toml_data)?);
         let value =
-            jsonpath_lib::replace_with(data, &canonicalize_json_path(valueKey), &mut |_| {
+            jsonpath_lib::replace_with(json_data, &canonicalize_json_path(valueKey), &mut |_| {
                 Some(json.clone())
             })?;
 
