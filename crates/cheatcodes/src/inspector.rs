@@ -217,7 +217,7 @@ impl Cheatcodes {
 
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
-        data: &mut EvmContext<DB>,
+        context: &mut EvmContext<DB>,
         call: &CallInputs,
     ) -> Result {
         // decode the cheatcode call
@@ -226,9 +226,9 @@ impl Cheatcodes {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        data.db.ensure_cheatcode_access_forking_mode(&caller)?;
+        context.db.ensure_cheatcode_access_forking_mode(&caller)?;
 
-        apply_dispatch(&decoded, &mut CheatsCtxt { state: self, data, caller })
+        apply_dispatch(&decoded, &mut CheatsCtxt { state: self, data: context, caller })
     }
 
     /// Determines the address of the contract and marks it as allowed
@@ -238,10 +238,10 @@ impl Cheatcodes {
     /// automatically we need to determine the new address
     fn allow_cheatcodes_on_create<DB: DatabaseExt>(
         &self,
-        data: &mut EvmContext<DB>,
+        context: &mut EvmContext<DB>,
         inputs: &CreateInputs,
     ) -> Address {
-        let old_nonce = data
+        let old_nonce = context
             .journaled_state
             .state
             .get(&inputs.caller)
@@ -249,13 +249,13 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = inputs.created_address(old_nonce);
 
-        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(&inputs.caller) {
+        if context.journaled_state.depth > 1 && !context.db.has_cheatcode_access(&inputs.caller) {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
             return created_address;
         }
 
-        data.db.allow_cheatcode_access(created_address);
+        context.db.allow_cheatcode_access(created_address);
 
         created_address
     }
@@ -264,7 +264,7 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EvmContext<DB>) {
+    pub fn on_revert<DB: DatabaseExt>(&mut self, context: &mut EvmContext<DB>) {
         trace!(deals=?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
@@ -273,7 +273,7 @@ impl Cheatcodes {
         }
 
         // we only want to apply cleanup top level
-        if data.journaled_state.depth() > 0 {
+        if context.journaled_state.depth() > 0 {
             return;
         }
 
@@ -281,7 +281,7 @@ impl Cheatcodes {
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
         while let Some(record) = self.eth_deals.pop() {
-            if let Some(acc) = data.journaled_state.state.get_mut(&record.address) {
+            if let Some(acc) = context.journaled_state.state.get_mut(&record.address) {
                 acc.info.balance = record.old_balance;
             }
         }
@@ -301,7 +301,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, data: &mut EvmContext<DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
         self.pc = interpreter.program_counter();
 
         // reset gas if gas metering is turned off
@@ -396,8 +396,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if interpreter.current_opcode() == opcode::SELFDESTRUCT {
                 let target = try_or_continue!(interpreter.stack().peek(0));
                 // load balance of this account
-                let value = if let Ok((account, _)) =
-                    data.journaled_state.load_account(interpreter.contract().address, &mut data.db)
+                let value = if let Ok((account, _)) = context
+                    .journaled_state
+                    .load_account(interpreter.contract().address, &mut context.db)
                 {
                     account.info.balance
                 } else {
@@ -406,7 +407,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 let account = Address::from_word(B256::from(target));
                 // get previous balance and initialized status of the target account
                 let (initialized, old_balance) = if let Ok((account, _)) =
-                    data.journaled_state.load_account(account, &mut data.db)
+                    context.journaled_state.load_account(account, &mut context.db)
                 {
                     (account.info.exists(), account.info.balance)
                 } else {
@@ -415,8 +416,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // register access for the target account
                 let access = crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: data.db.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(data.env.cfg.chain_id),
+                        forkId: context.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(context.env.cfg.chain_id),
                     },
                     accessor: interpreter.contract().address,
                     account,
@@ -429,7 +430,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     reverted: false,
                     deployedCode: vec![],
                     storageAccesses: vec![],
-                    depth: data.journaled_state.depth(),
+                    depth: context.journaled_state.depth(),
                 };
                 // Ensure that we're not selfdestructing a context recording was initiated on
                 if let Some(last) = account_accesses.last_mut() {
@@ -449,9 +450,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // it's not set (zero value)
                     let mut present_value = U256::ZERO;
                     // Try to load the account and the slot's present value
-                    if data.journaled_state.load_account(address, &mut data.db).is_ok() {
+                    if context.journaled_state.load_account(address, &mut context.db).is_ok() {
                         if let Ok((previous, _)) =
-                            data.journaled_state.sload(address, key, &mut data.db)
+                            context.journaled_state.sload(address, key, &mut context.db)
                         {
                             present_value = previous;
                         }
@@ -467,7 +468,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     append_storage_access(
                         recorded_account_diffs_stack,
                         access,
-                        data.journaled_state.depth(),
+                        context.journaled_state.depth(),
                     );
                 }
                 opcode::SSTORE => {
@@ -477,9 +478,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // Try to load the account and the slot's previous value, otherwise, assume it's
                     // not set (zero value)
                     let mut previous_value = U256::ZERO;
-                    if data.journaled_state.load_account(address, &mut data.db).is_ok() {
+                    if context.journaled_state.load_account(address, &mut context.db).is_ok() {
                         if let Ok((previous, _)) =
-                            data.journaled_state.sload(address, key, &mut data.db)
+                            context.journaled_state.sload(address, key, &mut context.db)
                         {
                             previous_value = previous;
                         }
@@ -496,7 +497,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     append_storage_access(
                         recorded_account_diffs_stack,
                         access,
-                        data.journaled_state.depth(),
+                        context.journaled_state.depth(),
                     );
                 }
                 // Record account accesses via the EXT family of opcodes
@@ -516,7 +517,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         .peek(0))));
                     let balance;
                     let initialized;
-                    if let Ok((acc, _)) = data.journaled_state.load_account(address, &mut data.db) {
+                    if let Ok((acc, _)) =
+                        context.journaled_state.load_account(address, &mut context.db)
+                    {
                         initialized = acc.info.exists();
                         balance = acc.info.balance;
                     } else {
@@ -525,8 +528,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     }
                     let account_access = crate::Vm::AccountAccess {
                         chainInfo: crate::Vm::ChainInfo {
-                            forkId: data.db.active_fork_id().unwrap_or_default(),
-                            chainId: U256::from(data.env.cfg.chain_id),
+                            forkId: context.db.active_fork_id().unwrap_or_default(),
+                            chainId: U256::from(context.env.cfg.chain_id),
                         },
                         accessor: interpreter.contract().address,
                         account: address,
@@ -539,7 +542,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         reverted: false,
                         deployedCode: vec![],
                         storageAccesses: vec![],
-                        depth: data.journaled_state.depth(),
+                        depth: context.journaled_state.depth(),
                     };
                     // Record the EXT* call as an account access at the current depth
                     // (future storage accesses will be recorded in a new "Resume" context)
@@ -557,7 +560,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // if the current opcode can either mutate directly or expand memory. If the opcode at
         // the current program counter is a match, check if the modified memory lies within the
         // allowed ranges. If not, revert and fail the test.
-        if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
+        if let Some(ranges) = self.allowed_mem_writes.get(&context.journaled_state.depth()) {
             // The `mem_opcode_match` macro is used to match the current opcode against a list of
             // opcodes that can mutate memory (either directly or expansion via reading). If the
             // opcode is a match, the memory offsets that are being written to are checked to be
@@ -701,7 +704,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    #[inline]
     fn call(&mut self, context: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
@@ -936,10 +938,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         None
     }
 
-    #[inline]
     fn call_end(
         &mut self,
-        data: &mut EvmContext<DB>,
+        context: &mut EvmContext<DB>,
         call: &CallInputs,
         mut outcome: CallOutcome,
     ) -> CallOutcome {
@@ -952,8 +953,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if !cheatcode_call {
             // Clean up pranks
             if let Some(prank) = &self.prank {
-                if data.journaled_state.depth() == prank.depth {
-                    data.env.tx.caller = prank.prank_origin;
+                if context.journaled_state.depth() == prank.depth {
+                    context.env.tx.caller = prank.prank_origin;
 
                     // Clean single-call prank once we have returned to the original depth
                     if prank.single_call {
@@ -964,8 +965,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
             // Clean up broadcast
             if let Some(broadcast) = &self.broadcast {
-                if data.journaled_state.depth() == broadcast.depth {
-                    data.env.tx.caller = broadcast.original_origin;
+                if context.journaled_state.depth() == broadcast.depth {
+                    context.env.tx.caller = broadcast.original_origin;
 
                     // Clean single-call broadcast once we have returned to the original depth
                     if broadcast.single_call {
@@ -977,7 +978,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if context.journaled_state.depth() <= expected_revert.depth {
                 let needs_processing: bool = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
                     // `pending_processing` == true means that we're in the `call_end` hook for
@@ -1031,7 +1032,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if data.journaled_state.depth() > 0 {
+            if context.journaled_state.depth() > 0 {
                 let mut last_recorded_depth =
                     recorded_account_diffs_stack.pop().expect("missing CALL account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
@@ -1049,9 +1050,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Assert that we're at the correct depth before recording post-call state changes.
                 // Depending on the depth the cheat was called at, there may not be any pending
                 // calls to update if execution has percolated up to a higher depth.
-                if call_access.depth == data.journaled_state.depth() {
+                if call_access.depth == context.journaled_state.depth() {
                     if let Ok((acc, _)) =
-                        data.journaled_state.load_account(call.contract, &mut data.db)
+                        context.journaled_state.load_account(call.contract, &mut context.db)
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
@@ -1082,7 +1083,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let should_check_emits = self
             .expected_emits
             .iter()
-            .any(|expected| expected.depth == data.journaled_state.depth()) &&
+            .any(|expected| expected.depth == context.journaled_state.depth()) &&
             // Ignore staticcalls
             !call.is_static;
         if should_check_emits {
@@ -1114,20 +1115,20 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
         // not exist
-        if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
+        if let TransactTo::Call(test_contract) = context.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if data.db.is_forked_mode() &&
+            if context.db.is_forked_mode() &&
                 outcome.result.result == InstructionResult::Stop &&
                 call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
-                    data.db.diagnose_revert(call.contract, &data.journaled_state);
+                    context.db.diagnose_revert(call.contract, &context.journaled_state);
             }
         }
 
         // If the depth is 0, then this is the root call terminating
-        if data.journaled_state.depth() == 0 {
+        if context.journaled_state.depth() == 0 {
             // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
             // earlier error that happened first with unrelated information about
             // another error when using cheatcodes.
@@ -1208,33 +1209,33 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     fn create(
         &mut self,
-        data: &mut EvmContext<DB>,
+        context: &mut EvmContext<DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         let gas = Gas::new(call.gas_limit);
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
+            if context.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 // At the target depth we set `msg.sender`
-                if data.journaled_state.depth() == prank.depth {
+                if context.journaled_state.depth() == prank.depth {
                     call.caller = prank.new_caller;
                 }
 
                 // At the target depth, or deeper, we set `tx.origin`
                 if let Some(new_origin) = prank.new_origin {
-                    data.env.tx.caller = new_origin;
+                    context.env.tx.caller = new_origin;
                 }
             }
         }
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() >= broadcast.depth &&
+            if context.journaled_state.depth() >= broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
                 if let Err(err) =
-                    data.journaled_state.load_account(broadcast.new_origin, &mut data.db)
+                    context.journaled_state.load_account(broadcast.new_origin, &mut context.db)
                 {
                     return Some(CreateOutcome {
                         result: InterpreterResult {
@@ -1246,19 +1247,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     })
                 }
 
-                data.env.tx.caller = broadcast.new_origin;
+                context.env.tx.caller = broadcast.new_origin;
 
-                if data.journaled_state.depth() == broadcast.depth {
+                if context.journaled_state.depth() == broadcast.depth {
                     let (bytecode, to, nonce) = process_broadcast_create(
                         broadcast.new_origin,
                         call.init_code.clone(),
-                        data,
+                        context,
                         call,
                     );
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
+                    let is_fixed_gas_limit = check_if_fixed_gas_limit(context, call.gas_limit);
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: data.db.active_fork_url(),
+                        rpc: context.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
                             to,
@@ -1285,7 +1286,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Apply the Create2 deployer
         if self.broadcast.is_some() || self.config.always_use_create_2_factory {
             match apply_create2_deployer(
-                data,
+                context,
                 call,
                 self.prank.as_ref(),
                 self.broadcast.as_ref(),
@@ -1308,12 +1309,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // allow cheatcodes from the address of the new contract
         // Compute the address *after* any possible broadcast updates, so it's based on the updated
         // call inputs
-        let address = self.allow_cheatcodes_on_create(data, call);
+        let address = self.allow_cheatcodes_on_create(context, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // If the create scheme is create2, and the caller is the DEFAULT_CREATE2_DEPLOYER then
             // we must add 1 to the depth to account for the call to the create2 factory.
-            let mut depth = data.journaled_state.depth();
+            let mut depth = context.journaled_state.depth();
             if let CreateScheme::Create2 { salt: _ } = call.scheme {
                 if call.caller == DEFAULT_CREATE2_DEPLOYER {
                     depth += 1;
@@ -1324,8 +1325,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // subsequent account accesses
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
-                    forkId: data.db.active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(data.env.cfg.chain_id),
+                    forkId: context.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(context.env.cfg.chain_id),
                 },
                 accessor: call.caller,
                 account: address,
@@ -1345,17 +1346,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         None
     }
 
-    #[inline]
     fn create_end(
         &mut self,
-        data: &mut EvmContext<DB>,
+        context: &mut EvmContext<DB>,
         _call: &CreateInputs,
         mut outcome: CreateOutcome,
     ) -> CreateOutcome {
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if data.journaled_state.depth() == prank.depth {
-                data.env.tx.caller = prank.prank_origin;
+            if context.journaled_state.depth() == prank.depth {
+                context.env.tx.caller = prank.prank_origin;
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -1366,8 +1366,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() == broadcast.depth {
-                data.env.tx.caller = broadcast.original_origin;
+            if context.journaled_state.depth() == broadcast.depth {
+                context.env.tx.caller = broadcast.original_origin;
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -1378,7 +1378,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth &&
+            if context.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
@@ -1407,7 +1407,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if data.journaled_state.depth() > 0 {
+            if context.journaled_state.depth() > 0 {
                 let mut last_depth =
                     recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
@@ -1426,14 +1426,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // changes. Depending on what depth the cheat was called at, there
                 // may not be any pending calls to update if execution has
                 // percolated up to a higher depth.
-                if create_access.depth == data.journaled_state.depth() {
+                if create_access.depth == context.journaled_state.depth() {
                     debug_assert_eq!(
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
                     if let Some(address) = outcome.address {
                         if let Ok((created_acc, _)) =
-                            data.journaled_state.load_account(address, &mut data.db)
+                            context.journaled_state.load_account(address, &mut context.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
                             create_access.deployedCode = created_acc
@@ -1501,7 +1501,7 @@ fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
 /// Returns a `DatabaseError::MissingCreate2Deployer` if the `DEFAULT_CREATE2_DEPLOYER` account is
 /// not found or if it does not have any associated bytecode.
 fn apply_create2_deployer<DB: DatabaseExt>(
-    data: &mut EvmContext<DB>,
+    context: &mut EvmContext<DB>,
     call: &mut CreateInputs,
     prank: Option<&Prank>,
     broadcast: Option<&Broadcast>,
@@ -1517,14 +1517,14 @@ fn apply_create2_deployer<DB: DatabaseExt>(
 
         // If the create scheme is Create2 and the depth equals the broadcast/prank/default
         // depth, then use the default create2 factory as the deployer
-        if data.journaled_state.depth() == base_depth {
+        if context.journaled_state.depth() == base_depth {
             // Record the call to the create2 factory in the state diff
             if let Some(recorded_account_diffs_stack) = diffs_stack {
                 let calldata = [&salt.to_be_bytes::<32>()[..], &call.init_code[..]].concat();
                 recorded_account_diffs_stack.push(vec![AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: data.db.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(data.env.cfg.chain_id),
+                        forkId: context.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(context.env.cfg.chain_id),
                     },
                     accessor: call.caller,
                     account: DEFAULT_CREATE2_DEPLOYER,
@@ -1537,16 +1537,19 @@ fn apply_create2_deployer<DB: DatabaseExt>(
                     reverted: false,
                     deployedCode: vec![],    // updated on create_end
                     storageAccesses: vec![], // updated on create_end
-                    depth: data.journaled_state.depth(),
+                    depth: context.journaled_state.depth(),
                 }])
             }
 
             // Sanity checks for our CREATE2 deployer
-            let info =
-                &data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, &mut data.db)?.0.info;
+            let info = &context
+                .journaled_state
+                .load_account(DEFAULT_CREATE2_DEPLOYER, &mut context.db)?
+                .0
+                .info;
             match &info.code {
                 Some(code) if code.is_empty() => return Err(DatabaseError::MissingCreate2Deployer),
-                None if data.db.code_by_hash(info.code_hash)?.is_empty() => {
+                None if context.db.code_by_hash(info.code_hash)?.is_empty() => {
                     return Err(DatabaseError::MissingCreate2Deployer)
                 }
                 _ => {}
@@ -1570,18 +1573,18 @@ fn apply_create2_deployer<DB: DatabaseExt>(
 fn process_broadcast_create<DB: DatabaseExt>(
     broadcast_sender: Address,
     bytecode: Bytes,
-    data: &mut EvmContext<DB>,
+    context: &mut EvmContext<DB>,
     call: &mut CreateInputs,
 ) -> (Bytes, Option<Address>, u64) {
     call.caller = broadcast_sender;
     match call.scheme {
         CreateScheme::Create => {
-            (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
+            (bytecode, None, context.journaled_state.account(broadcast_sender).info.nonce)
         }
         CreateScheme::Create2 { salt } => {
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
-            let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
+            let account = context.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let prev = account.info.nonce;
             // Touch account to ensure that incremented nonce is committed
             account.mark_touch();

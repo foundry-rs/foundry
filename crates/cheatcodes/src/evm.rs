@@ -521,12 +521,12 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
 
 /// Ensures the `Account` is loaded and touched.
 pub(super) fn journaled_account<DB: DatabaseExt>(
-    data: &mut EvmContext<DB>,
+    context: &mut EvmContext<DB>,
     addr: Address,
 ) -> Result<&mut Account> {
-    data.journaled_state.load_account(addr, &mut data.db)?;
-    data.journaled_state.touch(&addr);
-    Ok(data.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+    context.journaled_state.load_account(addr, &mut context.db)?;
+    context.journaled_state.touch(&addr);
+    Ok(context.journaled_state.state.get_mut(&addr).expect("account is loaded"))
 }
 
 /// Consumes recorded account accesses and returns them as an abi encoded

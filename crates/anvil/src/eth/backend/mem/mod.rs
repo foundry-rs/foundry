@@ -73,7 +73,6 @@ use foundry_evm::{
             Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
-    traces::{TracingInspector, TracingInspectorConfig},
     utils::new_evm_with_inspector_ref,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -1125,24 +1124,19 @@ impl Backend {
             let env = self.build_call_env(request, fee_details, block);
             let ResultAndState { result, state: _ } =
                 new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
-            let (exit_reason, gas_used, out, ) = match result {
+            let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
-                    (reason.into(), gas_used, Some(output), )
-                },
-                ExecutionResult::Revert { gas_used, output} => {
+                    (reason.into(), gas_used, Some(output))
+                }
+                ExecutionResult::Revert { gas_used, output } => {
                     (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
-                },
-                ExecutionResult::Halt { reason, gas_used } => {
-                    (reason.into(), gas_used, None)
-                },
+                }
+                ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
             };
-            let tracer = inspector.tracer.unwrap_or_else(|| TracingInspector::new(TracingInspectorConfig::all()));
-            let return_value = match &out {
-                Some(out) => out.data().clone(),
-                None => Bytes::new()
-            };
+            let tracer = inspector.tracer.expect("tracer disappeared");
+            let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
             let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
-            trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
+            trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
             Ok(res)
         })
         .await?
@@ -1166,7 +1160,7 @@ impl Backend {
             from.create(nonce)
         };
 
-        let mut tracer = AccessListInspector::new(
+        let mut inspector = AccessListInspector::new(
             request.access_list.clone().unwrap_or_default(),
             from,
             to,
@@ -1175,7 +1169,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
-            new_evm_with_inspector_ref(state, env, &mut tracer).transact()?;
+            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1185,7 +1179,7 @@ impl Backend {
             }
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
-        let access_list = tracer.access_list();
+        let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
 
