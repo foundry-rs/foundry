@@ -158,8 +158,6 @@ impl<'a> InvariantExecutor<'a> {
             // Before each run, we must reset the backend state.
             let mut executor = self.executor.clone();
 
-            complete_run();
-
             // Used for stat reports (eg. gas usage).
             let mut fuzz_runs = Vec::with_capacity(self.config.depth as usize);
 
@@ -255,6 +253,8 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             fuzz_cases.borrow_mut().push(FuzzedCases::new(fuzz_runs));
+
+            complete_run();
 
             Ok(())
         });
