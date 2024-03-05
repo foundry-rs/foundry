@@ -17,7 +17,7 @@ use toml::Value as TomlValue;
 impl Cheatcode for keyExistsTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        check_json_key_exists(&convert(toml)?, key)
+        check_json_key_exists(&convert_toml_to_json(toml)?, key)
     }
 }
 
@@ -146,9 +146,7 @@ impl Cheatcode for writeToml_0Call {
         let value =
             serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
 
-        let toml: TomlValue =
-            serde_json::from_value(value).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
-        let toml_string = toml::to_string_pretty(&toml).expect("failed to serialize TOML");
+        let toml_string = format_json_to_toml(value)?;
         super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
 }
@@ -168,30 +166,36 @@ impl Cheatcode for writeToml_1Call {
                 Some(json.clone())
             })?;
 
-        let toml: TomlValue =
-            serde_json::from_value(value).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
-        let toml_string = toml::to_string_pretty(&toml).expect("failed to serialize TOML");
+        let toml_string = format_json_to_toml(value)?;
         super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
 }
 
 /// Parse a TOML string and return the value at the given path.
 fn parse_toml(toml: &str, key: &str) -> Result {
-    parse_json(&convert(toml)?, key)
+    parse_json(&convert_toml_to_json(toml)?, key)
 }
 
 /// Parse a TOML string and return the value at the given path, coercing it to the given type.
 fn parse_toml_coerce(toml: &str, key: &str, ty: &DynSolType) -> Result {
-    parse_json_coerce(&convert(toml)?, key, ty)
+    parse_json_coerce(&convert_toml_to_json(toml)?, key, ty)
 }
 
 /// Parse a TOML string and return an array of all keys at the given path.
 fn parse_toml_keys(toml: &str, key: &str) -> Result {
-    parse_json_keys(&convert(toml)?, key)
+    parse_json_keys(&convert_toml_to_json(toml)?, key)
 }
 
 /// Convert a TOML string to a JSON string.
-fn convert(toml: &str) -> Result<String> {
-    let json: JsonValue = toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
-    serde_json::to_string(&json).map_err(|e| fmt_err!("failed to convert to JSON: {e}"))
+fn convert_toml_to_json(toml: &str) -> Result<String> {
+    let json: JsonValue =
+        toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML into JSON: {e}"))?;
+    serde_json::to_string(&json).map_err(|e| fmt_err!("failed to serialize JSON: {e}"))
+}
+
+/// Format a JSON value to a TOML pretty string.
+fn format_json_to_toml(json: JsonValue) -> Result<String> {
+    let toml: TomlValue =
+        serde_json::from_value(json).map_err(|e| fmt_err!("failed parsing JSON into TOML: {e}"))?;
+    toml::to_string_pretty(&toml).map_err(|e| fmt_err!("failed to serialize TOML: {e}"))
 }
