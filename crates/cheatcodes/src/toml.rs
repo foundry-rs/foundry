@@ -14,10 +14,6 @@ use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Number, Value as JsonValue};
 use toml::Value as TomlValue;
 
-// TODO: add documentation (`parse-toml`, `write-toml) in Foundry Book
-// TODO: add upstream support to `forge-std` for the proposed cheatcodes
-// TODO: check for redundant serialization / deserialization steps
-
 impl Cheatcode for keyExistsTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
