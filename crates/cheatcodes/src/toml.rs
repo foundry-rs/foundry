@@ -188,8 +188,6 @@ fn convert(toml: &str) -> Result<String> {
 
 /// Convert a TOML value to a JSON value.
 fn toml_to_json(value: TomlValue) -> JsonValue {
-    info!("toml_to_json: value={:?}", value);
-
     match value {
         TomlValue::String(s) => JsonValue::String(s),
         TomlValue::Integer(i) => JsonValue::Number(Number::from(i)),
