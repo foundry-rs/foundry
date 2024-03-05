@@ -393,7 +393,7 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, &mut ccx.data.env).abi_encode())
+        Ok(ccx.data.db.snapshot(&ccx.data.journaled_state, &ccx.data.env).abi_encode())
     }
 }
 
@@ -520,10 +520,10 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
 }
 
 /// Ensures the `Account` is loaded and touched.
-pub(super) fn journaled_account<'a, DB: DatabaseExt>(
-    data: &'a mut EvmContext<DB>,
+pub(super) fn journaled_account<DB: DatabaseExt>(
+    data: &mut EvmContext<DB>,
     addr: Address,
-) -> Result<&'a mut Account> {
+) -> Result<&mut Account> {
     data.journaled_state.load_account(addr, &mut data.db)?;
     data.journaled_state.touch(&addr);
     Ok(data.journaled_state.state.get_mut(&addr).expect("account is loaded"))
