@@ -20,6 +20,7 @@ impl Cheatcode for parseToml_0Call {
         let toml = parse_toml_str(toml)?;
         let json = toml_to_json(toml);
         let json_string = serde_json::to_string(&json)?;
+        info!("json_string={:?}", json_string);
         parse_json(&json_string, "$")
     }
 }
@@ -71,6 +72,8 @@ fn parse_toml_str(toml: &str) -> Result<TomlValue> {
 
 /// Convert a TOML value to a JSON value.
 fn toml_to_json(value: TomlValue) -> JsonValue {
+    info!("toml_to_json: value={:?}", value);
+
     match value {
         TomlValue::String(s) => JsonValue::String(s),
         TomlValue::Integer(i) => JsonValue::Number(Number::from(i)),

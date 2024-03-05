@@ -284,6 +284,7 @@ pub(super) fn parse_json(json: &str, path: &str) -> Result {
     let value = parse_json_str(json)?;
     let selected = select(&value, path)?;
     let sol = json_to_sol(&selected)?;
+    info!("sol={:?}", sol);
     Ok(encode(sol))
 }
 

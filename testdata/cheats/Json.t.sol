@@ -77,6 +77,7 @@ contract ParseJsonTest is DSTest {
         assertEq(nested.str, "NEST");
     }
 
+    // Object keys are sorted alphabetically, regardless of input.
     struct Whole {
         string str;
         string[] strArray;
