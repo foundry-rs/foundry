@@ -162,7 +162,7 @@ impl VerifyBytecodeArgs {
 
         // TODO: @Yash
         // Compile the project
-        // Cmp creation code with locally and built and maybe_creation_code
+        // Cmp creation code with locally built bytecode and maybe_creation_code
         // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
         // bytecode.
         Ok(())
