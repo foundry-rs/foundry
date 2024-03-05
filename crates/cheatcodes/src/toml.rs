@@ -14,6 +14,8 @@ use toml::Value as TomlValue;
 // TODO: add documentation (`parse-toml`, `write-toml) in Foundry Book
 // TODO: add comprehensive tests, including edge cases
 // TODO: add upstream support to `forge-std` for the proposed cheatcodes
+// TODO: check for redundant serialization / deserialization steps
+// TODO: check for JSON feature parity
 
 impl Cheatcode for parseToml_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -146,7 +148,8 @@ impl Cheatcode for writeToml_1Call {
 
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         let data_s = fs::read_to_string(data_path)?;
-        let data = serde_json::from_str(&data_s)?;
+        let data = toml_to_json(parse_toml_str(&data_s)?);
+
         let value =
             jsonpath_lib::replace_with(data, &canonicalize_json_path(valueKey), &mut |_| {
                 Some(json.clone())
@@ -158,9 +161,13 @@ impl Cheatcode for writeToml_1Call {
     }
 }
 
+fn parse_toml_str(toml: &str) -> Result<TomlValue> {
+    toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
+}
+
 /// Convert a TOML string to a JSON string.
 fn convert(toml: &str) -> Result<String> {
-    let toml = toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+    let toml = parse_toml_str(toml)?;
     let json = toml_to_json(toml);
     serde_json::to_string(&json).map_err(|e| fmt_err!("failed to convert to JSON: {e}"))
 }

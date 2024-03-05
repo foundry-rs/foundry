@@ -115,26 +115,110 @@ contract ParseTomlTest is DSTest {
         assertEq(numbers[1], 1231232);
         assertEq(numbers[2], 1231232);
     }
+
+    function test_coercionBool() public {
+        bool boolean = vm.parseTomlBool(toml, ".booleanString");
+        assertEq(boolean, true);
+        bool[] memory booleans = vm.parseTomlBoolArray(toml, ".booleanArray");
+        assert(booleans[0]);
+        assert(!booleans[1]);
+    }
+
+    function test_advancedJsonPath() public {
+        bytes memory data = vm.parseToml(toml, ".advancedJsonPath[*].id");
+        uint256[] memory numbers = abi.decode(data, (uint256[]));
+        assertEq(numbers[0], 1);
+        assertEq(numbers[1], 2);
+    }
+
+    function test_canonicalizePath() public {
+        bytes memory data = vm.parseToml(toml, "$.str");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("hai", decodedData);
+    }
+
+    function test_nonExistentKey() public {
+        bytes memory data = vm.parseToml(toml, ".thisKeyDoesNotExist");
+        assertEq(0, data.length);
+    }
+
+    // TODO: add `parseTomlKeys`
 }
 
 contract WriteTomlTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function setUp() public {}
+    string json1;
+    string json2;
+
+    function setUp() public {
+        json1 = "example";
+        json2 = "example2";
+    }
 
     struct simpleJson {
         uint256 a;
         string b;
     }
 
-    function test_serializeSimpleToml() public {
-        string memory json = "json";
-        string memory path = "fixtures/Toml/write_simple_test.toml";
+    struct notSimpleJson {
+        uint256 a;
+        string b;
+        simpleJson c;
+    }
 
-        vm.serializeUint(json, "a", uint256(123));
-        string memory semiFinal = vm.serializeString(json, "b", "test");
-        string memory finalJson = vm.serializeString(json, "c", semiFinal);
+    function test_serializeNotSimpleToml() public {
+        string memory json3 = "json3";
+        string memory path = "fixtures/Toml/write_complex_test.toml";
+        vm.serializeUint(json3, "a", uint256(123));
+        string memory semiFinal = vm.serializeString(json3, "b", "test");
+        string memory finalJson = vm.serializeString(json3, "c", semiFinal);
         console.log(finalJson);
         vm.writeToml(finalJson, path);
+        string memory toml = vm.readFile(path);
+        bytes memory data = vm.parseToml(toml);
+        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+    }
+
+    function test_retrieveEntireToml() public {
+        string memory path = "fixtures/Toml/write_complex_test.toml";
+        string memory toml = vm.readFile(path);
+        bytes memory data = vm.parseToml(toml, ".");
+        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        console.log(decodedData.a);
+        assertEq(decodedData.a, 123);
+    }
+
+    // TODO: add `checkKeyExists` / `checkKeyDoesNotExist`
+
+    function test_writeJson() public {
+        string memory json3 = "json3";
+        string memory path = "fixtures/Toml/write_test.toml";
+        vm.serializeUint(json3, "a", uint256(123));
+        string memory finalJson = vm.serializeString(json3, "b", "test");
+        vm.writeToml(finalJson, path);
+
+        string memory toml = vm.readFile(path);
+        bytes memory data = vm.parseToml(toml);
+        simpleJson memory decodedData = abi.decode(data, (simpleJson));
+        assertEq(decodedData.a, 123);
+        assertEq(decodedData.b, "test");
+
+        // write json3 to key b
+        vm.writeToml(finalJson, path, ".b");
+        // read again
+        toml = vm.readFile(path);
+        data = vm.parseToml(toml, ".b");
+        decodedData = abi.decode(data, (simpleJson));
+        assertEq(decodedData.a, 123);
+        assertEq(decodedData.b, "test");
+
+        // replace a single value to key b
+        address ex = address(0xBEEF);
+        vm.writeToml(vm.toString(ex), path, ".b");
+        toml = vm.readFile(path);
+        data = vm.parseToml(toml, ".b");
+        address decodedAddress = abi.decode(data, (address));
+        assertEq(decodedAddress, ex);
     }
 }
