@@ -17,126 +17,126 @@ use toml::Value as TomlValue;
 impl Cheatcode for keyExistsTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        check_json_key_exists(&convert(&toml)?, key)
+        check_json_key_exists(&convert(toml)?, key)
     }
 }
 
 impl Cheatcode for parseToml_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
-        parse_json(&convert(&toml)?, "$")
+        parse_json(&convert(toml)?, "$")
     }
 }
 
 impl Cheatcode for parseToml_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json(&convert(&toml)?, key)
+        parse_json(&convert(toml)?, key)
     }
 }
 
 impl Cheatcode for parseTomlUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Uint(256))
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseTomlUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Uint(256))
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseTomlIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Int(256))
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseTomlIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Int(256))
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseTomlBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Bool)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseTomlBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Bool)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseTomlAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Address)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseTomlAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Address)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseTomlStringCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::String)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseTomlStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::String)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseTomlBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Bytes)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseTomlBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::Bytes)
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseTomlBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::FixedBytes(32))
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseTomlBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(&toml)?, key, &DynSolType::FixedBytes(32))
+        parse_json_coerce(&convert(toml)?, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseTomlKeysCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_keys(&convert(&toml)?, key)
+        parse_json_keys(&convert(toml)?, key)
     }
 }
 
