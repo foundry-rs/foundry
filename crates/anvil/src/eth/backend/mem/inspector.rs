@@ -47,41 +47,37 @@ impl Inspector {
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
-    fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.initialize_interp(interp, context);
+            inspector.initialize_interp(interp, ecx);
         });
     }
 
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step(interp, context);
+            inspector.step(interp, ecx);
         });
     }
 
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step_end(interp, context);
+            inspector.step_end(interp, ecx);
         });
     }
 
     #[inline]
-    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            inspector.log(context, log);
+            inspector.log(ecx, log);
         });
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            if let Some(outcome) = inspector.call(context, inputs) {
+            if let Some(outcome) = inspector.call(ecx, inputs) {
                 return Some(outcome);
             }
         });
@@ -92,12 +88,12 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn call_end(
         &mut self,
-        context: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
         if let Some(tracer) = &mut self.tracer {
-            return tracer.call_end(context, inputs, outcome);
+            return tracer.call_end(ecx, inputs, outcome);
         }
 
         outcome
@@ -106,11 +102,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn create(
         &mut self,
-        context: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.create(context, inputs) {
+            if let Some(out) = tracer.create(ecx, inputs) {
                 return Some(out);
             }
         }
@@ -120,12 +116,12 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn create_end(
         &mut self,
-        context: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         if let Some(tracer) = &mut self.tracer {
-            return tracer.create_end(context, inputs, outcome);
+            return tracer.create_end(ecx, inputs, outcome);
         }
 
         outcome

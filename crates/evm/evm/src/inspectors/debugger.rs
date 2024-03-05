@@ -47,12 +47,12 @@ impl Debugger {
 
 impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         let pc = interp.program_counter();
         let op = interp.current_opcode();
 
         // Get opcode information
-        let opcode_infos = spec_opcode_gas(context.spec_id());
+        let opcode_infos = spec_opcode_gas(ecx.spec_id());
         let opcode_info = &opcode_infos[op as usize];
 
         // Extract the push bytes
@@ -67,7 +67,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         };
 
         let total_gas_used = gas_used(
-            context.spec_id(),
+            ecx.spec_id(),
             interp.gas.limit().saturating_sub(interp.gas.remaining()),
             interp.gas.refunded() as u64,
         );
@@ -85,13 +85,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.enter(
-            context.journaled_state.depth() as usize,
+            ecx.journaled_state.depth() as usize,
             inputs.context.code_address,
             inputs.context.scheme.into(),
         );
@@ -123,11 +119,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn create(
         &mut self,
-        context: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        // TODO: Does this increase gas cost?
-        if let Err(err) = context.journaled_state.load_account(inputs.caller, &mut context.db) {
+        if let Err(err) = ecx.journaled_state.load_account(inputs.caller, &mut ecx.db) {
             let gas = Gas::new(inputs.gas_limit);
             return Some(CreateOutcome::new(
                 InterpreterResult {
@@ -139,9 +134,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             ));
         }
 
-        let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+        let nonce = ecx.journaled_state.account(inputs.caller).info.nonce;
         self.enter(
-            context.journaled_state.depth() as usize,
+            ecx.journaled_state.depth() as usize,
             inputs.created_address(nonce),
             CallKind::Create,
         );

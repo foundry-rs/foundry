@@ -26,13 +26,9 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && context.env.tx.caller != inputs.context.caller {
+        if self.call_generator.is_some() && ecx.env.tx.caller != inputs.context.caller {
             self.override_call(inputs);
         }
 

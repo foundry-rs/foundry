@@ -398,7 +398,7 @@ impl InspectorStack {
 
     fn do_call_end<DB: DatabaseExt>(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
@@ -414,7 +414,7 @@ impl InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let new_outcome = inspector.call_end(data, inputs, outcome.clone());
+                let new_outcome = inspector.call_end(ecx, inputs, outcome.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -428,7 +428,7 @@ impl InspectorStack {
                 }
             },
             self,
-            data
+            ecx
         );
 
         outcome
@@ -436,57 +436,57 @@ impl InspectorStack {
 
     fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
         transact_to: TransactTo,
         caller: Address,
         input: Bytes,
         gas_limit: u64,
         value: U256,
     ) -> (InterpreterResult, Option<Address>) {
-        data.db.commit(data.journaled_state.state.clone());
+        ecx.db.commit(ecx.journaled_state.state.clone());
 
-        let nonce = data
+        let nonce = ecx
             .journaled_state
-            .load_account(caller, &mut data.db)
+            .load_account(caller, &mut ecx.db)
             .expect("failed to load caller")
             .0
             .info
             .nonce;
 
-        let cached_env = data.env.clone();
+        let cached_env = ecx.env.clone();
 
-        data.env.block.basefee = U256::ZERO;
-        data.env.tx.caller = caller;
-        data.env.tx.transact_to = transact_to.clone();
-        data.env.tx.data = input;
-        data.env.tx.value = value;
-        data.env.tx.nonce = Some(nonce);
+        ecx.env.block.basefee = U256::ZERO;
+        ecx.env.tx.caller = caller;
+        ecx.env.tx.transact_to = transact_to.clone();
+        ecx.env.tx.data = input;
+        ecx.env.tx.value = value;
+        ecx.env.tx.nonce = Some(nonce);
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        data.env.tx.gas_limit = gas_limit + 21000;
+        ecx.env.tx.gas_limit = gas_limit + 21000;
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
-        if !data.env.cfg.disable_block_gas_limit {
-            data.env.tx.gas_limit =
-                std::cmp::min(data.env.tx.gas_limit, data.env.block.gas_limit.to());
+        if !ecx.env.cfg.disable_block_gas_limit {
+            ecx.env.tx.gas_limit =
+                std::cmp::min(ecx.env.tx.gas_limit, ecx.env.block.gas_limit.to());
         }
-        data.env.tx.gas_price = U256::ZERO;
+        ecx.env.tx.gas_price = U256::ZERO;
 
         self.inner_context_data = Some(InnerContextData {
-            sender: data.env.tx.caller,
+            sender: ecx.env.tx.caller,
             original_origin: cached_env.tx.caller,
             original_sender_nonce: nonce,
             is_create: matches!(transact_to, TransactTo::Create(_)),
         });
         self.in_inner_context = true;
 
-        let env = EnvWithHandlerCfg::new_with_spec_id(data.env.clone(), data.spec_id());
-        let res = crate::utils::new_evm_with_inspector(&mut *data.db, env, &mut *self).transact();
+        let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
+        let res = crate::utils::new_evm_with_inspector(&mut *ecx.db, env, &mut *self).transact();
 
         self.in_inner_context = false;
         self.inner_context_data = None;
 
-        data.env.tx = cached_env.tx;
-        data.env.block.basefee = cached_env.block.basefee;
+        ecx.env.tx = cached_env.tx;
+        ecx.env.block.basefee = cached_env.block.basefee;
 
         let mut gas = Gas::new(gas_limit);
 
@@ -498,15 +498,15 @@ impl InspectorStack {
         };
 
         // Commit changes after transaction
-        data.db.commit(res.state.clone());
+        ecx.db.commit(res.state.clone());
 
         // Update both states with new DB data after commit.
-        update_state(&mut data.journaled_state.state, &mut data.db);
-        update_state(&mut res.state, &mut data.db);
+        update_state(&mut ecx.journaled_state.state, &mut ecx.db);
+        update_state(&mut res.state, &mut ecx.db);
 
         // Merge transaction journal into the active journal.
         for (addr, acc) in res.state {
-            if let Some(acc_mut) = data.journaled_state.state.get_mut(&addr) {
+            if let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) {
                 acc_mut.status |= acc.status;
                 for (key, val) in acc.storage {
                     if !acc_mut.storage.contains_key(&key) {
@@ -514,7 +514,7 @@ impl InspectorStack {
                     }
                 }
             } else {
-                data.journaled_state.state.insert(addr, acc);
+                ecx.journaled_state.state.insert(addr, acc);
             }
         }
 
@@ -546,11 +546,11 @@ impl InspectorStack {
     /// Updates tx.origin to the value before entering inner context
     fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
     ) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
-        let sender_acc = data
+        let sender_acc = ecx
             .journaled_state
             .state
             .get_mut(&inner_context_data.sender)
@@ -558,7 +558,7 @@ impl InspectorStack {
         if !inner_context_data.is_create {
             sender_acc.info.nonce = inner_context_data.original_sender_nonce;
         }
-        data.env.tx.caller = inner_context_data.original_origin;
+        ecx.env.tx.caller = inner_context_data.original_origin;
     }
 }
 
@@ -568,11 +568,7 @@ impl InspectorStack {
 // this ever needs to be changed, this can be reverted back to using just `DB`, and instead using
 // dynamic dispatch (`&mut dyn ...`) in `transact_inner`.
 impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        context: &mut EvmContext<&mut DB>,
-    ) {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -583,15 +579,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.initialize_interp(interpreter, context);
+                inspector.initialize_interp(interpreter, ecx);
                 None::<()>
             },
             self,
-            context
+            ecx
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<&mut DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
@@ -603,15 +599,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.step(interpreter, context);
+                inspector.step(interpreter, ecx);
                 None::<()>
             },
             self,
-            context
+            ecx
         );
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<&mut DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -622,33 +618,33 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                inspector.step_end(interpreter, context);
+                inspector.step_end(interpreter, ecx);
                 None::<()>
             },
             self,
-            context
+            ecx
         );
     }
 
-    fn log(&mut self, context: &mut EvmContext<&mut DB>, log: &Log) {
+    fn log(&mut self, ecx: &mut EvmContext<&mut DB>, log: &Log) {
         call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                inspector.log(context, log);
+                inspector.log(ecx, log);
                 None::<()>
             },
             self,
-            context
+            ecx
         );
     }
 
     fn call(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if self.in_inner_context && data.journaled_state.depth == 0 {
-            self.adjust_evm_data_for_inner_context(data);
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
 
@@ -664,7 +660,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
             ],
             |inspector| {
                 let mut out = None;
-                if let Some(output) = inspector.call(data, call) {
+                if let Some(output) = inspector.call(ecx, call) {
                     if output.result.result != InstructionResult::Continue {
                         out = Some(Some(output));
                     }
@@ -672,16 +668,16 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 out
             },
             self,
-            data
+            ecx
         );
 
         if self.enable_isolation &&
             call.context.scheme == CallScheme::Call &&
             !self.in_inner_context &&
-            data.journaled_state.depth == 1
+            ecx.journaled_state.depth == 1
         {
             let (result, _) = self.transact_inner(
-                data,
+                ecx,
                 TransactTo::Call(call.contract),
                 call.context.caller,
                 call.input.clone(),
@@ -696,23 +692,23 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
 
     fn call_end(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
-        if self.in_inner_context && data.journaled_state.depth == 0 {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
             return outcome
         }
 
-        let outcome = self.do_call_end(data, inputs, outcome);
+        let outcome = self.do_call_end(ecx, inputs, outcome);
         if outcome.result.is_revert() {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
             // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
             // before revm reverts the state itself
             if let Some(cheats) = self.cheatcodes.as_mut() {
-                cheats.on_revert(data);
+                cheats.on_revert(ecx);
             }
         }
 
@@ -721,11 +717,11 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
 
     fn create(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if self.in_inner_context && data.journaled_state.depth == 0 {
-            self.adjust_evm_data_for_inner_context(data);
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
 
@@ -738,14 +734,14 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
-            |inspector| { inspector.create(data, create).map(Some) },
+            |inspector| { inspector.create(ecx, create).map(Some) },
             self,
-            data
+            ecx
         );
 
-        if self.enable_isolation && !self.in_inner_context && data.journaled_state.depth == 1 {
+        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
             let (result, address) = self.transact_inner(
-                data,
+                ecx,
                 TransactTo::Create(create.scheme),
                 create.caller,
                 create.init_code.clone(),
@@ -760,13 +756,13 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
 
     fn create_end(
         &mut self,
-        data: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
-        if self.in_inner_context && data.journaled_state.depth == 0 {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
             return outcome
         }
 
@@ -782,7 +778,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let new_outcome = inspector.create_end(data, call, outcome.clone());
+                let new_outcome = inspector.create_end(ecx, call, outcome.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -796,7 +792,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 }
             },
             self,
-            data
+            ecx
         );
 
         outcome

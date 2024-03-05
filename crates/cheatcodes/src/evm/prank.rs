@@ -96,10 +96,10 @@ fn prank<DB: DatabaseExt>(
 ) -> Result {
     let prank = Prank::new(
         ccx.caller,
-        ccx.context.env.tx.caller,
+        ccx.ecx.env.tx.caller,
         *new_caller,
         new_origin.copied(),
-        ccx.context.journaled_state.depth(),
+        ccx.ecx.journaled_state.depth(),
         single_call,
     );
 
