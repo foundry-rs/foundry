@@ -6,11 +6,7 @@ use foundry_evm::revm::{
 use std::fmt;
 
 pub fn get_precompiles_for(spec_id: SpecId) -> Vec<Address> {
-    Precompiles::new(PrecompileSpecId::from_spec_id(spec_id))
-        .addresses()
-        .into_iter()
-        .copied()
-        .collect()
+    Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)).addresses().copied().collect()
 }
 
 /// wrapper type that displays byte as hex

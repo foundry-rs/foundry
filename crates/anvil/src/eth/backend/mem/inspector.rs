@@ -8,16 +8,11 @@ use foundry_evm::{
     inspectors::{LogCollector, TracingInspector},
     revm,
     revm::{
-        interpreter::{
-            CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult,
-            Interpreter,
-        },
-        primitives::{Address, Bytes, B256},
+        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
         EvmContext,
     },
     traces::TracingInspectorConfig,
 };
-use std::ops::Range;
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
