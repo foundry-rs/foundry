@@ -284,6 +284,7 @@ interface Vm {
     function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
     function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
     function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
     function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
     function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
     function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);

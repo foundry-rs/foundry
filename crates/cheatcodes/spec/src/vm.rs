@@ -1888,6 +1888,9 @@ interface Vm {
         pure
         returns (bytes32[] memory);
 
+    /// Returns an array of all the keys in a TOML table.
+    #[cheatcode(group = Toml)]
+    function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
 
     // -------- Writing --------
 

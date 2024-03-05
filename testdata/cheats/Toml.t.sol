@@ -142,7 +142,32 @@ contract ParseTomlTest is DSTest {
         assertEq(0, data.length);
     }
 
-    // TODO: add `parseTomlKeys`
+    function test_parseTomlKeys() public {
+        string memory tomlString =
+            "some_key_to_value = \"some_value\"\n some_key_to_array = [1, 2, 3]\n [some_key_to_object]\n key1 = \"value1\"\n key2 = 2";
+
+        string[] memory keys = vm.parseTomlKeys(tomlString, "$");
+        string[] memory expected = new string[](3);
+        expected[0] = "some_key_to_value";
+        expected[1] = "some_key_to_array";
+        expected[2] = "some_key_to_object";
+        assertEq(abi.encode(keys), abi.encode(expected));
+
+        keys = vm.parseTomlKeys(tomlString, ".some_key_to_object");
+        expected = new string[](2);
+        expected[0] = "key1";
+        expected[1] = "key2";
+        assertEq(abi.encode(keys), abi.encode(expected));
+
+        vm._expectCheatcodeRevert("JSON value at \".some_key_to_array\" is not an object");
+        vm.parseTomlKeys(tomlString, ".some_key_to_array");
+
+        vm._expectCheatcodeRevert("JSON value at \".some_key_to_value\" is not an object");
+        vm.parseTomlKeys(tomlString, ".some_key_to_value");
+
+        vm._expectCheatcodeRevert("key \".*\" must return exactly one JSON object");
+        vm.parseTomlKeys(tomlString, ".*");
+    }
 }
 
 contract WriteTomlTest is DSTest {

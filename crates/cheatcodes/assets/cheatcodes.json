@@ -5740,6 +5740,26 @@
     },
     {
       "func": {
+        "id": "parseTomlKeys",
+        "description": "Returns an array of all the keys in a TOML table.",
+        "declaration": "function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlKeys(string,string)",
+        "selector": "0x812a44b2",
+        "selectorBytes": [
+          129,
+          42,
+          68,
+          178
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseTomlString",
         "description": "Parses a string of TOML data at `key` and coerces it to `string`.",
         "declaration": "function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);",

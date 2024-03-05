@@ -134,16 +134,7 @@ impl Cheatcode for parseJsonBytes32ArrayCall {
 impl Cheatcode for parseJsonKeysCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        let json = parse_json_str(json)?;
-        let values = select(&json, key)?;
-        let [value] = values[..] else {
-            bail!("key {key:?} must return exactly one JSON object");
-        };
-        let Value::Object(object) = value else {
-            bail!("JSON value at {key:?} is not an object");
-        };
-        let keys = object.keys().collect::<Vec<_>>();
-        Ok(keys.abi_encode())
+        parse_json_keys(json, key)
     }
 }
 
@@ -310,6 +301,19 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
         debug!(target: "cheatcodes", %ty, "parsing string");
         string::parse(&to_string(values[0]), ty)
     }
+}
+
+pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, key)?;
+    let [value] = values[..] else {
+        bail!("key {key:?} must return exactly one JSON object");
+    };
+    let Value::Object(object) = value else {
+        bail!("JSON value at {key:?} is not an object");
+    };
+    let keys = object.keys().collect::<Vec<_>>();
+    Ok(keys.abi_encode())
 }
 
 fn parse_json_str(json: &str) -> Result<Value> {

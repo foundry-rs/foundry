@@ -1,7 +1,7 @@
 //! Implementations of [`Toml`](crate::Group::Toml) cheatcodes.
 
 use crate::{
-    json::{canonicalize_json_path, parse_json, parse_json_coerce},
+    json::{canonicalize_json_path, parse_json, parse_json_coerce, parse_json_keys},
     Cheatcode, Cheatcodes, Result,
     Vm::*,
 };
@@ -126,6 +126,13 @@ impl Cheatcode for parseTomlBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_json_coerce(&convert(&toml)?, key, &DynSolType::FixedBytes(32))
+    }
+}
+
+impl Cheatcode for parseTomlKeysCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { toml, key } = self;
+        parse_json_keys(&convert(&toml)?, key)
     }
 }
 
