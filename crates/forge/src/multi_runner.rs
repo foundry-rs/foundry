@@ -13,7 +13,7 @@ use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, Proj
 use foundry_evm::{
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder},
+    executors::{invariant::report as invariant_report, Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -171,6 +171,8 @@ impl MultiContractRunner {
             self.contracts.len(),
             find_time,
         );
+
+        invariant_report::init(self.test_options.invariant.show_progress);
 
         contracts.par_iter().for_each_with(tx, |tx, &(id, (abi, deploy_code, libs))| {
             let identifier = id.identifier();

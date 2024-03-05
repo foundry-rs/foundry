@@ -38,6 +38,10 @@ use foundry_evm_fuzz::strategies::CalldataFuzzDictionary;
 mod funcs;
 pub use funcs::{assert_invariants, replay_run};
 
+pub mod report;
+pub use report::init;
+use report::{add_runs, complete_run};
+
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation = (
     EvmFuzzState,
@@ -108,6 +112,8 @@ impl<'a> InvariantExecutor<'a> {
         if !invariant_contract.invariant_function.inputs.is_empty() {
             return Err(eyre!("Invariant test function should have no inputs"))
         }
+
+        add_runs(self.config.runs);
 
         let (fuzz_state, targeted_contracts, strat, calldata_fuzz_dictionary) =
             self.prepare_fuzzing(&invariant_contract)?;
@@ -247,6 +253,8 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             fuzz_cases.borrow_mut().push(FuzzedCases::new(fuzz_runs));
+
+            complete_run();
 
             Ok(())
         });

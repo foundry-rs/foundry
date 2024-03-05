@@ -18,6 +18,7 @@ invariant_fail_on_revert = false
 invariant_call_override = false
 invariant_shrink_sequence = true
 invariant_preserve_state = false
+invariant_show_progress = false
 gas_limit = 9223372036854775807
 gas_price = 0
 gas_reports = ["*"]
