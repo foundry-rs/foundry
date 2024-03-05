@@ -317,7 +317,7 @@ impl ScriptRunner {
                 match res.exit_reason {
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFund => {
+                    InstructionResult::OutOfFunds => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {

@@ -752,9 +752,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
-            |inspector| {
-                inspector.create(data, call).map(Some)
-            },
+            |inspector| { inspector.create(data, call).map(Some) },
             self,
             data
         );
