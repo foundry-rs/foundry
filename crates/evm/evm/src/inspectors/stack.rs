@@ -2,22 +2,18 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
-use foundry_evm_core::{
-    backend::DatabaseExt,
-    debug::DebugArena,
-    utils::{eval_to_instruction_result, halt_to_instruction_result},
-};
+use alloy_primitives::{Address, Bytes, Log, U256};
+use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
-    evm_inner,
+    inspector_handle_register,
     interpreter::{
-        return_revert, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter,
-        Stack,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
-    primitives::{BlockEnv, Env, ExecutionResult, Output, State, TransactTo},
-    DatabaseCommit, EVMData, Inspector,
+    primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, State, TransactTo},
+    DatabaseCommit, EvmContext, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -241,7 +237,7 @@ pub struct InspectorData {
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
-    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
 
 /// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
@@ -403,12 +399,11 @@ impl InspectorStack {
 
     fn do_call_end<DB: DatabaseExt>(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        data: &mut EvmContext<DB>,
+        inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
+        let result = outcome.result.result;
         call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
@@ -420,15 +415,15 @@ impl InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (new_status, new_gas, new_retdata) =
-                    inspector.call_end(data, call, remaining_gas, status, retdata.clone());
+                let new_outcome = inspector.call_end(data, inputs, outcome.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                if new_status != status ||
-                    (new_status == InstructionResult::Revert && new_retdata != retdata)
+                if new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output())
                 {
-                    Some((new_status, new_gas, new_retdata))
+                    Some(new_outcome)
                 } else {
                     None
                 }
@@ -436,12 +431,13 @@ impl InspectorStack {
             self,
             data
         );
-        (status, remaining_gas, retdata)
+
+        outcome
     }
 
     fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<DB>,
         transact_to: TransactTo,
         caller: Address,
         input: Bytes,
@@ -452,7 +448,7 @@ impl InspectorStack {
 
         let nonce = data
             .journaled_state
-            .load_account(caller, data.db)
+            .load_account(caller, &mut data.db)
             .expect("failed to load caller")
             .0
             .info
@@ -483,7 +479,19 @@ impl InspectorStack {
             is_create: matches!(transact_to, TransactTo::Create(_)),
         });
         self.in_inner_context = true;
-        let res = evm_inner(data.env, data.db, Some(self)).transact();
+
+        let env = data.env.clone();
+        let env = EnvWithHandlerCfg::new_with_spec_id(env, data.spec_id());
+
+        let res = {
+            let mut evm = revm::Evm::builder()
+                .with_db(&mut data.db)
+                .with_external_context(&mut *self)
+                .with_env_with_handler_cfg(env)
+                .append_handler_register(inspector_handle_register)
+                .build();
+            evm.transact()
+        };
         self.in_inner_context = false;
         self.inner_context_data = None;
 
@@ -501,8 +509,8 @@ impl InspectorStack {
         data.db.commit(res.state.clone());
 
         // Update both states with new DB data after commit.
-        update_state(&mut data.journaled_state.state, data.db);
-        update_state(&mut res.state, data.db);
+        update_state(&mut data.journaled_state.state, &mut data.db);
+        update_state(&mut res.state, &mut data.db);
 
         // Merge transaction journal into the active journal.
         for (addr, acc) in res.state {
@@ -526,11 +534,11 @@ impl InspectorStack {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
                 };
-                (eval_to_instruction_result(reason), address, gas, output.into_data())
+                (reason.into(), address, gas, output.into_data())
             }
             ExecutionResult::Halt { reason, gas_used } => {
                 gas.record_cost(gas_used);
-                (halt_to_instruction_result(reason), None, gas, Bytes::new())
+                (reason.into(), None, gas, Bytes::new())
             }
             ExecutionResult::Revert { gas_used, output } => {
                 gas.record_cost(gas_used);
@@ -543,7 +551,7 @@ impl InspectorStack {
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
-    fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+    fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(&mut self, data: &mut EvmContext<DB>) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
         let sender_acc = data
@@ -559,8 +567,7 @@ impl InspectorStack {
 }
 
 impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -571,22 +578,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.initialize_interp(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    Some(())
-                } else {
-                    None
-                }
+                inspector.initialize_interp(interpreter, context);
+                None::<()>
             },
             self,
-            data
+            context
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
+    fn step(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
@@ -598,40 +598,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.step(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    Some(())
-                } else {
-                    None
-                }
+                inspector.step(interpreter, context);
+                None::<()>
             },
             self,
-            data
+            context
         );
     }
 
-    fn log(
-        &mut self,
-        evm_data: &mut EVMData<'_, DB>,
-        address: &Address,
-        topics: &[B256],
-        data: &Bytes,
-    ) {
-        call_inspectors_adjust_depth!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| {
-                inspector.log(evm_data, address, topics, data);
-                None
-            },
-            self,
-            evm_data
-        );
-    }
-
-    fn step_end(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
+    fn step_end(&mut self, interpreter: &mut Interpreter, context: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -642,28 +617,39 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                inspector.step_end(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    Some(())
-                } else {
-                    None
-                }
+                inspector.step_end(interpreter, context);
+                None::<()>
             },
             self,
-            data
+            context
         );
     }
 
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+        call_inspectors_adjust_depth!(
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                inspector.log(context, log);
+                None::<()>
+            },
+            self,
+            context
+        );
+    }
+
+    fn call(&mut self, data: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
         if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
-            return (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new());
+            return {
+                Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Continue,
+                        output: Default::default(),
+                        gas: Gas::new(call.gas_limit),
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                })
+            }
         }
 
         call_inspectors_adjust_depth!(
@@ -677,14 +663,13 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (status, gas, retdata) = inspector.call(data, call);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    Some((status, gas, retdata))
-                } else {
-                    None
+                let mut out = None;
+                if let Some(output) = inspector.call(data, call) {
+                    if output.result.result != InstructionResult::Continue {
+                        out = Some(Some(output));
+                    }
                 }
+                out
             },
             self,
             data
@@ -703,28 +688,31 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 call.gas_limit,
                 call.transfer.value,
             );
-            return (res, gas, output);
+            return {
+                Some(CallOutcome {
+                    result: InterpreterResult { result: res, output, gas },
+                    memory_offset: call.return_memory_offset.clone(),
+                })
+            }
         }
 
-        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        data: &mut EvmContext<DB>,
+        inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && data.journaled_state.depth == 0 {
-            return (status, remaining_gas, retdata);
+            return outcome
         }
 
-        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
-        if matches!(res.0, return_revert!()) {
+        let outcome = self.do_call_end(data, inputs, outcome);
+        if outcome.result.is_revert() {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
             // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
             // before revm reverts the state itself
@@ -733,17 +721,26 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             }
         }
 
-        res
+        outcome
     }
 
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> Option<CreateOutcome> {
         if self.in_inner_context && data.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(data);
-            return (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new());
+            return {
+                Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Continue,
+                        output: Default::default(),
+                        gas: Gas::new(call.gas_limit),
+                    },
+                    address: None,
+                })
+            }
         }
 
         call_inspectors_adjust_depth!(
@@ -756,21 +753,14 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (status, addr, gas, retdata) = inspector.create(data, call);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    Some((status, addr, gas, retdata))
-                } else {
-                    None
-                }
+                inspector.create(data, call).map(Some)
             },
             self,
             data
         );
 
         if self.enable_isolation && !self.in_inner_context && data.journaled_state.depth == 1 {
-            return self.transact_inner(
+            let (res, address, gas, output) = self.transact_inner(
                 data,
                 TransactTo::Create(call.scheme),
                 call.caller,
@@ -778,25 +768,32 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 call.gas_limit,
                 call.value,
             );
+
+            return {
+                Some(CreateOutcome {
+                    result: InterpreterResult { result: res, output, gas },
+                    address,
+                })
+            }
         }
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<DB>,
         call: &CreateInputs,
-        status: InstructionResult,
-        address: Option<Address>,
-        remaining_gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && data.journaled_state.depth == 0 {
-            return (status, address, remaining_gas, retdata);
+            return outcome
         }
+
+        let result = outcome.result.result;
+
         call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
@@ -807,17 +804,15 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
-                    data,
-                    call,
-                    status,
-                    address,
-                    remaining_gas,
-                    retdata.clone(),
-                );
+                let new_outcome = inspector.create_end(data, call, outcome.clone());
 
-                if new_status != status {
-                    Some((new_status, new_address, new_gas, new_retdata))
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output())
+                {
+                    Some(new_outcome)
                 } else {
                     None
                 }
@@ -826,7 +821,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStack {
             data
         );
 
-        (status, address, remaining_gas, retdata)
+        outcome
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
