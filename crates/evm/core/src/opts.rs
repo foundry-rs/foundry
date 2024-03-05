@@ -61,6 +61,12 @@ pub struct EvmOpts {
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     pub memory_limit: u64,
+
+    /// Whether to enable isolation of calls.
+    pub isolate: bool,
+
+    /// Whether to disable block gas limit checks.
+    pub disable_block_gas_limit: bool,
 }
 
 impl EvmOpts {
@@ -93,6 +99,7 @@ impl EvmOpts {
             self.env.chain_id,
             self.fork_block_number,
             self.sender,
+            self.disable_block_gas_limit,
         )
         .await
         .wrap_err_with(|| {
@@ -110,6 +117,7 @@ impl EvmOpts {
         // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
+        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
 
         revm::primitives::Env {
             block: BlockEnv {

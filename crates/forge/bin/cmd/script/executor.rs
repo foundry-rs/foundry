@@ -281,7 +281,7 @@ impl ScriptArgs {
                 Some(db) => db.clone(),
                 None => {
                     let fork = script_config.evm_opts.get_fork(&script_config.config, env.clone());
-                    let backend = Backend::spawn(fork).await;
+                    let backend = Backend::spawn(fork);
                     script_config.backends.insert(url.clone(), backend.clone());
                     backend
                 }
@@ -291,7 +291,6 @@ impl ScriptArgs {
                 // no need to cache it, since there won't be any onchain simulation that we'd need
                 // to cache the backend for.
                 Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()))
-                    .await
             }
         };
 
@@ -303,14 +302,17 @@ impl ScriptArgs {
 
         if let SimulationStage::Local = stage {
             builder = builder.inspectors(|stack| {
-                stack.debug(self.debug).cheatcodes(
-                    CheatsConfig::new(
-                        &script_config.config,
-                        script_config.evm_opts.clone(),
-                        script_wallets,
+                stack
+                    .debug(self.debug)
+                    .cheatcodes(
+                        CheatsConfig::new(
+                            &script_config.config,
+                            script_config.evm_opts.clone(),
+                            script_wallets,
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
+                    .enable_isolation(script_config.evm_opts.isolate)
             });
         }
 

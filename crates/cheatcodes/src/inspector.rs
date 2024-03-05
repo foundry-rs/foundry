@@ -868,6 +868,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     let prev = account.info.nonce;
+
+                    // Touch account to ensure that incremented nonce is committed
+                    account.mark_touch();
                     account.info.nonce += 1;
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
@@ -1580,9 +1583,10 @@ fn process_broadcast_create<DB: DatabaseExt>(
             // by the create2_deployer
             let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let prev = account.info.nonce;
+            // Touch account to ensure that incremented nonce is committed
+            account.mark_touch();
             account.info.nonce += 1;
             debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
-
             // Proxy deployer requires the data to be `salt ++ init_code`
             let calldata = [&salt.to_be_bytes::<32>()[..], &bytecode[..]].concat();
             (calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev)

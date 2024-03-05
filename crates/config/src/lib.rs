@@ -374,6 +374,14 @@ pub struct Config {
     /// Should be removed once EvmVersion Cancun is supported by solc
     pub cancun: bool,
 
+    /// Whether to enable call isolation.
+    ///
+    /// Useful for more correct gas accounting and EVM behavior in general.
+    pub isolate: bool,
+
+    /// Whether to disable the block gas limit.
+    pub disable_block_gas_limit: bool,
+
     /// Address labels
     pub labels: HashMap<Address, String>,
 
@@ -575,12 +583,13 @@ impl Config {
         self.evm_version = self.get_normalized_evm_version();
     }
 
-    /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version.
+    /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version or if the solc
+    /// path is a valid solc binary.
     ///
     /// Otherwise it returns the configured [EvmVersion].
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(SolcReq::Version(version)) = &self.solc {
-            if let Some(evm_version) = self.evm_version.normalize_version(version) {
+        if let Some(version) = self.solc.as_ref().and_then(|solc| solc.try_version().ok()) {
+            if let Some(evm_version) = self.evm_version.normalize_version(&version) {
                 return evm_version;
             }
         }
@@ -1515,12 +1524,19 @@ impl Config {
         if !chain_path.exists() {
             return Ok(blocks)
         }
-        for block in chain_path.read_dir()?.flatten().filter(|x| x.file_type().unwrap().is_dir()) {
-            let filepath = block.path().join("storage.json");
-            blocks.push((
-                block.file_name().to_string_lossy().into_owned(),
-                fs::metadata(filepath)?.len(),
-            ));
+        for block in chain_path.read_dir()?.flatten() {
+            let file_type = block.file_type()?;
+            let file_name = block.file_name();
+            let filepath = if file_type.is_dir() {
+                block.path().join("storage.json")
+            } else if file_type.is_file() &&
+                file_name.to_string_lossy().chars().all(char::is_numeric)
+            {
+                block.path()
+            } else {
+                continue
+            };
+            blocks.push((file_name.to_string_lossy().into_owned(), fs::metadata(filepath)?.len()));
         }
         Ok(blocks)
     }
@@ -1597,11 +1613,15 @@ impl Config {
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
     fn normalize_defaults(&mut self, figment: Figment) -> Figment {
-        if let Ok(version) = figment.extract_inner::<Version>("solc") {
+        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc") {
             // check if evm_version is set
             // TODO: add a warning if evm_version is provided but incompatible
             if figment.find_value("evm_version").is_err() {
-                if let Some(version) = self.evm_version.normalize_version(&version) {
+                if let Some(version) = solc
+                    .try_version()
+                    .ok()
+                    .and_then(|version| self.evm_version.normalize_version(&version))
+                {
                     // normalize evm_version based on the provided solc version
                     self.evm_version = version;
                 }
@@ -1820,6 +1840,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             cancun: false,
+            isolate: false,
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -1871,6 +1892,7 @@ impl Default for Config {
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
+            disable_block_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
@@ -1883,6 +1905,7 @@ impl Default for Config {
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
                 SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
+                SolidityErrorCode::TransientStorageUsed,
             ],
             ignored_file_paths: vec![],
             deny_warnings: false,
@@ -1991,6 +2014,22 @@ pub enum SolcReq {
     Version(Version),
     /// Path to an existing local solc installation
     Local(PathBuf),
+}
+
+impl SolcReq {
+    /// Tries to get the solc version from the `SolcReq`
+    ///
+    /// If the `SolcReq` is a `Version` it will return the version, if it's a path to a binary it
+    /// will try to get the version from the binary.
+    fn try_version(&self) -> Result<Version, SolcError> {
+        match self {
+            SolcReq::Version(version) => Ok(version.clone()),
+            SolcReq::Local(path) => Solc::new(path).version().map_err(|err| {
+                warn!("failed to get solc version from {}: {}", path.display(), err);
+                err
+            }),
+        }
+    }
 }
 
 impl<T: AsRef<str>> From<T> for SolcReq {
@@ -4532,23 +4571,38 @@ mod tests {
             writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
+        fn fake_block_cache_block_path_as_file(
+            chain_path: &Path,
+            block_number: &str,
+            size_bytes: usize,
+        ) {
+            let block_path = chain_path.join(block_number);
+            let mut file = File::create(block_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
+        }
+
         let chain_dir = tempdir()?;
 
         fake_block_cache(chain_dir.path(), "1", 100);
         fake_block_cache(chain_dir.path(), "2", 500);
+        fake_block_cache_block_path_as_file(chain_dir.path(), "3", 900);
         // Pollution file that should not show up in the cached block
         let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
         writeln!(pol_file, "{}", [' '; 10].iter().collect::<String>()).unwrap();
 
         let result = Config::get_cached_blocks(chain_dir.path())?;
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 3);
         let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
         let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
+        let block3 = &result.iter().find(|x| x.0 == "3").unwrap();
+
         assert_eq!(block1.0, "1");
         assert_eq!(block1.1, 100);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
+        assert_eq!(block3.0, "3");
+        assert_eq!(block3.1, 900);
 
         chain_dir.close()?;
         Ok(())

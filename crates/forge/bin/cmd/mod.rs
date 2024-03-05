@@ -23,9 +23,9 @@
 //! // A new clap subcommand that accepts both `EvmArgs` and `BuildArgs`
 //! #[derive(Clone, Debug, Parser)]
 //! pub struct MyArgs {
-//!     #[clap(flatten)]
+//!     #[command(flatten)]
 //!     evm_opts: EvmArgs,
-//!     #[clap(flatten)]
+//!     #[command(flatten)]
 //!     opts: BuildArgs,
 //! }
 //!

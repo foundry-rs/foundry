@@ -10,7 +10,7 @@ use revm::primitives::{Env, EnvWithHandlerCfg, SpecId};
 ///
 /// [`Cheatcodes`]: super::inspector::Cheatcodes
 /// [`InspectorStack`]: super::inspector::InspectorStack
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct ExecutorBuilder {
     /// The configuration used to build an [InspectorStack].

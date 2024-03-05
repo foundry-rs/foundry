@@ -408,8 +408,8 @@ pub struct Backend {
 
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
-    pub async fn spawn(fork: Option<CreateFork>) -> Self {
-        Self::new(MultiFork::spawn().await, fork)
+    pub fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn(), fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -452,16 +452,11 @@ impl Backend {
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) async fn new_with_fork(
-        id: &ForkId,
-        fork: Fork,
-        journaled_state: JournaledState,
-    ) -> Self {
-        let mut backend = Self::spawn(None).await;
+    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
+        let mut backend = Self::spawn(None);
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
-
         backend
     }
 
@@ -1879,8 +1874,7 @@ fn commit_transaction<I: Inspector<Backend>>(
     let state = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
-        let db = crate::utils::RuntimeOrHandle::new()
-            .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
+        let db = Backend::new_with_fork(fork_id, fork, journaled_state);
         let mut evm = revm::Evm::builder()
             .with_db(db)
             .with_external_context(inspector)
@@ -1888,10 +1882,7 @@ fn commit_transaction<I: Inspector<Backend>>(
             .append_handler_register(inspector_handle_register)
             .build();
 
-        match evm.transact() {
-            Ok(res) => res.state,
-            Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
-        }
+        evm.transact().wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

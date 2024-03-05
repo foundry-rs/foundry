@@ -13,8 +13,9 @@ use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
     inspector_handle_register,
-    primitives::{AccountInfo, Bytecode, Env, EnvWithHandlerCfg, ResultAndState, SpecId},
-    Database, Inspector, JournaledState,
+    primitives::{EnvWithHandlerCfg, SpecId},
+    primitives::{Account, AccountInfo, Bytecode, Env, HashMap as Map, ResultAndState},
+    Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};
 
@@ -288,5 +289,11 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
 
     fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self, number)
+    }
+}
+
+impl<'a> DatabaseCommit for FuzzBackendWrapper<'a> {
+    fn commit(&mut self, changes: Map<Address, Account>) {
+        self.backend.to_mut().commit(changes)
     }
 }

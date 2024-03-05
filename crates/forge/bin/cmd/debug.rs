@@ -14,28 +14,28 @@ pub struct DebugArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath)]
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
+    #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
+    #[arg(long, short, default_value = "run()", value_name = "SIGNATURE")]
     pub sig: String,
 
     /// Open the script in the debugger.
-    #[clap(long)]
+    #[arg(long)]
     pub debug: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub evm_opts: EvmArgs,
 }
 
