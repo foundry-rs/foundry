@@ -24,119 +24,119 @@ impl Cheatcode for keyExistsTomlCall {
 impl Cheatcode for parseToml_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
-        parse_json(&convert(toml)?, "$")
+        parse_toml(toml, "$")
     }
 }
 
 impl Cheatcode for parseToml_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json(&convert(toml)?, key)
+        parse_toml(toml, key)
     }
 }
 
 impl Cheatcode for parseTomlUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Uint(256))
+        parse_toml_coerce(toml, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseTomlUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Uint(256))
+        parse_toml_coerce(toml, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseTomlIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Int(256))
+        parse_toml_coerce(toml, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseTomlIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Int(256))
+        parse_toml_coerce(toml, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseTomlBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bool)
+        parse_toml_coerce(toml, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseTomlBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bool)
+        parse_toml_coerce(toml, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseTomlAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Address)
+        parse_toml_coerce(toml, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseTomlAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Address)
+        parse_toml_coerce(toml, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseTomlStringCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::String)
+        parse_toml_coerce(toml, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseTomlStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::String)
+        parse_toml_coerce(toml, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseTomlBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bytes)
+        parse_toml_coerce(toml, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseTomlBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::Bytes)
+        parse_toml_coerce(toml, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseTomlBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::FixedBytes(32))
+        parse_toml_coerce(toml, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseTomlBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_coerce(&convert(toml)?, key, &DynSolType::FixedBytes(32))
+        parse_toml_coerce(toml, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseTomlKeysCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_json_keys(&convert(toml)?, key)
+        parse_toml_keys(toml, key)
     }
 }
 
@@ -171,8 +171,24 @@ impl Cheatcode for writeToml_1Call {
     }
 }
 
+/// Parse a TOML string.
 fn parse_toml_str(toml: &str) -> Result<TomlValue> {
     toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
+}
+
+/// Parse a TOML string and return the value at the given path.
+fn parse_toml(toml: &str, key: &str) -> Result {
+    parse_json(&convert(toml)?, key)
+}
+
+/// Parse a TOML string and return the value at the given path, coercing it to the given type.
+fn parse_toml_coerce(toml: &str, key: &str, ty: &DynSolType) -> Result {
+    parse_json_coerce(&convert(toml)?, key, ty)
+}
+
+/// Parse a TOML string and return an array of all keys at the given path.
+fn parse_toml_keys(toml: &str, key: &str) -> Result {
+    parse_json_keys(&convert(toml)?, key)
 }
 
 /// Convert a TOML string to a JSON string.
@@ -185,7 +201,13 @@ fn convert(toml: &str) -> Result<String> {
 /// Convert a TOML value to a JSON value.
 fn toml_to_json(value: TomlValue) -> JsonValue {
     match value {
-        TomlValue::String(s) => JsonValue::String(s),
+        TomlValue::String(s) => {
+            if s == "null" {
+                JsonValue::Null
+            } else {
+                JsonValue::String(s)
+            }
+        }
         TomlValue::Integer(i) => JsonValue::Number(Number::from(i)),
         TomlValue::Float(f) => {
             JsonValue::Number(Number::from_f64(f).expect("failed to convert float"))
