@@ -93,6 +93,11 @@ impl Executor {
         Executor { backend, env, inspector, gas_limit }
     }
 
+    /// Returns the spec id of the executor
+    pub fn spec_id(&self) -> SpecId {
+        self.env.handler_cfg.spec_id
+    }
+
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
