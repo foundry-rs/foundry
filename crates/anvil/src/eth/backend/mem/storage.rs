@@ -435,7 +435,7 @@ impl MinedTransaction {
                             self.info.traces.clone(),
                             TracingInspectorConfig::from_geth_config(&config),
                         )
-                        .geth_call_traces(call_config, self.receipt.gas_used().as_u64())
+                        .geth_call_traces(call_config, self.receipt.gas_used())
                         .into()
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => NoopFrame::default().into(),
@@ -448,12 +448,12 @@ impl MinedTransaction {
         // default structlog tracer
         GethTraceBuilder::new(
             self.info.traces.clone(),
-            TracingInspectorConfig::default_geth(),
+            TracingInspectorConfig::from_geth_config(&config),
         )
         .geth_traces(
-            self.receipt.gas_used().as_u64(),
+            self.receipt.gas_used(),
             self.info.out.clone().unwrap_or_default().0.into(),
-            opts,
+            opts.config,
         )
         .into()
     }
