@@ -14,7 +14,12 @@ use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::RetryArgs;
 use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::{
-    abi::{encode_function_args, get_func}, compile::SkipBuildFilter, errors::UnlinkedByteCode, evm::{Breakpoints, EvmArgs}, provider::ethers::RpcUrl, shell, CONTRACT_MAX_SIZE, SELECTOR_LEN
+    abi::{encode_function_args, get_func},
+    compile::SkipBuildFilter,
+    errors::UnlinkedByteCode,
+    evm::{Breakpoints, EvmArgs},
+    provider::ethers::RpcUrl,
+    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
 use foundry_config::{

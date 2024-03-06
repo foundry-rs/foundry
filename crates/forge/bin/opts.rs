@@ -5,8 +5,8 @@ use crate::cmd::{
     selectors::SelectorsSubcommands, snapshot, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
-use forge_verify::{VerifyArgs, VerifyCheckArgs};
 use forge_script::ScriptArgs;
+use forge_verify::{VerifyArgs, VerifyCheckArgs};
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
