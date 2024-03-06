@@ -2932,6 +2932,7 @@ dependencies = [
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
+ "foundry-linking",
  "foundry-test-utils",
  "foundry-wallets",
  "futures",
@@ -3412,6 +3413,16 @@ dependencies = [
  "tokio",
  "tracing",
  "yansi 0.5.1",
+]
+
+[[package]]
+name = "foundry-linking"
+version = "0.2.0"
+dependencies = [
+ "alloy-primitives",
+ "foundry-compilers",
+ "semver 1.0.22",
+ "thiserror",
 ]
 
 [[package]]
