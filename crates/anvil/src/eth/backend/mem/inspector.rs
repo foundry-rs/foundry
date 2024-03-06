@@ -1,7 +1,7 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::{eth::macros::node_info, revm::Database};
-use alloy_primitives::Log;
+use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
@@ -13,6 +13,7 @@ use foundry_evm::{
     },
     traces::TracingInspectorConfig,
 };
+use foundry_evm::revm::primitives::U256;
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -125,6 +126,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         }
 
         outcome
+    }
+
+    #[inline]
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        if let Some(tracer) = &mut self.tracer {
+            revm::Inspector::<DB>::selfdestruct(tracer, contract, target, value);
+        }
     }
 }
 
