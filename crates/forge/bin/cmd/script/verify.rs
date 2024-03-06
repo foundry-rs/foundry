@@ -1,8 +1,5 @@
-use crate::cmd::{
-    retry::RetryArgs,
-    verify::{VerifierArgs, VerifyArgs},
-};
 use alloy_primitives::Address;
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};

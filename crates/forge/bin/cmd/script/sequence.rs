@@ -5,11 +5,11 @@ use crate::cmd::{
         transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
         verify::VerifyBundle,
     },
-    verify::provider::VerificationProviderType,
 };
 use alloy_primitives::{Address, TxHash};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
+use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::now;
 use foundry_common::{
     fs, shell,

@@ -2924,6 +2924,7 @@ dependencies = [
  "eyre",
  "forge-doc",
  "forge-fmt",
+ "forge-verify",
  "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
@@ -3006,6 +3007,36 @@ dependencies = [
  "toml 0.8.10",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "forge-verify"
+version = "0.2.0"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "async-trait",
+ "clap",
+ "const-hex",
+ "ethers-providers",
+ "eyre",
+ "foundry-block-explorers",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-compilers",
+ "foundry-config",
+ "foundry-evm",
+ "foundry-test-utils",
+ "futures",
+ "once_cell",
+ "regex",
+ "reqwest",
+ "semver 1.0.22",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
