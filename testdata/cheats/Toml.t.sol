@@ -14,37 +14,29 @@ contract ParseTomlTest is DSTest {
         toml = vm.readFile(path);
     }
 
-    function test_uintArray() public {
-        bytes memory data = vm.parseToml(toml, ".uintArray");
-        uint256[] memory decodedData = abi.decode(data, (uint256[]));
-        assertEq(42, decodedData[0]);
-        assertEq(43, decodedData[1]);
-    }
-
     function test_str() public {
-        bytes memory data = vm.parseToml(toml, ".str");
+        bytes memory data = vm.parseToml(toml, ".basicString");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
 
-    function test_strArray() public {
-        bytes memory data = vm.parseToml(toml, ".strArray");
+    function test_nullString() public {
+        bytes memory data = vm.parseToml(toml, ".nullString");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("", decodedData);
+    }
+
+    function test_stringMultiline() public {
+        bytes memory data = vm.parseToml(toml, ".multilineString");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("hai\nthere\n", decodedData);
+    }
+
+    function test_stringArray() public {
+        bytes memory data = vm.parseToml(toml, ".stringArray");
         string[] memory decodedData = abi.decode(data, (string[]));
         assertEq("hai", decodedData[0]);
         assertEq("there", decodedData[1]);
-    }
-
-    function test_bool() public {
-        bytes memory data = vm.parseToml(toml, ".bool");
-        bool decodedData = abi.decode(data, (bool));
-        assertTrue(decodedData);
-    }
-
-    function test_boolArray() public {
-        bytes memory data = vm.parseToml(toml, ".boolArray");
-        bool[] memory decodedData = abi.decode(data, (bool[]));
-        assertTrue(decodedData[0]);
-        assertTrue(!decodedData[1]);
     }
 
     function test_address() public {
@@ -65,16 +57,50 @@ contract ParseTomlTest is DSTest {
         assertEq("0000000000000000000000000000000000001337", data);
     }
 
-    struct Nested {
-        uint256 number;
-        string str;
+    function test_bool() public {
+        bytes memory data = vm.parseToml(toml, ".bool");
+        bool decodedData = abi.decode(data, (bool));
+        assertTrue(decodedData);
     }
 
-    function test_nestedObject() public {
-        bytes memory data = vm.parseToml(toml, ".nestedObject");
-        Nested memory nested = abi.decode(data, (Nested));
-        assertEq(nested.number, 9223372036854775807); // TOML is limited to 64-bit integers
-        assertEq(nested.str, "NEST");
+    function test_boolString() public {
+        bytes memory data = vm.parseToml(toml, ".boolString");
+        bool decodedData = abi.decode(data, (bool));
+        assertTrue(decodedData);
+    }
+
+    function test_boolArray() public {
+        bytes memory data = vm.parseToml(toml, ".boolArray");
+        bool[] memory decodedData = abi.decode(data, (bool[]));
+        assertTrue(decodedData[0]);
+        assertTrue(!decodedData[1]);
+    }
+
+    function test_boolStringArray() public {
+        bytes memory data = vm.parseToml(toml, ".boolStringArray");
+        bool[] memory decodedData = abi.decode(data, (bool[]));
+        assertTrue(decodedData[0]);
+        assertTrue(!decodedData[1]);
+    }
+
+    function test_dateTime() public {
+        bytes memory data = vm.parseToml(toml, ".datetime");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq(decodedData, "2021-08-10T14:48:00Z");
+    }
+
+    function test_dateTimeArray() public {
+        bytes memory data = vm.parseToml(toml, ".datetimeArray");
+        string[] memory decodedData = abi.decode(data, (string[]));
+        assertEq(decodedData[0], "2021-08-10T14:48:00Z");
+        assertEq(decodedData[1], "2021-08-10T14:48:00Z");
+    }
+
+    function test_uintArray() public {
+        bytes memory data = vm.parseToml(toml, ".uintArray");
+        uint256[] memory decodedData = abi.decode(data, (uint256[]));
+        assertEq(42, decodedData[0]);
+        assertEq(43, decodedData[1]);
     }
 
     // Object keys are sorted alphabetically, regardless of input.
@@ -104,24 +130,57 @@ contract ParseTomlTest is DSTest {
     }
 
     function test_coercionUint() public {
-        uint256 number = vm.parseTomlUint(toml, ".hexUint");
-        assertEq(number, 1231232);
-        number = vm.parseTomlUint(toml, ".stringUint");
-        assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        number = vm.parseTomlUint(toml, ".numberUint");
+        uint256 number = vm.parseTomlUint(toml, ".uintNumber");
         assertEq(number, 9223372036854775807); // TOML is limited to 64-bit integers
-        uint256[] memory numbers = vm.parseTomlUintArray(toml, ".arrayUint");
+        number = vm.parseTomlUint(toml, ".uintString");
+        assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
+        number = vm.parseTomlUint(toml, ".uintHex");
+        assertEq(number, 1231232);
+        uint256[] memory numbers = vm.parseTomlUintArray(toml, ".uintArray");
+        assertEq(numbers[0], 42);
+        assertEq(numbers[1], 43);
+        numbers = vm.parseTomlUintArray(toml, ".uintStringArray");
         assertEq(numbers[0], 1231232);
         assertEq(numbers[1], 1231232);
         assertEq(numbers[2], 1231232);
     }
 
+    function test_coercionInt() public {
+        int256 number = vm.parseTomlInt(toml, ".intNumber");
+        assertEq(number, -12);
+        number = vm.parseTomlInt(toml, ".intString");
+        assertEq(number, -12);
+        number = vm.parseTomlInt(toml, ".intHex");
+        assertEq(number, -12);
+    }
+
     function test_coercionBool() public {
-        bool boolean = vm.parseTomlBool(toml, ".booleanString");
+        bool boolean = vm.parseTomlBool(toml, ".boolString");
         assertEq(boolean, true);
-        bool[] memory booleans = vm.parseTomlBoolArray(toml, ".booleanArray");
+        bool[] memory booleans = vm.parseTomlBoolArray(toml, ".boolArray");
         assert(booleans[0]);
         assert(!booleans[1]);
+    }
+
+    function test_coercionBytes() public {
+        bytes memory bytes_ = vm.parseTomlBytes(toml, ".bytes");
+        assertEq(bytes_, hex"01");
+
+        bytes[] memory bytesArray = vm.parseTomlBytesArray(toml, ".bytesArray");
+        assertEq(bytesArray[0], hex"01");
+        assertEq(bytesArray[1], hex"02");
+    }
+
+    struct Nested {
+        uint256 number;
+        string str;
+    }
+
+    function test_nestedObject() public {
+        bytes memory data = vm.parseToml(toml, ".nestedObject");
+        Nested memory nested = abi.decode(data, (Nested));
+        assertEq(nested.number, 9223372036854775807); // TOML is limited to 64-bit integers
+        assertEq(nested.str, "NEST");
     }
 
     function test_advancedJsonPath() public {
@@ -132,7 +191,7 @@ contract ParseTomlTest is DSTest {
     }
 
     function test_canonicalizePath() public {
-        bytes memory data = vm.parseToml(toml, "$.str");
+        bytes memory data = vm.parseToml(toml, "$.basicString");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
