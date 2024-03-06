@@ -22,8 +22,8 @@ contract ParseJsonTest is DSTest {
 
     function test_null() public {
         bytes memory data = vm.parseJson(json, ".null");
-        string memory decodedData = abi.decode(data, (string));
-        assertEq("", decodedData);
+        bytes memory decodedData = abi.decode(data, (bytes));
+        assertEq(new bytes(0), decodedData);
     }
 
     function test_stringArray() public {
