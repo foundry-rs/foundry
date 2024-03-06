@@ -766,7 +766,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }) {
                 return Some(CallOutcome {
                     result: InterpreterResult {
-                        result: InstructionResult::Revert,
+                        result: return_data.ret_type,
                         output: return_data.data.clone(),
                         gas,
                     },

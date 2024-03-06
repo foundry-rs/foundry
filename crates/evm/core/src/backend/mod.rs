@@ -14,6 +14,7 @@ use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
+    interpreter::Host,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
@@ -776,16 +777,23 @@ impl Backend {
         EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.inner.spec_id)
     }
 
-    /// Executes the configured test call of the `env` without committing state changes
+    /// Executes the configured test call of the `env` without committing state changes.
+    ///
+    /// Note: in case there are any cheatcodes executed that modify the environment, this will
+    /// update the given `env` with the new values.
     pub fn inspect_ref<'a, I: Inspector<&'a mut Self>>(
         &'a mut self,
-        env: EnvWithHandlerCfg,
+        env: &mut EnvWithHandlerCfg,
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(&env);
-        crate::utils::new_evm_with_inspector(self, env, inspector)
-            .transact()
-            .wrap_err("backend: failed while inspecting")
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+
+        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+
+        env.env = Box::new(evm.env().clone());
+
+        Ok(res)
     }
 
     /// Returns true if the address is a precompile

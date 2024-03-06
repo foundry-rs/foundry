@@ -9,11 +9,11 @@ use foundry_evm::{
     revm,
     revm::{
         interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+        primitives::U256,
         EvmContext,
     },
     traces::TracingInspectorConfig,
 };
-use foundry_evm::revm::primitives::U256;
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
