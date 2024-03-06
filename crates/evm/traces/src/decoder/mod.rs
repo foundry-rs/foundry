@@ -456,23 +456,7 @@ impl CallTraceDecoder {
                     Some(decoded.iter().map(format_token).collect())
                 }
             }
-            "parseToml" |
-            "parseTomlUint" |
-            "parseTomlUintArray" |
-            "parseTomlInt" |
-            "parseTomlIntArray" |
-            "parseTomlString" |
-            "parseTomlStringArray" |
-            "parseTomlAddress" |
-            "parseTomlAddressArray" |
-            "parseTomlBool" |
-            "parseTomlBoolArray" |
-            "parseTomlBytes" |
-            "parseTomlBytesArray" |
-            "parseTomlBytes32" |
-            "parseTomlBytes32Array" |
-            "writeToml" |
-            "keyExistsToml" => {
+            s if s.contains("Toml") => {
                 if self.verbosity >= 5 {
                     None
                 } else {
