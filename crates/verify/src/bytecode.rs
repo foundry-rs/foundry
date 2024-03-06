@@ -1,6 +1,7 @@
 use alloy_primitives::Address;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
+use ethers_core::types::Eip1559TransactionRequest;
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::Client;
@@ -238,6 +239,29 @@ impl VerifyBytecodeArgs {
         tracing::info!("Created fork with id {}", fork_id);
         // TODO: @Yash
         // Deploy the contract on the forked chain
+        let fork_rpc_url = multi_fork.get_fork_url(fork_id)?;
+        let mut fork_config = config.clone();
+        fork_config.eth_rpc_url = fork_rpc_url;
+        let fork_provider = utils::get_provider(&fork_config)?;
+
+        let tx = Eip1559TransactionRequest {
+            from: Some(creation_data.contract_creator.to_ethers()),
+            data: Some(bytecode.to_owned().to_ethers()),
+            ..Default::default()
+        };
+        // @mattsse - Need some help here.
+        let pending_tx = fork_provider.send_transaction(tx, None).await?;
+
+        let tx_receipt = pending_tx.confirmations(1).await.ok().flatten().ok_or_eyre(
+            "Failed to deploy locally built bytecode on the forked chain to verify runtime bytecode",
+        )?;
+
+        tracing::info!("Deployed contract at address {}", tx_receipt.contract_address.unwrap());
+        // Get onchain runtime bytecode
+        let _runtime_code = provider.get_code(self.address.to_ethers(), None).await?;
+
+        // Get fork runtime bytecode
+        let _fork_runtime_code = fork_provider.get_code(self.address.to_ethers(), None).await?;
         // Cmp runtime bytecode with onchain deployed bytecode
         Ok(())
     }

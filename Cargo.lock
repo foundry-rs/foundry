@@ -3019,6 +3019,7 @@ dependencies = [
  "async-trait",
  "clap",
  "const-hex",
+ "ethers-core",
  "ethers-providers",
  "eyre",
  "foundry-block-explorers",
