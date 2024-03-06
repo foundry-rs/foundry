@@ -1,16 +1,13 @@
 use super::{multi_sequence::MultiChainSequence, NestedValue};
-use crate::cmd::{
-    init::get_commit_hash,
-    script::{
-        transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
-        verify::VerifyBundle,
-    },
+use crate::{
+    transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
+    verify::VerifyBundle,
 };
 use alloy_primitives::{Address, TxHash};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
-use foundry_cli::utils::now;
+use foundry_cli::utils::{now, Git};
 use foundry_common::{
     fs, shell,
     types::{ToAlloy, ToEthers},
@@ -22,9 +19,14 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufWriter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use yansi::Paint;
+
+/// Returns the commit hash of the project if it exists
+pub fn get_commit_hash(root: &Path) -> Option<String> {
+    Git::new(root).commit_hash(true, "HEAD").ok()
+}
 
 pub enum ScriptSequenceKind {
     Single(ScriptSequence),

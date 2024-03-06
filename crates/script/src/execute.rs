@@ -10,14 +10,6 @@ use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
 use ethers_providers::Middleware;
 use eyre::Result;
-use forge::{
-    decode::{decode_console_logs, RevertDecoder},
-    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
-    traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
-    },
-};
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
@@ -27,6 +19,14 @@ use foundry_common::{
 use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
+use foundry_evm::{
+    decode::{decode_console_logs, RevertDecoder},
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    traces::{
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+    },
+};
 use futures::future::join_all;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};

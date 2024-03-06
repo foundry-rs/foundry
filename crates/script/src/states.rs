@@ -5,7 +5,7 @@ use super::{
     transaction::TransactionWithMetadata,
     ScriptArgs, ScriptConfig, ScriptResult,
 };
-use forge::inspectors::cheatcodes::ScriptWallets;
+use foundry_cheatcodes::ScriptWallets;
 use std::collections::VecDeque;
 
 /// First state basically containing only inputs of the user.

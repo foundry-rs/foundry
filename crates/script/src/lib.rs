@@ -1,19 +1,17 @@
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
+#[macro_use]
+extern crate tracing;
+
 use self::transaction::AdditionalContract;
 use super::build::BuildArgs;
-use crate::cmd::script::runner::ScriptRunner;
+use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
+use broadcast::next_nonce;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result, WrapErr};
-use forge::{
-    backend::Backend,
-    debug::DebugArena,
-    executors::ExecutorBuilder,
-    inspectors::{cheatcodes::ScriptWallets, CheatsConfig},
-    opts::EvmOpts,
-    traces::Traces,
-};
 use forge_verify::RetryArgs;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -32,7 +30,16 @@ use foundry_config::{
     Config,
 };
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, inspectors::cheatcodes::BroadcastableTransactions,
+    backend::Backend,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    debug::DebugArena,
+    executors::ExecutorBuilder,
+    inspectors::{
+        cheatcodes::{BroadcastableTransactions, ScriptWallets},
+        CheatsConfig,
+    },
+    opts::EvmOpts,
+    traces::Traces,
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
@@ -52,7 +59,7 @@ mod runner;
 mod sequence;
 mod simulate;
 mod states;
-pub mod transaction;
+mod transaction;
 mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -398,7 +405,7 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            forge::next_nonce(evm_opts.sender, fork_url, None).await?
+            next_nonce(evm_opts.sender, fork_url, None).await?
         } else {
             // dapptools compatibility
             1
@@ -408,7 +415,7 @@ impl ScriptConfig {
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            forge::next_nonce(sender, fork_url, None).await?
+            next_nonce(sender, fork_url, None).await?
         } else {
             // dapptools compatibility
             1

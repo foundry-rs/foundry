@@ -119,6 +119,7 @@ forge = { path = "crates/forge" }
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
 forge-verify = { path = "crates/verify" }
+forge-script = { path = "crates/script" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }

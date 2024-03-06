@@ -7,14 +7,15 @@ use super::{
     states::{BundledState, FilledTransactionsState, PreSimulationState},
     transaction::TransactionWithMetadata,
 };
-use crate::cmd::{init::get_commit_hash, script::broadcast::estimate_gas};
+use crate::{broadcast::estimate_gas, sequence::get_commit_hash};
 use alloy_primitives::{utils::format_units, Address, U256};
 use eyre::{Context, Result};
-use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::render_trace_arena};
+use foundry_cheatcodes::BroadcastableTransactions;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
     get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
 };
+use foundry_evm::traces::render_trace_arena;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{

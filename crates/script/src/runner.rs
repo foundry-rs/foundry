@@ -1,13 +1,13 @@
 use super::ScriptResult;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use forge::{
+use foundry_config::Config;
+use foundry_evm::{
     constants::CALLER,
     executors::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
-use foundry_config::Config;
 use yansi::Paint;
 
 /// Drives script execution

@@ -51,6 +51,7 @@ yansi = "0.5"
 forge-doc.workspace = true
 forge-fmt.workspace = true
 forge-verify.workspace = true
+forge-script.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
@@ -60,7 +61,6 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types.workspace = true
 
 async-trait = "0.1"
-async-recursion = "1.0.5"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"

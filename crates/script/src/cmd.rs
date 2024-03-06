@@ -2,7 +2,7 @@ use super::{states::PreprocessedState, ScriptArgs, ScriptConfig};
 use alloy_primitives::Address;
 use ethers_signers::Signer;
 use eyre::Result;
-use forge::inspectors::cheatcodes::ScriptWallets;
+use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{shell, types::ToAlloy};
 

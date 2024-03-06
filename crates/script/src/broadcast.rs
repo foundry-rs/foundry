@@ -3,7 +3,7 @@ use super::{
     states::{BroadcastedState, BundledState},
 };
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
-use ethers_core::types::transaction::eip2718::TypedTransaction;
+use ethers_core::types::{transaction::eip2718::TypedTransaction, BlockId};
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
 use eyre::{bail, Context, Result};
@@ -47,6 +47,17 @@ where
             100,
     );
     Ok(())
+}
+
+pub async fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block: Option<BlockId>,
+) -> eyre::Result<u64> {
+    let provider = Provider::try_from(provider_url)
+        .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
+    let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
+    res.try_into().map_err(Into::into)
 }
 
 pub async fn send_transaction(
