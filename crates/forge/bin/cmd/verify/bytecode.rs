@@ -108,7 +108,7 @@ impl VerifyBytecodeArgs {
         self.etherscan_opts.key =
             config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
         // Create etherscan client
-        let etherscan = Client::new(chain, self.etherscan_opts.key.unwrap())?;
+        let etherscan = Client::new(chain, self.etherscan_opts.key.clone().unwrap())?;
 
         // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(self.address).await?;
@@ -154,9 +154,8 @@ impl VerifyBytecodeArgs {
             );
         };
 
-        // TODO: @Yash
         // Compile the project
-        let output = self.build_opts.run()?;
+        let output = self.build_opts.clone().run()?;
         let artifact = output
             .find_contract(&self.contract)
             .ok_or_eyre("Contract artifact not found locally")?;
@@ -173,12 +172,10 @@ impl VerifyBytecodeArgs {
         };
 
         // Cmp creation code with locally built bytecode and maybe_creation_code
-        if maybe_creation_code.starts_with(bytecode) {
-            tracing::info!("Creation code matches");
-        } else {
-            tracing::info!("Creation code does not match locally built bytecode");
-        }
+        let res = try_match(maybe_creation_code, bytecode, self.verification_type)?;
+        tracing::info!("Match: {} | Type: {:?}", res.0, res.1);
 
+        // TODO: @Yash
         // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
         // bytecode.
         // Get the block number of the creation tx
@@ -192,7 +189,7 @@ impl VerifyBytecodeArgs {
                     Some(tx) => tx.block_number.unwrap().as_u64(),
                     None => {
                         eyre::bail!(
-                            "Failed to get block number of the creation tx, specify using
+                            "Failed to get block number of the contract creation tx, specify using
         the --block flag"
                         );
                     }
@@ -201,6 +198,55 @@ impl VerifyBytecodeArgs {
                 BlockId::Number(BlockNumberOrTag::Number(block))
             }
         };
+
+        // TODO: Fork the chain at `simulation_block`
         Ok(())
+    }
+}
+
+fn try_match(
+    creation_code: &[u8],
+    bytecode: &[u8],
+    match_type: String,
+) -> Result<(bool, Option<String>)> {
+    if match_type == "full" {
+        if creation_code.starts_with(bytecode) {
+            Ok((true, Some("full".to_string())))
+        } else {
+            match try_partial_match(creation_code, bytecode) {
+                Ok(true) => Ok((true, Some("partial".to_string()))),
+                Ok(false) => Ok((false, None)),
+                Err(e) => Err(e),
+            }
+        }
+    } else {
+        match try_partial_match(creation_code, bytecode) {
+            Ok(true) => Ok((true, Some("partial".to_string()))),
+            Ok(false) => Ok((false, None)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+fn try_partial_match(creation_code: &[u8], bytecode: &[u8]) -> Result<bool> {
+    // Get the last two bytes of the creation code to find the length of CBOR metadata
+    let creation_code_metadata_len = &creation_code[creation_code.len() - 2..];
+    let metadata_len =
+        u16::from_be_bytes([creation_code_metadata_len[0], creation_code_metadata_len[1]]);
+
+    // Now discard the metadata from the creation code
+    let creation_code = &creation_code[..creation_code.len() - 2 - metadata_len as usize];
+
+    // Do the same for the bytecode
+    let bytecode_metadata_len = &bytecode[bytecode.len() - 2..];
+    let metadata_len = u16::from_be_bytes([bytecode_metadata_len[0], bytecode_metadata_len[1]]);
+
+    let bytecode = &bytecode[..bytecode.len() - 2 - metadata_len as usize];
+
+    // Now compare the creation code and bytecode
+    if creation_code.starts_with(bytecode) {
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
