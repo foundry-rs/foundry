@@ -576,7 +576,7 @@ impl SourceAnalyzer {
     fn analyze_contracts(&mut self) -> eyre::Result<()> {
         for contract_id in self.contracts.keys() {
             // Find this contract's coverage items if we haven't already
-            if self.contract_items.get(contract_id).is_none() {
+            if !self.contract_items.contains_key(contract_id) {
                 let ContractVisitor { items, base_contract_node_ids, .. } = ContractVisitor::new(
                     contract_id.source_id,
                     self.sources.get(&contract_id.source_id).unwrap_or_else(|| {
