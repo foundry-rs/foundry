@@ -1652,9 +1652,13 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-json to understand the
     // limitations and caveats of the JSON parsing cheats.
 
+    // TODO: deprecate `keyExists` in favor of `keyExistsJson` and issue warning.
     /// Checks if `key` exists in a JSON object.
     #[cheatcode(group = Json)]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
+    /// Checks if `key` exists in a JSON object.
+    #[cheatcode(group = Json)]
+    function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
     /// ABI-encodes a JSON object.
     #[cheatcode(group = Json)]

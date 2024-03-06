@@ -16,6 +16,13 @@ impl Cheatcode for keyExistsCall {
     }
 }
 
+impl Cheatcode for keyExistsJsonCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { json, key } = self;
+        check_json_key_exists(json, key)
+    }
+}
+
 impl Cheatcode for parseJson_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json } = self;

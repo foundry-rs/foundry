@@ -287,16 +287,24 @@ contract WriteJsonTest is DSTest {
         assertEq(decodedData.a, 123);
     }
 
-    function test_checkKeyExists() public {
+    function test_checkKeyExistsJson() public {
         string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
+        bool exists = vm.keyExistsJson(json, ".a");
+        assertTrue(exists);
+
+        // TODO: issue deprecation warning
         bool exists = vm.keyExists(json, ".a");
         assertTrue(exists);
     }
 
-    function test_checkKeyDoesNotExist() public {
+    function test_checkKeyDoesNotExistJson() public {
         string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
+        bool exists = vm.keyExistsJson(json, ".d");
+        assertTrue(!exists);
+
+        // TODO: issue deprecation warning
         bool exists = vm.keyExists(json, ".d");
         assertTrue(!exists);
     }

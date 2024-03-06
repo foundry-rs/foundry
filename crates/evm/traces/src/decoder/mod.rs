@@ -429,7 +429,8 @@ impl CallTraceDecoder {
             "parseJsonBytes32" |
             "parseJsonBytes32Array" |
             "writeJson" |
-            "keyExists" |
+            "keyExists" | // Deprecated
+            "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
             "serializeInt" |
@@ -441,12 +442,46 @@ impl CallTraceDecoder {
                     None
                 } else {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                    let token =
-                        if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
-                            "<JSON file>"
-                        } else {
-                            "<stringified JSON>"
-                        };
+                    let token = if func.name.as_str() == "parseJson" ||
+                        func.name.as_str() == "keyExists" || // Deprecated
+                        func.name.as_str() == "keyExistsJson"
+                    {
+                        "<JSON file>"
+                    } else {
+                        "<stringified JSON>"
+                    };
+                    decoded[0] = DynSolValue::String(token.to_string());
+                    Some(decoded.iter().map(format_token).collect())
+                }
+            }
+            "parseToml" |
+            "parseTomlUint" |
+            "parseTomlUintArray" |
+            "parseTomlInt" |
+            "parseTomlIntArray" |
+            "parseTomlString" |
+            "parseTomlStringArray" |
+            "parseTomlAddress" |
+            "parseTomlAddressArray" |
+            "parseTomlBool" |
+            "parseTomlBoolArray" |
+            "parseTomlBytes" |
+            "parseTomlBytesArray" |
+            "parseTomlBytes32" |
+            "parseTomlBytes32Array" |
+            "writeToml" |
+            "keyExistsToml" => {
+                if self.verbosity >= 5 {
+                    None
+                } else {
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let token = if func.name.as_str() == "parseToml" ||
+                        func.name.as_str() == "keyExistsToml"
+                    {
+                        "<TOML file>"
+                    } else {
+                        "<stringified TOML>"
+                    };
                     decoded[0] = DynSolValue::String(token.to_string());
                     Some(decoded.iter().map(format_token).collect())
                 }

@@ -299,7 +299,7 @@
           ]
         },
         {
-          "description": "Utility cheatcodes that deal with parsing values from and converting values to TOML.\n\nExamples: `serializeToml`, `parseToml`, `writeToml`.\n\nSafety: safe.",
+          "description": "Utility cheatcodes that deal with parsing values from and converting values to TOML.\n\nExamples: `parseToml`, `writeToml`.\n\nSafety: safe.",
           "type": "string",
           "enum": [
             "toml"
