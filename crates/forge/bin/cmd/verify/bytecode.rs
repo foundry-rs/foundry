@@ -3,7 +3,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
-use forge::constants::DEFAULT_CREATE2_DEPLOYER;
+use forge::{constants::DEFAULT_CREATE2_DEPLOYER, fork::MultiFork, opts::EvmOpts};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::EtherscanOpts,
@@ -12,6 +12,7 @@ use foundry_cli::{
 use foundry_common::types::ToEthers;
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, Artifact};
 use foundry_config::{figment, merge_impl_figment_convert, Config};
+use foundry_evm::fork::CreateFork;
 use std::path::PathBuf;
 
 use crate::cmd::build::BuildArgs;
@@ -178,14 +179,18 @@ impl VerifyBytecodeArgs {
         // TODO: @Yash
         // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
         // bytecode.
-        // Get the block number of the creation tx
-        let _simulation_block = match self.block {
-            Some(block) => block,
+        let simulation_block = match self.block {
+            Some(block) => match block {
+                BlockId::Number(BlockNumberOrTag::Number(block)) => block,
+                _ => {
+                    eyre::bail!("Invalid block number");
+                }
+            },
             None => {
                 let provider = utils::get_provider(&config)?;
                 let creation_block =
                     provider.get_transaction(creation_data.transaction_hash.to_ethers()).await?;
-                let block = match creation_block {
+                match creation_block {
                     Some(tx) => tx.block_number.unwrap().as_u64(),
                     None => {
                         eyre::bail!(
@@ -193,13 +198,25 @@ impl VerifyBytecodeArgs {
         the --block flag"
                         );
                     }
-                };
-
-                BlockId::Number(BlockNumberOrTag::Number(block))
+                }
             }
         };
 
-        // TODO: Fork the chain at `simulation_block`
+        // Fork the chain at `simulation_block`
+        let fork = CreateFork {
+            enable_caching: false,
+            url: self.rpc_url.unwrap_or_default(),
+            env: Default::default(),
+            evm_opts: EvmOpts { fork_block_number: Some(simulation_block), ..Default::default() },
+        };
+
+        let (multi_fork, _multi_fork_handler) = MultiFork::new();
+        let (_fork_id, _shared_backend, _env) = multi_fork.create_fork(fork)?;
+
+        // TODO: @Yash
+        // Deploy the contract on the forked chain
+
+        // Cmp runtime bytecode with onchain deployed bytecode
         Ok(())
     }
 }
