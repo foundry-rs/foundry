@@ -48,7 +48,7 @@ pub struct VerifyBytecodeArgs {
     pub guess_constructor_args: bool,
 
     /// The rpc url to use for verification.
-    #[clap(long, value_name = "RPC_URL")]
+    #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
     /// Verfication Type: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
@@ -76,7 +76,7 @@ impl figment::Provider for VerifyBytecodeArgs {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
         if let Some(rpc_url) = &self.rpc_url {
-            dict.insert("rpc_url".into(), rpc_url.to_string().into());
+            dict.insert("eth_rpc_url".into(), rpc_url.to_string().into());
         }
         dict.insert("verification_type".into(), self.verification_type.to_string().into());
 
@@ -91,10 +91,7 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
-        let mut config = self.load_config_emit_warnings();
-        if self.rpc_url.is_some() {
-            config.eth_rpc_url = self.rpc_url;
-        }
+        let config = self.load_config_emit_warnings();
         let provider = utils::get_provider(&config)?;
 
         tracing::info!("Verifying contract at address {}", self.address);
