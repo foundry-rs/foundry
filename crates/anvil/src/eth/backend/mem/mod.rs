@@ -297,6 +297,10 @@ impl Backend {
             for (account, info) in self.genesis.account_infos() {
                 db.insert_account(account, info);
             }
+
+            // insert the new genesis hash to the database so it's available for the next block in
+            // the evm
+            db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
         }
 
         let db = self.db.write().await;

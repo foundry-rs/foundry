@@ -1091,7 +1091,12 @@ latest block number: {latest_block}"
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
         };
 
-        (ForkedDatabase::new(backend, block_chain_db), config)
+        let mut db = ForkedDatabase::new(backend, block_chain_db);
+
+        // need to insert the forked block's hash
+        db.insert_block_hash(U256::from(config.block_number), config.block_hash);
+
+        (db, config)
     }
 }
 
