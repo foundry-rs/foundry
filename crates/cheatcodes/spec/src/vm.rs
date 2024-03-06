@@ -1654,7 +1654,7 @@ interface Vm {
 
     // TODO: deprecate `keyExists` in favor of `keyExistsJson` and issue warning.
     /// Checks if `key` exists in a JSON object.
-    #[cheatcode(group = Json)]
+    #[cheatcode(group = Json, status = Deprecated)]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     /// Checks if `key` exists in a JSON object.
     #[cheatcode(group = Json)]
