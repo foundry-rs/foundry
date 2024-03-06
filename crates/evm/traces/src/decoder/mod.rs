@@ -429,7 +429,8 @@ impl CallTraceDecoder {
             "parseJsonBytes32" |
             "parseJsonBytes32Array" |
             "writeJson" |
-            "keyExists" | // Deprecated
+            // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+            "keyExists" | 
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
@@ -443,7 +444,8 @@ impl CallTraceDecoder {
                 } else {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                     let token = if func.name.as_str() == "parseJson" ||
-                        func.name.as_str() == "keyExists" || // Deprecated
+                        // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+                        func.name.as_str() == "keyExists" || 
                         func.name.as_str() == "keyExistsJson"
                     {
                         "<JSON file>"

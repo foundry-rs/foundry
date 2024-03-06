@@ -1652,8 +1652,8 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-json to understand the
     // limitations and caveats of the JSON parsing cheats.
 
-    // TODO: deprecate `keyExists` in favor of `keyExistsJson` and issue warning.
-    /// Checks if `key` exists in a JSON object.
+    /// Checks if `key` exists in a JSON object
+    /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
     #[cheatcode(group = Json, status = Deprecated)]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     /// Checks if `key` exists in a JSON object.
