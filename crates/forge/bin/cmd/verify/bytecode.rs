@@ -1,4 +1,3 @@
-use crate::cmd::build::BuildArgs;
 use alloy_primitives::Address;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -11,13 +10,21 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::types::ToEthers;
-use foundry_config::{figment, impl_figment_convert, Config};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, Artifact};
+use foundry_config::{figment, merge_impl_figment_convert, Config};
 use std::path::PathBuf;
+
+use crate::cmd::build::BuildArgs;
+
+merge_impl_figment_convert!(VerifyBytecodeArgs, build_opts);
 /// CLI arguments for `forge verify-bytecode`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyBytecodeArgs {
     /// The address of the contract to verify.
     pub address: Address,
+
+    /// The contract identifier in the form `<path>:<contractname>`.
+    pub contract: ContractInfo,
 
     /// The block at which the bytecode should be verified.
     #[clap(long, value_name = "BLOCK")]
@@ -48,17 +55,13 @@ pub struct VerifyBytecodeArgs {
     #[clap(long, default_value = "full", value_name = "TYPE")]
     pub verification_type: String,
 
-    /// BuildArgs to use for the verification.
+    /// The build options to use for verification.
     #[clap(flatten)]
     pub build_opts: BuildArgs,
-
-    pub root: Option<PathBuf>,
 
     #[clap(flatten)]
     pub etherscan_opts: EtherscanOpts,
 }
-
-impl_figment_convert!(VerifyBytecodeArgs);
 
 impl figment::Provider for VerifyBytecodeArgs {
     fn metadata(&self) -> figment::Metadata {
@@ -88,9 +91,13 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
-        let config = self.load_config_emit_warnings();
+        let mut config = self.load_config_emit_warnings();
+        if self.rpc_url.is_some() {
+            config.eth_rpc_url = self.rpc_url;
+        }
         let provider = utils::get_provider(&config)?;
 
+        tracing::info!("Verifying contract at address {}", self.address);
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
 
@@ -109,15 +116,26 @@ impl VerifyBytecodeArgs {
         // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(self.address).await?;
 
-        let _constructor_args = match source_code.items.get(0) {
-            Some(item) => item.constructor_arguments.clone(),
+        let constructor_args = match source_code.items.first() {
+            Some(item) => {
+                tracing::info!("Contract Name: {:?}", item.contract_name);
+                tracing::info!("Compiler Version {:?}", item.compiler_version);
+                tracing::info!("EVM Version {:?}", item.evm_version);
+                tracing::info!("Optimization {:?}", item.optimization_used);
+                tracing::info!("Runs {:?}", item.runs);
+                item.constructor_arguments.clone()
+            }
             None => {
                 eyre::bail!("No source code found for contract at address {}", self.address);
             }
         };
 
+        tracing::info!("Constructor args: {:?}", constructor_args);
+
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
+
+        tracing::info!("Creation data: {:?}", creation_data);
         let transaction = provider
             .get_transaction(creation_data.transaction_hash.to_ethers())
             .await?
@@ -128,7 +146,7 @@ impl VerifyBytecodeArgs {
             .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
 
         // Extract creation code
-        let _maybe_creation_code = if receipt.contract_address == Some(self.address.to_ethers()) {
+        let maybe_creation_code = if receipt.contract_address == Some(self.address.to_ethers()) {
             &transaction.input
         } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER.to_ethers()) {
             &transaction.input[32..]
@@ -139,6 +157,33 @@ impl VerifyBytecodeArgs {
             );
         };
 
+        // TODO: @Yash
+        // Compile the project
+        let output = self.build_opts.run()?;
+        let artifact = output
+            .find_contract(&self.contract)
+            .ok_or_eyre("Contract artifact not found locally")?;
+
+        let bytecode = artifact
+            .get_bytecode_object()
+            .ok_or_eyre("Contract artifact does not have bytecode")?;
+
+        let bytecode = match bytecode.as_ref() {
+            BytecodeObject::Bytecode(bytes) => bytes,
+            BytecodeObject::Unlinked(_) => {
+                eyre::bail!("Unlinked bytecode is not supported for verification")
+            }
+        };
+
+        // Cmp creation code with locally built bytecode and maybe_creation_code
+        if maybe_creation_code.starts_with(bytecode) {
+            tracing::info!("Creation code matches");
+        } else {
+            tracing::info!("Creation code does not match locally built bytecode");
+        }
+
+        // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
+        // bytecode.
         // Get the block number of the creation tx
         let _simulation_block = match self.block {
             Some(block) => block,
@@ -159,12 +204,6 @@ impl VerifyBytecodeArgs {
                 BlockId::Number(BlockNumberOrTag::Number(block))
             }
         };
-
-        // TODO: @Yash
-        // Compile the project
-        // Cmp creation code with locally built bytecode and maybe_creation_code
-        // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
-        // bytecode.
         Ok(())
     }
 }
