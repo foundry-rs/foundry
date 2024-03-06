@@ -294,7 +294,7 @@ contract WriteJsonTest is DSTest {
         assertTrue(exists);
 
         // TODO: issue deprecation warning
-        bool exists = vm.keyExists(json, ".a");
+        exists = vm.keyExists(json, ".a");
         assertTrue(exists);
     }
 
@@ -305,7 +305,7 @@ contract WriteJsonTest is DSTest {
         assertTrue(!exists);
 
         // TODO: issue deprecation warning
-        bool exists = vm.keyExists(json, ".d");
+        exists = vm.keyExists(json, ".d");
         assertTrue(!exists);
     }
 
