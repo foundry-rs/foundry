@@ -4,7 +4,6 @@
 extern crate tracing;
 
 use self::transaction::AdditionalContract;
-use super::build::BuildArgs;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
@@ -13,12 +12,9 @@ use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::RetryArgs;
+use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::{
-    abi::{encode_function_args, get_func},
-    errors::UnlinkedByteCode,
-    evm::{Breakpoints, EvmArgs},
-    provider::ethers::RpcUrl,
-    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    abi::{encode_function_args, get_func}, compile::SkipBuildFilter, errors::UnlinkedByteCode, evm::{Breakpoints, EvmArgs}, provider::ethers::RpcUrl, shell, CONTRACT_MAX_SIZE, SELECTOR_LEN
 };
 use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
 use foundry_config::{
@@ -172,8 +168,14 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
+    /// Skip building files whose names contain the given filter.
+    ///
+    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
+    #[arg(long, num_args(1..))]
+    pub skip: Option<Vec<SkipBuildFilter>>,
+
     #[command(flatten)]
-    pub opts: BuildArgs,
+    pub opts: CoreBuildArgs,
 
     #[command(flatten)]
     pub wallets: MultiWalletOpts,

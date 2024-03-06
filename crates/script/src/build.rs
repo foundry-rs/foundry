@@ -121,7 +121,7 @@ impl PreprocessedState {
     pub fn compile(self) -> Result<CompiledState> {
         let Self { args, script_config, script_wallets } = self;
         let project = script_config.config.project()?;
-        let filters = args.opts.skip.clone().unwrap_or_default();
+        let filters = args.skip.clone().unwrap_or_default();
 
         let mut target_name = args.target_contract.clone();
 
@@ -146,7 +146,7 @@ impl PreprocessedState {
             compile::compile_target_with_filter(
                 &target_path,
                 &project,
-                args.opts.args.silent,
+                args.opts.silent,
                 args.verify,
                 filters,
             )

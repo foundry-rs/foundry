@@ -19,12 +19,12 @@ foundry-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
 foundry-wallets.workspace = true
+foundry-linking.workspace = true
 
 hex.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
-thiserror = "1"
 dunce = "1"
 foundry-compilers = { workspace = true, features = ["full"] }
 tracing.workspace = true
@@ -45,3 +45,6 @@ alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true
 dialoguer = { version = "0.11", default-features = false }
 indicatif = "0.17"
+
+[dev-dependencies]
+tempfile = "3"

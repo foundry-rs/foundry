@@ -3036,6 +3036,7 @@ dependencies = [
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
+ "foundry-linking",
  "foundry-wallets",
  "futures",
  "indicatif",
@@ -3045,7 +3046,7 @@ dependencies = [
  "semver 1.0.22",
  "serde",
  "serde_json",
- "thiserror",
+ "tempfile",
  "tracing",
  "yansi 0.5.1",
 ]
