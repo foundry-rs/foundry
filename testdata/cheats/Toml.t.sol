@@ -14,7 +14,7 @@ contract ParseTomlTest is DSTest {
         toml = vm.readFile(path);
     }
 
-    function test_str() public {
+    function test_basicString() public {
         bytes memory data = vm.parseToml(toml, ".basicString");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
@@ -155,18 +155,23 @@ contract ParseTomlTest is DSTest {
     }
 
     function test_coercionBool() public {
-        bool boolean = vm.parseTomlBool(toml, ".boolString");
+        bool boolean = vm.parseTomlBool(toml, ".bool");
+        assert(true);
+        boolean = vm.parseTomlBool(toml, ".boolString");
         assertEq(boolean, true);
         bool[] memory booleans = vm.parseTomlBoolArray(toml, ".boolArray");
+        assert(booleans[0]);
+        assert(!booleans[1]);
+        booleans = vm.parseTomlBoolArray(toml, ".boolStringArray");
         assert(booleans[0]);
         assert(!booleans[1]);
     }
 
     function test_coercionBytes() public {
-        bytes memory bytes_ = vm.parseTomlBytes(toml, ".bytes");
+        bytes memory bytes_ = vm.parseTomlBytes(toml, ".bytesString");
         assertEq(bytes_, hex"01");
 
-        bytes[] memory bytesArray = vm.parseTomlBytesArray(toml, ".bytesArray");
+        bytes[] memory bytesArray = vm.parseTomlBytesArray(toml, ".bytesStringArray");
         assertEq(bytesArray[0], hex"01");
         assertEq(bytesArray[1], hex"02");
     }

@@ -35,8 +35,8 @@ intNumber = -12
 intString = "-12"
 intHex = "-0xC"
 
-bytes = "0x01"
-bytesArray = ["0x01", "0x02"]
+bytesString = "0x01"
+bytesStringArray = ["0x01", "0x02"]
 
 [nestedObject]
 number = 9223372036854775807 # TOML is limited to 64-bit integers

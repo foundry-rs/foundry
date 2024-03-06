@@ -208,8 +208,6 @@ fn format_json_to_toml(json: JsonValue) -> Result<String> {
 fn toml_to_json_value(toml: TomlValue) -> JsonValue {
     match toml {
         TomlValue::String(s) => match s.as_str() {
-            "true" => JsonValue::Bool(true),
-            "false" => JsonValue::Bool(false),
             "null" => JsonValue::Null,
             _ => JsonValue::String(s),
         },

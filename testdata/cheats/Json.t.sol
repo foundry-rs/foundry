@@ -14,37 +14,23 @@ contract ParseJsonTest is DSTest {
         json = vm.readFile(path);
     }
 
-    function test_uintArray() public {
-        bytes memory data = vm.parseJson(json, ".uintArray");
-        uint256[] memory decodedData = abi.decode(data, (uint256[]));
-        assertEq(42, decodedData[0]);
-        assertEq(43, decodedData[1]);
-    }
-
-    function test_str() public {
-        bytes memory data = vm.parseJson(json, ".str");
+    function test_basicString() public {
+        bytes memory data = vm.parseJson(json, ".basicString");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
 
-    function test_strArray() public {
-        bytes memory data = vm.parseJson(json, ".strArray");
+    function test_null() public {
+        bytes memory data = vm.parseJson(json, ".null");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("", decodedData);
+    }
+
+    function test_stringArray() public {
+        bytes memory data = vm.parseJson(json, ".stringArray");
         string[] memory decodedData = abi.decode(data, (string[]));
         assertEq("hai", decodedData[0]);
         assertEq("there", decodedData[1]);
-    }
-
-    function test_bool() public {
-        bytes memory data = vm.parseJson(json, ".bool");
-        bool decodedData = abi.decode(data, (bool));
-        assertTrue(decodedData);
-    }
-
-    function test_boolArray() public {
-        bytes memory data = vm.parseJson(json, ".boolArray");
-        bool[] memory decodedData = abi.decode(data, (bool[]));
-        assertTrue(decodedData[0]);
-        assertTrue(!decodedData[1]);
     }
 
     function test_address() public {
@@ -65,16 +51,24 @@ contract ParseJsonTest is DSTest {
         assertEq("0000000000000000000000000000000000001337", data);
     }
 
-    struct Nested {
-        uint256 number;
-        string str;
+    function test_bool() public {
+        bytes memory data = vm.parseJson(json, ".bool");
+        bool decodedData = abi.decode(data, (bool));
+        assertTrue(decodedData);
     }
 
-    function test_nestedObject() public {
-        bytes memory data = vm.parseJson(json, ".nestedObject");
-        Nested memory nested = abi.decode(data, (Nested));
-        assertEq(nested.number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        assertEq(nested.str, "NEST");
+    function test_boolArray() public {
+        bytes memory data = vm.parseJson(json, ".boolArray");
+        bool[] memory decodedData = abi.decode(data, (bool[]));
+        assertTrue(decodedData[0]);
+        assertTrue(!decodedData[1]);
+    }
+
+    function test_uintArray() public {
+        bytes memory data = vm.parseJson(json, ".uintArray");
+        uint256[] memory decodedData = abi.decode(data, (uint256[]));
+        assertEq(42, decodedData[0]);
+        assertEq(43, decodedData[1]);
     }
 
     // Object keys are sorted alphabetically, regardless of input.
@@ -104,31 +98,62 @@ contract ParseJsonTest is DSTest {
     }
 
     function test_coercionUint() public {
-        uint256 number = vm.parseJsonUint(json, ".hexUint");
+        uint256 number = vm.parseJsonUint(json, ".uintHex");
         assertEq(number, 1231232);
-        number = vm.parseJsonUint(json, ".stringUint");
+        number = vm.parseJsonUint(json, ".uintString");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        number = vm.parseJsonUint(json, ".numberUint");
+        number = vm.parseJsonUint(json, ".uintNumber");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        uint256[] memory numbers = vm.parseJsonUintArray(json, ".arrayUint");
+        uint256[] memory numbers = vm.parseJsonUintArray(json, ".uintArray");
+        assertEq(numbers[0], 42);
+        assertEq(numbers[1], 43);
+        numbers = vm.parseJsonUintArray(json, ".uintStringArray");
         assertEq(numbers[0], 1231232);
         assertEq(numbers[1], 1231232);
         assertEq(numbers[2], 1231232);
     }
 
     function test_coercionInt() public {
-        int256 number = vm.parseJsonInt(json, ".hexInt");
+        int256 number = vm.parseJsonInt(json, ".intNumber");
         assertEq(number, -12);
-        number = vm.parseJsonInt(json, ".stringInt");
+        number = vm.parseJsonInt(json, ".intString");
+        assertEq(number, -12);
+        number = vm.parseJsonInt(json, ".intHex");
         assertEq(number, -12);
     }
 
     function test_coercionBool() public {
-        bool boolean = vm.parseJsonBool(json, ".booleanString");
+        bool boolean = vm.parseJsonBool(json, ".bool");
+        assert(true);
+        boolean = vm.parseJsonBool(json, ".boolString");
         assertEq(boolean, true);
-        bool[] memory booleans = vm.parseJsonBoolArray(json, ".booleanArray");
+        bool[] memory booleans = vm.parseJsonBoolArray(json, ".boolArray");
         assert(booleans[0]);
         assert(!booleans[1]);
+        booleans = vm.parseJsonBoolArray(json, ".boolStringArray");
+        assert(booleans[0]);
+        assert(!booleans[1]);
+    }
+
+    function test_coercionBytes() public {
+        bytes memory bytes_ = vm.parseJsonBytes(json, ".bytesString");
+        assertEq(bytes_, hex"01");
+
+        bytes[] memory bytesArray = vm.parseJsonBytesArray(json, ".bytesStringArray");
+        assertEq(bytesArray[0], hex"01");
+        assertEq(bytesArray[1], hex"02");
+    }
+
+    struct Nested {
+        uint256 number;
+        string str;
+    }
+
+    function test_nestedObject() public {
+        bytes memory data = vm.parseJson(json, ".nestedObject");
+        Nested memory nested = abi.decode(data, (Nested));
+        assertEq(nested.number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
+        assertEq(nested.str, "NEST");
     }
 
     function test_advancedJsonPath() public {
@@ -139,7 +164,7 @@ contract ParseJsonTest is DSTest {
     }
 
     function test_canonicalizePath() public {
-        bytes memory data = vm.parseJson(json, "$.str");
+        bytes memory data = vm.parseJson(json, "$.basicString");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
