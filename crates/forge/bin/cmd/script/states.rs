@@ -1,7 +1,3 @@
-use std::collections::VecDeque;
-
-use forge::inspectors::cheatcodes::ScriptWallets;
-
 use super::{
     build::{BuildData, LinkedBuildData},
     execute::{ExecutionArtifacts, ExecutionData},
@@ -9,6 +5,8 @@ use super::{
     transaction::TransactionWithMetadata,
     ScriptArgs, ScriptConfig, ScriptResult,
 };
+use forge::inspectors::cheatcodes::ScriptWallets;
+use std::collections::VecDeque;
 
 /// First state basically containing only inputs of the user.
 pub struct PreprocessedState {

@@ -39,14 +39,14 @@ impl ScriptSequenceKind {
         }
     }
 
-    pub fn iter_sequences(&self) -> impl Iterator<Item = &ScriptSequence> {
+    pub fn sequences(&self) -> impl Iterator<Item = &ScriptSequence> {
         match self {
             ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence).iter(),
             ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter(),
         }
     }
 
-    pub fn iter_sequeneces_mut(&mut self) -> impl Iterator<Item = &mut ScriptSequence> {
+    pub fn sequeneces_mut(&mut self) -> impl Iterator<Item = &mut ScriptSequence> {
         match self {
             ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence).iter_mut(),
             ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter_mut(),

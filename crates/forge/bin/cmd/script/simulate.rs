@@ -1,5 +1,3 @@
-use crate::cmd::{init::get_commit_hash, script::broadcast::estimate_gas};
-
 use super::{
     artifacts::ArtifactInfo,
     multi_sequence::MultiChainSequence,
@@ -9,6 +7,7 @@ use super::{
     states::{BundledState, FilledTransactionsState, PreSimulationState},
     transaction::TransactionWithMetadata,
 };
+use crate::cmd::{init::get_commit_hash, script::broadcast::estimate_gas};
 use alloy_primitives::{utils::format_units, Address, U256};
 use eyre::{Context, Result};
 use forge::{inspectors::cheatcodes::BroadcastableTransactions, traces::render_trace_arena};

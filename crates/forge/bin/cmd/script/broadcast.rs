@@ -148,7 +148,7 @@ impl BundledState {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let futs = self
             .sequence
-            .iter_sequeneces_mut()
+            .sequeneces_mut()
             .map(|sequence| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider = Arc::new(get_http_provider(rpc_url));
@@ -172,7 +172,7 @@ impl BundledState {
     pub async fn broadcast(mut self) -> Result<BroadcastedState> {
         let required_addresses = self
             .sequence
-            .iter_sequences()
+            .sequences()
             .flat_map(|sequence| {
                 sequence
                     .typed_transactions()

@@ -1,3 +1,4 @@
+use super::states::{BroadcastedState, BundledState};
 use alloy_primitives::Address;
 use eyre::Result;
 use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
@@ -7,11 +8,9 @@ use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
 
-use super::states::{BroadcastedState, BundledState};
-
 impl BundledState {
     pub fn verify_preflight_check(&self) -> Result<()> {
-        for sequence in self.sequence.iter_sequences() {
+        for sequence in self.sequence.sequences() {
             if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
                 self.script_config
                     .config
@@ -38,7 +37,7 @@ impl BroadcastedState {
             args.verifier,
         );
 
-        for sequence in sequence.iter_sequeneces_mut() {
+        for sequence in sequence.sequeneces_mut() {
             sequence.verify_contracts(&script_config.config, verify.clone()).await?;
         }
 
