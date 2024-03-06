@@ -1,4 +1,8 @@
-use super::retry::RetryArgs;
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
 use eyre::Result;
@@ -20,7 +24,10 @@ pub mod provider;
 use provider::VerificationProvider;
 
 pub mod bytecode;
+pub mod retry;
 mod sourcify;
+
+pub use retry::RetryArgs;
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]

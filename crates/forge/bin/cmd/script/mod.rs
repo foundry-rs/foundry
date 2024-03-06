@@ -1,4 +1,4 @@
-use super::{build::BuildArgs, retry::RetryArgs};
+use super::build::BuildArgs;
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256, U64};
@@ -17,6 +17,7 @@ use forge::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
+use forge_verify::RetryArgs;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     errors::UnlinkedByteCode,
@@ -182,7 +183,7 @@ pub struct ScriptArgs {
     pub evm_opts: EvmArgs,
 
     #[command(flatten)]
-    pub verifier: super::verify::VerifierArgs,
+    pub verifier: forge_verify::VerifierArgs,
 
     #[command(flatten)]
     pub retry: RetryArgs,

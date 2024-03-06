@@ -3,19 +3,25 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
-use forge::{constants::DEFAULT_CREATE2_DEPLOYER, fork::MultiFork, opts::EvmOpts};
 use foundry_block_explorers::Client;
 use foundry_cli::{
-    opts::EtherscanOpts,
+    opts::{CoreBuildArgs, EtherscanOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::types::ToEthers;
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, Artifact};
+use foundry_common::{
+    compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
+    types::ToEthers,
+};
+use foundry_compilers::{
+    artifacts::BytecodeObject, info::ContractInfo, Artifact, ProjectCompileOutput,
+};
 use foundry_config::{figment, merge_impl_figment_convert, Config};
-use foundry_evm::fork::CreateFork;
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{CreateFork, MultiFork},
+    opts::EvmOpts,
+};
 use std::path::PathBuf;
-
-use crate::cmd::build::BuildArgs;
 
 merge_impl_figment_convert!(VerifyBytecodeArgs, build_opts);
 /// CLI arguments for `forge verify-bytecode`.
@@ -44,10 +50,6 @@ pub struct VerifyBytecodeArgs {
     #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
-    /// Try to extract constructor arguments from on-chain creation code.
-    #[arg(long)]
-    pub guess_constructor_args: bool,
-
     /// The rpc url to use for verification.
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
@@ -56,12 +58,31 @@ pub struct VerifyBytecodeArgs {
     #[clap(long, default_value = "full", value_name = "TYPE")]
     pub verification_type: String,
 
-    /// The build options to use for verification.
-    #[clap(flatten)]
-    pub build_opts: BuildArgs,
-
     #[clap(flatten)]
     pub etherscan_opts: EtherscanOpts,
+
+    /// The build options to use for verification.
+    #[clap(flatten)]
+    pub build_opts: CoreBuildArgs,
+
+    /// Print compiled contract names.
+    #[arg(long)]
+    pub names: bool,
+
+    /// Print compiled contract sizes.
+    #[arg(long)]
+    pub sizes: bool,
+
+    /// Skip building files whose names contain the given filter.
+    ///
+    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
+    #[arg(long, num_args(1..))]
+    pub skip: Option<Vec<SkipBuildFilter>>,
+
+    /// Output the compilation errors in the json format.
+    /// This is useful when you want to use the output in other tools.
+    #[arg(long, conflicts_with = "silent")]
+    pub format_json: bool,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -156,7 +177,8 @@ impl VerifyBytecodeArgs {
         };
 
         // Compile the project
-        let output = self.build_opts.clone().run()?;
+        let output = self.build_project(&config)?;
+        // let output = self.build_opts.run()?;
         let artifact = output
             .find_contract(&self.contract)
             .ok_or_eyre("Contract artifact not found locally")?;
@@ -209,15 +231,36 @@ impl VerifyBytecodeArgs {
             env: Default::default(),
             evm_opts: EvmOpts { fork_block_number: Some(simulation_block), ..Default::default() },
         };
+        tracing::info!("Forking the chain at block {}", simulation_block);
+        let multi_fork = MultiFork::spawn();
+        let (fork_id, _shared_backend, _env) = multi_fork.create_fork(fork)?;
 
-        let (multi_fork, _multi_fork_handler) = MultiFork::new();
-        let (_fork_id, _shared_backend, _env) = multi_fork.create_fork(fork)?;
-
+        tracing::info!("Created fork with id {}", fork_id);
         // TODO: @Yash
         // Deploy the contract on the forked chain
-
         // Cmp runtime bytecode with onchain deployed bytecode
         Ok(())
+    }
+
+    fn build_project(&self, config: &Config) -> Result<ProjectCompileOutput> {
+        let project = config.project()?;
+        let mut compiler = ProjectCompiler::new()
+            .print_names(self.names)
+            .print_sizes(self.sizes)
+            .quiet(self.format_json)
+            .bail(!self.format_json);
+
+        if let Some(skip) = &self.skip {
+            if !skip.is_empty() {
+                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip.to_owned())?));
+            }
+        }
+        let output = compiler.compile(&project)?;
+
+        if self.format_json {
+            println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
+        }
+        Ok(output)
     }
 }
 

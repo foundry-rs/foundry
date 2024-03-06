@@ -1,5 +1,6 @@
-use super::{build::BuildArgs, retry::RETRY_VERIFY_ON_CREATE, script::ScriptArgs};
+use super::{build::BuildArgs, script::ScriptArgs};
 use clap::{Parser, ValueHint};
+use forge_verify::retry::RETRY_VERIFY_ON_CREATE;
 use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;

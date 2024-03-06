@@ -1,9 +1,8 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
-use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
+use crate::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
 use ethers_providers::Middleware;
 use eyre::{eyre, Context, OptionExt, Result};
-use forge::hashbrown::HashSet;
 use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
@@ -19,7 +18,7 @@ use foundry_compilers::{
     Artifact, Project, Solc,
 };
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, hashbrown::HashSet};
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
