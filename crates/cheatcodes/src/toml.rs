@@ -212,9 +212,7 @@ fn toml_to_json_value(toml: TomlValue) -> JsonValue {
             _ => JsonValue::String(s),
         },
         TomlValue::Integer(i) => JsonValue::Number(i.into()),
-        TomlValue::Float(f) => {
-            JsonValue::Number(serde_json::Number::from_f64(f).expect("failed to convert float"))
-        }
+        TomlValue::Float(f) => JsonValue::Number(serde_json::Number::from_f64(f).unwrap()),
         TomlValue::Boolean(b) => JsonValue::Bool(b),
         TomlValue::Array(a) => JsonValue::Array(a.into_iter().map(toml_to_json_value).collect()),
         TomlValue::Table(t) => {
@@ -228,13 +226,13 @@ fn toml_to_json_value(toml: TomlValue) -> JsonValue {
 fn json_to_toml_value(json: JsonValue) -> TomlValue {
     match json {
         JsonValue::String(s) => TomlValue::String(s),
-        JsonValue::Number(n) => {
-            if n.is_i64() {
-                TomlValue::Integer(n.as_i64().unwrap())
-            } else {
-                TomlValue::Float(n.as_f64().unwrap())
-            }
-        }
+        JsonValue::Number(n) => match n.as_i64() {
+            Some(i) => TomlValue::Integer(i),
+            None => match n.as_f64() {
+                Some(f) => TomlValue::Float(f),
+                None => TomlValue::String(n.to_string()),
+            },
+        },
         JsonValue::Bool(b) => TomlValue::Boolean(b),
         JsonValue::Array(a) => TomlValue::Array(a.into_iter().map(json_to_toml_value).collect()),
         JsonValue::Object(o) => {
