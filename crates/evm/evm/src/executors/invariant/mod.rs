@@ -23,6 +23,7 @@ use foundry_evm_fuzz::{
     },
     FuzzCase, FuzzedCases,
 };
+use foundry_evm_traces::CallTraceArena;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -123,6 +124,9 @@ impl<'a> InvariantExecutor<'a> {
         // Stores the calldata in the last run.
         let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
 
+        // Stores additional traces for gas report.
+        let gas_report_traces: RefCell<Vec<Vec<CallTraceArena>>> = RefCell::default();
+
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll
         // already know if we can early exit the invariant run.
@@ -161,6 +165,9 @@ impl<'a> InvariantExecutor<'a> {
 
             // Created contracts during a run.
             let mut created_contracts = vec![];
+
+            // Traces of each call of the sequence.
+            let mut run_traces = Vec::new();
 
             let mut current_run = 0;
             let mut assume_rejects_counter = 0;
@@ -233,6 +240,7 @@ impl<'a> InvariantExecutor<'a> {
                             self.config.fail_on_revert,
                             self.config.shrink_sequence,
                             self.config.shrink_run_limit,
+                            &mut run_traces,
                         );
 
                     if !can_continue || current_run == self.config.depth - 1 {
@@ -265,6 +273,9 @@ impl<'a> InvariantExecutor<'a> {
                 }
             }
 
+            if gas_report_traces.borrow().len() < self.config.gas_report_samples as usize {
+                gas_report_traces.borrow_mut().push(run_traces);
+            }
             fuzz_cases.borrow_mut().push(FuzzedCases::new(fuzz_runs));
 
             Ok(())
@@ -280,6 +291,7 @@ impl<'a> InvariantExecutor<'a> {
             cases: fuzz_cases.into_inner(),
             reverts,
             last_run_inputs: last_run_calldata.take(),
+            gas_report_traces: gas_report_traces.into_inner(),
         })
     }
 
@@ -764,6 +776,7 @@ fn can_continue(
     fail_on_revert: bool,
     shrink_sequence: bool,
     shrink_run_limit: usize,
+    run_traces: &mut Vec<CallTraceArena>,
 ) -> RichInvariantResults {
     let mut call_results = None;
 
@@ -775,6 +788,10 @@ fn can_continue(
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
+        if let Some(traces) = call_result.traces {
+            run_traces.push(traces);
+        }
+
         call_results = assert_invariants(
             invariant_contract,
             executor,
