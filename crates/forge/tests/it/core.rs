@@ -689,8 +689,8 @@ async fn test_doesnt_run_abstract_contract() {
     let filter = Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str());
     let mut runner = runner();
     let results = runner.test_collect(&filter);
-    assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
-    assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
+    assert!(!results.contains_key("core/Abstract.t.sol:AbstractTestBase"));
+    assert!(results.contains_key("core/Abstract.t.sol:AbstractTest"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
