@@ -27,7 +27,7 @@ use itertools::Itertools;
 use revm::{
     interpreter::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
-        InstructionResult, Interpreter, InterpreterResult,
+        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, TransactTo},
     EvmContext, Inspector,
@@ -578,7 +578,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
-                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         }
@@ -590,7 +589,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
                                 disallowed_mem_write(offset, 1, interpreter, ranges);
-                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         }
@@ -610,7 +608,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
-                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         }
@@ -642,7 +639,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // that gives information about the allowed ranges and revert.
                             if fail_cond {
                                 disallowed_mem_write(dest_offset, size, interpreter, ranges);
-                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         })*
@@ -1453,6 +1449,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
 /// and sets the return range to the revert string's location in memory.
+///
+/// This will set the interpreter's next action to a return with the revert string as the output.
+/// And trigger a revert.
 fn disallowed_mem_write(
     dest_offset: u64,
     size: u64,
@@ -1463,22 +1462,17 @@ fn disallowed_mem_write(
         "memory write at offset 0x{:02X} of size 0x{:02X} not allowed; safe range: {}",
         dest_offset,
         size,
-        ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" ∪ ")
-    )
-    .abi_encode();
-    mstore_revert_string(interpreter, &revert_string);
-}
+        ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" U ")
+    );
 
-/// Expands memory, stores a revert string, and sets the return range to the revert
-/// string's location in memory.
-fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
-    let starting_offset = interpreter.shared_memory.len();
-    interpreter.shared_memory.resize(starting_offset + bytes.len());
-    interpreter.shared_memory.set_data(starting_offset, 0, bytes.len(), bytes);
-
-    // TODO(mattsse): what happened to this??
-    // interpreter.return_offset = starting_offset;
-    // interpreter.return_len = interpreter.shared_memory.len() - starting_offset
+    interpreter.instruction_result = InstructionResult::Revert;
+    interpreter.next_action = InterpreterAction::Return {
+        result: InterpreterResult {
+            output: Error::encode(revert_string),
+            gas: interpreter.gas,
+            result: InstructionResult::Revert,
+        },
+    };
 }
 
 /// Applies the default CREATE2 deployer for contract creation.
