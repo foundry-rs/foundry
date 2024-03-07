@@ -6,9 +6,10 @@ use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
     inspectors::CheatsConfig,
+    multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
-    MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
     opts::CoreBuildArgs,
@@ -30,7 +31,12 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
-use std::{sync::mpsc::channel, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    sync::mpsc::channel,
+    time::Instant,
+};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -130,6 +136,64 @@ impl TestArgs {
         self.execute_tests().await
     }
 
+    pub fn get_sources_to_compile(
+        &self,
+        config: &Config,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<BTreeSet<PathBuf>> {
+        // Here we assume that cached artifacts contain ABI.
+        let mut project = config.create_project(true, true)?;
+        project.solc_config.settings.output_selection.0 = BTreeMap::from([(
+            "*".to_string(),
+            BTreeMap::from([("*".to_string(), vec!["abi".to_string()])]),
+        )]);
+        let output = project.compile()?;
+
+        let abis = output
+            .into_artifacts()
+            .filter_map(|(id, artifact)| artifact.abi.map(|abi| (id, abi)))
+            .collect::<BTreeMap<_, _>>();
+
+        let sources = abis
+            .iter()
+            .filter(|(id, abi)| matches_contract(id, abi, filter))
+            .map(|(id, _)| id.source.clone())
+            .collect::<BTreeSet<_>>();
+
+        if sources.len() == 0 {
+            println!();
+            if filter.is_empty() {
+                println!(
+                    "No tests found in project! \
+                        Forge looks for functions that starts with `test`."
+                );
+            } else {
+                println!("No tests match the provided pattern:");
+                print!("{filter}");
+
+                // Try to suggest a test when there's no match
+                if let Some(test_pattern) = &filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    let candidates = abis
+                        .into_iter()
+                        .filter(|(id, _)| {
+                            filter.matches_path(&id.source) && filter.matches_contract(&id.name)
+                        })
+                        .map(|(_, abi)| abi.functions.into_iter().map(|(name, _)| name))
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        println!("\nDid you mean `{suggestion}`?");
+                    }
+                }
+            }
+
+            eyre::bail!("No tests to run");
+        }
+
+        Ok(sources)
+    }
+
     /// Executes all the tests in the project.
     ///
     /// This will trigger the build process first. On success all test contracts that match the
@@ -164,10 +228,12 @@ impl TestArgs {
         let mut filter = self.filter(&config);
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let mut compiler = ProjectCompiler::new().quiet_if(self.json || self.opts.silent);
-        if config.sparse_mode {
-            compiler = compiler.filter(Box::new(filter.clone()));
-        }
+        let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
+
+        let compiler = ProjectCompiler::new()
+            .quiet_if(self.json || self.opts.silent)
+            .files(sources_to_compile);
+
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.
@@ -260,28 +326,6 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if num_filtered == 0 {
-            println!();
-            if filter.is_empty() {
-                println!(
-                    "No tests found in project! \
-                     Forge looks for functions that starts with `test`."
-                );
-            } else {
-                println!("No tests match the provided pattern:");
-                print!("{filter}");
-
-                // Try to suggest a test when there's no match
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    let test_name = test_pattern.as_str();
-                    // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        println!("\nDid you mean `{suggestion}`?");
-                    }
-                }
-            }
-        }
         if self.debug.is_some() && num_filtered != 1 {
             eyre::bail!(
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\

@@ -370,7 +370,7 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
+pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
     (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
         abi.functions().any(|func| is_matching_test(func, filter))
 }
