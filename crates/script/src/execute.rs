@@ -26,7 +26,7 @@ use foundry_evm::{
     decode::{decode_console_logs, RevertDecoder},
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
     traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
+        identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
@@ -336,33 +336,31 @@ impl ExecutedState {
         &self,
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
-        let verbosity = self.script_config.evm_opts.verbosity;
-        let mut etherscan_identifier = EtherscanIdentifier::new(
-            &self.script_config.config,
-            self.script_config.evm_opts.get_remote_chain_id(),
-        )?;
-
-        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(self.execution_result.labeled_addresses.clone())
-            .with_verbosity(verbosity)
-            .with_local_identifier_abis(&local_identifier)
+            .with_verbosity(self.script_config.evm_opts.verbosity)
+            .with_known_contracts(known_contracts)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 self.script_config.config.offline,
             )?)
             .build();
 
+        let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_etherscan(
+            &self.script_config.config,
+            self.script_config.evm_opts.get_remote_chain_id(),
+        )?;
+
         // Decoding traces using etherscan is costly as we run into rate limits,
         // causing scripts to run for a very long time unnecessarily.
         // Therefore, we only try and use etherscan if the user has provided an API key.
         let should_use_etherscan_traces = self.script_config.config.etherscan_api_key.is_some();
+        if !should_use_etherscan_traces {
+            identifier.etherscan = None;
+        }
 
         for (_, trace) in &self.execution_result.traces {
-            decoder.identify(trace, &mut local_identifier);
-            if should_use_etherscan_traces {
-                decoder.identify(trace, &mut etherscan_identifier);
-            }
+            decoder.identify(trace, &mut identifier);
         }
 
         Ok(decoder)

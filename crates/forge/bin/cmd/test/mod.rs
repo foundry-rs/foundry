@@ -7,10 +7,7 @@ use forge::{
     gas_report::GasReport,
     inspectors::CheatsConfig,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoderBuilder, TraceKind,
-    },
+    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
@@ -31,6 +28,7 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_debugger::Debugger;
+use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -296,9 +294,10 @@ impl TestArgs {
 
         // Set up trace identifiers.
         let known_contracts = runner.known_contracts.clone();
-        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
+        let mut identifier = TraceIdentifiers::new()
+            .with_local(&known_contracts)
+            .with_etherscan(&config, remote_chain_id)?;
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -313,7 +312,7 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
-            .with_local_identifier_abis(&local_identifier)
+            .with_known_contracts(&known_contracts)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
@@ -379,8 +378,7 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
-                        decoder.identify(arena, &mut local_identifier);
-                        decoder.identify(arena, &mut etherscan_identifier);
+                        decoder.identify(arena, &mut identifier);
                     }
 
                     // verbosity:

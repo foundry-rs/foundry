@@ -7,7 +7,9 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
-use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
+use foundry_common::{
+    abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
+};
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
     constants::{
@@ -50,15 +52,20 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Add known contracts to the decoder from a `LocalTraceIdentifier`.
+    /// Add known contracts to the decoder.
     #[inline]
-    pub fn with_local_identifier_abis(mut self, identifier: &LocalTraceIdentifier<'_>) -> Self {
-        let contracts = identifier.contracts();
-        trace!(target: "evm::traces", len=contracts.len(), "collecting local identifier ABIs");
+    pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
+        trace!(target: "evm::traces", len=contracts.len(), "collecting known contract ABIs");
         for (abi, _) in contracts.values() {
             self.decoder.collect_abi(abi, None);
         }
         self
+    }
+
+    /// Add known contracts to the decoder from a `LocalTraceIdentifier`.
+    #[inline]
+    pub fn with_local_identifier_abis(self, identifier: &LocalTraceIdentifier<'_>) -> Self {
+        self.with_known_contracts(identifier.contracts())
     }
 
     /// Sets the verbosity level of the decoder.
@@ -225,7 +232,7 @@ impl CallTraceDecoder {
     fn addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
-    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + 'a {
+    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
         arena
             .nodes()
             .iter()
