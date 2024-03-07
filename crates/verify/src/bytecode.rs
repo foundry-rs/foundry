@@ -1,7 +1,7 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
-use ethers_core::types::Eip1559TransactionRequest;
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::Client;
@@ -11,17 +11,17 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
+    provider::alloy::ProviderBuilder,
     types::ToEthers,
 };
 use foundry_compilers::{
     artifacts::BytecodeObject, info::ContractInfo, Artifact, ProjectCompileOutput,
 };
-use foundry_config::{figment, merge_impl_figment_convert, Config};
+use foundry_config::{figment, merge_impl_figment_convert, Chain, Config};
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{CreateFork, MultiFork},
-    opts::EvmOpts,
+    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
+use revm_primitives::db::Database;
 use std::path::PathBuf;
 
 merge_impl_figment_convert!(VerifyBytecodeArgs, build_opts);
@@ -115,14 +115,18 @@ impl VerifyBytecodeArgs {
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
-        let provider = utils::get_provider(&config)?;
-
-        tracing::info!("Verifying contract at address {}", self.address);
+        // let provider = utils::get_provider(&config)?;
+        let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
+        tracing::info!("Checking bytecode contract at address {}", self.address);
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
 
         let chain = match config.get_rpc_url() {
-            Some(_) => utils::get_chain(config.chain, provider.clone()).await?,
+            Some(_) => {
+                let chain_id = provider.get_chain_id().await?;
+                // Convert to u64
+                Chain::from(chain_id.to::<u64>())
+            }
             None => config.chain.unwrap_or_default(),
         };
 
@@ -137,14 +141,7 @@ impl VerifyBytecodeArgs {
         let source_code = etherscan.contract_source_code(self.address).await?;
 
         let constructor_args = match source_code.items.first() {
-            Some(item) => {
-                tracing::info!("Contract Name: {:?}", item.contract_name);
-                tracing::info!("Compiler Version {:?}", item.compiler_version);
-                tracing::info!("EVM Version {:?}", item.evm_version);
-                tracing::info!("Optimization {:?}", item.optimization_used);
-                tracing::info!("Runs {:?}", item.runs);
-                item.constructor_arguments.clone()
-            }
+            Some(item) => item.constructor_arguments.clone(),
             None => {
                 eyre::bail!("No source code found for contract at address {}", self.address);
             }
@@ -155,20 +152,28 @@ impl VerifyBytecodeArgs {
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
 
-        tracing::info!("Creation data: {:?}", creation_data);
         let transaction = provider
-            .get_transaction(creation_data.transaction_hash.to_ethers())
-            .await?
-            .ok_or_eyre("Couldn't fetch transaction data from RPC")?;
+            .get_transaction_by_hash(creation_data.transaction_hash)
+            .await
+            .or_else(|_| eyre::bail!("Couldn't fetch transaction from RPC"))?;
         let receipt = provider
-            .get_transaction_receipt(creation_data.transaction_hash.to_ethers())
-            .await?
-            .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
+            .get_transaction_receipt(creation_data.transaction_hash)
+            .await
+            .or_else(|_| eyre::bail!("Couldn't fetch transacrion receipt from RPC"))?;
 
+        let receipt = match receipt {
+            Some(receipt) => receipt,
+            None => {
+                eyre::bail!(
+                    "Receipt not found for transaction hash {}",
+                    creation_data.transaction_hash
+                );
+            }
+        };
         // Extract creation code
-        let maybe_creation_code = if receipt.contract_address == Some(self.address.to_ethers()) {
+        let maybe_creation_code = if receipt.contract_address == Some(self.address) {
             &transaction.input
-        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER.to_ethers()) {
+        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER) {
             &transaction.input[32..]
         } else {
             eyre::bail!(
@@ -196,8 +201,8 @@ impl VerifyBytecodeArgs {
         };
 
         // Cmp creation code with locally built bytecode and maybe_creation_code
-        let res = try_match(maybe_creation_code, bytecode, self.verification_type)?;
-        tracing::info!("Match: {} | Type: {:?}", res.0, res.1);
+        let res = try_match(maybe_creation_code, bytecode, self.verification_type.clone())?;
+        tracing::info!("Creation code match: {} | Type: {:?}", res.0, res.1);
 
         // TODO: @Yash
         // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
@@ -226,43 +231,63 @@ impl VerifyBytecodeArgs {
         };
 
         // Fork the chain at `simulation_block`
-        let fork = CreateFork {
-            enable_caching: false,
-            url: self.rpc_url.unwrap_or_default(),
-            env: Default::default(),
-            evm_opts: EvmOpts { fork_block_number: Some(simulation_block), ..Default::default() },
+
+        let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
+        fork_config.fork_block_number = Some(simulation_block - 1);
+        let (mut env, fork, _chain) =
+            TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
+
+        let mut executor = TracingExecutor::new(env.clone(), fork, Some(config.evm_version), false);
+        env.block.number = U256::from(simulation_block);
+        let block = provider.get_block(simulation_block.into(), true).await?;
+        if let Some(ref block) = block {
+            env.block.timestamp = block.header.timestamp;
+            env.block.coinbase = block.header.miner;
+            env.block.difficulty = block.header.difficulty;
+            env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+            env.block.gas_limit = block.header.gas_limit;
+        }
+
+        configure_tx_env(&mut env, &transaction);
+        let deploy_result = match executor.deploy_with_env(env.clone(), None) {
+            Ok(result) => result,
+            Err(_error) => {
+                eyre::bail!("Failed contract deploy transaction in block {}", env.block.number);
+            }
         };
-        tracing::info!("Forking the chain at block {}", simulation_block);
-        let multi_fork = MultiFork::spawn();
-        let (fork_id, _shared_backend, _env) = multi_fork.create_fork(fork)?;
 
-        tracing::info!("Created fork with id {}", fork_id);
-        // TODO: @Yash
-        // Deploy the contract on the forked chain
-        let fork_rpc_url = multi_fork.get_fork_url(fork_id)?;
-        let mut fork_config = config.clone();
-        fork_config.eth_rpc_url = fork_rpc_url;
-        let fork_provider = utils::get_provider(&fork_config)?;
-
-        let tx = Eip1559TransactionRequest {
-            from: Some(creation_data.contract_creator.to_ethers()),
-            data: Some(bytecode.to_owned().to_ethers()),
-            ..Default::default()
+        // State commited using deploy_with_env, now get the runtime bytecode from the db.
+        let fork_runtime_code = match executor.backend.basic(deploy_result.address)? {
+            Some(account) => {
+                if let Some(code) = account.code {
+                    code
+                } else {
+                    eyre::bail!(
+                        "Bytecode does not exist for contract deployed on fork at address {}",
+                        deploy_result.address
+                    );
+                }
+            }
+            None => {
+                eyre::bail!(
+                    "Failed to get runtime code for contract deployed on fork at address {}",
+                    deploy_result.address
+                );
+            }
         };
-        // @mattsse - Need some help here.
-        let pending_tx = fork_provider.send_transaction(tx, None).await?;
 
-        let tx_receipt = pending_tx.confirmations(1).await.ok().flatten().ok_or_eyre(
-            "Failed to deploy locally built bytecode on the forked chain to verify runtime bytecode",
-        )?;
+        let onchain_runtime_code = provider
+            .get_code_at(
+                self.address,
+                Some(BlockId::Number(BlockNumberOrTag::Number(simulation_block))),
+            )
+            .await?;
 
-        tracing::info!("Deployed contract at address {}", tx_receipt.contract_address.unwrap());
-        // Get onchain runtime bytecode
-        let _runtime_code = provider.get_code(self.address.to_ethers(), None).await?;
-
-        // Get fork runtime bytecode
-        let _fork_runtime_code = fork_provider.get_code(self.address.to_ethers(), None).await?;
-        // Cmp runtime bytecode with onchain deployed bytecode
+        // Compare the runtime bytecode with the locally built bytecode
+        let res =
+            try_match(&fork_runtime_code.bytecode, &onchain_runtime_code, self.verification_type)?;
+        tracing::info!("Runtime code match: {} | Type: {:?}", res.0, res.1);
         Ok(())
     }
 
@@ -289,22 +314,22 @@ impl VerifyBytecodeArgs {
 }
 
 fn try_match(
-    creation_code: &[u8],
+    local_bytecode: &[u8],
     bytecode: &[u8],
     match_type: String,
 ) -> Result<(bool, Option<String>)> {
     if match_type == "full" {
-        if creation_code.starts_with(bytecode) {
+        if local_bytecode.starts_with(bytecode) {
             Ok((true, Some("full".to_string())))
         } else {
-            match try_partial_match(creation_code, bytecode) {
+            match try_partial_match(local_bytecode, bytecode) {
                 Ok(true) => Ok((true, Some("partial".to_string()))),
                 Ok(false) => Ok((false, None)),
                 Err(e) => Err(e),
             }
         }
     } else {
-        match try_partial_match(creation_code, bytecode) {
+        match try_partial_match(local_bytecode, bytecode) {
             Ok(true) => Ok((true, Some("partial".to_string()))),
             Ok(false) => Ok((false, None)),
             Err(e) => Err(e),
