@@ -12,7 +12,6 @@ use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
-    interpreter::Host,
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
         SpecId,
@@ -71,7 +70,7 @@ impl<'a> FuzzBackendWrapper<'a> {
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
-        env.env = Box::new(evm.env().clone());
+        env.env = evm.context.evm.env;
 
         Ok(res)
     }

@@ -8,8 +8,8 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, Host,
-        InstructionResult, Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
     primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, State, TransactTo},
     DatabaseCommit, EvmContext, Inspector,

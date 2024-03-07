@@ -14,7 +14,6 @@ use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
-    interpreter::Host,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
@@ -791,7 +790,7 @@ impl Backend {
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
-        env.env = Box::new(evm.env().clone());
+        env.env = evm.context.evm.env;
 
         Ok(res)
     }
