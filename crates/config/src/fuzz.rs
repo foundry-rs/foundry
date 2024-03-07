@@ -1,13 +1,17 @@
 //! Configuration for fuzz testing.
 
-use crate::inline::{
-    parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
+use crate::{
+    inline::{
+        parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
+    },
+    Config,
 };
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Contains for fuzz testing
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
@@ -22,6 +26,10 @@ pub struct FuzzConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
+    /// Path where fuzz failures are recorded and replayed, defaults to `~/.foundry/cache/fuzz`
+    pub failure_persist_dir: Option<PathBuf>,
+    /// Name of the file to record fuzz failures, defaults to `failures`
+    pub failure_persist_file: Option<String>,
 }
 
 impl Default for FuzzConfig {
@@ -31,6 +39,8 @@ impl Default for FuzzConfig {
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
+            failure_persist_dir: Config::foundry_fuzz_cache_dir(),
+            failure_persist_file: Some("failures".to_string()),
         }
     }
 }
@@ -47,8 +57,7 @@ impl InlineConfigParser for FuzzConfig {
             return Ok(None)
         }
 
-        // self is Copy. We clone it with dereference.
-        let mut conf_clone = *self;
+        let mut conf_clone = self.clone();
 
         for pair in overrides {
             let key = pair.0;

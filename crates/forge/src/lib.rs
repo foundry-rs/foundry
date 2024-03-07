@@ -6,7 +6,9 @@ use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
-use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::{
+    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
+};
 use std::path::Path;
 
 pub mod coverage;
@@ -93,8 +95,18 @@ impl TestOptions {
     where
         S: Into<String>,
     {
-        let fuzz = self.fuzz_config(contract_id, test_fn);
-        self.fuzzer_with_cases(fuzz.runs)
+        let fuzz_config = self.fuzz_config(contract_id, test_fn).clone();
+        let failure_persist_path = fuzz_config
+            .failure_persist_dir
+            .unwrap()
+            .join(fuzz_config.failure_persist_file.unwrap())
+            .into_os_string()
+            .into_string()
+            .unwrap();
+        self.fuzzer_with_cases(
+            fuzz_config.runs,
+            Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
+        )
     }
 
     /// Returns an "invariant" test runner instance. Parameters are used to select tight scoped fuzz
@@ -109,7 +121,7 @@ impl TestOptions {
         S: Into<String>,
     {
         let invariant = self.invariant_config(contract_id, test_fn);
-        self.fuzzer_with_cases(invariant.runs)
+        self.fuzzer_with_cases(invariant.runs, None)
     }
 
     /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz
@@ -140,10 +152,13 @@ impl TestOptions {
         self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
-    pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
-        // TODO: Add Options to modify the persistence
+    pub fn fuzzer_with_cases(
+        &self,
+        cases: u32,
+        file_failure_persistence: Option<Box<dyn FailurePersistence>>,
+    ) -> TestRunner {
         let config = proptest::test_runner::Config {
-            failure_persistence: None,
+            failure_persistence: file_failure_persistence,
             cases,
             max_global_rejects: self.fuzz.max_test_rejects,
             ..Default::default()
