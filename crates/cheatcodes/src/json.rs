@@ -446,10 +446,6 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
                     32 => DynSolValue::FixedBytes(B256::from_slice(&bytes), 32),
                     _ => DynSolValue::Bytes(bytes),
                 })
-            } else if string == "true" {
-                Ok(DynSolValue::Bool(true))
-            } else if string == "false" {
-                Ok(DynSolValue::Bool(false))
             } else {
                 Ok(DynSolValue::String(string.to_owned()))
             }

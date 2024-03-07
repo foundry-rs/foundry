@@ -63,21 +63,8 @@ contract ParseTomlTest is DSTest {
         assertTrue(decodedData);
     }
 
-    function test_boolString() public {
-        bytes memory data = vm.parseToml(toml, ".boolString");
-        bool decodedData = abi.decode(data, (bool));
-        assertTrue(decodedData);
-    }
-
     function test_boolArray() public {
         bytes memory data = vm.parseToml(toml, ".boolArray");
-        bool[] memory decodedData = abi.decode(data, (bool[]));
-        assertTrue(decodedData[0]);
-        assertTrue(!decodedData[1]);
-    }
-
-    function test_boolStringArray() public {
-        bytes memory data = vm.parseToml(toml, ".boolStringArray");
         bool[] memory decodedData = abi.decode(data, (bool[]));
         assertTrue(decodedData[0]);
         assertTrue(!decodedData[1]);
