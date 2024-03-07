@@ -28,6 +28,7 @@ use foundry_common::{
 use foundry_config::Config;
 use foundry_wallets::WalletSigner;
 use futures::{future::join_all, StreamExt};
+use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -186,13 +187,12 @@ impl BundledState {
             })
             .collect::<Vec<_>>();
 
-        let errors =
-            join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
+        let errors = join_all(futs).await.into_iter().filter_map(Result::err).collect::<Vec<_>>();
 
         self.sequence.save(true, false)?;
 
         if !errors.is_empty() {
-            return Err(eyre::eyre!("{errors:?}"));
+            return Err(eyre::eyre!("{}", errors.iter().format("\n")));
         }
 
         Ok(self)

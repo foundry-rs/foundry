@@ -99,7 +99,9 @@ impl ScriptSequenceKind {
 
 impl Drop for ScriptSequenceKind {
     fn drop(&mut self) {
-        self.save(false, true).expect("could not save deployment sequence");
+        if let Err(err) = self.save(false, true) {
+            error!(?err, "could not save deployment sequence");
+        }
     }
 }
 
@@ -136,8 +138,8 @@ pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
 
-impl From<&mut ScriptSequence> for SensitiveScriptSequence {
-    fn from(sequence: &mut ScriptSequence) -> Self {
+impl From<ScriptSequence> for SensitiveScriptSequence {
+    fn from(sequence: ScriptSequence) -> Self {
         SensitiveScriptSequence {
             transactions: sequence
                 .transactions
@@ -190,7 +192,7 @@ impl ScriptSequence {
         self.timestamp = now().as_secs();
         let ts_name = format!("run-{}.json", self.timestamp);
 
-        let sensitive_script_sequence: SensitiveScriptSequence = self.into();
+        let sensitive_script_sequence: SensitiveScriptSequence = self.clone().into();
 
         // broadcast folder writes
         //../run-latest.json
