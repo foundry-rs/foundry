@@ -160,7 +160,6 @@ impl TestArgs {
             .collect::<BTreeSet<_>>();
 
         if sources.is_empty() {
-            println!();
             if filter.is_empty() {
                 println!(
                     "No tests found in project! \
