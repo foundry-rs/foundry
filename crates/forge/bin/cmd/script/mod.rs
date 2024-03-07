@@ -13,8 +13,8 @@ use forge::{
     decode::decode_console_logs,
     opts::EvmOpts,
     traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        identifier::SignaturesIdentifier, render_trace_arena, CallTraceDecoder,
+        CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use forge_verify::RetryArgs;
@@ -42,6 +42,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     decode::RevertDecoder,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    traces::identifier::TraceIdentifiers,
 };
 use foundry_wallets::MultiWalletOpts;
 use futures::future;
@@ -198,33 +199,29 @@ impl ScriptArgs {
         result: &mut ScriptResult,
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
-        let verbosity = script_config.evm_opts.verbosity;
-        let mut etherscan_identifier = EtherscanIdentifier::new(
-            &script_config.config,
-            script_config.evm_opts.get_remote_chain_id(),
-        )?;
-
-        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
-            .with_verbosity(verbosity)
-            .with_local_identifier_abis(&local_identifier)
+            .with_verbosity(script_config.evm_opts.verbosity)
+            .with_known_contracts(known_contracts)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 script_config.config.offline,
             )?)
             .build();
+        let mut identifier = TraceIdentifiers::new()
+            .with_local(known_contracts)
+            .with_etherscan(&script_config.config, script_config.evm_opts.get_remote_chain_id())?;
 
         // Decoding traces using etherscan is costly as we run into rate limits,
         // causing scripts to run for a very long time unnecessarily.
         // Therefore, we only try and use etherscan if the user has provided an API key.
         let should_use_etherscan_traces = script_config.config.etherscan_api_key.is_some();
+        if !should_use_etherscan_traces {
+            identifier.etherscan = None;
+        }
 
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &mut local_identifier);
-            if should_use_etherscan_traces {
-                decoder.identify(trace, &mut etherscan_identifier);
-            }
+            decoder.identify(trace, &mut identifier);
         }
         Ok(decoder)
     }
