@@ -1618,12 +1618,8 @@ impl Backend {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
                     BlockNumber::Number(num) => num,
-                    BlockNumber::Safe => U64::from(current)
-                        .saturating_sub(U64::from(self.slots_in_an_epoch))
-                        .to::<u64>(),
-                    BlockNumber::Finalized => U64::from(current)
-                        .saturating_sub(U64::from(self.slots_in_an_epoch) * U64::from(2))
-                        .to::<u64>(),
+                    BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
+                    BlockNumber::Finalized => current.saturating_sub(self.slots_in_an_epoch * 2),
                 },
             };
 
