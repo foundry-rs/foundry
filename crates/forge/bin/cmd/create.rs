@@ -1,4 +1,3 @@
-use super::{retry::RetryArgs, verify};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
@@ -14,6 +13,7 @@ use ethers_core::{
 use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use eyre::{Context, Result};
+use forge_verify::RetryArgs;
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
@@ -80,7 +80,7 @@ pub struct CreateArgs {
     eth: EthereumOpts,
 
     #[command(flatten)]
-    pub verifier: verify::VerifierArgs,
+    pub verifier: forge_verify::VerifierArgs,
 
     #[command(flatten)]
     retry: RetryArgs,
@@ -169,7 +169,7 @@ impl CreateArgs {
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let mut verify = verify::VerifyArgs {
+        let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
             contract: self.contract.clone(),
             compiler_version: None,
@@ -323,7 +323,7 @@ impl CreateArgs {
 
         let num_of_optimizations =
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
-        let verify = verify::VerifyArgs {
+        let verify = forge_verify::VerifyArgs {
             address,
             contract: self.contract,
             compiler_version: None,

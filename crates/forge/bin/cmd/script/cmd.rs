@@ -7,7 +7,7 @@ use alloy_primitives::{Address, Bytes};
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::{OptionExt, Result};
-use forge::{link::Linker, traces::CallTraceDecoder};
+use forge::traces::CallTraceDecoder;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{
     contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
@@ -18,6 +18,7 @@ use foundry_compilers::{
 };
 use foundry_debugger::Debugger;
 use foundry_evm::inspectors::cheatcodes::{BroadcastableTransaction, ScriptWallets};
+use foundry_linking::Linker;
 use foundry_wallets::WalletSigner;
 use std::{collections::HashMap, sync::Arc};
 

@@ -1,7 +1,6 @@
 use super::{ScriptArgs, ScriptConfig};
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, ContextCompat, Result};
-use forge::link::{LinkOutput, Linker};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::compile::{self, ContractSources, ProjectCompiler};
 use foundry_compilers::{
@@ -11,6 +10,7 @@ use foundry_compilers::{
     info::ContractInfo,
     ArtifactId, Project, ProjectCompileOutput,
 };
+use foundry_linking::{LinkOutput, Linker};
 use std::str::FromStr;
 
 impl ScriptArgs {
