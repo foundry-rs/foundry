@@ -4,13 +4,18 @@ use super::{
     providers::ProvidersManager,
     runner::ScriptRunner,
     sequence::{ScriptSequence, ScriptSequenceKind},
-    states::{BundledState, FilledTransactionsState, PreSimulationState},
     transaction::TransactionWithMetadata,
 };
-use crate::{broadcast::estimate_gas, sequence::get_commit_hash};
+use crate::{
+    broadcast::{estimate_gas, BundledState},
+    build::LinkedBuildData,
+    execute::{ExecutionArtifacts, ExecutionData},
+    sequence::get_commit_hash,
+    ScriptArgs, ScriptConfig, ScriptResult,
+};
 use alloy_primitives::{utils::format_units, Address, U256};
 use eyre::{Context, Result};
-use foundry_cheatcodes::BroadcastableTransactions;
+use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
     get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
@@ -22,6 +27,21 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
+
+/// Same as [ExecutedState], but also contains [ExecutionArtifacts] which are obtained from
+/// [ScriptResult].
+///
+/// Can be either converted directly to [BundledState] via [PreSimulationState::resume] or driven to
+/// it through [FilledTransactionsState].
+pub struct PreSimulationState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_result: ScriptResult,
+    pub execution_artifacts: ExecutionArtifacts,
+}
 
 impl PreSimulationState {
     /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
@@ -229,6 +249,19 @@ impl PreSimulationState {
             })
             .collect())
     }
+}
+
+/// At this point we have converted transactions collected during script execution to
+/// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
+/// verification.
+pub struct FilledTransactionsState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_artifacts: ExecutionArtifacts,
+    pub transactions: VecDeque<TransactionWithMetadata>,
 }
 
 impl FilledTransactionsState {

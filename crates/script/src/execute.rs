@@ -1,8 +1,10 @@
-use super::{
-    runner::ScriptRunner,
-    states::{CompiledState, ExecutedState, LinkedState, PreExecutionState, PreSimulationState},
-    JsonResult, NestedValue, ScriptResult,
+use crate::{
+    build::{CompiledState, LinkedBuildData},
+    simulate::PreSimulationState,
+    ScriptArgs, ScriptConfig,
 };
+
+use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes, U64};
@@ -10,6 +12,7 @@ use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
 use ethers_providers::Middleware;
 use eyre::Result;
+use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
@@ -31,6 +34,15 @@ use futures::future::join_all;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use yansi::Paint;
+
+/// State after linking, contains the linked build data along with library addresses and optional
+/// array of libraries that need to be predeployed.
+pub struct LinkedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: LinkedBuildData,
+}
 
 /// Container for data we need for execution which can only be obtained after linking stage.
 pub struct ExecutionData {
@@ -68,6 +80,15 @@ impl LinkedState {
             execution_data: ExecutionData { func, calldata, bytecode, abi },
         })
     }
+}
+
+/// Same as [LinkedState], but also contains [ExecutionData].
+pub struct PreExecutionState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
 }
 
 impl PreExecutionState {
@@ -261,6 +282,16 @@ pub struct ExecutionArtifacts {
     pub returns: HashMap<String, NestedValue>,
     /// Information about RPC endpoints used during script execution.
     pub rpc_data: RpcData,
+}
+
+/// State after the script has been executed.
+pub struct ExecutedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_result: ScriptResult,
 }
 
 impl ExecutedState {

@@ -1,28 +1,29 @@
-use super::states::{BroadcastedState, BundledState};
+use crate::{
+    build::LinkedBuildData,
+    execute::{ExecutionArtifacts, ExecutionData},
+    sequence::ScriptSequenceKind,
+    ScriptArgs, ScriptConfig,
+};
+
 use alloy_primitives::Address;
 use eyre::Result;
-use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
 
-impl BundledState {
-    pub fn verify_preflight_check(&self) -> Result<()> {
-        for sequence in self.sequence.sequences() {
-            if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
-                self.script_config
-                    .config
-                    .get_etherscan_api_key(Some(sequence.chain.into()))
-                    .is_none()
-            {
-                eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
-            }
-        }
-
-        Ok(())
-    }
+/// State after we have broadcasted the script.
+/// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
+/// broadcasted transactions.
+pub struct BroadcastedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_artifacts: ExecutionArtifacts,
+    pub sequence: ScriptSequenceKind,
 }
 
 impl BroadcastedState {

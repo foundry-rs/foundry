@@ -1,6 +1,8 @@
-use super::states::{CompiledState, LinkedState, PreprocessedState};
+use crate::{execute::LinkedState, ScriptArgs, ScriptConfig};
+
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, OptionExt, Result};
+use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
@@ -115,6 +117,13 @@ impl LinkedBuildData {
     }
 }
 
+/// First state basically containing only inputs of the user.
+pub struct PreprocessedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+}
+
 impl PreprocessedState {
     /// Parses user input and compiles the contracts depending on script target.
     /// After compilation, finds exact [ArtifactId] of the target contract.
@@ -129,16 +138,16 @@ impl PreprocessedState {
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
         let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
-            Ok::<_, eyre::Report>(Some(path))
+            Some(path)
         } else {
             let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
-                Ok(Some(dunce::canonicalize(path)?))
+                Some(dunce::canonicalize(path)?)
             } else {
-                Ok(None)
+                None
             }
-        }?;
+        };
 
         // If we've found target path above, only compile it.
         // Otherwise, compile everything to match contract by name later.
@@ -214,6 +223,14 @@ impl PreprocessedState {
             build_data: BuildData { linker, target, sources },
         })
     }
+}
+
+/// State after we have determined and compiled target contract to be executed.
+pub struct CompiledState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: BuildData,
 }
 
 impl CompiledState {

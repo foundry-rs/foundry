@@ -1,12 +1,19 @@
-use super::{
-    receipts,
-    states::{BroadcastedState, BundledState},
+use crate::{
+    build::LinkedBuildData,
+    execute::{ExecutionArtifacts, ExecutionData},
+    sequence::ScriptSequenceKind,
+    verify::BroadcastedState,
+    ScriptArgs, ScriptConfig,
 };
+
+use super::receipts;
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, BlockId};
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
 use eyre::{bail, Context, Result};
+use forge_verify::provider::VerificationProviderType;
+use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::{
     init_progress, update_progress,
     utils::{has_batch_support, has_different_gas_calc},
@@ -153,6 +160,18 @@ impl SendTransactionsKind {
             SendTransactionsKind::Raw(signers) => signers.len(),
         }
     }
+}
+
+/// State after we have bundled all [TransactionWithMetadata] objects into a single
+/// [ScriptSequenceKind] object containing one or more script sequences.
+pub struct BundledState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub script_wallets: ScriptWallets,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_artifacts: ExecutionArtifacts,
+    pub sequence: ScriptSequenceKind,
 }
 
 impl BundledState {
@@ -391,5 +410,20 @@ impl BundledState {
             execution_artifacts: self.execution_artifacts,
             sequence: self.sequence,
         })
+    }
+
+    pub fn verify_preflight_check(&self) -> Result<()> {
+        for sequence in self.sequence.sequences() {
+            if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
+                self.script_config
+                    .config
+                    .get_etherscan_api_key(Some(sequence.chain.into()))
+                    .is_none()
+            {
+                eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
+            }
+        }
+
+        Ok(())
     }
 }
