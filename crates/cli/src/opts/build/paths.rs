@@ -67,8 +67,14 @@ impl ProjectPathsArgs {
     /// Returns the root directory to use for configuring the [Project]
     ///
     /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
+    ///
+    /// # Panics
+    ///
+    /// If the project root directory cannot be found: [find_project_root_path()]
     pub fn project_root(&self) -> PathBuf {
-        self.root.clone().unwrap_or_else(|| find_project_root_path(None).unwrap())
+        self.root
+            .clone()
+            .unwrap_or_else(|| find_project_root_path(None).expect("Failed to find project root"))
     }
 
     /// Returns the remappings to add to the config

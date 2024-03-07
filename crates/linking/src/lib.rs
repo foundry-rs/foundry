@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
 use alloy_primitives::{Address, Bytes};
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, Libraries},

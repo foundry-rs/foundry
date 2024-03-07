@@ -25,6 +25,7 @@ foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
+foundry-linking.workspace = true
 
 ethers-contract.workspace = true
 ethers-core.workspace = true
@@ -45,6 +46,7 @@ yansi = "0.5"
 # bin
 forge-doc.workspace = true
 forge-fmt.workspace = true
+forge-verify.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 

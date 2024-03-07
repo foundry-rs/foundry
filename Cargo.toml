@@ -118,6 +118,7 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
+forge-verify = { path = "crates/verify" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -132,6 +133,7 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
+foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
@@ -144,14 +146,14 @@ revm-primitives = { version = "1", default-features = false }
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "e90052361276aebcdc67cb24d8e2c4d907b6d299", default-features = false }
 
 ## ethers
-ethers = { version = "2.0", default-features = false }
-ethers-core = { version = "2.0", default-features = false }
-ethers-contract = { version = "2.0", default-features = false }
-ethers-contract-abigen = { version = "2.0", default-features = false }
-ethers-providers = { version = "2.0", default-features = false }
-ethers-signers = { version = "2.0", default-features = false }
-ethers-middleware = { version = "2.0", default-features = false }
-ethers-solc = { version = "2.0", default-features = false }
+ethers = { version = "2.0.14", default-features = false }
+ethers-core = { version = "2.0.14", default-features = false }
+ethers-contract = { version = "2.0.14", default-features = false }
+ethers-contract-abigen = { version = "2.0.14", default-features = false }
+ethers-providers = { version = "2.0.14", default-features = false }
+ethers-signers = { version = "2.0.14", default-features = false }
+ethers-middleware = { version = "2.0.14", default-features = false }
+ethers-solc = { version = "2.0.14", default-features = false }
 
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
@@ -209,28 +211,7 @@ hyper = "0.14"
 tower = "0.4"
 tower-http = "0.4"
 
-#[patch."https://github.com/gakonst/ethers-rs"]
-#ethers = { path = "../ethers-rs/ethers" }
-#ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
-#ethers-contract = { path = "../ethers-rs/ethers-contract" }
-#ethers-contract-abigen = { path = "../ethers-rs/ethers-contract/ethers-contract-abigen" }
-#ethers-core = { path = "../ethers-rs/ethers-core" }
-#ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
-#ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
-#ethers-providers = { path = "../ethers-rs/ethers-providers" }
-#ethers-signers = { path = "../ethers-rs/ethers-signers" }
-#ethers-solc = { path = "../ethers-rs/ethers-solc" }
-
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
