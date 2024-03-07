@@ -211,4 +211,3 @@ hyper = "0.14"
 tower = "0.4"
 tower-http = "0.4"
 
-[patch.crates-io]
