@@ -238,6 +238,6 @@ fn json_to_toml_value(json: JsonValue) -> TomlValue {
         JsonValue::Object(o) => {
             TomlValue::Table(o.into_iter().map(|(k, v)| (k, json_to_toml_value(v))).collect())
         }
-        JsonValue::Null => TomlValue::String("null".to_owned()),
+        JsonValue::Null => TomlValue::String("null".to_string()),
     }
 }
