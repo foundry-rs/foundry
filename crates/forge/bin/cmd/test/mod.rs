@@ -159,7 +159,7 @@ impl TestArgs {
             .map(|(id, _)| id.source.clone())
             .collect::<BTreeSet<_>>();
 
-        if sources.len() == 0 {
+        if sources.is_empty() {
             println!();
             if filter.is_empty() {
                 println!(
@@ -178,8 +178,7 @@ impl TestArgs {
                         .filter(|(id, _)| {
                             filter.matches_path(&id.source) && filter.matches_contract(&id.name)
                         })
-                        .map(|(_, abi)| abi.functions.into_iter().map(|(name, _)| name))
-                        .flatten()
+                        .flat_map(|(_, abi)| abi.functions.into_keys())
                         .collect::<Vec<_>>();
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                         println!("\nDid you mean `{suggestion}`?");
