@@ -485,7 +485,7 @@ impl InspectorStack {
             let res = evm.transact();
 
             // need to reset the env in case it was modified via cheatcodes during execution
-            ecx.env = Box::new(evm.env().clone());
+            ecx.env = evm.context.evm.env;
             res
         };
 
