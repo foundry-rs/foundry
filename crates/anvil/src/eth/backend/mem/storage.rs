@@ -435,7 +435,7 @@ impl MinedTransaction {
                             self.info.traces.clone(),
                             TracingInspectorConfig::from_geth_config(&config),
                         )
-                        .geth_call_traces(call_config, self.receipt.gas_used())
+                        .geth_call_traces(call_config, self.receipt.gas_used().to::<u64>())
                         .into()
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => NoopFrame::default().into(),
@@ -451,7 +451,7 @@ impl MinedTransaction {
             TracingInspectorConfig::from_geth_config(&config),
         )
         .geth_traces(
-            self.receipt.gas_used(),
+            self.receipt.gas_used().to::<u64>(),
             self.info.out.clone().unwrap_or_default().0.into(),
             opts.config,
         )
