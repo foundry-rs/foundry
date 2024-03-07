@@ -87,8 +87,8 @@ pub struct NodeArgs {
     pub block_time: Option<u64>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value = "32")]
-    pub slots_in_an_epoch: Option<u64>,
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
     #[arg(long, value_name = "OUT_FILE")]
