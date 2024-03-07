@@ -8,8 +8,8 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, Host,
+        InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, State, TransactTo},
     DatabaseCommit, EvmContext, Inspector,
@@ -480,7 +480,14 @@ impl InspectorStack {
         self.in_inner_context = true;
 
         let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
-        let res = crate::utils::new_evm_with_inspector(&mut *ecx.db, env, &mut *self).transact();
+        let res = {
+            let mut evm = crate::utils::new_evm_with_inspector(&mut *ecx.db, env, &mut *self);
+            let res = evm.transact();
+
+            // need to reset the env in case it was modified via cheatcodes during execution
+            ecx.env = Box::new(evm.env().clone());
+            res
+        };
 
         self.in_inner_context = false;
         self.inner_context_data = None;
