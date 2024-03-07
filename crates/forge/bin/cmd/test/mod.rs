@@ -141,7 +141,6 @@ impl TestArgs {
         config: &Config,
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
-        // Here we assume that cached artifacts contain ABI.
         let mut project = config.create_project(true, true)?;
         project.solc_config.settings.output_selection.0 = BTreeMap::from([(
             "*".to_string(),
