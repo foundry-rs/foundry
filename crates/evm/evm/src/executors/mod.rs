@@ -310,7 +310,7 @@ impl Executor {
         // Build VM
         let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(&self.backend);
-        let result = db.inspect_ref(&mut env, &mut inspector)?;
+        let result = db.inspect(&mut env, &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
         let has_snapshot_failure = db.has_snapshot_failure();
@@ -328,7 +328,7 @@ impl Executor {
     pub fn call_raw_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         // execute the call
         let mut inspector = self.inspector.clone();
-        let result = self.backend.inspect_ref(&mut env, &mut inspector)?;
+        let result = self.backend.inspect(&mut env, &mut inspector)?;
         convert_executed_result(env, inspector, result, self.backend.has_snapshot_failure())
     }
 

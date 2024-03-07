@@ -58,7 +58,7 @@ impl<'a> FuzzBackendWrapper<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
-    pub fn inspect_ref<'b, I: Inspector<&'b mut Self>>(
+    pub fn inspect<'b, I: Inspector<&'b mut Self>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: I,
