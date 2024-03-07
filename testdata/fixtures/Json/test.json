@@ -8,7 +8,8 @@
     "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"
   ],
   "H160NotAddress": "0000000000000000000000000000000000001337",
-  "bool": true,
+  "boolTrue": true,
+  "boolFalse": false,
   "boolArray": [true, false],
   "boolString": "true",
   "boolStringArray": [true, "false"],

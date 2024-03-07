@@ -58,9 +58,13 @@ contract ParseTomlTest is DSTest {
     }
 
     function test_bool() public {
-        bytes memory data = vm.parseToml(toml, ".bool");
+        bytes memory data = vm.parseToml(toml, ".boolTrue");
         bool decodedData = abi.decode(data, (bool));
         assertTrue(decodedData);
+
+        data = vm.parseToml(toml, ".boolFalse");
+        decodedData = abi.decode(data, (bool));
+        assertTrue(!decodedData);
     }
 
     function test_boolArray() public {
@@ -142,16 +146,18 @@ contract ParseTomlTest is DSTest {
     }
 
     function test_coercionBool() public {
-        bool boolean = vm.parseTomlBool(toml, ".bool");
-        assert(true);
+        bool boolean = vm.parseTomlBool(toml, ".boolTrue");
+        assertTrue(boolean);
+        bool boolFalse = vm.parseTomlBool(toml, ".boolFalse");
+        assertTrue(!boolFalse);
         boolean = vm.parseTomlBool(toml, ".boolString");
         assertEq(boolean, true);
         bool[] memory booleans = vm.parseTomlBoolArray(toml, ".boolArray");
-        assert(booleans[0]);
-        assert(!booleans[1]);
+        assertTrue(booleans[0]);
+        assertTrue(!booleans[1]);
         booleans = vm.parseTomlBoolArray(toml, ".boolStringArray");
-        assert(booleans[0]);
-        assert(!booleans[1]);
+        assertTrue(booleans[0]);
+        assertTrue(!booleans[1]);
     }
 
     function test_coercionBytes() public {

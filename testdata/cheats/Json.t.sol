@@ -52,9 +52,13 @@ contract ParseJsonTest is DSTest {
     }
 
     function test_bool() public {
-        bytes memory data = vm.parseJson(json, ".bool");
+        bytes memory data = vm.parseJson(json, ".boolTrue");
         bool decodedData = abi.decode(data, (bool));
         assertTrue(decodedData);
+
+        data = vm.parseJson(json, ".boolFalse");
+        decodedData = abi.decode(data, (bool));
+        assertTrue(!decodedData);
     }
 
     function test_boolArray() public {
@@ -123,16 +127,18 @@ contract ParseJsonTest is DSTest {
     }
 
     function test_coercionBool() public {
-        bool boolean = vm.parseJsonBool(json, ".bool");
-        assert(true);
+        bool boolean = vm.parseJsonBool(json, ".boolTrue");
+        assertTrue(boolean);
+        bool boolFalse = vm.parseJsonBool(json, ".boolFalse");
+        assertTrue(!boolFalse);
         boolean = vm.parseJsonBool(json, ".boolString");
         assertEq(boolean, true);
         bool[] memory booleans = vm.parseJsonBoolArray(json, ".boolArray");
-        assert(booleans[0]);
-        assert(!booleans[1]);
+        assertTrue(booleans[0]);
+        assertTrue(!booleans[1]);
         booleans = vm.parseJsonBoolArray(json, ".boolStringArray");
-        assert(booleans[0]);
-        assert(!booleans[1]);
+        assertTrue(booleans[0]);
+        assertTrue(!booleans[1]);
     }
 
     function test_coercionBytes() public {

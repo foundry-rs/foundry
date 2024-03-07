@@ -13,7 +13,8 @@ addressArray = [
 ]
 H160NotAddress = "0000000000000000000000000000000000001337"
 
-bool = true
+boolTrue = true
+boolFalse = false
 boolArray = [true, false]
 boolString = "true"
 boolStringArray = ["true", "false"] # Array values can't have mixed types
