@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -22,7 +22,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
 use revm_primitives::db::Database;
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 
 merge_impl_figment_convert!(VerifyBytecodeArgs, build_opts);
 /// CLI arguments for `forge verify-bytecode`.
@@ -201,7 +201,8 @@ impl VerifyBytecodeArgs {
         };
 
         // Cmp creation code with locally built bytecode and maybe_creation_code
-        let res = try_match(maybe_creation_code, bytecode, self.verification_type.clone())?;
+        let res =
+            try_match(maybe_creation_code, bytecode, &constructor_args, &self.verification_type)?;
         tracing::info!("Creation code match: {} | Type: {:?}", res.0, res.1);
 
         // TODO: @Yash
@@ -285,8 +286,12 @@ impl VerifyBytecodeArgs {
             .await?;
 
         // Compare the runtime bytecode with the locally built bytecode
-        let res =
-            try_match(&fork_runtime_code.bytecode, &onchain_runtime_code, self.verification_type)?;
+        let res = try_match(
+            &fork_runtime_code.bytecode,
+            &onchain_runtime_code,
+            &constructor_args,
+            &self.verification_type,
+        )?;
         tracing::info!("Runtime code match: {} | Type: {:?}", res.0, res.1);
         Ok(())
     }
@@ -316,20 +321,21 @@ impl VerifyBytecodeArgs {
 fn try_match(
     local_bytecode: &[u8],
     bytecode: &[u8],
-    match_type: String,
+    constructor_args: &[u8],
+    match_type: &String,
 ) -> Result<(bool, Option<String>)> {
     if match_type == "full" {
         if local_bytecode.starts_with(bytecode) {
             Ok((true, Some("full".to_string())))
         } else {
-            match try_partial_match(local_bytecode, bytecode) {
+            match try_partial_match(local_bytecode, bytecode, constructor_args) {
                 Ok(true) => Ok((true, Some("partial".to_string()))),
                 Ok(false) => Ok((false, None)),
                 Err(e) => Err(e),
             }
         }
     } else {
-        match try_partial_match(local_bytecode, bytecode) {
+        match try_partial_match(local_bytecode, bytecode, constructor_args) {
             Ok(true) => Ok((true, Some("partial".to_string()))),
             Ok(false) => Ok((false, None)),
             Err(e) => Err(e),
@@ -337,7 +343,11 @@ fn try_match(
     }
 }
 
-fn try_partial_match(creation_code: &[u8], bytecode: &[u8]) -> Result<bool> {
+fn try_partial_match(
+    creation_code: &[u8],
+    bytecode: &[u8],
+    constructor_args: &[u8],
+) -> Result<bool> {
     // Get the last two bytes of the creation code to find the length of CBOR metadata
     let creation_code_metadata_len = &creation_code[creation_code.len() - 2..];
     let metadata_len =
@@ -358,4 +368,29 @@ fn try_partial_match(creation_code: &[u8], bytecode: &[u8]) -> Result<bool> {
     } else {
         Ok(false)
     }
+}
+
+fn constructor_args_range(bytecode: &[u8], constructor_args: &[u8]) -> Range<usize> {
+    let mut start = 0;
+    let mut end = 0;
+    // let args_len = constructor_args.len();
+    // First check if it ends with constructor args
+    if bytecode.ends_with(constructor_args) {
+        start = bytecode.len() - constructor_args.len();
+        end = bytecode.len();
+
+        tracing::info!("Constructor args found at end of bytecode");
+        // Extract the args from bytecode
+        let args = &bytecode[start..end];
+        tracing::info!("Extracted Constructor args: {:?}", hex::encode(args));
+        return start..end;
+    }
+    for i in 0..bytecode.len() {
+        if bytecode[i..].starts_with(constructor_args) {
+            start = i;
+            end = i + constructor_args.len();
+            break;
+        }
+    }
+    start..end
 }
