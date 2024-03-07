@@ -603,7 +603,7 @@ impl NodeConfig {
     #[must_use]
     pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: Option<u64>) -> Self {
         self.slots_in_an_epoch =
-            if let Some(slots_in_an_epoch) = slots_in_an_epoch { slots_in_an_epoch } else { 32 };
+            slots_in_an_epoch.unwrap_or(32)
         self
     }
 
