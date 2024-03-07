@@ -170,6 +170,8 @@ pub struct NodeConfig {
     pub disable_default_create2_deployer: bool,
     /// Enable Optimism deposit transaction
     pub enable_optimism: bool,
+    /// Slots in an epoch
+    pub slots_in_an_epoch: u64,
 }
 
 impl NodeConfig {
@@ -404,6 +406,7 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             enable_optimism: false,
+            slots_in_an_epoch: 32,
         }
     }
 }
@@ -593,6 +596,14 @@ impl NodeConfig {
     #[must_use]
     pub fn with_no_mining(mut self, no_mining: bool) -> Self {
         self.no_mining = no_mining;
+        self
+    }
+
+    /// Sets the slots in an epoch
+    #[must_use]
+    pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: Option<u64>) -> Self {
+        self.slots_in_an_epoch =
+            if let Some(slots_in_an_epoch) = slots_in_an_epoch { slots_in_an_epoch } else { 32 };
         self
     }
 
