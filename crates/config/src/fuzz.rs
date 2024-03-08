@@ -68,6 +68,7 @@ impl InlineConfigParser for FuzzConfig {
                 "dictionary-weight" => {
                     conf_clone.dictionary.dictionary_weight = parse_config_u32(key, value)?
                 }
+                "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
@@ -136,11 +137,13 @@ mod tests {
         let configs = &[
             "forge-config: default.fuzz.runs = 42424242".to_string(),
             "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
+            "forge-config: default.fuzz.failure-persist-file = fuzz-failure".to_string(),
         ];
         let base_config = FuzzConfig::default();
         let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
         assert_eq!(merged.runs, 42424242);
         assert_eq!(merged.dictionary.dictionary_weight, 42);
+        assert_eq!(merged.failure_persist_file, Some("fuzz-failure".to_string()));
     }
 
     #[test]
