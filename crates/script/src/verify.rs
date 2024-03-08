@@ -38,7 +38,7 @@ impl BroadcastedState {
             args.verifier,
         );
 
-        for sequence in sequence.sequeneces_mut() {
+        for sequence in sequence.sequences_mut() {
             sequence.verify_contracts(&script_config.config, verify.clone()).await?;
         }
 

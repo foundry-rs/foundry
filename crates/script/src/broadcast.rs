@@ -179,7 +179,8 @@ impl BundledState {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let futs = self
             .sequence
-            .sequeneces_mut()
+            .sequences_mut()
+            .iter_mut()
             .map(|sequence| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider = Arc::new(get_http_provider(rpc_url));
@@ -203,6 +204,7 @@ impl BundledState {
         let required_addresses = self
             .sequence
             .sequences()
+            .iter()
             .flat_map(|sequence| {
                 sequence
                     .typed_transactions()
@@ -239,8 +241,8 @@ impl BundledState {
             SendTransactionsKind::Raw(signers)
         };
 
-        for i in 0..self.sequence.sequences_len() {
-            let mut sequence = self.sequence.get_sequence_mut(i).unwrap();
+        for i in 0..self.sequence.sequences().len() {
+            let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
             let already_broadcasted = sequence.receipts.len();
@@ -359,7 +361,7 @@ impl BundledState {
 
                             // Checkpoint save
                             self.sequence.save(true, false)?;
-                            sequence = self.sequence.get_sequence_mut(i).unwrap();
+                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             update_progress!(pb, index - already_broadcasted);
                             index += 1;
@@ -367,14 +369,14 @@ impl BundledState {
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
-                        sequence = self.sequence.get_sequence_mut(i).unwrap();
+                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                         shell::println("##\nWaiting for receipts.")?;
                         receipts::clear_pendings(provider.clone(), sequence, None).await?;
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
-                    sequence = self.sequence.get_sequence_mut(i).unwrap();
+                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
 

@@ -41,40 +41,19 @@ impl ScriptSequenceKind {
         }
     }
 
-    pub fn sequences(&self) -> impl Iterator<Item = &ScriptSequence> {
+    pub fn sequences(&self) -> &[ScriptSequence] {
         match self {
-            ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence).iter(),
-            ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter(),
+            ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence),
+            ScriptSequenceKind::Multi(sequence) => &sequence.deployments,
         }
     }
 
-    pub fn sequeneces_mut(&mut self) -> impl Iterator<Item = &mut ScriptSequence> {
+    pub fn sequences_mut(&mut self) -> &mut [ScriptSequence] {
         match self {
-            ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence).iter_mut(),
-            ScriptSequenceKind::Multi(sequence) => sequence.deployments.iter_mut(),
+            ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence),
+            ScriptSequenceKind::Multi(sequence) => &mut sequence.deployments,
         }
     }
-
-    pub fn sequences_len(&self) -> usize {
-        match self {
-            ScriptSequenceKind::Single(_) => 1,
-            ScriptSequenceKind::Multi(sequence) => sequence.deployments.len(),
-        }
-    }
-
-    pub fn get_sequence_mut(&mut self, index: usize) -> Option<&mut ScriptSequence> {
-        match self {
-            ScriptSequenceKind::Single(sequence) => {
-                if index == 0 {
-                    Some(sequence)
-                } else {
-                    None
-                }
-            }
-            ScriptSequenceKind::Multi(sequence) => sequence.deployments.get_mut(index),
-        }
-    }
-
     /// Updates underlying sequence paths to not be under /dry-run directory.
     pub fn update_paths_to_broadcasted(
         &mut self,
