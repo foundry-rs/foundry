@@ -14,7 +14,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use foundry_evm_core::{
-    backend::{Backend, DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
+    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
     },
@@ -309,7 +309,7 @@ impl Executor {
         let mut inspector = self.inspector.clone();
         // Build VM
         let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
-        let mut db = FuzzBackendWrapper::new(&self.backend);
+        let mut db = CowBackend::new(&self.backend);
         let result = db.inspect(&mut env, &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
@@ -483,15 +483,16 @@ impl Executor {
     ///
     /// ## Background
     ///
-    /// Executing and failure checking [Executor::ensure_success] are two steps, for ds-test
+    /// Executing and failure checking [`Executor::ensure_success`] are two steps, for ds-test
     /// legacy reasons failures can be stored in a global variables and needs to be called via a
-    /// solidity call `failed()(bool)`. For fuzz tests we’re using the
-    /// `FuzzBackendWrapper` which is a Cow of the executor’s backend which lazily clones the
-    /// backend when it’s mutated via cheatcodes like `snapshot`. Snapshots make it even
-    /// more complicated because now we also need to keep track of that global variable when we
-    /// revert to a snapshot (because it is stored in state). Now, the problem is that
-    /// the `FuzzBackendWrapper` is dropped after every call, so we need to keep track of the
-    /// snapshot failure in the [RawCallResult] instead.
+    /// solidity call `failed()(bool)`.
+    ///
+    /// For fuzz tests we’re using the `CowBackend` which is a Cow of the executor’s backend which
+    /// lazily clones the backend when it’s mutated via cheatcodes like `snapshot`. Snapshots
+    /// make it even more complicated because now we also need to keep track of that global
+    /// variable when we revert to a snapshot (because it is stored in state). Now, the problem
+    /// is that the `CowBackend` is dropped after every call, so we need to keep track of the
+    /// snapshot failure in the [`RawCallResult`] instead.
     pub fn is_raw_call_success(
         &self,
         address: Address,

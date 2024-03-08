@@ -32,8 +32,8 @@ pub use diagnostic::RevertDiagnostic;
 mod error;
 pub use error::{DatabaseError, DatabaseResult};
 
-mod fuzz;
-pub use fuzz::FuzzBackendWrapper;
+mod cow;
+pub use cow::CowBackend;
 
 mod in_memory_db;
 pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
