@@ -4,6 +4,7 @@ use crate::eth::{
         db::{MaybeHashDatabase, StateDb},
         mem::cache::DiskStateCache,
     },
+    error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
 use alloy_network::Sealable;
@@ -22,6 +23,7 @@ use anvil_core::eth::{
     block::{Block, PartialHeader},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
+use anvil_rpc::error::RpcError;
 use foundry_evm::{
     revm::primitives::Env,
     traces::{FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
@@ -418,7 +420,7 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
         if let Some(tracer) = tracer {
@@ -426,27 +428,28 @@ impl MinedTransaction {
                 GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                     GethDebugBuiltInTracerType::FourByteTracer => {
                         let inspector = FourByteInspector::default();
-                        return FourByteFrame::from(inspector).into()
+                        return Ok(FourByteFrame::from(inspector).into())
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
-                        let call_config = tracer_config.into_call_config().unwrap();
-
-                        return GethTraceBuilder::new(
-                            self.info.traces.clone(),
-                            TracingInspectorConfig::from_geth_config(&config),
-                        )
-                        .geth_call_traces(call_config, self.receipt.gas_used().to::<u64>())
-                        .into()
+                        match tracer_config.into_call_config() {
+                            Ok(call_config) => Ok(GethTraceBuilder::new(
+                                self.info.traces.clone(),
+                                TracingInspectorConfig::from_geth_config(&config),
+                            )
+                            .geth_call_traces(call_config, self.receipt.gas_used().to::<u64>())
+                            .into()),
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        }
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer => NoopFrame::default().into(),
-                    GethDebugBuiltInTracerType::NoopTracer => NoopFrame::default().into(),
+                    GethDebugBuiltInTracerType::PreStateTracer => Ok(NoopFrame::default().into()),
+                    GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                 },
-                GethDebugTracerType::JsTracer(_code) => return NoopFrame::default().into(),
+                GethDebugTracerType::JsTracer(_code) => return Ok(NoopFrame::default().into()),
             }
         }
 
         // default structlog tracer
-        GethTraceBuilder::new(
+        Ok(GethTraceBuilder::new(
             self.info.traces.clone(),
             TracingInspectorConfig::from_geth_config(&config),
         )
@@ -455,7 +458,7 @@ impl MinedTransaction {
             self.info.out.clone().unwrap_or_default().0.into(),
             opts.config,
         )
-        .into()
+        .into())
     }
 }
 
