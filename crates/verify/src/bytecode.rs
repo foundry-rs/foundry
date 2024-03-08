@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Uint, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -148,11 +148,14 @@ impl VerifyBytecodeArgs {
         };
 
         tracing::info!("Constructor args: {:?}", constructor_args);
+        tracing::info!("Provided constructor args: {:?}", self.constructor_args);
+
+        // TODO: @Yash - Check if the constructor args match the provided constructor args else bail
 
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
 
-        let transaction = provider
+        let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
             .or_else(|_| eyre::bail!("Couldn't fetch transaction from RPC"))?;
@@ -189,25 +192,30 @@ impl VerifyBytecodeArgs {
             .find_contract(&self.contract)
             .ok_or_eyre("Contract artifact not found locally")?;
 
-        let bytecode = artifact
+        let local_bytecode = artifact
             .get_bytecode_object()
             .ok_or_eyre("Contract artifact does not have bytecode")?;
 
-        let bytecode = match bytecode.as_ref() {
+        let local_bytecode = match local_bytecode.as_ref() {
             BytecodeObject::Bytecode(bytes) => bytes,
             BytecodeObject::Unlinked(_) => {
                 eyre::bail!("Unlinked bytecode is not supported for verification")
             }
         };
 
+        // Append constructor args to the local_bytecode
+        let mut local_bytecode_vec = local_bytecode.to_vec();
+        local_bytecode_vec.extend_from_slice(&constructor_args);
         // Cmp creation code with locally built bytecode and maybe_creation_code
-        let res =
-            try_match(maybe_creation_code, bytecode, &constructor_args, &self.verification_type)?;
+        let res = try_match(
+            local_bytecode_vec.as_slice(),
+            maybe_creation_code,
+            &constructor_args,
+            &self.verification_type,
+        )?;
         tracing::info!("Creation code match: {} | Type: {:?}", res.0, res.1);
 
-        // TODO: @Yash
-        // Fork the chain at `simulation_block`, deploy the contract and compare the runtime
-        // bytecode.
+        // Get contract creation block
         let simulation_block = match self.block {
             Some(block) => match block {
                 BlockId::Number(BlockNumberOrTag::Number(block)) => block,
@@ -241,6 +249,15 @@ impl VerifyBytecodeArgs {
         let mut executor = TracingExecutor::new(env.clone(), fork, Some(config.evm_version), false);
         env.block.number = U256::from(simulation_block);
         let block = provider.get_block(simulation_block.into(), true).await?;
+
+        // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
+        // block.
+        let prev_block_id = BlockId::Number(BlockNumberOrTag::Number(simulation_block - 1));
+        let prev_block_nonce = provider
+            .get_transaction_count(creation_data.contract_creator, Some(prev_block_id))
+            .await?;
+        transaction.nonce = Uint::<64, 1>::from(prev_block_nonce);
+
         if let Some(ref block) = block {
             env.block.timestamp = block.header.timestamp;
             env.block.coinbase = block.header.miner;
@@ -251,10 +268,15 @@ impl VerifyBytecodeArgs {
         }
 
         configure_tx_env(&mut env, &transaction);
+        // Get the nonce of the contract creator at the block where the contract was created
         let deploy_result = match executor.deploy_with_env(env.clone(), None) {
             Ok(result) => result,
-            Err(_error) => {
-                eyre::bail!("Failed contract deploy transaction in block {}", env.block.number);
+            Err(error) => {
+                eyre::bail!(
+                    "Failed contract deploy transaction in block {} | Err: {:?}",
+                    env.block.number,
+                    error
+                );
             }
         };
 
@@ -324,10 +346,13 @@ fn try_match(
     constructor_args: &[u8],
     match_type: &String,
 ) -> Result<(bool, Option<String>)> {
+    // 1. Try full match
     if match_type == "full" {
         if local_bytecode.starts_with(bytecode) {
+            // Success => Full match
             Ok((true, Some("full".to_string())))
         } else {
+            // Failure => Try partial match
             match try_partial_match(local_bytecode, bytecode, constructor_args) {
                 Ok(true) => Ok((true, Some("partial".to_string()))),
                 Ok(false) => Ok((false, None)),
@@ -344,33 +369,80 @@ fn try_match(
 }
 
 fn try_partial_match(
-    creation_code: &[u8],
-    bytecode: &[u8],
+    mut local_bytecode: &[u8],
+    mut bytecode: &[u8],
     constructor_args: &[u8],
 ) -> Result<bool> {
-    // Get the last two bytes of the creation code to find the length of CBOR metadata
-    let creation_code_metadata_len = &creation_code[creation_code.len() - 2..];
-    let metadata_len =
-        u16::from_be_bytes([creation_code_metadata_len[0], creation_code_metadata_len[1]]);
+    // 1. Check length of constructor args
+    if constructor_args.is_empty() {
+        tracing::info!("Constructor args are empty");
+        // Assume metadata is at the end of the bytecode
+        local_bytecode = extract_metadata_hash(local_bytecode)?;
+        bytecode = extract_metadata_hash(bytecode)?;
 
-    // Now discard the metadata from the creation code
-    let creation_code = &creation_code[..creation_code.len() - 2 - metadata_len as usize];
+        // Now compare the creation code and bytecode
+        return Ok(local_bytecode.starts_with(bytecode));
+    }
 
-    // Do the same for the bytecode
-    let bytecode_metadata_len = &bytecode[bytecode.len() - 2..];
-    let metadata_len = u16::from_be_bytes([bytecode_metadata_len[0], bytecode_metadata_len[1]]);
+    // constructor_args in onchain bytecode
+    let (bytecode_args_range, onchain_args_at_end) =
+        constructor_args_range(bytecode, constructor_args);
+    // constructor_args in local bytecode
+    let (local_args_range, local_args_at_end) =
+        constructor_args_range(local_bytecode, constructor_args);
+    match (bytecode_args_range, local_args_range) {
+        (Some(onchain_range), Some(local_range)) => {
+            // Check if constructor args are at the end of the bytecode
+            if onchain_args_at_end {
+                tracing::info!("onchain_args_at_end");
+                bytecode = &bytecode[..onchain_range.start];
+            } else {
+                // Remove the constructor args from where ever they are located
+                // Do we need to remove them if they're not at the end??
+            }
+            if local_args_at_end {
+                tracing::info!("local_args_at_end");
+                local_bytecode = &local_bytecode[..local_range.start];
+            } else {
+                // Remove the constructor args from where ever they are located
+                // Do we need to remove them if they're not at the end??
+            }
 
-    let bytecode = &bytecode[..bytecode.len() - 2 - metadata_len as usize];
+            // Extract metdata from both
+            local_bytecode = extract_metadata_hash(local_bytecode)?;
+            bytecode = extract_metadata_hash(bytecode)?;
 
-    // Now compare the creation code and bytecode
-    if creation_code.starts_with(bytecode) {
-        Ok(true)
-    } else {
-        Ok(false)
+            // Now compare the local code and bytecode
+            Ok(local_bytecode.starts_with(bytecode))
+        }
+        (None, None) => {
+            tracing::info!("No constructor args found in either bytecode");
+            // Likely that this is runtime code. In that case extract_metadata and match
+            local_bytecode = extract_metadata_hash(local_bytecode)?;
+            bytecode = extract_metadata_hash(bytecode)?;
+
+            // Now compare the local code and bytecode
+            Ok(local_bytecode.starts_with(bytecode))
+        }
+        (Some(onchain_range), None) => {
+            tracing::info!("Constructor args found in onchain bytecode but not in local bytecode");
+            tracing::info!("onchain_range: {:?}", onchain_range);
+            tracing::info!("onchain_args_at_end: {:?}", onchain_args_at_end);
+            Ok(false)
+        }
+        (None, Some(local_range)) => {
+            tracing::info!("Constructor args found in local bytecode but not in onchain bytecode");
+            tracing::info!("local_range: {:?}", local_range);
+            tracing::info!("local_args_at_end: {:?}", local_args_at_end);
+            Ok(false)
+        }
     }
 }
 
-fn constructor_args_range(bytecode: &[u8], constructor_args: &[u8]) -> Range<usize> {
+fn constructor_args_range(
+    bytecode: &[u8],
+    constructor_args: &[u8],
+) -> (Option<Range<usize>>, bool) {
     let mut start = 0;
     let mut end = 0;
     // let args_len = constructor_args.len();
@@ -380,10 +452,7 @@ fn constructor_args_range(bytecode: &[u8], constructor_args: &[u8]) -> Range<usi
         end = bytecode.len();
 
         tracing::info!("Constructor args found at end of bytecode");
-        // Extract the args from bytecode
-        let args = &bytecode[start..end];
-        tracing::info!("Extracted Constructor args: {:?}", hex::encode(args));
-        return start..end;
+        return (Some(start..end), true);
     }
     for i in 0..bytecode.len() {
         if bytecode[i..].starts_with(constructor_args) {
@@ -392,5 +461,19 @@ fn constructor_args_range(bytecode: &[u8], constructor_args: &[u8]) -> Range<usi
             break;
         }
     }
-    start..end
+    if start == 0 && end == 0 {
+        (None, false)
+    } else {
+        (Some(start..end), false)
+    }
+}
+
+/// @dev This assumes that the metadata is at the end of the bytecode
+fn extract_metadata_hash(bytecode: &[u8]) -> Result<&[u8]> {
+    // Get the last two bytes of the bytecode to find the length of CBOR metadata
+    let metadata_len = &bytecode[bytecode.len() - 2..];
+    let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
+
+    // Now discard the metadata from the bytecode
+    Ok(&bytecode[..bytecode.len() - 2 - metadata_len as usize])
 }
