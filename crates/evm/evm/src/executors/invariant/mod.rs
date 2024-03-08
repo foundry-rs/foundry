@@ -236,7 +236,7 @@ impl<'a> InvariantExecutor<'a> {
                         );
 
                     if !can_continue || current_run == self.config.depth - 1 {
-                        *last_run_calldata.borrow_mut() = inputs.clone();
+                        last_run_calldata.borrow_mut().clone_from(&inputs);
                     }
 
                     if !can_continue {

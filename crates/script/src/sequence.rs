@@ -365,7 +365,7 @@ impl ScriptSequence {
         self.transactions
             .iter_mut()
             .enumerate()
-            .for_each(|(i, tx)| tx.rpc = sensitive.transactions[i].rpc.clone());
+            .for_each(|(i, tx)| tx.rpc.clone_from(&sensitive.transactions[i].rpc));
     }
 }
 
