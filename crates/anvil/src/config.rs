@@ -602,7 +602,7 @@ impl NodeConfig {
     /// Sets the slots in an epoch
     #[must_use]
     pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
-        self.slots_in_an_epoch = slots_in_an_epoch.unwrap_or(32);
+        self.slots_in_an_epoch = slots_in_an_epoch;
         self
     }
 
