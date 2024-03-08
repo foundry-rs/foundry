@@ -545,6 +545,7 @@ dependencies = [
  "eyre",
  "fdlimit",
  "flate2",
+ "foundry-cli",
  "foundry-common",
  "foundry-config",
  "foundry-evm",
