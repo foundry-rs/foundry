@@ -63,22 +63,22 @@ use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
-    inspectors::AccessListTracer,
+    inspectors::AccessListInspector,
     revm::{
         self,
         db::CacheDB,
         interpreter::InstructionResult,
         primitives::{
-            BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output, SpecId,
-            TransactTo, TxEnv, KECCAK_EMPTY,
+            BlockEnv, CfgEnvWithHandlerCfg, CreateScheme, EnvWithHandlerCfg, ExecutionResult,
+            Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
-    traces::{TracingInspector, TracingInspectorConfig},
-    utils::{eval_to_instruction_result, halt_to_instruction_result},
+    utils::new_evm_with_inspector_ref,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
+use revm::primitives::ResultAndState;
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -147,7 +147,7 @@ pub struct Backend {
     /// Historic states of previous blocks
     states: Arc<RwLock<InMemoryBlockStates>>,
     /// env data of the chain
-    env: Arc<RwLock<Env>>,
+    env: Arc<RwLock<EnvWithHandlerCfg>>,
     /// this is set if this is currently forked off another client
     fork: Arc<RwLock<Option<ClientFork>>>,
     /// provides time related info, like timestamp
@@ -177,7 +177,7 @@ impl Backend {
     #[allow(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<Box<dyn Db>>>,
-        env: Arc<RwLock<Env>>,
+        env: Arc<RwLock<EnvWithHandlerCfg>>,
         genesis: GenesisConfig,
         fees: FeeManager,
         fork: Arc<RwLock<Option<ClientFork>>>,
@@ -357,7 +357,7 @@ impl Backend {
     }
 
     pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env.read().cfg.spec_id)
+        get_precompiles_for(self.env.read().handler_cfg.spec_id)
     }
 
     /// Resets the fork to a fresh state
@@ -480,7 +480,7 @@ impl Backend {
     }
 
     /// The env data of the blockchain
-    pub fn env(&self) -> &Arc<RwLock<Env>> {
+    pub fn env(&self) -> &Arc<RwLock<EnvWithHandlerCfg>> {
         &self.env
     }
 
@@ -556,7 +556,7 @@ impl Backend {
 
     /// Returns the configured specid
     pub fn spec_id(&self) -> SpecId {
-        self.env.read().cfg.spec_id
+        self.env.read().handler_cfg.spec_id
     }
 
     /// Returns true for post London
@@ -576,7 +576,7 @@ impl Backend {
 
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
-        self.env.read().cfg.optimism
+        self.env.read().handler_cfg.is_optimism
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -771,7 +771,7 @@ impl Backend {
     }
 
     /// Returns the environment for the next block
-    fn next_env(&self) -> Env {
+    fn next_env(&self) -> EnvWithHandlerCfg {
         let mut env = self.env.read().clone();
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(rU256::from(1));
@@ -793,24 +793,16 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
 
-        let mut evm = revm::EVM::new();
-        evm.env = env;
-        evm.database(&*db);
-        let result_and_state = match evm.inspect_ref(&mut inspector) {
-            Ok(res) => res,
-            Err(e) => return Err(e.into()),
-        };
-        let state = result_and_state.state;
-        let (exit_reason, gas_used, out, logs) = match result_and_state.result {
+        let ResultAndState { result, state } =
+            new_evm_with_inspector_ref(&*db, env, &mut inspector).transact()?;
+        let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+                (reason.into(), gas_used, Some(output), Some(logs))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
         };
 
         inspector.print_logs();
@@ -843,12 +835,13 @@ impl Backend {
 
         let storage = self.blockchain.storage.read();
 
+        let cfg_env = CfgEnvWithHandlerCfg::new(env.cfg.clone(), env.handler_cfg);
         let executor = TransactionExecutor {
             db: &mut cache_db,
             validator: self,
             pending: pool_transactions.into_iter(),
             block_env: env.block.clone(),
-            cfg_env: env.cfg,
+            cfg_env,
             parent_hash: storage.best_hash,
             gas_used: U256::ZERO,
             enable_steps_tracing: self.enable_steps_tracing,
@@ -907,7 +900,7 @@ impl Backend {
                     validator: self,
                     pending: pool_transactions.into_iter(),
                     block_env: env.block.clone(),
-                    cfg_env: env.cfg.clone(),
+                    cfg_env: CfgEnvWithHandlerCfg::new(env.cfg.clone(), env.handler_cfg),
                     parent_hash: best_hash,
                     gas_used: U256::ZERO,
                     enable_steps_tracing: self.enable_steps_tracing,
@@ -1049,7 +1042,7 @@ impl Backend {
         request: TransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Env {
+    ) -> EnvWithHandlerCfg {
         let TransactionRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -1105,37 +1098,18 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         let mut inspector = Inspector::default();
-        let mut evm = revm::EVM::new();
-        evm.env = self.build_call_env(request, fee_details, block_env);
-        evm.database(state);
-        let result_and_state = match evm.inspect_ref(&mut inspector) {
-            Ok(result_and_state) => result_and_state,
-            Err(e) => match e {
-                EVMError::Transaction(invalid_tx) => {
-                    return Err(BlockchainError::InvalidTransaction(invalid_tx.into()))
-                }
-                EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
-                EVMError::Header(e) => match e {
-                    InvalidHeader::ExcessBlobGasNotSet => {
-                        return Err(BlockchainError::ExcessBlobGasNotSet)
-                    }
-                    InvalidHeader::PrevrandaoNotSet => {
-                        return Err(BlockchainError::PrevrandaoNotSet)
-                    }
-                },
-            },
-        };
-        let state = result_and_state.state;
-        let (exit_reason, gas_used, out) = match result_and_state.result {
+
+        let env = self.build_call_env(request, fee_details, block_env);
+        let ResultAndState { result, state } =
+            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+        let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output))
+                (reason.into(), gas_used, Some(output))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
         inspector.print_logs();
         Ok((exit_reason, out, gas_used, state))
@@ -1151,30 +1125,23 @@ impl Backend {
         self.with_database_at(block_request, |state, block| {
             let mut inspector = Inspector::default().with_steps_tracing();
             let block_number = block.number;
-            let mut evm = revm::EVM::new();
-            evm.env = self.build_call_env(request, fee_details, block);
-            evm.database(state);
-            let result_and_state =
-                match evm.inspect_ref(&mut inspector) {
-                    Ok(result_and_state) => result_and_state,
-                    Err(e) => return Err(e.into()),
-                };
-            let (exit_reason, gas_used, out, ) = match result_and_state.result {
+
+            let env = self.build_call_env(request, fee_details, block);
+            let ResultAndState { result, state: _ } =
+                new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+            let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
-                    (eval_to_instruction_result(reason), gas_used, Some(output), )
-                },
-                ExecutionResult::Revert { gas_used, output} => {
+                    (reason.into(), gas_used, Some(output))
+                }
+                ExecutionResult::Revert { gas_used, output } => {
                     (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
-                },
-                ExecutionResult::Halt { reason, gas_used } => {
-                    (halt_to_instruction_result(reason), gas_used, None)
-                },
+                }
+                ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
             };
-            let res = inspector.tracer.unwrap_or(TracingInspector::new(TracingInspectorConfig::all())).into_geth_builder().geth_traces(gas_used, match &out {
-                Some(out) => out.data().clone(),
-                None => Bytes::new()
-            }, opts);
-            trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
+            let tracer = inspector.tracer.expect("tracer disappeared");
+            let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
+            let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
+            trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
             Ok(res)
         })
         .await?
@@ -1198,32 +1165,26 @@ impl Backend {
             from.create(nonce)
         };
 
-        let mut tracer = AccessListTracer::new(
+        let mut inspector = AccessListInspector::new(
             request.access_list.clone().unwrap_or_default(),
             from,
             to,
             self.precompiles(),
         );
 
-        let mut evm = revm::EVM::new();
-        evm.env = self.build_call_env(request, fee_details, block_env);
-        evm.database(state);
-        let result_and_state = match evm.inspect_ref(&mut tracer) {
-            Ok(result_and_state) => result_and_state,
-            Err(e) => return Err(e.into()),
-        };
-        let (exit_reason, gas_used, out) = match result_and_state.result {
+        let env = self.build_call_env(request, fee_details, block_env);
+        let ResultAndState { result, state: _ } =
+            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+        let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output))
+                (reason.into(), gas_used, Some(output))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
-        let access_list = tracer.access_list();
+        let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
 
@@ -2320,7 +2281,7 @@ impl TransactionValidator for Backend {
         &self,
         pending: &PendingTransaction,
         account: &AccountInfo,
-        env: &Env,
+        env: &EnvWithHandlerCfg,
     ) -> Result<(), InvalidTransactionError> {
         let tx = &pending.transaction;
 
@@ -2329,7 +2290,7 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
                         !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
@@ -2365,7 +2326,7 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
-        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
+        if (env.handler_cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
             if tx.gas_price() < env.block.basefee && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
@@ -2400,7 +2361,7 @@ impl TransactionValidator for Backend {
         &self,
         tx: &PendingTransaction,
         account: &AccountInfo,
-        env: &Env,
+        env: &EnvWithHandlerCfg,
     ) -> Result<(), InvalidTransactionError> {
         self.validate_pool_transaction_for(tx, account, env)?;
         if tx.nonce().to::<u64>() > account.nonce {

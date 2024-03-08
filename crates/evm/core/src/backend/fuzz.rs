@@ -9,9 +9,13 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
-    primitives::{Account, AccountInfo, Bytecode, Env, HashMap as Map, ResultAndState},
+    primitives::{
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
+        SpecId,
+    },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -40,29 +44,35 @@ pub struct FuzzBackendWrapper<'a> {
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
+    /// The [SpecId] of the current backend.
+    spec_id: SpecId,
 }
 
 impl<'a> FuzzBackendWrapper<'a> {
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
-    ) -> eyre::Result<ResultAndState>
-    where
-        INSP: Inspector<Self>,
-    {
+    ///
+    /// Note: in case there are any cheatcodes executed that modify the environment, this will
+    /// update the given `env` with the new values.
+    pub fn inspect<'b, I: Inspector<&'b mut Self>>(
+        &'b mut self,
+        env: &mut EnvWithHandlerCfg,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
-            Ok(result) => Ok(result),
-            Err(e) => eyre::bail!("fuzz: failed to inspect: {e}"),
-        }
+        self.spec_id = env.handler_cfg.spec_id;
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+
+        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+
+        env.env = evm.context.evm.env;
+
+        Ok(res)
     }
 
     /// Returns whether there was a snapshot failure in the fuzz backend.
@@ -78,7 +88,8 @@ impl<'a> FuzzBackendWrapper<'a> {
     fn backend_mut(&mut self, env: &Env) -> &mut Backend {
         if !self.is_initialized {
             let backend = self.backend.to_mut();
-            backend.initialize(env);
+            let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), self.spec_id);
+            backend.initialize(&env);
             self.is_initialized = true;
             return backend
         }

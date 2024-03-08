@@ -11,25 +11,22 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::Address;
-use foundry_evm_core::backend::DatabaseExt;
-use revm::EVMData;
+use revm::EvmContext;
 
+pub use config::CheatsConfig;
+pub use error::{Error, ErrorKind, Result};
+use foundry_evm_core::backend::DatabaseExt;
+pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
 pub use spec::{CheatcodeDef, Vm};
 
 #[macro_use]
 mod error;
-pub use error::{Error, ErrorKind, Result};
-
-mod config;
-pub use config::CheatsConfig;
-
-mod inspector;
-pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
-
 mod base64;
+mod config;
 mod env;
 mod evm;
 mod fs;
+mod inspector;
 mod json;
 mod script;
 mod string;
@@ -112,18 +109,18 @@ impl<T: Cheatcode> DynCheatcode for T {
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
-pub(crate) struct CheatsCtxt<'a, 'b, 'c, DB: DatabaseExt> {
+pub(crate) struct CheatsCtxt<'a, 'b, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes,
     /// The EVM data.
-    pub(crate) data: &'b mut EVMData<'c, DB>,
+    pub(crate) ecx: &'b mut EvmContext<DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
 }
 
-impl<DB: DatabaseExt> CheatsCtxt<'_, '_, '_, DB> {
+impl<DB: DatabaseExt> CheatsCtxt<'_, '_, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.data.precompiles.contains(address)
+        self.ecx.precompiles.contains(address)
     }
 }

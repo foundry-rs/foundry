@@ -39,6 +39,7 @@ revm = { workspace = true, default-features = false, features = [
 revm-inspectors.workspace = true
 
 derive_more.workspace = true
+auto_impl = "1"
 eyre = "0.6"
 futures = "0.3"
 hex.workspace = true

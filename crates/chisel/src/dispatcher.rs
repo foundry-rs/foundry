@@ -438,7 +438,7 @@ impl ChiselDispatcher {
                                     println!(
                                         "{}: {}",
                                         Paint::yellow(format!("[{}]", stack.len() - i - 1)),
-                                        Paint::cyan(format!("0x{:02x}", stack.data()[i]))
+                                        Paint::cyan(format!("0x{:02x}", stack[i]))
                                     );
                                 });
                             }

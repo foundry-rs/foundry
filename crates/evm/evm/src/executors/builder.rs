@@ -1,7 +1,7 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
 use alloy_primitives::U256;
 use foundry_evm_core::backend::Backend;
-use revm::primitives::{Env, SpecId};
+use revm::primitives::{Env, EnvWithHandlerCfg, SpecId};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -63,12 +63,16 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     #[inline]
-    pub fn build(self, mut env: Env, db: Backend) -> Executor {
+    pub fn build(self, env: Env, db: Backend) -> Executor {
         let Self { mut stack, gas_limit, spec_id } = self;
-        env.cfg.spec_id = spec_id;
         stack.block = Some(env.block.clone());
         stack.gas_price = Some(env.tx.gas_price);
         let gas_limit = gas_limit.unwrap_or(env.block.gas_limit);
-        Executor::new(db, env, stack.build(), gas_limit)
+        Executor::new(
+            db,
+            EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id),
+            stack.build(),
+            gas_limit,
+        )
     }
 }

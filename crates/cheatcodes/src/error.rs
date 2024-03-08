@@ -7,6 +7,7 @@ use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::DatabaseError;
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
+use revm::primitives::EVMError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
@@ -301,6 +302,13 @@ impl_from!(
     SignerError,
     WalletSignerError,
 );
+
+impl From<EVMError<DatabaseError>> for Error {
+    #[inline]
+    fn from(err: EVMError<DatabaseError>) -> Self {
+        Self::display(DatabaseError::from(err))
+    }
+}
 
 #[cfg(test)]
 mod tests {
