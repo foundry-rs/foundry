@@ -189,7 +189,7 @@ impl CallTraceDecoder {
 
         let default_labels = &Self::new().labels;
         if self.labels.len() > default_labels.len() {
-            self.labels = default_labels.clone();
+            self.labels.clone_from(default_labels);
         }
 
         self.receive_contracts.clear();
