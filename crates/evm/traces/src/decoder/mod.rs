@@ -436,7 +436,9 @@ impl CallTraceDecoder {
             "parseJsonBytes32" |
             "parseJsonBytes32Array" |
             "writeJson" |
-            "keyExists" |
+            // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+            "keyExists" | 
+            "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
             "serializeInt" |
@@ -448,12 +450,31 @@ impl CallTraceDecoder {
                     None
                 } else {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                    let token =
-                        if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
-                            "<JSON file>"
-                        } else {
-                            "<stringified JSON>"
-                        };
+                    let token = if func.name.as_str() == "parseJson" ||
+                        // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExistsJson"
+                    {
+                        "<JSON file>"
+                    } else {
+                        "<stringified JSON>"
+                    };
+                    decoded[0] = DynSolValue::String(token.to_string());
+                    Some(decoded.iter().map(format_token).collect())
+                }
+            }
+            s if s.contains("Toml") => {
+                if self.verbosity >= 5 {
+                    None
+                } else {
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let token = if func.name.as_str() == "parseToml" ||
+                        func.name.as_str() == "keyExistsToml"
+                    {
+                        "<TOML file>"
+                    } else {
+                        "<stringified TOML>"
+                    };
                     decoded[0] = DynSolValue::String(token.to_string());
                     Some(decoded.iter().map(format_token).collect())
                 }
