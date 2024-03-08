@@ -1,5 +1,5 @@
-use super::{build::BuildArgs, script::ScriptArgs};
 use clap::{Parser, ValueHint};
+use forge_script::ScriptArgs;
 use forge_verify::retry::RETRY_VERIFY_ON_CREATE;
 use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::evm::EvmArgs;
@@ -48,7 +48,7 @@ impl DebugArgs {
             target_contract: self.target_contract,
             sig: self.sig,
             gas_estimate_multiplier: 130,
-            opts: BuildArgs { args: self.opts, ..Default::default() },
+            opts: self.opts,
             evm_opts: self.evm_opts,
             debug: true,
             retry: RETRY_VERIFY_ON_CREATE,

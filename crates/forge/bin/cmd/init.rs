@@ -164,11 +164,6 @@ impl InitArgs {
     }
 }
 
-/// Returns the commit hash of the project if it exists
-pub fn get_commit_hash(root: &Path) -> Option<String> {
-    Git::new(root).commit_hash(true, "HEAD").ok()
-}
-
 /// Initialises `root` as a git repository, if it isn't one already.
 ///
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.

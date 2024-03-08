@@ -2924,6 +2924,7 @@ dependencies = [
  "eyre",
  "forge-doc",
  "forge-fmt",
+ "forge-script",
  "forge-verify",
  "foundry-block-explorers",
  "foundry-cli",
@@ -3008,6 +3009,46 @@ dependencies = [
  "toml 0.8.10",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "forge-script"
+version = "0.2.0"
+dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "async-recursion",
+ "clap",
+ "const-hex",
+ "dialoguer",
+ "dunce",
+ "ethers-core",
+ "ethers-providers",
+ "ethers-signers",
+ "eyre",
+ "forge-verify",
+ "foundry-cheatcodes",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-compilers",
+ "foundry-config",
+ "foundry-debugger",
+ "foundry-evm",
+ "foundry-linking",
+ "foundry-wallets",
+ "futures",
+ "indicatif",
+ "itertools 0.11.0",
+ "parking_lot",
+ "revm-inspectors",
+ "semver 1.0.22",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "yansi 0.5.1",
 ]
 
 [[package]]
@@ -3096,6 +3137,7 @@ dependencies = [
  "revm",
  "serde_json",
  "thiserror",
+ "toml 0.8.10",
  "tracing",
  "walkdir",
 ]

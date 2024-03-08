@@ -1,10 +1,50 @@
+use crate::{
+    build::LinkedBuildData,
+    execute::{ExecutionArtifacts, ExecutionData},
+    sequence::ScriptSequenceKind,
+    ScriptArgs, ScriptConfig,
+};
+
 use alloy_primitives::Address;
+use eyre::Result;
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
+
+/// State after we have broadcasted the script.
+/// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
+/// broadcasted transactions.
+pub struct BroadcastedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub execution_data: ExecutionData,
+    pub execution_artifacts: ExecutionArtifacts,
+    pub sequence: ScriptSequenceKind,
+}
+
+impl BroadcastedState {
+    pub async fn verify(self) -> Result<()> {
+        let Self { args, script_config, build_data, mut sequence, .. } = self;
+
+        let verify = VerifyBundle::new(
+            &script_config.config.project()?,
+            &script_config.config,
+            build_data.get_flattened_contracts(false),
+            args.retry,
+            args.verifier,
+        );
+
+        for sequence in sequence.sequences_mut() {
+            sequence.verify_contracts(&script_config.config, verify.clone()).await?;
+        }
+
+        Ok(())
+    }
+}
 
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
 #[derive(Clone)]

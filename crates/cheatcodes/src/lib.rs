@@ -31,6 +31,7 @@ mod json;
 mod script;
 mod string;
 mod test;
+mod toml;
 mod utils;
 
 pub use script::ScriptWallets;

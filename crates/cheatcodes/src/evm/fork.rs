@@ -228,7 +228,7 @@ impl Cheatcode for rpcCall {
             .block_on(provider.raw_request(method, params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
-        let result_as_tokens = crate::json::value_to_token(&result)
+        let result_as_tokens = crate::json::json_value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
 
         Ok(result_as_tokens.abi_encode())
