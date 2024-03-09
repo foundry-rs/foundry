@@ -146,7 +146,7 @@ async fn test_persist_fuzz_failure() {
     }
 
     // write new failure in different file
-    runner.test_options.fuzz.failure_persist_file = Some("failure1".to_string());
+    runner.test_options.fuzz.failure_persist_file = "failure1".to_string();
     let new_calldata = match get_failure_result!() {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),
