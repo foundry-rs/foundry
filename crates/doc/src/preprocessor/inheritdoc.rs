@@ -78,8 +78,13 @@ impl Inheritdoc {
 
                         for children in item.children.iter() {
                             // TODO: improve matching logic
-                            if source.ident() == children.source.ident() {
-                                let key = format!("{}.{}", base, source.ident());
+                            let source_ident = source.ident();
+                            let children_source_ident = children.source.ident();
+                            if source_ident == children_source_ident ||
+                                (children_source_ident.starts_with('_') &&
+                                    source_ident == children_source_ident[1..])
+                            {
+                                let key = format!("{}.{}", base, source_ident);
                                 return Some((key, children.comments.clone()))
                             }
                         }
