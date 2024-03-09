@@ -17,16 +17,22 @@ use ethers_core::{
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
-use foundry_block_explorers::Client;
+use foundry_block_explorers::{contract::ContractMetadata, Client};
 use foundry_common::{
-    abi::{encode_function_args, get_func},
+    abi::{encode_function_args, encode_function_args_packed, get_func},
     fmt::*,
     types::{ToAlloy, ToEthers},
     TransactionReceiptWithRevertReason,
 };
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
+pub use foundry_evm::*;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
+pub use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+pub use rusoto_kms::KmsClient;
 use std::{
     io,
     path::PathBuf,
@@ -35,14 +41,6 @@ use std::{
 };
 use tokio::signal::ctrl_c;
 use tx::TxBuilderPeekOutput;
-
-use foundry_common::abi::encode_function_args_packed;
-pub use foundry_evm::*;
-pub use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-pub use rusoto_kms::KmsClient;
 pub use tx::{TxBuilder, TxBuilderOutput};
 
 pub mod base;
@@ -1865,7 +1863,7 @@ impl SimpleCast {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # use cast::SimpleCast as Cast;
     /// # use foundry_config::NamedChain;
     /// # async fn foo() -> eyre::Result<()> {
@@ -1875,7 +1873,7 @@ impl SimpleCast {
     ///             This file is part of the DAO.....",
     ///     Cast::etherscan_source(
     ///         NamedChain::Mainnet.into(),
-    ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
+    ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse().unwrap(),
     ///         "<etherscan_api_key>".to_string()
     ///     )
     ///     .await
@@ -1887,12 +1885,37 @@ impl SimpleCast {
     /// ```
     pub async fn etherscan_source(
         chain: Chain,
-        contract_address: String,
+        contract_address: Address,
         etherscan_api_key: String,
     ) -> Result<String> {
-        let client = Client::new(chain, etherscan_api_key)?;
-        let metadata = client.contract_source_code(contract_address.parse()?).await?;
-        Ok(metadata.source_code())
+        let meta =
+            Self::etherscan_contract_metadata(chain, contract_address, etherscan_api_key).await?;
+        Ok(meta.source_code())
+    }
+
+    /// Fetches source code of verified contracts from etherscan and flattens it
+    pub async fn etherscan_source_flattened(
+        chain: Chain,
+        contract_address: Address,
+        etherscan_api_key: String,
+        target_contract: String,
+    ) -> Result<String> {
+        let dir = tempfile::tempdir()?;
+        let meta =
+            Self::etherscan_contract_metadata(chain, contract_address, etherscan_api_key).await?;
+        let source_tree = meta.source_tree();
+        // find the matching contract
+        let target_entry = source_tree
+            .entries
+            .iter()
+            .find(|entry| entry.path.file_stem().map_or(false, |name| name == target_contract))
+            .ok_or_else(|| eyre::eyre!("Contract not found in source code"))?;
+
+        source_tree.write_to(dir.path())?;
+        let config = Config::load_with_root(dir.path());
+        let project = config.ephemeral_no_artifacts_project()?;
+
+        todo!()
     }
 
     /// Fetches the source code of verified contracts from etherscan and expands the resulting
@@ -1907,7 +1930,7 @@ impl SimpleCast {
     /// # async fn expand() -> eyre::Result<()> {
     /// Cast::expand_etherscan_source_to_directory(
     ///     NamedChain::Mainnet.into(),
-    ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
+    ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse()?,
     ///     "<etherscan_api_key>".to_string(),
     ///     PathBuf::from("output_dir"),
     /// )
@@ -1917,22 +1940,33 @@ impl SimpleCast {
     /// ```
     pub async fn expand_etherscan_source_to_directory(
         chain: Chain,
-        contract_address: String,
+        contract_address: Address,
         etherscan_api_key: String,
         output_directory: PathBuf,
     ) -> eyre::Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
-        let meta = client.contract_source_code(contract_address.parse()?).await?;
+        let meta =
+            Self::etherscan_contract_metadata(chain, contract_address, etherscan_api_key).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
         Ok(())
+    }
+
+    /// Returns the [ContractMetadata] of a verified contract from etherscan.
+    pub async fn etherscan_contract_metadata(
+        chain: Chain,
+        contract_address: Address,
+        etherscan_api_key: String,
+    ) -> eyre::Result<ContractMetadata> {
+        let client = Client::new(chain, etherscan_api_key)?;
+        let meta = client.contract_source_code(contract_address).await?;
+        Ok(meta)
     }
 
     /// Disassembles hex encoded bytecode into individual / human readable opcodes
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```non_run
     /// use cast::SimpleCast as Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {

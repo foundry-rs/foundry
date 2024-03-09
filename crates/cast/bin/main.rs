@@ -521,7 +521,7 @@ async fn main() -> Result<()> {
         CastSubcommand::RightShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
-        CastSubcommand::EtherscanSource { address, directory, etherscan } => {
+        CastSubcommand::EtherscanSource { address, directory, etherscan, flatten } => {
             let config = Config::from(&etherscan);
             let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
