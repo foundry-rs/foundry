@@ -4,12 +4,13 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
-use foundry_common::{fs, get_artifact_path};
+use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
+use semver::Version;
 use std::{
     collections::hash_map::Entry,
     io::{BufRead, BufReader, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -266,9 +267,68 @@ impl Cheatcode for getDeployedCodeCall {
     }
 }
 
+/// Returns the path to the json artifact depending on the input
+fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
+    if path.ends_with(".json") {
+        Ok(PathBuf::from(path))
+    } else {
+        let mut parts = path.split(':');
+        let file = PathBuf::from(parts.next().unwrap());
+        let contract_name = parts.next();
+        let version = parts.next();
+
+        let version = if let Some(version) = version {
+            Some(Version::parse(version).map_err(|_| fmt_err!("Error parsing version"))?)
+        } else {
+            None
+        };
+
+        // Use available artifacts list if available
+        if let Some(available_ids) = &state.config.available_artifacts {
+            let mut artifact = None;
+
+            for id in available_ids.iter() {
+                // name might be in the form of "Counter.0.8.23"
+                let id_name = id.name.split(".").next().unwrap();
+                let id_source_path =
+                    id.source.strip_prefix(&state.config.root).unwrap_or(&id.source);
+
+                if file != id_source_path {
+                    continue;
+                }
+                if let Some(name) = contract_name {
+                    if id_name != name {
+                        continue;
+                    }
+                }
+                if let Some(ref version) = version {
+                    if id.version.minor != version.minor ||
+                        id.version.major != version.major ||
+                        id.version.patch != version.patch
+                    {
+                        continue;
+                    }
+                }
+                artifact = Some(id);
+            }
+
+            let artifact = artifact.ok_or_else(|| fmt_err!("No matching artifact found"))?;
+            Ok(artifact.path.clone())
+        } else {
+            let file = file.to_string_lossy();
+            let contract_name = if let Some(contract_name) = contract_name {
+                contract_name.to_owned()
+            } else {
+                file.replace(".sol", "")
+            };
+            Ok(state.config.paths.artifacts.join(format!("{file}/{contract_name}.json")))
+        }
+    }
+}
+
 /// Reads the bytecode object(s) from the matching artifact
 fn read_bytecode(state: &Cheatcodes, path: &str) -> Result<ContractObject> {
-    let path = get_artifact_path(&state.config.paths, path);
+    let path = get_artifact_path(state, path)?;
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let data = fs::read_to_string(path)?;
     serde_json::from_str::<ContractObject>(&data).map_err(Into::into)

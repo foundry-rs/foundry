@@ -541,15 +541,16 @@ impl ScriptConfig {
 
     async fn get_runner_with_cheatcodes(
         &mut self,
+        artifact_ids: Vec<ArtifactId>,
         script_wallets: ScriptWallets,
         debug: bool,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some(script_wallets), debug).await
+        self._get_runner(Some((artifact_ids, script_wallets)), debug).await
     }
 
     async fn _get_runner(
         &mut self,
-        script_wallets: Option<ScriptWallets>,
+        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -578,7 +579,7 @@ impl ScriptConfig {
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
-        if let Some(script_wallets) = script_wallets {
+        if let Some((artifact_ids, script_wallets)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(debug)
@@ -586,6 +587,7 @@ impl ScriptConfig {
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
+                            Some(artifact_ids),
                             Some(script_wallets),
                         )
                         .into(),

@@ -26,6 +26,9 @@ pub struct BuildData {
     pub target: ArtifactId,
     /// Source files of the contracts. Used by debugger.
     pub sources: ContractSources,
+    /// Artifact ids of the contracts. Passed to cheatcodes to enable usage of
+    /// `vm.getDeployedCode`.
+    pub artifact_ids: Vec<ArtifactId>,
 }
 
 impl BuildData {
@@ -181,6 +184,8 @@ impl PreprocessedState {
 
         let mut target_id: Option<ArtifactId> = None;
 
+        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+
         // Find target artfifact id by name and path in compilation artifacts.
         for (id, contract) in output.artifact_ids().filter(|(id, _)| id.source == target_path) {
             if let Some(name) = &target_name {
@@ -220,7 +225,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData { linker, target, sources },
+            build_data: BuildData { linker, artifact_ids, target, sources },
         })
     }
 }

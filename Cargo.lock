@@ -3180,6 +3180,7 @@ dependencies = [
  "p256",
  "parking_lot",
  "revm",
+ "semver 1.0.22",
  "serde_json",
  "thiserror",
  "toml 0.8.10",
