@@ -137,8 +137,8 @@ impl TestArgs {
     }
 
     /// Returns sources which include any tests to be executed.
-    /// If no filters are provided, sources are filtered by existence of test/invariant methods in them,
-    /// If filters are provided, sources are additionaly filtered by them.
+    /// If no filters are provided, sources are filtered by existence of test/invariant methods in
+    /// them, If filters are provided, sources are additionaly filtered by them.
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
