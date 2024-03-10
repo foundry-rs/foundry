@@ -290,10 +290,8 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
             for id in available_ids.iter() {
                 // name might be in the form of "Counter.0.8.23"
                 let id_name = id.name.split('.').next().unwrap();
-                let id_source_path =
-                    id.source.strip_prefix(&state.config.root).unwrap_or(&id.source);
 
-                if file != id_source_path {
+                if !id.source.ends_with(&file) {
                     continue;
                 }
                 if let Some(name) = contract_name {
