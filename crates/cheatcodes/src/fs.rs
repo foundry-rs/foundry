@@ -289,7 +289,7 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
 
             for id in available_ids.iter() {
                 // name might be in the form of "Counter.0.8.23"
-                let id_name = id.name.split(".").next().unwrap();
+                let id_name = id.name.split('.').next().unwrap();
                 let id_source_path =
                     id.source.strip_prefix(&state.config.root).unwrap_or(&id.source);
 
@@ -308,6 +308,9 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
                     {
                         continue;
                     }
+                }
+                if artifact.is_some() {
+                    return Err(fmt_err!("Multiple matching artifacts found"));
                 }
                 artifact = Some(id);
             }
