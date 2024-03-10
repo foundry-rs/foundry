@@ -61,6 +61,13 @@ impl CheatsConfig {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
 
+        // If user explicitly disabled safety checks, do not set available_artifacts
+        let available_artifacts = if config.unchecked_cheatcode_artifacts {
+            None
+        } else {
+            available_artifacts
+        };
+
         Self {
             ffi: evm_opts.ffi,
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,

@@ -385,6 +385,10 @@ pub struct Config {
     /// Address labels
     pub labels: HashMap<Address, String>,
 
+    /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
+    /// If disabled, it is possible to access artifacts which were not recompiled or cached.
+    pub unchecked_cheatcode_artifacts: bool,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -1923,6 +1927,7 @@ impl Default for Config {
             fmt: Default::default(),
             doc: Default::default(),
             labels: Default::default(),
+            unchecked_cheatcode_artifacts: false,
             __non_exhaustive: (),
             __warnings: vec![],
         }
