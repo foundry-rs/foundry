@@ -10,7 +10,9 @@ use foundry_cli::{
     update_progress,
     utils::{handle_traces, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE,
+    compile::ProjectCompiler, fs,
+};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
@@ -18,6 +20,14 @@ use foundry_evm::{
     opts::EvmOpts,
     utils::configure_tx_env,
 };
+use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct CachedSignatures {
+    events: BTreeMap<String, String>,
+    functions: BTreeMap<String, String>,
+}
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -73,6 +83,9 @@ pub struct RunArgs {
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
+
+    #[arg(long, short, alias = "gs")]
+    pub generate_local_signatures: bool,
 }
 
 impl RunArgs {
@@ -216,6 +229,27 @@ impl RunArgs {
                 }
             }
         };
+
+        if self.generate_local_signatures {
+            let project = config.project()?;
+            let compiler = ProjectCompiler::new().quiet(true);
+            let out = compiler.compile(&project)?;
+            let mut cached_signatures = CachedSignatures::default();
+            out.artifacts().for_each(|(_, artifact)| {
+                if let Some(abi) = &artifact.abi {
+                    for func in abi.functions() {
+                        cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+                    }
+                    for event in abi.events() {
+                        cached_signatures.events.insert(event.selector().to_string(), event.full_signature());
+                    }
+                }
+            });
+            let path = Config::foundry_cache_dir().unwrap().join("signatures");
+            if path.is_file() {
+                let _ = fs::write_json_file(&path, &cached_signatures);
+            }
+        }
 
         handle_traces(result, &config, chain, self.label, self.debug).await?;
 
