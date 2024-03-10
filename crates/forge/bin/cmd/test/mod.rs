@@ -136,6 +136,9 @@ impl TestArgs {
         self.execute_tests().await
     }
 
+    /// Returns sources which include any tests to be executed.
+    /// If no filters are provided, sources are filtered by existence of test/invariant methods in them,
+    /// If filters are provided, sources are additionaly filtered by them.
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
@@ -148,11 +151,13 @@ impl TestArgs {
         )]);
         let output = project.compile()?;
 
+        // ABIs of all sources
         let abis = output
             .into_artifacts()
             .filter_map(|(id, artifact)| artifact.abi.map(|abi| (id, abi)))
             .collect::<BTreeMap<_, _>>();
 
+        // Filter sources by their abis and contract names.
         let sources = abis
             .iter()
             .filter(|(id, abi)| matches_contract(id, abi, filter))
