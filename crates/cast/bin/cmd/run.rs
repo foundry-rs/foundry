@@ -8,7 +8,9 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{
+    compile::ProjectCompiler, fs, is_known_system_sender, SYSTEM_TRANSACTION_TYPE,
+};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
@@ -16,6 +18,14 @@ use foundry_evm::{
     opts::EvmOpts,
     utils::configure_tx_env,
 };
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct CachedSignatures {
+    events: BTreeMap<String, String>,
+    functions: BTreeMap<String, String>,
+}
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -75,6 +85,9 @@ pub struct RunArgs {
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
+
+    #[arg(long, short, alias = "gs")]
+    pub generate_local_signatures: bool,
 }
 
 impl RunArgs {
@@ -160,15 +173,15 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.into_iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
-                    if is_known_system_sender(tx.from) ||
-                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                    if is_known_system_sender(tx.from)
+                        || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
@@ -224,6 +237,31 @@ impl RunArgs {
                 TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
+
+        if self.generate_local_signatures {
+            let project = config.project()?;
+            let compiler = ProjectCompiler::new().quiet(true);
+            let out = compiler.compile(&project)?;
+            let mut cached_signatures = CachedSignatures::default();
+            out.artifacts().for_each(|(_, artifact)| {
+                if let Some(abi) = &artifact.abi {
+                    for func in abi.functions() {
+                        cached_signatures
+                            .functions
+                            .insert(func.selector().to_string(), func.signature());
+                    }
+                    for event in abi.events() {
+                        cached_signatures
+                            .events
+                            .insert(event.selector().to_string(), event.full_signature());
+                    }
+                }
+            });
+            let path = Config::foundry_cache_dir().unwrap().join("signatures");
+            if path.is_file() {
+                let _ = fs::write_json_file(&path, &cached_signatures);
+            }
+        }
 
         handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
 
