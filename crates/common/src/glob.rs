@@ -46,6 +46,16 @@ impl GlobMatcher {
         if !path.starts_with("./") && self.as_str().starts_with("./") {
             return self.matcher.is_match(format!("./{}", path.display()));
         }
+        let glob_path = PathBuf::from(self.glob().glob());
+        if path.is_relative() && glob_path.is_absolute() {
+            let canonicalized_path = match path.canonicalize() {
+                Ok(p) => p,
+                Err(_e) => {
+                    return false;
+                }
+            };
+            return self.matcher.is_match(canonicalized_path);
+        }
 
         false
     }

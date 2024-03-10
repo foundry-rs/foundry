@@ -174,6 +174,43 @@ contract FailTest is DSTest {
     assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
 });
 
+// tests that using the --match-path option works with absolute paths
+forgetest!(can_test_with_match_path_absolute, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
+import "./test.sol";
+contract ATest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FailTest.t.sol",
+        r#"
+import "./test.sol";
+contract FailTest is DSTest {
+    function testNothing() external {
+        assertTrue(false);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let test_path = prj.root().join("src/ATest.t.sol");
+    let test_path = test_path.to_string_lossy();
+
+    cmd.args(["test", "--match-path", test_path.as_ref()]);
+    assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
+});
+
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
