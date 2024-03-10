@@ -140,6 +140,46 @@ impl EtherscanOpts {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Parser)]
+pub struct OKLinkOpts {
+    /// The OKLink (or equivalent) API key.
+    #[arg(long = "oklink-api-key", env = "OKLINK_API_KEY")]
+    #[serde(rename = "oklink_api_key", skip_serializing_if = "Option::is_none")]
+    pub apikey: Option<String>,
+}
+
+impl_figment_convert_cast!(OKLinkOpts);
+
+impl figment::Provider for OKLinkOpts {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("OKLinkOpts")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        Ok(Map::from([(Config::selected_profile(), self.dict())]))
+    }
+}
+
+impl OKLinkOpts {
+    /// Returns true if the OKLink API key is set.
+    pub fn has_key(&self) -> bool {
+        self.apikey.as_ref().filter(|key| !key.trim().is_empty()).is_some()
+    }
+
+    /// Returns the OKLink API key.
+    pub fn key(&self) -> Option<String> {
+        self.apikey.as_ref().filter(|key| !key.trim().is_empty()).cloned()
+    }
+
+    pub fn dict(&self) -> Dict {
+        let mut dict = Dict::new();
+        if let Some(key) = self.key() {
+            dict.insert("oklink_api_key".into(), key.into());
+        }
+        dict
+    }
+}
+
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Ethereum options")]
 pub struct EthereumOpts {
@@ -148,6 +188,9 @@ pub struct EthereumOpts {
 
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
+
+    #[command(flatten)]
+    pub oklink: OKLinkOpts,
 
     #[command(flatten)]
     pub wallet: WalletOpts,

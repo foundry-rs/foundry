@@ -8,7 +8,7 @@ use crate::{
 use alloy_primitives::Address;
 use eyre::Result;
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
-use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
+use foundry_cli::opts::{EtherscanOpts, OKLinkOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
@@ -53,6 +53,7 @@ pub struct VerifyBundle {
     pub known_contracts: ContractsByArtifact,
     pub project_paths: ProjectPathsArgs,
     pub etherscan: EtherscanOpts,
+    pub oklink: OKLinkOpts,
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
     pub via_ir: bool,
@@ -88,6 +89,7 @@ impl VerifyBundle {
             num_of_optimizations,
             known_contracts,
             etherscan: Default::default(),
+            oklink: Default::default(),
             project_paths,
             retry,
             verifier,
@@ -142,6 +144,7 @@ impl VerifyBundle {
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
+                    oklink: self.oklink.clone(),
                     rpc: Default::default(),
                     flatten: false,
                     force: false,
@@ -157,7 +160,7 @@ impl VerifyBundle {
                     guess_constructor_args: false,
                 };
 
-                return Some(verify)
+                return Some(verify);
             }
         }
         None
