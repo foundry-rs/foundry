@@ -52,8 +52,9 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
-/// This checks for:
-///    - prevrandao mixhash after merge
+/// - checks for prevrandao mixhash after merge
+/// - applies chain specifics: on Arbitrum `block.number` is the L1 block
+/// Should be called with proper chain id (retrieved from provider if not provided).
 pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::Env, block: &Block) {
     if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
         let block_number = block.header.number.unwrap_or_default();

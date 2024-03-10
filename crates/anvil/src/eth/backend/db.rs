@@ -1,7 +1,7 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
 use crate::{mem::state::trie_hash_db, revm::primitives::AccountInfo};
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::trie::KeccakHasher;
 use foundry_common::errors::FsPathError;
@@ -126,7 +126,11 @@ pub trait Db:
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
     /// Write all chain data to serialized bytes buffer
-    fn dump_state(&self, at: BlockEnv) -> DatabaseResult<Option<SerializableState>>;
+    fn dump_state(
+        &self,
+        at: BlockEnv,
+        best_number: U64,
+    ) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
@@ -196,7 +200,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         self.block_hashes.insert(number, hash);
     }
 
-    fn dump_state(&self, _at: BlockEnv) -> DatabaseResult<Option<SerializableState>> {
+    fn dump_state(
+        &self,
+        _at: BlockEnv,
+        _best_number: U64,
+    ) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
     }
 
@@ -329,6 +337,8 @@ pub struct SerializableState {
     /// Note: This is an Option for backwards compatibility: <https://github.com/foundry-rs/foundry/issues/5460>
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
+    /// The best block number of the state, can be different from block number (Arbitrum chain).
+    pub best_block_number: Option<U64>,
 }
 
 // === impl SerializableState ===
