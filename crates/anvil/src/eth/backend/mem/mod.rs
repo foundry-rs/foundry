@@ -734,12 +734,12 @@ impl Backend {
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
         // reset the block env
         if let Some(block) = state.block.clone() {
-            self.env.write().block = block;
-        }
+            self.env.write().block = block.clone();
 
-        // set the current best block number
-        if let Some(best_number) = state.best_block_number {
-            self.blockchain.storage.write().best_number = best_number;
+            // Set the current best block number.
+            // Defaults to block number for compatibility with existing state files.
+            self.blockchain.storage.write().best_number =
+                state.best_block_number.unwrap_or(block.number.to::<U64>());
         }
 
         if !self.db.write().await.load_state(state)? {
