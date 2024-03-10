@@ -400,8 +400,6 @@ impl FilledTransactionsState {
             script_config: self.script_config,
             script_wallets: self.script_wallets,
             build_data: self.build_data,
-            execution_data: self.execution_data,
-            execution_artifacts: self.execution_artifacts,
             sequence,
         })
     }
