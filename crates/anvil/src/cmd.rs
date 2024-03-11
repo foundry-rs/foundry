@@ -86,6 +86,10 @@ pub struct NodeArgs {
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS")]
     pub block_time: Option<u64>,
 
+    /// Slots in an epoch
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    pub slots_in_an_epoch: u64,
+
     /// Writes output of `anvil` as json to user-specified file.
     #[arg(long, value_name = "OUT_FILE")]
     pub config_out: Option<String>,
@@ -230,6 +234,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_optimism(self.evm_opts.optimism)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
+            .with_slots_in_an_epoch(self.slots_in_an_epoch)
     }
 
     fn account_generator(&self) -> AccountGenerator {

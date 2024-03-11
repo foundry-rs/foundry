@@ -1609,7 +1609,10 @@ impl SimpleCast {
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
     /// interface and their name.
-    /// ```ignore
+    ///
+    /// Note: This removes the constructor from the ABI before generating the interface.
+    ///
+    /// ```no_run
     /// use cast::{AbiPath, SimpleCast as Cast};
     /// # async fn foo() -> eyre::Result<()> {
     /// let path =
@@ -1620,7 +1623,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
-        let (contract_abis, contract_names) = match address_or_path {
+        let (mut contract_abis, contract_names) = match address_or_path {
             AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
                 let obj: ContractObject = serde_json::from_str(&file)?;
@@ -1643,9 +1646,12 @@ impl SimpleCast {
             }
         };
         contract_abis
-            .iter()
+            .iter_mut()
             .zip(contract_names)
             .map(|(contract_abi, name)| {
+                // need to filter out the constructor
+                contract_abi.constructor.take();
+
                 let source = foundry_cli::utils::abi_to_solidity(contract_abi, &name)?;
                 Ok(InterfaceSource {
                     name,

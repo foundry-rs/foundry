@@ -22,6 +22,8 @@ pub struct FuzzConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
+    /// Number of runs to execute and include in the gas report.
+    pub gas_report_samples: u32,
 }
 
 impl Default for FuzzConfig {
@@ -31,6 +33,7 @@ impl Default for FuzzConfig {
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
+            gas_report_samples: 256,
         }
     }
 }

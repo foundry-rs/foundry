@@ -50,6 +50,9 @@ pub struct InvariantFuzzTestResult {
     /// The entire inputs of the last run of the invariant campaign, used for
     /// replaying the run for collecting traces.
     pub last_run_inputs: Vec<BasicTxDetails>,
+
+    /// Additional traces used for gas report construction.
+    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 }
 
 #[derive(Clone, Debug)]

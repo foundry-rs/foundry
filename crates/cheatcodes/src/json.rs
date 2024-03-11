@@ -12,10 +12,14 @@ use std::{borrow::Cow, collections::BTreeMap, fmt::Write};
 impl Cheatcode for keyExistsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        let json = parse_json_str(json)?;
-        let values = select(&json, key)?;
-        let exists = !values.is_empty();
-        Ok(exists.abi_encode())
+        check_json_key_exists(json, key)
+    }
+}
+
+impl Cheatcode for keyExistsJsonCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { json, key } = self;
+        check_json_key_exists(json, key)
     }
 }
 
@@ -134,16 +138,7 @@ impl Cheatcode for parseJsonBytes32ArrayCall {
 impl Cheatcode for parseJsonKeysCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        let json = parse_json_str(json)?;
-        let values = select(&json, key)?;
-        let [value] = values[..] else {
-            bail!("key {key:?} must return exactly one JSON object");
-        };
-        let Value::Object(object) = value else {
-            bail!("JSON value at {key:?} is not an object");
-        };
-        let keys = object.keys().collect::<Vec<_>>();
-        Ok(keys.abi_encode())
+        parse_json_keys(json, key)
     }
 }
 
@@ -280,14 +275,21 @@ impl Cheatcode for writeJson_1Call {
     }
 }
 
-fn parse_json(json: &str, path: &str) -> Result {
+pub(super) fn check_json_key_exists(json: &str, key: &str) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, key)?;
+    let exists = !values.is_empty();
+    Ok(exists.abi_encode())
+}
+
+pub(super) fn parse_json(json: &str, path: &str) -> Result {
     let value = parse_json_str(json)?;
     let selected = select(&value, path)?;
     let sol = json_to_sol(&selected)?;
     Ok(encode(sol))
 }
 
-fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
+pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
     let value = parse_json_str(json)?;
     let values = select(&value, path)?;
     ensure!(!values.is_empty(), "no matching value found at {path:?}");
@@ -311,6 +313,19 @@ fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
     }
 }
 
+pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, key)?;
+    let [value] = values[..] else {
+        bail!("key {key:?} must return exactly one JSON object");
+    };
+    let Value::Object(object) = value else {
+        bail!("JSON value at {key:?} is not an object");
+    };
+    let keys = object.keys().collect::<Vec<_>>();
+    Ok(keys.abi_encode())
+}
+
 fn parse_json_str(json: &str) -> Result<Value> {
     serde_json::from_str(json).map_err(|e| fmt_err!("failed parsing JSON: {e}"))
 }
@@ -318,7 +333,7 @@ fn parse_json_str(json: &str) -> Result<Value> {
 fn json_to_sol(json: &[&Value]) -> Result<Vec<DynSolValue>> {
     let mut sol = Vec::with_capacity(json.len());
     for value in json {
-        sol.push(value_to_token(value)?);
+        sol.push(json_value_to_token(value)?);
     }
     Ok(sol)
 }
@@ -345,7 +360,7 @@ fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
 
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: <https://goessner.net/articles/JsonPath/>
-fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
+pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
     if !path.starts_with('$') {
         format!("${path}").into()
     } else {
@@ -359,12 +374,12 @@ fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
 #[instrument(target = "cheatcodes", level = "trace", ret)]
-pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
+pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
         Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),
         Value::Array(array) => {
-            array.iter().map(value_to_token).collect::<Result<_>>().map(DynSolValue::Array)
+            array.iter().map(json_value_to_token).collect::<Result<_>>().map(DynSolValue::Array)
         }
         value @ Value::Object(_) => {
             // See: [#3647](https://github.com/foundry-rs/foundry/pull/3647)
@@ -372,7 +387,7 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
                 serde_json::from_value(value.clone()).unwrap();
             ordered_object
                 .values()
-                .map(value_to_token)
+                .map(json_value_to_token)
                 .collect::<Result<_>>()
                 .map(DynSolValue::Tuple)
         }
@@ -400,18 +415,18 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
                         // used.
                         let fallback_s = f.to_string();
                         if let Ok(n) = fallback_s.parse() {
-                            return Ok(DynSolValue::Uint(n, 256))
+                            return Ok(DynSolValue::Uint(n, 256));
                         }
                         if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                            return Ok(DynSolValue::Int(n, 256))
+                            return Ok(DynSolValue::Int(n, 256));
                         }
                     }
 
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Uint(n, 256))
+                        return Ok(DynSolValue::Uint(n, 256));
                     }
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Int(n, 256))
+                        return Ok(DynSolValue::Int(n, 256));
                     }
                 }
             }

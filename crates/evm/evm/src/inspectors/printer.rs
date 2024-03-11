@@ -1,7 +1,6 @@
-use alloy_primitives::{Address, Bytes};
 use revm::{
-    interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    Database, EVMData, Inspector,
+    interpreter::{opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+    Database, EvmContext, Inspector,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -11,13 +10,13 @@ pub struct TracePrinter;
 impl<DB: Database> Inspector<DB> for TracePrinter {
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         let opcode = interp.current_opcode();
         let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
         let gas_remaining = interp.gas.remaining();
         println!(
             "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}, Data: 0x{}",
-            data.journaled_state.depth(),
+            ecx.journaled_state.depth(),
             interp.program_counter(),
             gas_remaining,
             gas_remaining,
@@ -31,11 +30,12 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         );
     }
 
+    #[inline]
     fn call(
         &mut self,
-        _data: &mut EVMData<'_, DB>,
+        _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    ) -> Option<CallOutcome> {
         println!(
             "SM CALL:   {},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.contract,
@@ -44,14 +44,15 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             inputs.transfer,
             inputs.input.len(),
         );
-        (InstructionResult::Continue, Gas::new(0), Bytes::new())
+        None
     }
 
+    #[inline]
     fn create(
         &mut self,
-        _data: &mut EVMData<'_, DB>,
+        _context: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> Option<CreateOutcome> {
         println!(
             "CREATE CALL: caller:{}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
@@ -60,6 +61,6 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             hex::encode(&inputs.init_code),
             inputs.gas_limit
         );
-        (InstructionResult::Continue, None, Gas::new(0), Bytes::new())
+        None
     }
 }
