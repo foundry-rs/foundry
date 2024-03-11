@@ -159,22 +159,22 @@ ethers-middleware = { version = "2.0.14", default-features = false }
 ethers-solc = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-providers = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90" }
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-providers = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
 alloy-primitives = { version = "0.6.3", features = ["getrandom"] }
 alloy-dyn-abi = "0.6.3"
 alloy-json-abi = "0.6.3"
