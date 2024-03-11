@@ -299,9 +299,12 @@ impl TestArgs {
         // Set up trace identifiers.
         let known_contracts = runner.known_contracts.clone();
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut identifier = TraceIdentifiers::new()
-            .with_local(&known_contracts)
-            .with_etherscan(&config, remote_chain_id)?;
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+        // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
+        if !self.gas_report {
+            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+        }
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -424,12 +427,12 @@ impl TestArgs {
                         // setUp and constructor.
                         for (kind, arena) in &result.traces {
                             if !matches!(kind, TraceKind::Execution) {
-                                decoder.identify(arena, &mut local_identifier);
+                                decoder.identify(arena, &mut identifier);
                             }
                         }
 
                         for arena in trace {
-                            decoder.identify(arena, &mut local_identifier);
+                            decoder.identify(arena, &mut identifier);
                             gas_report.analyze([arena], &decoder).await;
                         }
                     }
