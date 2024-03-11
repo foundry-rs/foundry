@@ -21,7 +21,7 @@ use foundry_config::{figment, merge_impl_figment_convert, Chain, Config};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
-use revm_primitives::db::Database;
+use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
 use std::{ops::Range, path::PathBuf};
 use yansi::Paint;
 
@@ -312,8 +312,10 @@ impl VerifyBytecodeArgs {
         }
 
         configure_tx_env(&mut env, &transaction);
+        let env_with_handler =
+            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
         // Get the nonce of the contract creator at the block where the contract was created
-        let deploy_result = match executor.deploy_with_env(env.clone(), None) {
+        let deploy_result = match executor.deploy_with_env(env_with_handler, None) {
             Ok(result) => result,
             Err(error) => {
                 eyre::bail!(
