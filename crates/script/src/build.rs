@@ -298,8 +298,8 @@ impl CompiledState {
                 .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
 
             if !froms.all(|from| available_signers.contains(&from.to_alloy())) {
-                // IF we are missing required signers, execute script as we might need to collect private
-                // keys from the execution.
+                // IF we are missing required signers, execute script as we might need to collect
+                // private keys from the execution.
                 let executed = self.link()?.prepare_execution().await?.execute().await?;
                 (
                     executed.args,
