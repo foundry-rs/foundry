@@ -5,7 +5,7 @@ use crate::{
     utils::{self, ethers_http_provider},
 };
 use alloy_primitives::{address, U256 as rU256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest as CallRequest},
     BlockNumberOrTag,

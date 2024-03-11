@@ -370,7 +370,6 @@ impl InspectorStack {
                 record_stack_snapshots: StackSnapshotType::None,
                 record_state_diff: false,
                 exclude_precompile_calls: false,
-                record_call_return_data: true,
                 record_logs: true,
             })
         });
@@ -443,6 +442,8 @@ impl InspectorStack {
         gas_limit: u64,
         value: U256,
     ) -> (InterpreterResult, Option<Address>) {
+        let ecx = &mut ecx.inner;
+
         ecx.db.commit(ecx.journaled_state.state.clone());
 
         let nonce = ecx
@@ -485,7 +486,7 @@ impl InspectorStack {
             let res = evm.transact();
 
             // need to reset the env in case it was modified via cheatcodes during execution
-            ecx.env = evm.context.evm.env;
+            ecx.env = evm.context.evm.inner.env;
             res
         };
 

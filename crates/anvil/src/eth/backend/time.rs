@@ -1,16 +1,13 @@
 //! Manages the block time
 
 use crate::eth::error::BlockchainError;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 
 /// Returns the `Utc` datetime for the given seconds since unix epoch
 pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
-    DateTime::<Utc>::from_naive_utc_and_offset(
-        NaiveDateTime::from_timestamp_opt(secs as i64, 0).unwrap(),
-        Utc,
-    )
+    DateTime::from_timestamp(secs as i64, 0).unwrap()
 }
 
 /// Manages block time
