@@ -7,7 +7,7 @@ use eyre::{OptionExt, Result};
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::{
     opts::{CoreBuildArgs, EtherscanOpts},
-    utils::{self, LoadConfig},
+    utils::{self, read_constructor_args_file, LoadConfig},
 };
 use foundry_common::{
     compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
@@ -115,6 +115,7 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
+        // Setup
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
         println!(
@@ -122,10 +123,8 @@ impl VerifyBytecodeArgs {
             Paint::green(self.contract.name.clone()),
             Paint::green(self.address.to_string())
         );
-
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
-
         let chain = match config.get_rpc_url() {
             Some(_) => {
                 let chain_id = provider.get_chain_id().await?;
@@ -151,8 +150,19 @@ impl VerifyBytecodeArgs {
                 eyre::bail!("No source code found for contract at address {}", self.address);
             }
         };
-        // TODO: @Yash - Check if the constructor args match the provided constructor args else bail
-
+        let provided_constructor_args = if let Some(args) = self.constructor_args.to_owned() {
+            args
+        } else if let Some(path) = self.constructor_args_path.to_owned() {
+            // Read from file
+            let res = read_constructor_args_file(path)?;
+            // Convert res to Bytes
+            res.join("")
+        } else {
+            constructor_args.to_string()
+        };
+        if provided_constructor_args != constructor_args.to_string() {
+            eyre::bail!("Constructor args do not match, verification will fail.");
+        }
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
 
