@@ -3041,6 +3041,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "yansi 0.5.1",
 ]
 
 [[package]]

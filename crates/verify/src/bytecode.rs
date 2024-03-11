@@ -23,6 +23,7 @@ use foundry_evm::{
 };
 use revm_primitives::db::Database;
 use std::{ops::Range, path::PathBuf};
+use yansi::Paint;
 
 merge_impl_figment_convert!(VerifyBytecodeArgs, build_opts);
 /// CLI arguments for `forge verify-bytecode`.
@@ -115,9 +116,13 @@ impl VerifyBytecodeArgs {
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
-        // let provider = utils::get_provider(&config)?;
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
-        tracing::info!("Checking bytecode contract at address {}", self.address);
+        println!(
+            "Verifying bytecode for contract {} at address {}",
+            Paint::green(self.contract.name.clone()),
+            Paint::green(self.address.to_string())
+        );
+
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
 
@@ -213,8 +218,22 @@ impl VerifyBytecodeArgs {
             &constructor_args,
             &self.verification_type,
         )?;
-        tracing::info!("Creation code match: {} | Type: {:?}", res.0, res.1);
 
+        match res.0 {
+            true => {
+                println!(
+                    "{} with status {}",
+                    Paint::green("Creation code matched").bold(),
+                    Paint::green(res.1.unwrap()).bold()
+                );
+            }
+            false => {
+                println!(
+                    "{}",
+                    Paint::red("Creation code did not match - This may be due to varying compiler settings").bold()
+                );
+            }
+        }
         // Get contract creation block
         let simulation_block = match self.block {
             Some(block) => match block {
@@ -314,7 +333,25 @@ impl VerifyBytecodeArgs {
             &constructor_args,
             &self.verification_type,
         )?;
-        tracing::info!("Runtime code match: {} | Type: {:?}", res.0, res.1);
+        match res.0 {
+            true => {
+                println!(
+                    "{} with status {}",
+                    Paint::green("Runtime code matched").bold(),
+                    Paint::green(res.1.unwrap()).bold()
+                );
+            }
+            false => {
+                println!(
+                    "{}",
+                    Paint::red(
+                        "Runtime code did not match - This may be due to varying compiler settings"
+                    )
+                    .bold()
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -411,6 +448,9 @@ fn try_partial_match(
             // Extract metdata from both
             local_bytecode = extract_metadata_hash(local_bytecode)?;
             bytecode = extract_metadata_hash(bytecode)?;
+
+            tracing::info!("Metadata extracted local bytecode: {:?}", hex::encode(local_bytecode));
+            tracing::info!("Metadata extracted bytecode: {:?}", hex::encode(bytecode));
 
             // Now compare the local code and bytecode
             Ok(local_bytecode.starts_with(bytecode))
