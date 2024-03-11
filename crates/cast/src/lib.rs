@@ -6,7 +6,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
-use chrono::NaiveDateTime;
+use chrono::DateTime;
 use ethers_core::{
     types::{
         transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, NameOrAddress,
@@ -395,8 +395,7 @@ where
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
         let timestamp_str =
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime =
-            NaiveDateTime::from_timestamp_opt(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
+        let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
