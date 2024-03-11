@@ -299,8 +299,7 @@ impl TestArgs {
         // Set up trace identifiers.
         let known_contracts = runner.known_contracts.clone();
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut identifier = TraceIdentifiers::new()
-            .with_local(&known_contracts);
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
         // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
         if !self.gas_report {
