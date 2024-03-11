@@ -4,7 +4,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
 use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
-use foundry_block_explorers::Client;
+use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::{
     opts::{CoreBuildArgs, EtherscanOpts},
     utils::{self, LoadConfig},
@@ -151,10 +151,6 @@ impl VerifyBytecodeArgs {
                 eyre::bail!("No source code found for contract at address {}", self.address);
             }
         };
-
-        tracing::info!("Constructor args: {:?}", constructor_args);
-        tracing::info!("Provided constructor args: {:?}", self.constructor_args);
-
         // TODO: @Yash - Check if the constructor args match the provided constructor args else bail
 
         // Get creation tx hash
@@ -208,9 +204,28 @@ impl VerifyBytecodeArgs {
             }
         };
 
+        // Etherscan compilation metadata
+        let etherscan_metadata = Metadata {
+            compiler_version: source_code.items[0].compiler_version.clone(),
+            source_code: source_code.items[0].source_code.clone(),
+            contract_name: source_code.items[0].contract_name.clone(),
+            constructor_arguments: source_code.items[0].constructor_arguments.clone(),
+            abi: source_code.items[0].abi.clone(),
+            optimization_used: source_code.items[0].optimization_used,
+            runs: source_code.items[0].runs,
+            evm_version: source_code.items[0].evm_version.clone(),
+            swarm_source: source_code.items[0].swarm_source.clone(),
+            license_type: source_code.items[0].license_type.clone(),
+            proxy: source_code.items[0].proxy,
+            implementation: None,
+            library: "".to_string(),
+        };
+
+        find_mismatch_in_settings(&etherscan_metadata, &config)?;
         // Append constructor args to the local_bytecode
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
+
         // Cmp creation code with locally built bytecode and maybe_creation_code
         let res = try_match(
             local_bytecode_vec.as_slice(),
@@ -412,7 +427,6 @@ fn try_partial_match(
 ) -> Result<bool> {
     // 1. Check length of constructor args
     if constructor_args.is_empty() {
-        tracing::info!("Constructor args are empty");
         // Assume metadata is at the end of the bytecode
         local_bytecode = extract_metadata_hash(local_bytecode)?;
         bytecode = extract_metadata_hash(bytecode)?;
@@ -431,32 +445,23 @@ fn try_partial_match(
         (Some(onchain_range), Some(local_range)) => {
             // Check if constructor args are at the end of the bytecode
             if onchain_args_at_end {
-                tracing::info!("onchain_args_at_end");
                 bytecode = &bytecode[..onchain_range.start];
-            } else {
-                // Remove the constructor args from where ever they are located
-                // Do we need to remove them if they're not at the end??
             }
             if local_args_at_end {
-                tracing::info!("local_args_at_end");
                 local_bytecode = &local_bytecode[..local_range.start];
-            } else {
-                // Remove the constructor args from where ever they are located
-                // Do we need to remove them if they're not at the end??
             }
+
+            // Note: If the constructor_args are not at the end of the bytecode we just assume that
+            // metadata hash is.
 
             // Extract metdata from both
             local_bytecode = extract_metadata_hash(local_bytecode)?;
             bytecode = extract_metadata_hash(bytecode)?;
 
-            tracing::info!("Metadata extracted local bytecode: {:?}", hex::encode(local_bytecode));
-            tracing::info!("Metadata extracted bytecode: {:?}", hex::encode(bytecode));
-
             // Now compare the local code and bytecode
             Ok(local_bytecode.starts_with(bytecode))
         }
         (None, None) => {
-            tracing::info!("No constructor args found in either bytecode");
             // Likely that this is runtime code. In that case extract_metadata and match
             local_bytecode = extract_metadata_hash(local_bytecode)?;
             bytecode = extract_metadata_hash(bytecode)?;
@@ -464,18 +469,7 @@ fn try_partial_match(
             // Now compare the local code and bytecode
             Ok(local_bytecode.starts_with(bytecode))
         }
-        (Some(onchain_range), None) => {
-            tracing::info!("Constructor args found in onchain bytecode but not in local bytecode");
-            tracing::info!("onchain_range: {:?}", onchain_range);
-            tracing::info!("onchain_args_at_end: {:?}", onchain_args_at_end);
-            Ok(false)
-        }
-        (None, Some(local_range)) => {
-            tracing::info!("Constructor args found in local bytecode but not in onchain bytecode");
-            tracing::info!("local_range: {:?}", local_range);
-            tracing::info!("local_args_at_end: {:?}", local_args_at_end);
-            Ok(false)
-        }
+        _ => Ok(false),
     }
 }
 
@@ -491,7 +485,6 @@ fn constructor_args_range(
         start = bytecode.len() - constructor_args.len();
         end = bytecode.len();
 
-        tracing::info!("Constructor args found at end of bytecode");
         return (Some(start..end), true);
     }
     for i in 0..bytecode.len() {
@@ -516,4 +509,37 @@ fn extract_metadata_hash(bytecode: &[u8]) -> Result<&[u8]> {
 
     // Now discard the metadata from the bytecode
     Ok(&bytecode[..bytecode.len() - 2 - metadata_len as usize])
+}
+
+fn find_mismatch_in_settings(etherscan_settings: &Metadata, local_settings: &Config) -> Result<()> {
+    println!("Scanning for mismatch in compiler settings...");
+    if etherscan_settings.evm_version != local_settings.evm_version.to_string().to_lowercase() {
+        println!(
+            "{} - local: {} VS onchain: {}",
+            Paint::red("EVM version mismatch").bold(),
+            local_settings.evm_version,
+            etherscan_settings.evm_version
+        );
+    }
+    let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
+    if etherscan_settings.optimization_used != local_optimizer {
+        println!(
+            "{} - local: {} VS onchain: {}",
+            Paint::red("Optimizer mismatch").bold(),
+            local_settings.optimizer,
+            etherscan_settings.optimization_used
+        );
+    }
+    if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
+        println!(
+            "{} - local: {} VS onchain: {}",
+            Paint::red("Optimizer runs mismatch").bold(),
+            local_settings.optimizer_runs,
+            etherscan_settings.runs
+        );
+    }
+
+    // TODO: Compiler Version Check
+
+    Ok(())
 }
