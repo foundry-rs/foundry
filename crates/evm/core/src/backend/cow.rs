@@ -71,7 +71,7 @@ impl<'a> CowBackend<'a> {
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
-        env.env = evm.context.evm.env;
+        env.env = evm.context.evm.inner.env;
 
         Ok(res)
     }
