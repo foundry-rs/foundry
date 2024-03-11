@@ -71,8 +71,11 @@ impl FuzzedExecutor {
         // Stores the result and calldata of the last failed call, if any.
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
 
-        // Stores the last successful call trace
-        let traces: RefCell<Option<CallTraceArena>> = RefCell::default();
+        // We want to collect at least one trace which will be displayed to user.
+        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+
+        // Stores up to `max_traces_to_collect` traces.
+        let traces: RefCell<Vec<CallTraceArena>> = RefCell::default();
 
         // Stores coverage information for all fuzz cases
         let coverage: RefCell<Option<HitMaps>> = RefCell::default();
@@ -103,8 +106,12 @@ impl FuzzedExecutor {
                     if first_case.is_none() {
                         first_case.replace(case.case);
                     }
-
-                    traces.replace(case.traces);
+                    if let Some(call_traces) = case.traces {
+                        if traces.borrow().len() == max_traces_to_collect {
+                            traces.borrow_mut().pop();
+                        }
+                        traces.borrow_mut().push(call_traces);
+                    }
 
                     if let Some(prev) = coverage.take() {
                         // Safety: If `Option::or` evaluates to `Some`, then `call.coverage` must
@@ -137,6 +144,10 @@ impl FuzzedExecutor {
         });
 
         let (calldata, call) = counterexample.into_inner();
+
+        let mut traces = traces.into_inner();
+        let last_run_traces = if run_result.is_ok() { traces.pop() } else { call.traces.clone() };
+
         let mut result = FuzzTestResult {
             first_case: first_case.take().unwrap_or_default(),
             gas_by_case: gas_by_case.take(),
@@ -146,7 +157,8 @@ impl FuzzedExecutor {
             decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
             labeled_addresses: call.labels,
-            traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
+            traces: last_run_traces,
+            gas_report_traces: traces,
             coverage: coverage.into_inner(),
         };
 

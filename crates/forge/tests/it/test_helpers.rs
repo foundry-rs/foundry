@@ -94,6 +94,7 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
                 max_fuzz_dictionary_values: 10_000,
                 max_calldata_fuzz_dictionary_addresses: 0,
             },
+            gas_report_samples: 256,
         })
         .invariant(InvariantConfig {
             runs: 256,
@@ -112,6 +113,7 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
             shrink_run_limit: 2usize.pow(18u32),
             preserve_state: false,
             max_assume_rejects: 65536,
+            gas_report_samples: 256,
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")
