@@ -4,9 +4,8 @@ use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_primitives::U256;
-use alloy_providers::provider::{Provider, TempProvider};
+use alloy_providers::tmp::{Provider, TempProvider};
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::BoxTransport;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
 use foundry_common::types::ToAlloy;
@@ -18,10 +17,13 @@ use std::{
 };
 use url::ParseError;
 
-use super::tower::RetryBackoffLayer;
+use super::{
+    runtime_transport::RuntimeTransport,
+    tower::{RetryBackoffLayer, RetryBackoffService},
+};
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<BoxTransport>;
+pub type RetryProvider = Provider<RetryBackoffService<RuntimeTransport>>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -232,7 +234,7 @@ impl ProviderBuilder {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
         // todo: provider polling interval
-        Ok(Provider::new_with_client(client.boxed()))
+        Ok(Provider::new_with_client(client))
     }
 }
 

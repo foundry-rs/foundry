@@ -1257,14 +1257,14 @@ impl Backend {
                 };
                 let mut is_match: bool = true;
                 if !filter.address.is_empty() && filter.has_topics() {
-                    if !params.filter_address(&log) || !params.filter_topics(&log) {
+                    if !params.filter_address(&log.address) || !params.filter_topics(&log.topics) {
                         is_match = false;
                     }
                 } else if !filter.address.is_empty() {
-                    if !params.filter_address(&log) {
+                    if !params.filter_address(&log.address) {
                         is_match = false;
                     }
-                } else if filter.has_topics() && !params.filter_topics(&log) {
+                } else if filter.has_topics() && !params.filter_topics(&log.topics) {
                     is_match = false;
                 }
 
