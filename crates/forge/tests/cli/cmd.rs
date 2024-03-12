@@ -393,7 +393,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/",);
+    assert_eq!(content, "forge-std/=lib/forge-std/src/",);
 });
 
 // checks that forge can init with template
