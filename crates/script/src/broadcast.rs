@@ -1,9 +1,6 @@
 use crate::{
-    build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData},
-    sequence::ScriptSequenceKind,
-    verify::BroadcastedState,
-    ScriptArgs, ScriptConfig,
+    build::LinkedBuildData, sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs,
+    ScriptConfig,
 };
 
 use super::receipts;
@@ -170,8 +167,6 @@ pub struct BundledState {
     pub script_config: ScriptConfig,
     pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_artifacts: ExecutionArtifacts,
     pub sequence: ScriptSequenceKind,
 }
 
@@ -408,8 +403,6 @@ impl BundledState {
             args: self.args,
             script_config: self.script_config,
             build_data: self.build_data,
-            execution_data: self.execution_data,
-            execution_artifacts: self.execution_artifacts,
             sequence: self.sequence,
         })
     }
