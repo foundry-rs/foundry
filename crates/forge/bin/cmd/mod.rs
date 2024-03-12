@@ -56,7 +56,6 @@ pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod remove;
-pub mod script;
 pub mod selectors;
 pub mod snapshot;
 pub mod test;

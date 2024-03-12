@@ -17,7 +17,7 @@ use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
@@ -438,7 +438,7 @@ impl ChiselDispatcher {
                                     println!(
                                         "{}: {}",
                                         Paint::yellow(format!("[{}]", stack.len() - i - 1)),
-                                        Paint::cyan(format!("0x{:02x}", stack.data()[i]))
+                                        Paint::cyan(format!("0x{:02x}", stack[i]))
                                     );
                                 });
                             }
@@ -893,11 +893,6 @@ impl ChiselDispatcher {
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let mut etherscan_identifier = EtherscanIdentifier::new(
-            &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id(),
-        )?;
-
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::new(
@@ -906,9 +901,14 @@ impl ChiselDispatcher {
             )?)
             .build();
 
-        for (_, trace) in &mut result.traces {
-            // decoder.identify(trace, &mut local_identifier);
-            decoder.identify(trace, &mut etherscan_identifier);
+        let mut identifier = TraceIdentifiers::new().with_etherscan(
+            &session_config.foundry_config,
+            session_config.evm_opts.get_remote_chain_id(),
+        )?;
+        if !identifier.is_empty() {
+            for (_, trace) in &mut result.traces {
+                decoder.identify(trace, &mut identifier);
+            }
         }
         Ok(decoder)
     }

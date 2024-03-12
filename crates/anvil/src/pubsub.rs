@@ -152,23 +152,12 @@ pub fn filter_logs(
 ) -> Vec<AlloyLog> {
     /// Determines whether to add this log
     fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
-        let log = AlloyLog {
-            address: l.address,
-            topics: l.topics().to_vec(),
-            data: l.data.data.clone(),
-            block_hash: None,
-            block_number: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        };
         if params.filter.is_some() {
             let block_number = block.header.number;
             if !params.filter_block_range(block_number) ||
                 !params.filter_block_hash(block_hash) ||
-                !params.filter_address(&log) ||
-                !params.filter_topics(&log)
+                !params.filter_address(&l.address) ||
+                !params.filter_topics(l.topics())
             {
                 return false;
             }

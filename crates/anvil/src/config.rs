@@ -17,7 +17,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{hex, utils::Unit, U256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},
@@ -34,7 +34,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
-    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv},
+    revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
@@ -170,6 +170,8 @@ pub struct NodeConfig {
     pub disable_default_create2_deployer: bool,
     /// Enable Optimism deposit transaction
     pub enable_optimism: bool,
+    /// Slots in an epoch
+    pub slots_in_an_epoch: u64,
 }
 
 impl NodeConfig {
@@ -404,6 +406,7 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             enable_optimism: false,
+            slots_in_an_epoch: 32,
         }
     }
 }
@@ -593,6 +596,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_no_mining(mut self, no_mining: bool) -> Self {
         self.no_mining = no_mining;
+        self
+    }
+
+    /// Sets the slots in an epoch
+    #[must_use]
+    pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
+        self.slots_in_an_epoch = slots_in_an_epoch;
         self
     }
 
@@ -810,8 +820,8 @@ impl NodeConfig {
     pub(crate) async fn setup(&mut self) -> mem::Backend {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::default();
-        cfg.spec_id = self.get_hardfork().into();
+        let mut cfg =
+            CfgEnvWithHandlerCfg::new_with_spec_id(CfgEnv::default(), self.get_hardfork().into());
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
@@ -819,10 +829,10 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-        cfg.optimism = self.enable_optimism;
+        cfg.handler_cfg.is_optimism = self.enable_optimism;
 
-        let mut env = revm::primitives::Env {
-            cfg,
+        let env = revm::primitives::Env {
+            cfg: cfg.cfg_env,
             block: BlockEnv {
                 gas_limit: self.gas_limit,
                 basefee: self.get_base_fee(),
@@ -830,7 +840,10 @@ impl NodeConfig {
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
-        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
+        let mut env = EnvWithHandlerCfg::new(Box::new(env), cfg.handler_cfg);
+
+        let fees =
+            FeeManager::new(cfg.handler_cfg.spec_id, self.get_base_fee(), self.get_gas_price());
 
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
@@ -900,7 +913,7 @@ impl NodeConfig {
     pub async fn setup_fork_db(
         &mut self,
         eth_rpc_url: String,
-        env: &mut revm::primitives::Env,
+        env: &mut EnvWithHandlerCfg,
         fees: &FeeManager,
     ) -> (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) {
         let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await;
@@ -922,7 +935,7 @@ impl NodeConfig {
     pub async fn setup_fork_db_config(
         &mut self,
         eth_rpc_url: String,
-        env: &mut revm::primitives::Env,
+        env: &mut EnvWithHandlerCfg,
         fees: &FeeManager,
     ) -> (ForkedDatabase, ClientForkConfig) {
         // TODO make provider agnostic
@@ -951,7 +964,7 @@ impl NodeConfig {
                     provider.get_chain_id().await.expect("Failed to fetch network chain ID");
                 if alloy_chains::NamedChain::Mainnet == chain_id.to::<u64>() {
                     let hardfork: Hardfork = fork_block_number.into();
-                    env.cfg.spec_id = hardfork.into();
+                    env.handler_cfg.spec_id = hardfork.into();
                     self.hardfork = Some(hardfork);
                 }
                 Some(U256::from(chain_id))
@@ -1060,7 +1073,7 @@ latest block number: {latest_block}"
         };
         let override_chain_id = self.chain_id;
 
-        let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(*env.env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
@@ -1091,7 +1104,12 @@ latest block number: {latest_block}"
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
         };
 
-        (ForkedDatabase::new(backend, block_chain_db), config)
+        let mut db = ForkedDatabase::new(backend, block_chain_db);
+
+        // need to insert the forked block's hash
+        db.insert_block_hash(U256::from(config.block_number), config.block_hash);
+
+        (db, config)
     }
 }
 

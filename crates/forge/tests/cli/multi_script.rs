@@ -61,6 +61,5 @@ forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
         .broadcast(ScriptOutcome::MissingWallet)
         .load_private_keys(&[0, 1])
         .await
-        .arg("--multi")
         .resume(ScriptOutcome::OkBroadcast);
 });

@@ -7,10 +7,7 @@ use forge::{
     gas_report::GasReport,
     inspectors::CheatsConfig,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoderBuilder, TraceKind,
-    },
+    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
@@ -31,6 +28,7 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_debugger::Debugger;
+use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -145,6 +143,10 @@ impl TestArgs {
         // Explicitly enable isolation for gas reports for more correct gas accounting
         if self.gas_report {
             evm_opts.isolate = true;
+        } else {
+            // Do not collect gas report traces if gas report is not enabled.
+            config.fuzz.gas_report_samples = 0;
+            config.invariant.gas_report_samples = 0;
         }
 
         // Set up the project.
@@ -296,9 +298,13 @@ impl TestArgs {
 
         // Set up trace identifiers.
         let known_contracts = runner.known_contracts.clone();
-        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+        // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
+        if !self.gas_report {
+            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+        }
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -313,7 +319,7 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
-            .with_local_identifier_abis(&local_identifier)
+            .with_known_contracts(&known_contracts)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
@@ -379,8 +385,7 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
-                        decoder.identify(arena, &mut local_identifier);
-                        decoder.identify(arena, &mut etherscan_identifier);
+                        decoder.identify(arena, &mut identifier);
                     }
 
                     // verbosity:
@@ -411,7 +416,26 @@ impl TestArgs {
                 }
 
                 if let Some(gas_report) = &mut gas_report {
-                    gas_report.analyze(&result.traces, &decoder).await;
+                    gas_report
+                        .analyze(result.traces.iter().map(|(_, arena)| arena), &decoder)
+                        .await;
+
+                    for trace in result.gas_report_traces.iter() {
+                        decoder.clear_addresses();
+
+                        // Re-execute setup and deployment traces to collect identities created in
+                        // setUp and constructor.
+                        for (kind, arena) in &result.traces {
+                            if !matches!(kind, TraceKind::Execution) {
+                                decoder.identify(arena, &mut identifier);
+                            }
+                        }
+
+                        for arena in trace {
+                            decoder.identify(arena, &mut identifier);
+                            gas_report.analyze([arena], &decoder).await;
+                        }
+                    }
                 }
             }
 
@@ -433,7 +457,9 @@ impl TestArgs {
         outcome.decoder = Some(decoder);
 
         if let Some(gas_report) = gas_report {
-            shell::println(gas_report.finalize())?;
+            let finalized = gas_report.finalize();
+            shell::println(&finalized)?;
+            outcome.gas_report = Some(finalized);
         }
 
         if !outcome.results.is_empty() {
@@ -530,6 +556,7 @@ fn list(
 mod tests {
     use super::*;
     use foundry_config::Chain;
+    use foundry_test_utils::forgetest_async;
 
     #[test]
     fn watch_parse() {
@@ -563,4 +590,62 @@ mod tests {
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
     }
+
+    forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
+        prj.insert_ds_test();
+        prj.add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+
+import "./test.sol";
+
+contract Foo {
+    function foo() public {}
+}
+
+contract Bar {
+    function bar() public {}
+}
+
+
+contract FooBarTest is DSTest {
+    Foo public targetContract;
+
+    function setUp() public {
+        targetContract = new Foo();
+    }
+
+    function invariant_dummy() public {
+        assertTrue(true);
+    }
+
+    function testFuzz_bar(uint256 _val) public {
+        (new Bar()).bar();
+    }
+}
+        "#,
+        )
+        .unwrap();
+
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--gas-report",
+            "--root",
+            &prj.root().to_string_lossy(),
+            "--silent",
+        ]);
+
+        let outcome = args.run().await.unwrap();
+        let gas_report = outcome.gas_report.unwrap();
+
+        assert_eq!(gas_report.contracts.len(), 3);
+        let call_cnts = gas_report
+            .contracts
+            .values()
+            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.calls.len())))
+            .collect::<Vec<_>>();
+        // assert that all functions were called at least 100 times
+        assert!(call_cnts.iter().all(|c| *c > 100));
+    });
 }
