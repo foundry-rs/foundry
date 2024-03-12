@@ -578,6 +578,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
     }
 
+    /// Returns true for post Cancun
+    pub fn is_eip4844(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::CANCUN as u8)
+    }
+
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
         self.env.read().handler_cfg.is_optimism
@@ -597,6 +602,13 @@ impl Backend {
             return Ok(());
         }
         Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
+    }
+
+    pub fn ensure_eip4844_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip4844() {
+            return Ok(());
+        }
+        Err(BlockchainError::EIP4844TransactionUnsupportedAtHardfork)
     }
 
     /// Returns an error if op-stack deposits are not active
@@ -1971,6 +1983,12 @@ impl Backend {
                 .base_fee_per_gas
                 .map_or(self.base_fee().to::<u128>(), |b| b as u128)
                 .checked_add(t.max_priority_fee_per_gas)
+                .unwrap_or(u128::MAX),
+            TypedTransaction::EIP4844(t) => block
+                .header
+                .base_fee_per_gas
+                .map_or(self.base_fee().to::<u128>(), |b| b as u128)
+                .checked_add(t.tx().tx().max_priority_fee_per_gas)
                 .unwrap_or(u128::MAX),
             TypedTransaction::Deposit(_) => 0_u128,
         };
