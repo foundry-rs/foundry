@@ -495,7 +495,7 @@ impl Backend {
 
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> u64 {
-        self.env.read().block.number.try_into().unwrap_or(u64::MAX)
+        self.blockchain.storage.read().best_number.try_into().unwrap_or(u64::MAX)
     }
 
     /// Sets the block number
@@ -721,7 +721,8 @@ impl Backend {
     /// Get the current state.
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
-        let state = self.db.read().await.dump_state(at)?;
+        let best_number = self.blockchain.storage.read().best_number;
+        let state = self.db.read().await.dump_state(at, best_number)?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -742,7 +743,12 @@ impl Backend {
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
         // reset the block env
         if let Some(block) = state.block.clone() {
-            self.env.write().block = block;
+            self.env.write().block = block.clone();
+
+            // Set the current best block number.
+            // Defaults to block number for compatibility with existing state files.
+            self.blockchain.storage.write().best_number =
+                state.best_block_number.unwrap_or(block.number.to::<U64>());
         }
 
         if !self.db.write().await.load_state(state)? {
@@ -922,8 +928,9 @@ impl Backend {
             let ExecutedTransactions { block, included, invalid } = executed_tx;
             let BlockInfo { block, transactions, receipts } = block;
 
+            let mut storage = self.blockchain.storage.write();
             let header = block.header.clone();
-            let block_number: U64 = env.block.number.to::<U64>();
+            let block_number = storage.best_number.saturating_add(U64::from(1));
 
             trace!(
                 target: "backend",
@@ -933,7 +940,6 @@ impl Backend {
                 transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
 
-            let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
