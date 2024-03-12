@@ -214,10 +214,7 @@ impl DebugStep {
 
     /// Returns `true` if the opcode modifies memory.
     pub fn opcode_modifies_memory(&self) -> bool {
-        self.instruction
-            .opcode()
-            .and_then(|opcode| OpCode::new(opcode))
-            .map_or(false, |opcode| opcodes::modifies_memory(opcode))
+        self.instruction.opcode().and_then(OpCode::new).map_or(false, opcodes::modifies_memory)
     }
 }
 
