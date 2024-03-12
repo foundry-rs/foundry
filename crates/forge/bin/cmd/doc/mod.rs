@@ -66,7 +66,7 @@ impl DocArgs {
         let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
         let project = config.project()?;
-        let compiler = ProjectCompiler::new();
+        let compiler = ProjectCompiler::new().quiet(true);
         let _output = compiler.compile(&project)?;
 
         let mut doc_config = config.doc.clone();
