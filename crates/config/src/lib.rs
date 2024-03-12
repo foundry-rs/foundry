@@ -1345,11 +1345,6 @@ impl Config {
         Some(Self::foundry_cache_dir()?.join("etherscan"))
     }
 
-    /// Returns the path to foundry fuzz cache dir `~/.foundry/cache/fuzz`
-    pub fn foundry_fuzz_cache_dir() -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join("fuzz"))
-    }
-
     /// Returns the path to foundry's keystores dir `~/.foundry/keystores`
     pub fn foundry_keystores_dir() -> Option<PathBuf> {
         Some(Self::foundry_dir()?.join("keystores"))

@@ -95,8 +95,8 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
                 max_calldata_fuzz_dictionary_addresses: 0,
             },
             gas_report_samples: 256,
-            failure_persist_dir: tempfile::tempdir().unwrap().into_path(),
-            failure_persist_file: "testfailure".to_string(),
+            failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+            failure_persist_file: Some("testfailure".to_string()),
         })
         .invariant(InvariantConfig {
             runs: 256,

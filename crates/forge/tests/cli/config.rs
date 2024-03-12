@@ -65,6 +65,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             runs: 1000,
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
+            failure_persist_dir: Some("test-cache/fuzz".into()),
+            failure_persist_file: Some("failures".to_string()),
             ..Default::default()
         },
         invariant: InvariantConfig { runs: 256, ..Default::default() },

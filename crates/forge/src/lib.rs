@@ -98,7 +98,8 @@ impl TestOptions {
         let fuzz_config = self.fuzz_config(contract_id, test_fn).clone();
         let failure_persist_path = fuzz_config
             .failure_persist_dir
-            .join(fuzz_config.failure_persist_file)
+            .unwrap()
+            .join(fuzz_config.failure_persist_file.unwrap())
             .into_os_string()
             .into_string()
             .unwrap();

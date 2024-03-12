@@ -1,10 +1,7 @@
 //! Configuration for fuzz testing.
 
-use crate::{
-    inline::{
-        parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
-    },
-    Config,
+use crate::inline::{
+    parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
 };
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
@@ -29,9 +26,9 @@ pub struct FuzzConfig {
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
     /// Path where fuzz failures are recorded and replayed.
-    pub failure_persist_dir: PathBuf,
+    pub failure_persist_dir: Option<PathBuf>,
     /// Name of the file to record fuzz failures, defaults to `failures`.
-    pub failure_persist_file: String,
+    pub failure_persist_file: Option<String>,
 }
 
 impl Default for FuzzConfig {
@@ -42,8 +39,8 @@ impl Default for FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            failure_persist_dir: Config::foundry_fuzz_cache_dir().unwrap(),
-            failure_persist_file: "failures".to_string(),
+            failure_persist_dir: None,
+            failure_persist_file: None,
         }
     }
 }
@@ -57,8 +54,8 @@ impl FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            failure_persist_dir: cache_dir,
-            failure_persist_file: "failures".to_string(),
+            failure_persist_dir: Some(cache_dir),
+            failure_persist_file: Some("failures".to_string()),
         }
     }
 }
@@ -86,7 +83,7 @@ impl InlineConfigParser for FuzzConfig {
                 "dictionary-weight" => {
                     conf_clone.dictionary.dictionary_weight = parse_config_u32(key, value)?
                 }
-                "failure-persist-file" => conf_clone.failure_persist_file = value,
+                "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
@@ -161,7 +158,7 @@ mod tests {
         let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
         assert_eq!(merged.runs, 42424242);
         assert_eq!(merged.dictionary.dictionary_weight, 42);
-        assert_eq!(merged.failure_persist_file, "fuzz-failure".to_string());
+        assert_eq!(merged.failure_persist_file, Some("fuzz-failure".to_string()));
     }
 
     #[test]
