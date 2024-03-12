@@ -1,9 +1,9 @@
+use crate::opcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
-use crate::opcodes;
 
 /// An arena of [DebugNode]s
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -169,11 +169,11 @@ pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
-    pub memory: Vec<u8>,
+    pub memory: Bytes,
     /// Calldata *prior* to running the associated opcode
     pub calldata: Bytes,
     /// Returndata *prior* to running the associated opcode
-    pub returndata: Vec<u8>,
+    pub returndata: Bytes,
     /// Opcode to be executed
     pub instruction: Instruction,
     /// Optional bytes that are being pushed onto the stack
@@ -214,9 +214,11 @@ impl DebugStep {
 
     /// Returns `true` if the opcode modifies memory.
     pub fn opcode_modifies_memory(&self) -> bool {
-        self.instruction.opcode().and_then(|opcode| OpCode::new(opcode)).map_or(false, |opcode| opcodes::modifies_memory(opcode))
+        self.instruction
+            .opcode()
+            .and_then(|opcode| OpCode::new(opcode))
+            .map_or(false, |opcode| opcodes::modifies_memory(opcode))
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,7 +260,6 @@ impl Display for Instruction {
 }
 
 impl Instruction {
-
     /// Returns the opcode of the instruction, if it is an opcode.
     #[inline]
     pub fn opcode(&self) -> Option<u8> {

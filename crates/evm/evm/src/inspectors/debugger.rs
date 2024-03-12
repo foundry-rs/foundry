@@ -1,6 +1,11 @@
 use alloy_primitives::Address;
 use foundry_common::{ErrorExt, SELECTOR_LEN};
-use foundry_evm_core::{backend::DatabaseExt, constants::CHEATCODE_ADDRESS, debug::{DebugArena, DebugNode, DebugStep, Instruction}, opcodes, utils::gas_used};
+use foundry_evm_core::{
+    backend::DatabaseExt,
+    constants::CHEATCODE_ADDRESS,
+    debug::{DebugArena, DebugNode, DebugStep, Instruction},
+    utils::gas_used,
+};
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
@@ -67,19 +72,28 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             interp.gas.refunded() as u64,
         );
 
-        // if the previous opcode does __not__ modify memory, we can safely assume the memory of that step
-        self.arena.arena[self.head].steps.last().map(|step|{
-            if !step.opcode_modifies_memory() {
-
-            }
-        });
+        // if the previous opcode does __not__ modify memory, we can reuse the memory of
+        // that step
+        let memory = self.arena.arena[self.head]
+            .steps
+            .last()
+            .and_then(|step| {
+                if !step.opcode_modifies_memory() {
+                    // reuse the memory from the previous step, because its opcode did not modify
+                    // memory
+                    Some(step.memory.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| interp.shared_memory.context_memory().to_vec().into());
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
             stack: interp.stack().data().clone(),
-            memory: interp.shared_memory.context_memory().to_vec(),
+            memory,
             calldata: interp.contract().input.clone(),
-            returndata: interp.return_data_buffer.to_vec(),
+            returndata: interp.return_data_buffer.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
             total_gas_used,
