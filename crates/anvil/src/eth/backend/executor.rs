@@ -76,6 +76,14 @@ impl ExecutedTransaction {
                 },
                 bloom,
             }),
+            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(ReceiptWithBloom {
+                receipt: Receipt {
+                    success: status_code == 1,
+                    cumulative_gas_used: used_gas.to::<u64>(),
+                    logs,
+                },
+                bloom,
+            }),
             TypedTransaction::Deposit(_) => TypedReceipt::Deposit(ReceiptWithBloom {
                 receipt: Receipt {
                     success: status_code == 1,

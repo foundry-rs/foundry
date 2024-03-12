@@ -1,10 +1,14 @@
 //! Fuzz tests.
 
-use crate::config::*;
-use alloy_primitives::U256;
+use std::collections::BTreeMap;
+
+use alloy_primitives::{Bytes, U256};
+use forge::fuzz::CounterExample;
+
 use forge::result::{SuiteResult, TestStatus};
 use foundry_test_utils::Filter;
-use std::collections::BTreeMap;
+
+use crate::config::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fuzz() {
@@ -102,4 +106,51 @@ async fn test_fuzz_collection() {
             ],
         )]),
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_persist_fuzz_failure() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/FuzzFailurePersist.t.sol");
+    let mut runner = runner();
+    runner.test_options.fuzz.runs = 1000;
+
+    macro_rules! get_failure_result {
+        () => {
+            runner
+                .test_collect(&filter)
+                .get("fuzz/FuzzFailurePersist.t.sol:FuzzFailurePersistTest")
+                .unwrap()
+                .test_results
+                .get("test_persist_fuzzed_failure(uint256,int256,address,bool,string,(address,uint256),address[])")
+                .unwrap()
+                .counterexample
+                .clone()
+        };
+    }
+
+    // record initial counterexample calldata
+    let intial_counterexample = get_failure_result!();
+    let initial_calldata = match intial_counterexample {
+        Some(CounterExample::Single(counterexample)) => counterexample.calldata,
+        _ => Bytes::new(),
+    };
+
+    // run several times and compare counterexamples calldata
+    for _ in 0..10 {
+        let new_calldata = match get_failure_result!() {
+            Some(CounterExample::Single(counterexample)) => counterexample.calldata,
+            _ => Bytes::new(),
+        };
+        // calldata should be the same with the initial one
+        assert_eq!(initial_calldata, new_calldata);
+    }
+
+    // write new failure in different file
+    runner.test_options.fuzz.failure_persist_file = Some("failure1".to_string());
+    let new_calldata = match get_failure_result!() {
+        Some(CounterExample::Single(counterexample)) => counterexample.calldata,
+        _ => Bytes::new(),
+    };
+    // empty file is used to load failure so new calldata is generated
+    assert_ne!(initial_calldata, new_calldata);
 }

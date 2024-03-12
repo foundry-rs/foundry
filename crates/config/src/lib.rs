@@ -1869,7 +1869,7 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
-            fuzz: Default::default(),
+            fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: Default::default(),
             always_use_create_2_factory: false,
             ffi: false,

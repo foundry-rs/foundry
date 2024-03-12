@@ -95,6 +95,8 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
                 max_calldata_fuzz_dictionary_addresses: 0,
             },
             gas_report_samples: 256,
+            failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+            failure_persist_file: Some("testfailure".to_string()),
         })
         .invariant(InvariantConfig {
             runs: 256,
@@ -126,6 +128,6 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: Executor) -> FuzzedExecutor {
         executor,
         proptest::test_runner::TestRunner::new(cfg),
         CALLER,
-        TEST_OPTS.fuzz,
+        TEST_OPTS.fuzz.clone(),
     )
 }
