@@ -147,7 +147,10 @@ impl VerifyBytecodeArgs {
             constructor_args.to_string()
         };
         if provided_constructor_args != constructor_args.to_string() {
-            eyre::bail!("Constructor args do not match, verification will fail.");
+            println!(
+                "{}",
+                Paint::red("The provider constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
+            );
         }
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
