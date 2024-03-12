@@ -424,62 +424,14 @@ fn try_partial_match(
         return Ok(local_bytecode.starts_with(bytecode));
     }
 
-    // constructor_args in onchain bytecode
-    let (bytecode_args_range, onchain_args_at_end) =
-        constructor_args_range(bytecode, constructor_args);
-    // constructor_args in local bytecode
-    let (local_args_range, local_args_at_end) =
-        constructor_args_range(local_bytecode, constructor_args);
-    match (bytecode_args_range, local_args_range) {
-        (Some(onchain_range), Some(local_range)) => {
-            // Check if constructor args are at the end of the bytecode
-            if onchain_args_at_end {
-                bytecode = &bytecode[..onchain_range.start];
-            }
-            if local_args_at_end {
-                local_bytecode = &local_bytecode[..local_range.start];
-            }
+    // If not runtime, extract constructor args from the end of the bytecode
+    bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
+    local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
-            // Note: If the constructor_args are not at the end of the bytecode we just assume that
-            // metadata hash is.
+    local_bytecode = extract_metadata_hash(local_bytecode)?;
+    bytecode = extract_metadata_hash(bytecode)?;
 
-            // Extract metdata from both
-            local_bytecode = extract_metadata_hash(local_bytecode)?;
-            bytecode = extract_metadata_hash(bytecode)?;
-
-            // Now compare the local code and bytecode
-            Ok(local_bytecode.starts_with(bytecode))
-        }
-        _ => Ok(false),
-    }
-}
-
-fn constructor_args_range(
-    bytecode: &[u8],
-    constructor_args: &[u8],
-) -> (Option<Range<usize>>, bool) {
-    let mut start = 0;
-    let mut end = 0;
-    // let args_len = constructor_args.len();
-    // First check if it ends with constructor args
-    if bytecode.ends_with(constructor_args) {
-        start = bytecode.len() - constructor_args.len();
-        end = bytecode.len();
-
-        return (Some(start..end), true);
-    }
-    for i in 0..bytecode.len() {
-        if bytecode[i..].starts_with(constructor_args) {
-            start = i;
-            end = i + constructor_args.len();
-            break;
-        }
-    }
-    if start == 0 && end == 0 {
-        (None, false)
-    } else {
-        (Some(start..end), false)
-    }
+    Ok(local_bytecode.starts_with(bytecode))
 }
 
 /// @dev This assumes that the metadata is at the end of the bytecode
