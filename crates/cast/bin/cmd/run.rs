@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockTransactions;
 use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;

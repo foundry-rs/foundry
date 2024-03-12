@@ -12,7 +12,7 @@ use foundry_evm_core::{
 };
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
-    EvmContext,
+    InnerEvmContext,
 };
 use std::{collections::HashMap, path::Path};
 
@@ -521,7 +521,7 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
 
 /// Ensures the `Account` is loaded and touched.
 pub(super) fn journaled_account<DB: DatabaseExt>(
-    ecx: &mut EvmContext<DB>,
+    ecx: &mut InnerEvmContext<DB>,
     addr: Address,
 ) -> Result<&mut Account> {
     ecx.load_account(addr)?;

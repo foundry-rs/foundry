@@ -24,7 +24,6 @@ alloy-genesis.workspace = true
 alloy-providers.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
-alloy-transport.workspace = true
 
 revm = { workspace = true, default-features = false, features = [
     "std",

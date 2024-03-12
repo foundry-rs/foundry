@@ -1,6 +1,6 @@
 use crate::utils::apply_chain_and_block_specific_env_changes;
 use alloy_primitives::{Address, U256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
