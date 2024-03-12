@@ -108,7 +108,8 @@ fn main() -> Result<()> {
 }
 
 /// Set the program execution context based on `forge` subcommand used.
-/// The execution context can be set only once per program, and it can be checked by using cheatcodes.
+/// The execution context can be set only once per program, and it can be checked by using
+/// cheatcodes.
 fn init_execution_context(subcommand: &ForgeSubcommand) {
     let context = match subcommand {
         ForgeSubcommand::Test(_) => ForgeContext::Test,
