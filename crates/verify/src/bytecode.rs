@@ -214,6 +214,7 @@ impl VerifyBytecodeArgs {
             maybe_creation_code,
             &constructor_args,
             &self.verification_type,
+            false,
         )?;
 
         match res.0 {
@@ -331,6 +332,7 @@ impl VerifyBytecodeArgs {
             &onchain_runtime_code,
             &constructor_args,
             &self.verification_type,
+            true,
         )?;
         match res.0 {
             true => {
@@ -374,6 +376,7 @@ fn try_match(
     bytecode: &[u8],
     constructor_args: &[u8],
     match_type: &String,
+    is_runtime: bool,
 ) -> Result<(bool, Option<String>)> {
     // 1. Try full match
     if match_type == "full" {
@@ -382,14 +385,14 @@ fn try_match(
             Ok((true, Some("full".to_string())))
         } else {
             // Failure => Try partial match
-            match try_partial_match(local_bytecode, bytecode, constructor_args) {
+            match try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime) {
                 Ok(true) => Ok((true, Some("partial".to_string()))),
                 Ok(false) => Ok((false, None)),
                 Err(e) => Err(e),
             }
         }
     } else {
-        match try_partial_match(local_bytecode, bytecode, constructor_args) {
+        match try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime) {
             Ok(true) => Ok((true, Some("partial".to_string()))),
             Ok(false) => Ok((false, None)),
             Err(e) => Err(e),
@@ -401,6 +404,7 @@ fn try_partial_match(
     mut local_bytecode: &[u8],
     mut bytecode: &[u8],
     constructor_args: &[u8],
+    is_runtime: bool,
 ) -> Result<bool> {
     // 1. Check length of constructor args
     if constructor_args.is_empty() {
@@ -409,6 +413,14 @@ fn try_partial_match(
         bytecode = extract_metadata_hash(bytecode)?;
 
         // Now compare the creation code and bytecode
+        return Ok(local_bytecode.starts_with(bytecode));
+    }
+
+    if is_runtime {
+        local_bytecode = extract_metadata_hash(local_bytecode)?;
+        bytecode = extract_metadata_hash(bytecode)?;
+
+        // Now compare the local code and bytecode
         return Ok(local_bytecode.starts_with(bytecode));
     }
 
@@ -432,14 +444,6 @@ fn try_partial_match(
             // metadata hash is.
 
             // Extract metdata from both
-            local_bytecode = extract_metadata_hash(local_bytecode)?;
-            bytecode = extract_metadata_hash(bytecode)?;
-
-            // Now compare the local code and bytecode
-            Ok(local_bytecode.starts_with(bytecode))
-        }
-        (None, None) => {
-            // Likely that this is runtime code. In that case extract_metadata and match
             local_bytecode = extract_metadata_hash(local_bytecode)?;
             bytecode = extract_metadata_hash(bytecode)?;
 
