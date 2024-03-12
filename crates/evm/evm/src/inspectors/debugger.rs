@@ -67,11 +67,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             interp.gas.refunded() as u64,
         );
 
+        // if the previous opcode does __not__ modify memory, we can safely assume the memory of that step
+        self.arena.arena[self.head].steps.last().map(|step|{
+            if !step.opcode_modifies_memory() {
 
-        let head = self.arena.arena[self.head].steps.last().and_then(|previous| {
-            previous.instruction.opcode().map_or(false, |opcode|  opcodes::modifies_memory(previous));
-
-        })
+            }
+        });
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
