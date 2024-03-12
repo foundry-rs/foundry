@@ -3,6 +3,7 @@ use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use crate::opcodes;
 
 /// An arena of [DebugNode]s
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -210,6 +211,12 @@ impl DebugStep {
             self.instruction.to_string()
         }
     }
+
+    /// Returns `true` if the opcode modifies memory.
+    pub fn opcode_modifies_memory(&self) -> bool {
+        self.instruction.opcode().and_then(|opcode| OpCode::new(opcode)).map_or(false, |opcode| opcodes::modifies_memory(opcode))
+    }
+
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +253,18 @@ impl Display for Instruction {
                     .id
                     .to_uppercase()
             ),
+        }
+    }
+}
+
+impl Instruction {
+
+    /// Returns the opcode of the instruction, if it is an opcode.
+    #[inline]
+    pub fn opcode(&self) -> Option<u8> {
+        match self {
+            Instruction::OpCode(op) => Some(*op),
+            _ => None,
         }
     }
 }

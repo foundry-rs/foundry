@@ -1,11 +1,6 @@
 use alloy_primitives::Address;
 use foundry_common::{ErrorExt, SELECTOR_LEN};
-use foundry_evm_core::{
-    backend::DatabaseExt,
-    constants::CHEATCODE_ADDRESS,
-    debug::{DebugArena, DebugNode, DebugStep, Instruction},
-    utils::gas_used,
-};
+use foundry_evm_core::{backend::DatabaseExt, constants::CHEATCODE_ADDRESS, debug::{DebugArena, DebugNode, DebugStep, Instruction}, opcodes, utils::gas_used};
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
@@ -71,6 +66,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             interp.gas.limit().saturating_sub(interp.gas.remaining()),
             interp.gas.refunded() as u64,
         );
+
+
+        let head = self.arena.arena[self.head].steps.last().and_then(|previous| {
+            previous.instruction.opcode().map_or(false, |opcode|  opcodes::modifies_memory(previous));
+
+        })
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
