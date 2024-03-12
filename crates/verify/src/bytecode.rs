@@ -6,7 +6,7 @@ use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::{
-    opts::{CoreBuildArgs, EtherscanOpts},
+    opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
 use foundry_common::{
@@ -17,7 +17,7 @@ use foundry_common::{
 use foundry_compilers::{
     artifacts::BytecodeObject, info::ContractInfo, Artifact, ProjectCompileOutput,
 };
-use foundry_config::{figment, merge_impl_figment_convert, Chain, Config};
+use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
@@ -25,7 +25,7 @@ use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
 use std::{ops::Range, path::PathBuf};
 use yansi::Paint;
 
-merge_impl_figment_convert!(VerifyBytecodeArgs, build_opts);
+impl_figment_convert!(VerifyBytecodeArgs);
 /// CLI arguments for `forge verify-bytecode`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyBytecodeArgs {
@@ -63,28 +63,14 @@ pub struct VerifyBytecodeArgs {
     #[clap(flatten)]
     pub etherscan_opts: EtherscanOpts,
 
-    /// The build options to use for verification.
-    #[clap(flatten)]
-    pub build_opts: CoreBuildArgs,
-
-    /// Print compiled contract names.
-    #[arg(long)]
-    pub names: bool,
-
-    /// Print compiled contract sizes.
-    #[arg(long)]
-    pub sizes: bool,
-
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
     #[arg(long, num_args(1..))]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    /// Output the compilation errors in the json format.
-    /// This is useful when you want to use the output in other tools.
-    #[arg(long, conflicts_with = "silent")]
-    pub format_json: bool,
+    /// The path to the project's root directory.
+    pub root: Option<PathBuf>,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -215,23 +201,9 @@ impl VerifyBytecodeArgs {
         };
 
         // Etherscan compilation metadata
-        let etherscan_metadata = Metadata {
-            compiler_version: source_code.items[0].compiler_version.clone(),
-            source_code: source_code.items[0].source_code.clone(),
-            contract_name: source_code.items[0].contract_name.clone(),
-            constructor_arguments: source_code.items[0].constructor_arguments.clone(),
-            abi: source_code.items[0].abi.clone(),
-            optimization_used: source_code.items[0].optimization_used,
-            runs: source_code.items[0].runs,
-            evm_version: source_code.items[0].evm_version.clone(),
-            swarm_source: source_code.items[0].swarm_source.clone(),
-            license_type: source_code.items[0].license_type.clone(),
-            proxy: source_code.items[0].proxy,
-            implementation: None,
-            library: "".to_string(),
-        };
+        let etherscan_metadata = source_code.items.first().unwrap();
 
-        find_mismatch_in_settings(&etherscan_metadata, &config)?;
+        find_mismatch_in_settings(etherscan_metadata, &config)?;
         // Append constructor args to the local_bytecode
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
@@ -384,11 +356,7 @@ impl VerifyBytecodeArgs {
 
     fn build_project(&self, config: &Config) -> Result<ProjectCompileOutput> {
         let project = config.project()?;
-        let mut compiler = ProjectCompiler::new()
-            .print_names(self.names)
-            .print_sizes(self.sizes)
-            .quiet(self.format_json)
-            .bail(!self.format_json);
+        let mut compiler = ProjectCompiler::new();
 
         if let Some(skip) = &self.skip {
             if !skip.is_empty() {
@@ -397,9 +365,6 @@ impl VerifyBytecodeArgs {
         }
         let output = compiler.compile(&project)?;
 
-        if self.format_json {
-            println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
-        }
         Ok(output)
     }
 }
