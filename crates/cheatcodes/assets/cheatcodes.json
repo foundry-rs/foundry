@@ -7917,6 +7917,126 @@
       "group": "toml",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isTestContext",
+        "description": "Returns true if the current execution context is test.",
+        "declaration": "function isTestContext() external view returns (bool isTest);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isTestContext()",
+        "selector": "0x6e90e283",
+        "selectorBytes": [
+          110,
+          144,
+          226,
+          131
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isCoverageContext",
+        "description": "Returns true if the current execution context is coverage.",
+        "declaration": "function isCoverageContext() external view returns (bool isCoverage);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isCoverageContext()",
+        "selector": "0x5b2e21ea",
+        "selectorBytes": [
+          91,
+          46,
+          33,
+          234
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isSnapshotContext",
+        "description": "Returns true if the current execution context is snapshot.",
+        "declaration": "function isSnapshotContext() external view returns (bool isSnapshot);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isSnapshotContext()",
+        "selector": "0xaa8ce5f3",
+        "selectorBytes": [
+          170,
+          140,
+          229,
+          243
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isScriptDryRunContext",
+        "description": "Returns true if the current execution context is script dry run.",
+        "declaration": "function isScriptDryRunContext() external view returns (bool isScriptDryRun);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isScriptDryRunContext()",
+        "selector": "0xe932f8ee",
+        "selectorBytes": [
+          233,
+          50,
+          248,
+          238
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isScriptBroadcastContext",
+        "description": "Returns true if the current execution context is script broadcast.",
+        "declaration": "function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isScriptBroadcastContext()",
+        "selector": "0xd0c87477",
+        "selectorBytes": [
+          208,
+          200,
+          116,
+          119
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isScriptResumeContext",
+        "description": "Returns true if the current execution context is script resume.",
+        "declaration": "function isScriptResumeContext() external view returns (bool isScriptResume);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isScriptResumeContext()",
+        "selector": "0x3d51d384",
+        "selectorBytes": [
+          61,
+          81,
+          211,
+          132
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
     }
   ]
 }

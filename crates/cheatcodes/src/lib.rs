@@ -23,6 +23,7 @@ pub use spec::{CheatcodeDef, Vm};
 mod error;
 mod base64;
 mod config;
+mod context;
 mod env;
 mod evm;
 mod fs;
@@ -34,6 +35,7 @@ mod test;
 mod toml;
 mod utils;
 
+pub use context::ForgeContext;
 pub use script::ScriptWallets;
 pub use test::expect::ExpectedCallTracker;
 

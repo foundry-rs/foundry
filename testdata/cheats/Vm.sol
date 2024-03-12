@@ -237,9 +237,15 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
+    function isCoverageContext() external view returns (bool isCoverage);
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
+    function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
+    function isScriptResumeContext() external view returns (bool isScriptResume);
+    function isScriptDryRunContext() external view returns (bool isScriptDryRun);
+    function isSnapshotContext() external view returns (bool isSnapshot);
+    function isTestContext() external view returns (bool isTest);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);

@@ -1912,6 +1912,32 @@ interface Vm {
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 
+    // -------- Forge execution context cheatcodes --------
+
+    /// Returns true if `forge` command was executed with `test` option.
+    #[cheatcode(group = Context)]
+    function isTestContext() external view returns (bool isTest);
+
+    /// Returns true if `forge` command was executed with `coverage` option.
+    #[cheatcode(group = Context)]
+    function isCoverageContext() external view returns (bool isCoverage);
+
+    /// Returns true if `forge` command was executed with `snapshot` option.
+    #[cheatcode(group = Context)]
+    function isSnapshotContext() external view returns (bool isSnapshot);
+
+    /// Returns true if `forge` command was executed with `script` option.
+    #[cheatcode(group = Context)]
+    function isScriptDryRunContext() external view returns (bool isScriptDryRun);
+
+    /// Returns true if `forge` command was executed with `script --broadcast` option.
+    #[cheatcode(group = Context)]
+    function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
+
+    /// Returns true if `forge` command was executed with `script --resume` option.
+    #[cheatcode(group = Context)]
+    function isScriptResumeContext() external view returns (bool isScriptResume);
+
     // -------- Key Management --------
 
     /// Derives a private key from the name, labels the account with that name, and returns the wallet.
