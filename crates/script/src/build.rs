@@ -289,6 +289,7 @@ impl CompiledState {
             let mut froms = sequence.sequences().iter().flat_map(|s| {
                 s.transactions
                     .iter()
+                    .skip(s.receipts.len())
                     .map(|t| t.transaction.from().expect("from is missing in script artifact"))
             });
 
