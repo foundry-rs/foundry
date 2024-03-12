@@ -443,6 +443,7 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => Ok(NoopFrame::default().into()),
                     GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
+                    GethDebugBuiltInTracerType::MuxTracer => Ok(NoopFrame::default().into()),
                 },
                 GethDebugTracerType::JsTracer(_code) => return Ok(NoopFrame::default().into()),
             }
