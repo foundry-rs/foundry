@@ -4,6 +4,7 @@ use forge_doc::{
     ContractInheritance, Deployments, DocBuilder, GitSource, InferInlineHyperlinks, Inheritdoc,
 };
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
+use foundry_common::compile::ProjectCompiler;
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
@@ -64,6 +65,9 @@ impl DocArgs {
     pub fn run(self) -> Result<()> {
         let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new();
+        let _output = compiler.compile(&project)?;
 
         let mut doc_config = config.doc.clone();
         if let Some(out) = self.out {
