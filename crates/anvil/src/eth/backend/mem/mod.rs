@@ -1876,7 +1876,7 @@ impl Backend {
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
-            return Ok(trace?);
+            return trace;
         }
 
         if let Some(fork) = self.get_fork() {
