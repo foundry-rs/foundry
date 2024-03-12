@@ -1,3 +1,4 @@
+use crate::opcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
@@ -168,11 +169,11 @@ pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
-    pub memory: Vec<u8>,
+    pub memory: Bytes,
     /// Calldata *prior* to running the associated opcode
     pub calldata: Bytes,
     /// Returndata *prior* to running the associated opcode
-    pub returndata: Vec<u8>,
+    pub returndata: Bytes,
     /// Opcode to be executed
     pub instruction: Instruction,
     /// Optional bytes that are being pushed onto the stack
@@ -210,6 +211,11 @@ impl DebugStep {
             self.instruction.to_string()
         }
     }
+
+    /// Returns `true` if the opcode modifies memory.
+    pub fn opcode_modifies_memory(&self) -> bool {
+        self.instruction.opcode().and_then(OpCode::new).map_or(false, opcodes::modifies_memory)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +252,17 @@ impl Display for Instruction {
                     .id
                     .to_uppercase()
             ),
+        }
+    }
+}
+
+impl Instruction {
+    /// Returns the opcode of the instruction, if it is an opcode.
+    #[inline]
+    pub fn opcode(&self) -> Option<u8> {
+        match self {
+            Instruction::OpCode(op) => Some(*op),
+            _ => None,
         }
     }
 }
