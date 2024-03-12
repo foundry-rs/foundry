@@ -30,7 +30,7 @@ mod standard_json;
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
 
-pub static BASE_URL: &str = "https://www.oklink.com/goerli-test/";
+pub static BASE_URL: &str = "https://www.oklink.com/";
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -120,10 +120,8 @@ impl VerificationProvider for OklinkVerificationProvider {
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-                resp.message,
-                resp.result,
-                oklink.address_url(args.address)
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`",
+                resp.message, resp.result,
             );
 
             if args.watch {
