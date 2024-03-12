@@ -22,7 +22,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
-use std::{ops::Range, path::PathBuf};
+use std::path::PathBuf;
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
