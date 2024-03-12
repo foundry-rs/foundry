@@ -45,6 +45,20 @@ impl Default for FuzzConfig {
     }
 }
 
+impl FuzzConfig {
+    /// Creates fuzz configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
+    pub fn new(cache_dir: PathBuf) -> Self {
+        FuzzConfig {
+            runs: 256,
+            max_test_rejects: 65536,
+            seed: None,
+            dictionary: FuzzDictionaryConfig::default(),
+            failure_persist_dir: cache_dir,
+            failure_persist_file: "failures".to_string(),
+        }
+    }
+}
+
 impl InlineConfigParser for FuzzConfig {
     fn config_key() -> String {
         INLINE_CONFIG_FUZZ_KEY.into()
