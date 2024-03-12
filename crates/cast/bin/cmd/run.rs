@@ -1,6 +1,7 @@
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockTransactions;
+use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -134,6 +135,9 @@ impl RunArgs {
             env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
             env.block.gas_limit = block.header.gas_limit;
         }
+
+        let mut env =
+            EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {

@@ -1080,6 +1080,28 @@ interface Interface {}
     assert!(cmd.stdout_lossy().contains("Script ran successfully."));
 });
 
+forgetest_async!(assert_can_detect_unlinked_target_with_libraries, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "ScriptWithExtLib.s.sol",
+            r#"
+library Lib {
+    function f() public {}
+}
+
+contract Script {
+    function run() external {
+        Lib.f();
+    }
+}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script);
+    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});
+
 forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());

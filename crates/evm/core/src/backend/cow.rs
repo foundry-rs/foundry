@@ -9,9 +9,13 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
-    primitives::{Account, AccountInfo, Bytecode, Env, HashMap as Map, ResultAndState},
+    primitives::{
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
+        SpecId,
+    },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -27,45 +31,52 @@ use std::{borrow::Cow, collections::HashMap};
 /// function via immutable raw (no state changes) calls.
 ///
 /// **N.B.**: we're assuming cheatcodes that alter the state (like multi fork swapping) are niche.
-/// If they executed during fuzzing, it will require a clone of the initial input database. This way
-/// we can support these cheatcodes in fuzzing cheaply without adding overhead for fuzz tests that
+/// If they executed, it will require a clone of the initial input database.
+/// This way we can support these cheatcodes cheaply without adding overhead for tests that
 /// don't make use of them. Alternatively each test case would require its own `Backend` clone,
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
 #[derive(Clone, Debug)]
-pub struct FuzzBackendWrapper<'a> {
-    /// The underlying immutable `Backend`
+pub struct CowBackend<'a> {
+    /// The underlying `Backend`.
     ///
-    /// No calls on the `FuzzBackendWrapper` will ever persistently modify the `backend`'s state.
+    /// No calls on the `CowBackend` will ever persistently modify the `backend`'s state.
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
+    /// The [SpecId] of the current backend.
+    spec_id: SpecId,
 }
 
-impl<'a> FuzzBackendWrapper<'a> {
+impl<'a> CowBackend<'a> {
+    /// Creates a new `CowBackend` with the given `Backend`.
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
-    ) -> eyre::Result<ResultAndState>
-    where
-        INSP: Inspector<Self>,
-    {
+    ///
+    /// Note: in case there are any cheatcodes executed that modify the environment, this will
+    /// update the given `env` with the new values.
+    pub fn inspect<'b, I: Inspector<&'b mut Self>>(
+        &'b mut self,
+        env: &mut EnvWithHandlerCfg,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
-            Ok(result) => Ok(result),
-            Err(e) => eyre::bail!("fuzz: failed to inspect: {e}"),
-        }
+        self.spec_id = env.handler_cfg.spec_id;
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+
+        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+
+        env.env = evm.context.evm.inner.env;
+
+        Ok(res)
     }
 
-    /// Returns whether there was a snapshot failure in the fuzz backend.
+    /// Returns whether there was a snapshot failure in the backend.
     ///
     /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
     pub fn has_snapshot_failure(&self) -> bool {
@@ -78,7 +89,8 @@ impl<'a> FuzzBackendWrapper<'a> {
     fn backend_mut(&mut self, env: &Env) -> &mut Backend {
         if !self.is_initialized {
             let backend = self.backend.to_mut();
-            backend.initialize(env);
+            let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), self.spec_id);
+            backend.initialize(&env);
             self.is_initialized = true;
             return backend
         }
@@ -94,9 +106,8 @@ impl<'a> FuzzBackendWrapper<'a> {
     }
 }
 
-impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
+impl<'a> DatabaseExt for CowBackend<'a> {
     fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
-        trace!("fuzz: create snapshot");
         self.backend_mut(env).snapshot(journaled_state, env)
     }
 
@@ -107,7 +118,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         current: &mut Env,
         action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
-        trace!(?id, "fuzz: revert snapshot");
         self.backend_mut(current).revert(id, journaled_state, current, action)
     }
 
@@ -126,7 +136,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
-        trace!("fuzz: create fork");
         self.backend.to_mut().create_fork(fork)
     }
 
@@ -135,7 +144,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         fork: CreateFork,
         transaction: B256,
     ) -> eyre::Result<LocalForkId> {
-        trace!(?transaction, "fuzz: create fork at");
         self.backend.to_mut().create_fork_at_transaction(fork, transaction)
     }
 
@@ -145,7 +153,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        trace!(?id, "fuzz: select fork");
         self.backend_mut(env).select_fork(id, env, journaled_state)
     }
 
@@ -156,7 +163,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        trace!(?id, ?block_number, "fuzz: roll fork");
         self.backend_mut(env).roll_fork(id, block_number, env, journaled_state)
     }
 
@@ -167,7 +173,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        trace!(?id, ?transaction, "fuzz: roll fork to transaction");
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
@@ -179,7 +184,6 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         journaled_state: &mut JournaledState,
         inspector: &mut I,
     ) -> eyre::Result<()> {
-        trace!(?id, ?transaction, "fuzz: execute transaction");
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
     }
 
@@ -240,7 +244,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     }
 }
 
-impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
+impl<'a> DatabaseRef for CowBackend<'a> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -260,7 +264,7 @@ impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
     }
 }
 
-impl<'a> Database for FuzzBackendWrapper<'a> {
+impl<'a> Database for CowBackend<'a> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -280,7 +284,7 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
     }
 }
 
-impl<'a> DatabaseCommit for FuzzBackendWrapper<'a> {
+impl<'a> DatabaseCommit for CowBackend<'a> {
     fn commit(&mut self, changes: Map<Address, Account>) {
         self.backend.to_mut().commit(changes)
     }

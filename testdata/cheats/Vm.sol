@@ -241,6 +241,8 @@ interface Vm {
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
+    function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
+    function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
@@ -274,6 +276,23 @@ interface Vm {
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
+    function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    function parseTomlAddressArray(string calldata toml, string calldata key) external pure returns (address[] memory);
+    function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    function parseTomlBytes32Array(string calldata toml, string calldata key) external pure returns (bytes32[] memory);
+    function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
+    function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
+    function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
     function prank(address msgSender) external;
@@ -372,4 +391,6 @@ interface Vm {
     function writeJson(string calldata json, string calldata path) external;
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
     function writeLine(string calldata path, string calldata data) external;
+    function writeToml(string calldata json, string calldata path) external;
+    function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 }

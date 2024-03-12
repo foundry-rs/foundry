@@ -14,21 +14,22 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use foundry_evm_core::{
-    backend::{Backend, DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
+    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
     },
     debug::DebugArena,
     decode::RevertDecoder,
-    utils::{eval_to_instruction_result, halt_to_instruction_result, StateChangeset},
+    utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult},
     primitives::{
-        BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
+        BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
+        SpecId, TransactTo, TxEnv,
     },
 };
 use std::collections::HashMap;
@@ -62,7 +63,7 @@ pub struct Executor {
     // so the performance difference should be negligible.
     pub backend: Backend,
     /// The EVM environment.
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// The Revm inspector stack.
     pub inspector: InspectorStack,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
@@ -73,7 +74,12 @@ pub struct Executor {
 
 impl Executor {
     #[inline]
-    pub fn new(mut backend: Backend, env: Env, inspector: InspectorStack, gas_limit: U256) -> Self {
+    pub fn new(
+        mut backend: Backend,
+        env: EnvWithHandlerCfg,
+        inspector: InspectorStack,
+        gas_limit: U256,
+    ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
         backend.insert_account_info(
@@ -85,6 +91,11 @@ impl Executor {
         );
 
         Executor { backend, env, inspector, gas_limit }
+    }
+
+    /// Returns the spec id of the executor
+    pub fn spec_id(&self) -> SpecId {
+        self.env.handler_cfg.spec_id
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
@@ -298,8 +309,8 @@ impl Executor {
         let mut inspector = self.inspector.clone();
         // Build VM
         let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
-        let mut db = FuzzBackendWrapper::new(&self.backend);
-        let result = db.inspect_ref(&mut env, &mut inspector)?;
+        let mut db = CowBackend::new(&self.backend);
+        let result = db.inspect(&mut env, &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
         let has_snapshot_failure = db.has_snapshot_failure();
@@ -307,17 +318,17 @@ impl Executor {
     }
 
     /// Execute the transaction configured in `env.tx` and commit the changes
-    pub fn commit_tx_with_env(&mut self, env: Env) -> eyre::Result<RawCallResult> {
+    pub fn commit_tx_with_env(&mut self, env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut result = self.call_raw_with_env(env)?;
         self.commit(&mut result);
         Ok(result)
     }
 
     /// Execute the transaction configured in `env.tx`
-    pub fn call_raw_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
+    pub fn call_raw_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         // execute the call
         let mut inspector = self.inspector.clone();
-        let result = self.backend.inspect_ref(&mut env, &mut inspector)?;
+        let result = self.backend.inspect(&mut env, &mut inspector)?;
         convert_executed_result(env, inspector, result, self.backend.has_snapshot_failure())
     }
 
@@ -349,7 +360,7 @@ impl Executor {
     /// database
     pub fn deploy_with_env(
         &mut self,
-        env: Env,
+        env: EnvWithHandlerCfg,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         debug_assert!(
@@ -472,15 +483,16 @@ impl Executor {
     ///
     /// ## Background
     ///
-    /// Executing and failure checking [Executor::ensure_success] are two steps, for ds-test
+    /// Executing and failure checking [`Executor::ensure_success`] are two steps, for ds-test
     /// legacy reasons failures can be stored in a global variables and needs to be called via a
-    /// solidity call `failed()(bool)`. For fuzz tests we’re using the
-    /// `FuzzBackendWrapper` which is a Cow of the executor’s backend which lazily clones the
-    /// backend when it’s mutated via cheatcodes like `snapshot`. Snapshots make it even
-    /// more complicated because now we also need to keep track of that global variable when we
-    /// revert to a snapshot (because it is stored in state). Now, the problem is that
-    /// the `FuzzBackendWrapper` is dropped after every call, so we need to keep track of the
-    /// snapshot failure in the [RawCallResult] instead.
+    /// solidity call `failed()(bool)`.
+    ///
+    /// For fuzz tests we’re using the `CowBackend` which is a Cow of the executor’s backend which
+    /// lazily clones the backend when it’s mutated via cheatcodes like `snapshot`. Snapshots
+    /// make it even more complicated because now we also need to keep track of that global
+    /// variable when we revert to a snapshot (because it is stored in state). Now, the problem
+    /// is that the `CowBackend` is dropped after every call, so we need to keep track of the
+    /// snapshot failure in the [`RawCallResult`] instead.
     pub fn is_raw_call_success(
         &self,
         address: Address,
@@ -549,8 +561,8 @@ impl Executor {
         transact_to: TransactTo,
         data: Bytes,
         value: U256,
-    ) -> Env {
-        Env {
+    ) -> EnvWithHandlerCfg {
+        let env = Env {
             cfg: self.env.cfg.clone(),
             // We always set the gas price to 0 so we can execute the transaction regardless of
             // network conditions - the actual gas price is kept in `self.block` and is applied by
@@ -571,7 +583,9 @@ impl Executor {
                 gas_limit: self.gas_limit.to(),
                 ..self.env.tx.clone()
             },
-        }
+        };
+
+        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.env.handler_cfg.spec_id)
     }
 }
 
@@ -624,7 +638,7 @@ pub struct DeployResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// The `revm::Env` after deployment
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// The coverage info collected during the deployment
     pub coverage: Option<HitMaps>,
 }
@@ -661,7 +675,7 @@ pub struct CallResult {
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
     /// The `revm::Env` after the call
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// breakpoints
     pub breakpoints: Breakpoints,
 }
@@ -704,13 +718,13 @@ pub struct RawCallResult {
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
     /// The `revm::Env` after the call
-    pub env: Env,
+    pub env: EnvWithHandlerCfg,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
@@ -730,7 +744,7 @@ impl Default for RawCallResult {
             debug: None,
             transactions: None,
             state_changeset: None,
-            env: Default::default(),
+            env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -746,7 +760,7 @@ fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
-    env: Env,
+    env: EnvWithHandlerCfg,
     inspector: InspectorStack,
     result: ResultAndState,
     has_snapshot_failure: bool,
@@ -754,17 +768,15 @@ fn convert_executed_result(
     let ResultAndState { result: exec_result, state: state_changeset } = result;
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, output, .. } => {
-            (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output))
+            (reason.into(), gas_refunded, gas_used, Some(output))
         }
         ExecutionResult::Revert { gas_used, output } => {
             // Need to fetch the unused gas
             (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)))
         }
-        ExecutionResult::Halt { reason, gas_used } => {
-            (halt_to_instruction_result(reason), 0_u64, gas_used, None)
-        }
+        ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
     };
-    let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
+    let stipend = calc_stipend(&env.tx.data, env.handler_cfg.spec_id);
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),

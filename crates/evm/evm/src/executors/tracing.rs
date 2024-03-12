@@ -2,7 +2,7 @@ use crate::executors::{Executor, ExecutorBuilder};
 use foundry_compilers::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-use revm::primitives::Env;
+use revm::primitives::{Env, SpecId};
 use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
@@ -26,6 +26,11 @@ impl TracingExecutor {
                 .spec(evm_spec_id(&version.unwrap_or_default()))
                 .build(env, db),
         }
+    }
+
+    /// Returns the spec id of the executor
+    pub fn spec_id(&self) -> SpecId {
+        self.executor.spec_id()
     }
 
     /// uses the fork block number from the config

@@ -203,7 +203,7 @@ impl Create2Args {
                     #[allow(clippy::needless_borrows_for_generic_args)]
                     let addr = deployer.create2(&salt.0, init_code_hash);
 
-                    // Check if the the regex matches the calculated address' checksum.
+                    // Check if the regex matches the calculated address' checksum.
                     let _ = addr.to_checksum_raw(&mut checksum, None);
                     // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string
                     // is safe.

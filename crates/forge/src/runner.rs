@@ -439,6 +439,7 @@ impl<'a> ContractRunner<'a> {
             debug: debug_arena,
             breakpoints,
             duration,
+            gas_report_traces: Vec::new(),
         }
     }
 
@@ -491,23 +492,24 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_function: func, abi: self.contract };
 
-        let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs } = match evm
-            .invariant_fuzz(invariant_contract.clone())
-        {
-            Ok(x) => x,
-            Err(e) => {
-                return TestResult {
-                    status: TestStatus::Failure,
-                    reason: Some(format!("failed to set up invariant testing environment: {e}")),
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
-                    duration: start.elapsed(),
-                    ..Default::default()
+        let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
+            match evm.invariant_fuzz(invariant_contract.clone()) {
+                Ok(x) => x,
+                Err(e) => {
+                    return TestResult {
+                        status: TestStatus::Failure,
+                        reason: Some(format!(
+                            "failed to set up invariant testing environment: {e}"
+                        )),
+                        decoded_logs: decode_console_logs(&logs),
+                        traces,
+                        labeled_addresses,
+                        kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
+                        duration: start.elapsed(),
+                        ..Default::default()
+                    }
                 }
-            }
-        };
+            };
 
         let mut counterexample = None;
         let mut logs = logs.clone();
@@ -571,6 +573,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             labeled_addresses: labeled_addresses.clone(),
             duration: start.elapsed(),
+            gas_report_traces,
             ..Default::default() // TODO collect debug traces on the last run or error
         }
     }
@@ -702,6 +705,7 @@ impl<'a> ContractRunner<'a> {
             debug,
             breakpoints,
             duration,
+            gas_report_traces: result.gas_report_traces.into_iter().map(|t| vec![t]).collect(),
         }
     }
 }

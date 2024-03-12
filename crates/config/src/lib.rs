@@ -678,8 +678,8 @@ impl Config {
             })
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
-            .set_cached(cached)
-            .set_build_info(cached && self.build_info)
+            .set_cached(cached && !self.build_info)
+            .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts)
             .build()?;
 
@@ -918,6 +918,8 @@ impl Config {
     /// Returns
     ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if `etherscan_api_key` is
     ///    an alias
+    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if a `chain` is
+    ///    configured. an alias
     ///  - the Mainnet  `ResolvedEtherscanConfig` if `etherscan_api_key` is set, `None` otherwise
     ///
     /// # Example
@@ -933,18 +935,7 @@ impl Config {
     pub fn get_etherscan_config(
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
-        if self.etherscan.contains_key(maybe_alias) {
-            // etherscan points to an alias in the `etherscan` table, so we try to resolve that
-            let mut resolved = self.etherscan.clone().resolved();
-            return resolved.remove(maybe_alias)
-        }
-
-        // we treat the `etherscan_api_key` as actual API key
-        // if no chain provided, we assume mainnet
-        let chain = self.chain.unwrap_or(Chain::mainnet());
-        let api_key = self.etherscan_api_key.as_ref()?;
-        ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
+        self.get_etherscan_config_with_chain(None).transpose()
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
@@ -964,14 +955,15 @@ impl Config {
         }
 
         // try to find by comparing chain IDs after resolving
-        if let Some(res) =
-            chain.and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
+        if let Some(res) = chain
+            .or(self.chain)
+            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
         {
             match (res, self.etherscan_api_key.as_ref()) {
                 (Ok(mut config), Some(key)) => {
                     // we update the key, because if an etherscan_api_key is set, it should take
                     // precedence over the entry, since this is usually set via env var or CLI args.
-                    config.key = key.clone();
+                    config.key.clone_from(key);
                     return Ok(Some(config))
                 }
                 (Ok(config), None) => return Ok(Some(config)),
@@ -992,6 +984,10 @@ impl Config {
     }
 
     /// Helper function to just get the API key
+    ///
+    /// Optionally updates the config with the given `chain`.
+    ///
+    /// See also [Self::get_etherscan_config_with_chain]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
@@ -3120,6 +3116,29 @@ mod tests {
                     ),
                 ])
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_resolve_etherscan_chain_id() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                chain_id = "sepolia"
+
+                [etherscan]
+                sepolia = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+            "#,
+            )?;
+
+            let config = Config::load();
+            let etherscan = config.get_etherscan_config().unwrap().unwrap();
+            assert_eq!(etherscan.chain, Some(NamedChain::Sepolia.into()));
+            assert_eq!(etherscan.key, "FX42Z3BBJJEWXWGYV2X1CIPRSCN");
 
             Ok(())
         });

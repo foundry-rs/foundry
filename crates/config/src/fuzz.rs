@@ -26,9 +26,11 @@ pub struct FuzzConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// Path where fuzz failures are recorded and replayed, defaults to `~/.foundry/cache/fuzz`
+    /// Number of runs to execute and include in the gas report.
+    pub gas_report_samples: u32,
+    /// Path where fuzz failures are recorded and replayed.
     pub failure_persist_dir: PathBuf,
-    /// Name of the file to record fuzz failures, defaults to `failures`
+    /// Name of the file to record fuzz failures, defaults to `failures`.
     pub failure_persist_file: String,
 }
 
@@ -39,6 +41,7 @@ impl Default for FuzzConfig {
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
+            gas_report_samples: 256,
             failure_persist_dir: Config::foundry_fuzz_cache_dir().unwrap(),
             failure_persist_file: "failures".to_string(),
         }
@@ -53,6 +56,7 @@ impl FuzzConfig {
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
+            gas_report_samples: 256,
             failure_persist_dir: cache_dir,
             failure_persist_file: "failures".to_string(),
         }

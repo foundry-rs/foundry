@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, U256, U64};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use anvil::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]

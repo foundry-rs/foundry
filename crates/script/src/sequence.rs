@@ -1,22 +1,19 @@
-use super::NestedValue;
-use crate::cmd::{
-    init::get_commit_hash,
-    script::{
-        transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
-        verify::VerifyBundle,
-    },
+use super::{multi_sequence::MultiChainSequence, NestedValue};
+use crate::{
+    transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
+    verify::VerifyBundle,
 };
 use alloy_primitives::{Address, TxHash};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
-use foundry_cli::utils::now;
+use foundry_cli::utils::{now, Git};
 use foundry_common::{
     fs, shell,
     types::{ToAlloy, ToEthers},
     SELECTOR_LEN,
 };
-use foundry_compilers::{artifacts::Libraries, ArtifactId};
+use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,6 +22,67 @@ use std::{
     path::{Path, PathBuf},
 };
 use yansi::Paint;
+
+/// Returns the commit hash of the project if it exists
+pub fn get_commit_hash(root: &Path) -> Option<String> {
+    Git::new(root).commit_hash(true, "HEAD").ok()
+}
+
+pub enum ScriptSequenceKind {
+    Single(ScriptSequence),
+    Multi(MultiChainSequence),
+}
+
+impl ScriptSequenceKind {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => sequence.save(silent, save_ts),
+            ScriptSequenceKind::Multi(sequence) => sequence.save(silent, save_ts),
+        }
+    }
+
+    pub fn sequences(&self) -> &[ScriptSequence] {
+        match self {
+            ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence),
+            ScriptSequenceKind::Multi(sequence) => &sequence.deployments,
+        }
+    }
+
+    pub fn sequences_mut(&mut self) -> &mut [ScriptSequence] {
+        match self {
+            ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence),
+            ScriptSequenceKind::Multi(sequence) => &mut sequence.deployments,
+        }
+    }
+    /// Updates underlying sequence paths to not be under /dry-run directory.
+    pub fn update_paths_to_broadcasted(
+        &mut self,
+        config: &Config,
+        sig: &str,
+        target: &ArtifactId,
+    ) -> Result<()> {
+        match self {
+            ScriptSequenceKind::Single(sequence) => {
+                sequence.paths =
+                    Some(ScriptSequence::get_paths(config, sig, target, sequence.chain, false)?);
+            }
+            ScriptSequenceKind::Multi(sequence) => {
+                (sequence.path, sequence.sensitive_path) =
+                    MultiChainSequence::get_paths(config, sig, target, false)?;
+            }
+        };
+
+        Ok(())
+    }
+}
+
+impl Drop for ScriptSequenceKind {
+    fn drop(&mut self) {
+        if let Err(err) = self.save(false, true) {
+            error!(?err, "could not save deployment sequence");
+        }
+    }
+}
 
 pub const DRY_RUN_DIR: &str = "dry-run";
 
@@ -38,21 +96,19 @@ pub struct ScriptSequence {
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
     #[serde(skip)]
-    pub path: PathBuf,
-    #[serde(skip)]
-    pub sensitive_path: PathBuf,
+    /// Contains paths to the sequence files
+    /// None if sequence should not be saved to disk (e.g. part of a multi-chain sequence)
+    pub paths: Option<(PathBuf, PathBuf)>,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
-    /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
-    pub multi: bool,
     pub commit: Option<String>,
 }
 
 /// Sensitive values from the transactions in a script sequence
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveTransactionMetadata {
-    pub rpc: Option<String>,
+    pub rpc: String,
 }
 
 /// Sensitive info from the script sequence which is saved into the cache folder
@@ -61,8 +117,8 @@ pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
 
-impl From<&mut ScriptSequence> for SensitiveScriptSequence {
-    fn from(sequence: &mut ScriptSequence) -> Self {
+impl From<ScriptSequence> for SensitiveScriptSequence {
+    fn from(sequence: ScriptSequence) -> Self {
         SensitiveScriptSequence {
             transactions: sequence
                 .transactions
@@ -74,59 +130,16 @@ impl From<&mut ScriptSequence> for SensitiveScriptSequence {
 }
 
 impl ScriptSequence {
-    pub fn new(
-        transactions: VecDeque<TransactionWithMetadata>,
-        returns: HashMap<String, NestedValue>,
-        sig: &str,
-        target: &ArtifactId,
-        config: &Config,
-        broadcasted: bool,
-        is_multi: bool,
-    ) -> Result<Self> {
-        let chain = config.chain.unwrap_or_default().id();
-
-        let (path, sensitive_path) = ScriptSequence::get_paths(
-            &config.broadcast,
-            &config.cache_path,
-            sig,
-            target,
-            chain,
-            broadcasted && !is_multi,
-        )?;
-
-        let commit = get_commit_hash(&config.__root.0);
-
-        Ok(ScriptSequence {
-            transactions,
-            returns,
-            receipts: vec![],
-            pending: vec![],
-            path,
-            sensitive_path,
-            timestamp: now().as_secs(),
-            libraries: vec![],
-            chain,
-            multi: is_multi,
-            commit,
-        })
-    }
-
     /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
-        broadcasted: bool,
+        dry_run: bool,
     ) -> Result<Self> {
-        let (path, sensitive_path) = ScriptSequence::get_paths(
-            &config.broadcast,
-            &config.cache_path,
-            sig,
-            target,
-            chain_id,
-            broadcasted,
-        )?;
+        let (path, sensitive_path) =
+            ScriptSequence::get_paths(config, sig, target, chain_id, dry_run)?;
 
         let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
@@ -138,41 +151,52 @@ impl ScriptSequence {
 
         script_sequence.fill_sensitive(&sensitive_script_sequence);
 
-        script_sequence.path = path;
-        script_sequence.sensitive_path = sensitive_path;
+        script_sequence.paths = Some((path, sensitive_path));
 
         Ok(script_sequence)
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> Result<()> {
-        if self.multi || self.transactions.is_empty() {
+    /// `save_ts` should be set to true for checkpoint updates, which might happen many times and
+    /// could result in us saving many identical files.
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
+        self.sort_receipts();
+
+        if self.transactions.is_empty() {
             return Ok(())
         }
+
+        let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
 
         self.timestamp = now().as_secs();
         let ts_name = format!("run-{}.json", self.timestamp);
 
-        let sensitive_script_sequence: SensitiveScriptSequence = self.into();
+        let sensitive_script_sequence: SensitiveScriptSequence = self.clone().into();
 
         // broadcast folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
+        let mut writer = BufWriter::new(fs::create_file(&path)?);
         serde_json::to_writer_pretty(&mut writer, &self)?;
         writer.flush()?;
-        //../run-[timestamp].json
-        fs::copy(&self.path, self.path.with_file_name(&ts_name))?;
+        if save_ts {
+            //../run-[timestamp].json
+            fs::copy(&path, path.with_file_name(&ts_name))?;
+        }
 
         // cache folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
+        let mut writer = BufWriter::new(fs::create_file(&sensitive_path)?);
         serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
         writer.flush()?;
-        //../run-[timestamp].json
-        fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
+        if save_ts {
+            //../run-[timestamp].json
+            fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
+        }
 
-        shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
-        shell::println(format!("Sensitive values saved to: {}\n", self.sensitive_path.display()))?;
+        if !silent {
+            shell::println(format!("\nTransactions saved to: {}\n", path.display()))?;
+            shell::println(format!("Sensitive values saved to: {}\n", sensitive_path.display()))?;
+        }
 
         Ok(())
     }
@@ -197,36 +221,24 @@ impl ScriptSequence {
         self.pending.retain(|element| element != &tx_hash);
     }
 
-    pub fn add_libraries(&mut self, libraries: Libraries) {
-        self.libraries = libraries
-            .libs
-            .iter()
-            .flat_map(|(file, libs)| {
-                libs.iter()
-                    .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
-            })
-            .collect();
-    }
-
     /// Gets paths in the formats
     /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
     /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
     pub fn get_paths(
-        broadcast: &Path,
-        cache: &Path,
+        config: &Config,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
-        broadcasted: bool,
+        dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = broadcast.to_path_buf();
-        let mut cache = cache.to_path_buf();
+        let mut broadcast = config.broadcast.to_path_buf();
+        let mut cache = config.cache_path.to_path_buf();
         let mut common = PathBuf::new();
 
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         common.push(target_fname);
         common.push(chain_id.to_string());
-        if !broadcasted {
+        if dry_run {
             common.push(DRY_RUN_DIR);
         }
 
@@ -243,20 +255,6 @@ impl ScriptSequence {
         cache.push(format!("{filename}-latest.json"));
 
         Ok((broadcast, cache))
-    }
-
-    /// Checks that there is an Etherscan key for the chain id of this sequence.
-    pub fn verify_preflight_check(&self, config: &Config, verify: &VerifyBundle) -> Result<()> {
-        if config.get_etherscan_api_key(Some(self.chain.into())).is_none() &&
-            verify.verifier.verifier == VerificationProviderType::Etherscan
-        {
-            eyre::bail!(
-                "Etherscan API key wasn't found for chain id {}. On-chain execution aborted",
-                self.chain
-            )
-        }
-
-        Ok(())
     }
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
@@ -354,8 +352,8 @@ impl ScriptSequence {
     }
 
     /// Returns the first RPC URL of this sequence.
-    pub fn rpc_url(&self) -> Option<&str> {
-        self.transactions.front().and_then(|tx| tx.rpc.as_deref())
+    pub fn rpc_url(&self) -> &str {
+        self.transactions.front().expect("empty sequence").rpc.as_str()
     }
 
     /// Returns the list of the transactions without the metadata.
@@ -367,14 +365,7 @@ impl ScriptSequence {
         self.transactions
             .iter_mut()
             .enumerate()
-            .for_each(|(i, tx)| tx.rpc = sensitive.transactions[i].rpc.clone());
-    }
-}
-
-impl Drop for ScriptSequence {
-    fn drop(&mut self) {
-        self.sort_receipts();
-        self.save().expect("not able to save deployment sequence");
+            .for_each(|(i, tx)| tx.rpc.clone_from(&sensitive.transactions[i].rpc));
     }
 }
 
