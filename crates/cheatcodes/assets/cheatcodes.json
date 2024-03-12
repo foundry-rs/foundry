@@ -372,6 +372,11 @@
           "name": "storageAccesses",
           "ty": "StorageAccess[]",
           "description": "An ordered list of storage accesses made during an account access operation."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "Call depth traversed during the recording of state differences"
         }
       ]
     },
@@ -4856,7 +4861,7 @@
     {
       "func": {
         "id": "keyExists",
-        "description": "Checks if `key` exists in a JSON object.",
+        "description": "Checks if `key` exists in a JSON object\n`keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.",
         "declaration": "function keyExists(string calldata json, string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -4870,6 +4875,46 @@
         ]
       },
       "group": "json",
+      "status": "deprecated",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "keyExistsJson",
+        "description": "Checks if `key` exists in a JSON object.",
+        "declaration": "function keyExistsJson(string calldata json, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "keyExistsJson(string,string)",
+        "selector": "0xdb4235f6",
+        "selectorBytes": [
+          219,
+          66,
+          53,
+          246
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "keyExistsToml",
+        "description": "Checks if `key` exists in a TOML table.",
+        "declaration": "function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "keyExistsToml(string,string)",
+        "selector": "0x600903ad",
+        "selectorBytes": [
+          96,
+          9,
+          3,
+          173
+        ]
+      },
+      "group": "toml",
       "status": "stable",
       "safety": "safe"
     },
@@ -5530,6 +5575,346 @@
         ]
       },
       "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlAddress",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address`.",
+        "declaration": "function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddress(string,string)",
+        "selector": "0x65e7c844",
+        "selectorBytes": [
+          101,
+          231,
+          200,
+          68
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlAddressArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address[]`.",
+        "declaration": "function parseTomlAddressArray(string calldata toml, string calldata key) external pure returns (address[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddressArray(string,string)",
+        "selector": "0x65c428e7",
+        "selectorBytes": [
+          101,
+          196,
+          40,
+          231
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBool",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool`.",
+        "declaration": "function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBool(string,string)",
+        "selector": "0xd30dced6",
+        "selectorBytes": [
+          211,
+          13,
+          206,
+          214
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBoolArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool[]`.",
+        "declaration": "function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBoolArray(string,string)",
+        "selector": "0x127cfe9a",
+        "selectorBytes": [
+          18,
+          124,
+          254,
+          154
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`.",
+        "declaration": "function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes(string,string)",
+        "selector": "0xd77bfdb9",
+        "selectorBytes": [
+          215,
+          123,
+          253,
+          185
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`.",
+        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32(string,string)",
+        "selector": "0x8e214810",
+        "selectorBytes": [
+          142,
+          33,
+          72,
+          16
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32Array",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32[]`.",
+        "declaration": "function parseTomlBytes32Array(string calldata toml, string calldata key) external pure returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32Array(string,string)",
+        "selector": "0x3e716f81",
+        "selectorBytes": [
+          62,
+          113,
+          111,
+          129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytesArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes[]`.",
+        "declaration": "function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytesArray(string,string)",
+        "selector": "0xb197c247",
+        "selectorBytes": [
+          177,
+          151,
+          194,
+          71
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlInt",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256`.",
+        "declaration": "function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlInt(string,string)",
+        "selector": "0xc1350739",
+        "selectorBytes": [
+          193,
+          53,
+          7,
+          57
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlIntArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`.",
+        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlIntArray(string,string)",
+        "selector": "0xd3522ae6",
+        "selectorBytes": [
+          211,
+          82,
+          42,
+          230
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlKeys",
+        "description": "Returns an array of all the keys in a TOML table.",
+        "declaration": "function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlKeys(string,string)",
+        "selector": "0x812a44b2",
+        "selectorBytes": [
+          129,
+          42,
+          68,
+          178
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlString",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string`.",
+        "declaration": "function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlString(string,string)",
+        "selector": "0x8bb8dd43",
+        "selectorBytes": [
+          139,
+          184,
+          221,
+          67
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlStringArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`.",
+        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlStringArray(string,string)",
+        "selector": "0x9f629281",
+        "selectorBytes": [
+          159,
+          98,
+          146,
+          129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUint",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256`.",
+        "declaration": "function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUint(string,string)",
+        "selector": "0xcc7b0487",
+        "selectorBytes": [
+          204,
+          123,
+          4,
+          135
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUintArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`.",
+        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUintArray(string,string)",
+        "selector": "0xb5df27c8",
+        "selectorBytes": [
+          181,
+          223,
+          39,
+          200
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseToml_0",
+        "description": "ABI-encodes a TOML table.",
+        "declaration": "function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseToml(string)",
+        "selector": "0x592151f0",
+        "selectorBytes": [
+          89,
+          33,
+          81,
+          240
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseToml_1",
+        "description": "ABI-encodes a TOML table at `key`.",
+        "declaration": "function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseToml(string,string)",
+        "selector": "0x37736e08",
+        "selectorBytes": [
+          55,
+          115,
+          110,
+          8
+        ]
+      },
+      "group": "toml",
       "status": "stable",
       "safety": "safe"
     },
@@ -7490,6 +7875,46 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeToml_0",
+        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML to a file.",
+        "declaration": "function writeToml(string calldata json, string calldata path) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeToml(string,string)",
+        "selector": "0xc0865ba7",
+        "selectorBytes": [
+          192,
+          134,
+          91,
+          167
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeToml_1",
+        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.",
+        "declaration": "function writeToml(string calldata json, string calldata path, string calldata valueKey) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeToml(string,string,string)",
+        "selector": "0x51ac6a33",
+        "selectorBytes": [
+          81,
+          172,
+          106,
+          51
+        ]
+      },
+      "group": "toml",
       "status": "stable",
       "safety": "safe"
     }

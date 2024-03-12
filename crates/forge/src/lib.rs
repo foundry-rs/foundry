@@ -1,21 +1,19 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::B256;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
-
-use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::{
+    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
+};
 use std::path::Path;
 
 pub mod coverage;
 
 pub mod gas_report;
-
-pub mod link;
 
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
@@ -97,8 +95,18 @@ impl TestOptions {
     where
         S: Into<String>,
     {
-        let fuzz = self.fuzz_config(contract_id, test_fn);
-        self.fuzzer_with_cases(fuzz.runs)
+        let fuzz_config = self.fuzz_config(contract_id, test_fn).clone();
+        let failure_persist_path = fuzz_config
+            .failure_persist_dir
+            .unwrap()
+            .join(fuzz_config.failure_persist_file.unwrap())
+            .into_os_string()
+            .into_string()
+            .unwrap();
+        self.fuzzer_with_cases(
+            fuzz_config.runs,
+            Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
+        )
     }
 
     /// Returns an "invariant" test runner instance. Parameters are used to select tight scoped fuzz
@@ -113,7 +121,7 @@ impl TestOptions {
         S: Into<String>,
     {
         let invariant = self.invariant_config(contract_id, test_fn);
-        self.fuzzer_with_cases(invariant.runs)
+        self.fuzzer_with_cases(invariant.runs, None)
     }
 
     /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz
@@ -144,22 +152,25 @@ impl TestOptions {
         self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
-    pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
-        // TODO: Add Options to modify the persistence
-        let cfg = proptest::test_runner::Config {
-            failure_persistence: None,
+    pub fn fuzzer_with_cases(
+        &self,
+        cases: u32,
+        file_failure_persistence: Option<Box<dyn FailurePersistence>>,
+    ) -> TestRunner {
+        let config = proptest::test_runner::Config {
+            failure_persistence: file_failure_persistence,
             cases,
             max_global_rejects: self.fuzz.max_test_rejects,
             ..Default::default()
         };
 
-        if let Some(ref fuzz_seed) = self.fuzz.seed {
-            trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
-            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &B256::from(*fuzz_seed).0);
-            TestRunner::new_with_rng(cfg, rng)
+        if let Some(seed) = &self.fuzz.seed {
+            trace!(target: "forge::test", %seed, "building deterministic fuzzer");
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
+            TestRunner::new_with_rng(config, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
-            TestRunner::new(cfg)
+            TestRunner::new(config)
         }
     }
 }
@@ -211,23 +222,3 @@ impl TestOptionsBuilder {
         TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
     }
 }
-
-mod utils2 {
-    use alloy_primitives::Address;
-    use ethers_core::types::BlockId;
-    use ethers_providers::{Middleware, Provider};
-    use eyre::Context;
-    use foundry_common::types::{ToAlloy, ToEthers};
-
-    pub async fn next_nonce(
-        caller: Address,
-        provider_url: &str,
-        block: Option<BlockId>,
-    ) -> eyre::Result<u64> {
-        let provider = Provider::try_from(provider_url)
-            .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-        let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
-        res.try_into().map_err(Into::into)
-    }
-}
-pub use utils2::*;

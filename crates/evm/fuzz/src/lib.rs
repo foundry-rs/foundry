@@ -150,6 +150,10 @@ pub struct FuzzTestResult {
     /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
     pub traces: Option<CallTraceArena>,
 
+    /// Additional traces used for gas report construction.
+    /// Those traces should not be displayed.
+    pub gas_report_traces: Vec<CallTraceArena>,
+
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
 }

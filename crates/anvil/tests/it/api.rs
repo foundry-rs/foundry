@@ -5,7 +5,7 @@ use crate::{
     utils::ethers_http_provider,
 };
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
     state::{AccountOverride, StateOverride},

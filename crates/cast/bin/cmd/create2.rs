@@ -19,7 +19,7 @@ const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 #[derive(Clone, Debug, Parser)]
 pub struct Create2Args {
     /// Prefix for the contract address.
-    #[clap(
+    #[arg(
         long,
         short,
         required_unless_present_any = &["ends_with", "matching"],
@@ -28,19 +28,19 @@ pub struct Create2Args {
     starts_with: Option<String>,
 
     /// Suffix for the contract address.
-    #[clap(long, short, value_name = "HEX")]
+    #[arg(long, short, value_name = "HEX")]
     ends_with: Option<String>,
 
     /// Sequence that the address has to match.
-    #[clap(long, short, value_name = "HEX")]
+    #[arg(long, short, value_name = "HEX")]
     matching: Option<String>,
 
     /// Case sensitive matching.
-    #[clap(short, long)]
+    #[arg(short, long)]
     case_sensitive: bool,
 
     /// Address of the contract deployer.
-    #[clap(
+    #[arg(
         short,
         long,
         default_value = DEPLOYER,
@@ -49,27 +49,27 @@ pub struct Create2Args {
     deployer: Address,
 
     /// Init code of the contract to be deployed.
-    #[clap(short, long, value_name = "HEX")]
+    #[arg(short, long, value_name = "HEX")]
     init_code: Option<String>,
 
     /// Init code hash of the contract to be deployed.
-    #[clap(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
+    #[arg(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
     init_code_hash: Option<String>,
 
     /// Number of threads to use. Defaults to and caps at the number of logical cores.
-    #[clap(short, long)]
+    #[arg(short, long)]
     jobs: Option<NonZeroUsize>,
 
     /// Address of the caller. Used for the first 20 bytes of the salt.
-    #[clap(long, value_name = "ADDRESS")]
+    #[arg(long, value_name = "ADDRESS")]
     caller: Option<Address>,
 
     /// The random number generator's seed, used to initialize the salt.
-    #[clap(long, value_name = "HEX")]
+    #[arg(long, value_name = "HEX")]
     seed: Option<B256>,
 
     /// Don't initialize the salt with a random value, and instead use the default value of 0.
-    #[clap(long, conflicts_with = "seed")]
+    #[arg(long, conflicts_with = "seed")]
     no_random: bool,
 }
 
@@ -203,7 +203,7 @@ impl Create2Args {
                     #[allow(clippy::needless_borrows_for_generic_args)]
                     let addr = deployer.create2(&salt.0, init_code_hash);
 
-                    // Check if the the regex matches the calculated address' checksum.
+                    // Check if the regex matches the calculated address' checksum.
                     let _ = addr.to_checksum_raw(&mut checksum, None);
                     // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string
                     // is safe.

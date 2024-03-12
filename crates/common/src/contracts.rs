@@ -135,23 +135,6 @@ unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
     sum
 }
 
-/// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
-pub fn flatten_contracts(
-    contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
-    deployed_code: bool,
-) -> ContractsByArtifact {
-    ContractsByArtifact(
-        contracts
-            .iter()
-            .filter_map(|(id, c)| {
-                let bytecode =
-                    if deployed_code { c.deployed_bytecode.bytes() } else { c.bytecode.bytes() };
-                bytecode.cloned().map(|code| (id.clone(), (c.abi.clone(), code.into())))
-            })
-            .collect(),
-    )
-}
-
 /// Artifact/Contract identifier can take the following form:
 /// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
 /// the contract's artifact and the contract name is the name of the solidity contract, like

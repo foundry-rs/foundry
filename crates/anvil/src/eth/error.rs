@@ -87,6 +87,8 @@ pub enum BlockchainError {
     DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
+    #[error("{0}")]
+    Message(String),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -107,6 +109,7 @@ where
                 InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => BlockchainError::Message(err),
         }
     }
 }
@@ -235,7 +238,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::NonceOverflowInTransaction => {
                 InvalidTransactionError::NonceMaxValue
             }
-            InvalidTransaction::CreateInitcodeSizeLimit => {
+            InvalidTransaction::CreateInitCodeSizeLimit => {
                 InvalidTransactionError::MaxInitCodeSizeExceeded
             }
             InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
@@ -416,6 +419,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::ExcessBlobGasNotSet => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
             }
             .into(),
         }

@@ -1,8 +1,16 @@
-use super::retry::RetryArgs;
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::{EtherscanOpts, RpcOpts},
+    utils,
+    utils::LoadConfig,
+};
 use foundry_compilers::{info::ContractInfo, EvmVersion};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
@@ -15,17 +23,20 @@ use etherscan::EtherscanVerificationProvider;
 pub mod provider;
 use provider::VerificationProvider;
 
+pub mod retry;
 mod sourcify;
+
+pub use retry::RetryArgs;
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[clap(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
+    #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
     pub verifier: VerificationProviderType,
 
     /// The verifier URL, if using a custom provider
-    #[clap(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
 }
 
@@ -45,7 +56,7 @@ pub struct VerifyArgs {
     pub contract: ContractInfo,
 
     /// The ABI-encoded constructor arguments.
-    #[clap(
+    #[arg(
         long,
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
@@ -54,68 +65,75 @@ pub struct VerifyArgs {
     pub constructor_args: Option<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
+    /// Try to extract constructor arguments from on-chain creation code.
+    #[arg(long)]
+    pub guess_constructor_args: bool,
+
     /// The `solc` version to use to build the smart contract.
-    #[clap(long, value_name = "VERSION")]
+    #[arg(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
 
     /// The number of optimization runs used to build the smart contract.
-    #[clap(long, visible_alias = "optimizer-runs", value_name = "NUM")]
+    #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
     /// Flatten the source code before verifying.
-    #[clap(long)]
+    #[arg(long)]
     pub flatten: bool,
 
     /// Do not compile the flattened smart contract before verifying (if --flatten is passed).
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub force: bool,
 
     /// Do not check if the contract is already verified before verifying.
-    #[clap(long)]
+    #[arg(long)]
     pub skip_is_verified_check: bool,
 
     /// Wait for verification result after submission.
-    #[clap(long)]
+    #[arg(long)]
     pub watch: bool,
 
     /// Set pre-linked libraries.
-    #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
+    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
 
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
     /// Prints the standard json compiler input.
     ///
     /// The standard json compiler input can be used to manually submit contract verification in
     /// the browser.
-    #[clap(long, conflicts_with = "flatten")]
+    #[arg(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
 
     /// Use the Yul intermediate representation compilation pipeline.
-    #[clap(long)]
+    #[arg(long)]
     pub via_ir: bool,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[clap(long)]
+    #[arg(long)]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
+    pub rpc: RpcOpts,
+
+    #[command(flatten)]
     pub retry: RetryArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: VerifierArgs,
 }
 
@@ -130,6 +148,8 @@ impl figment::Provider for VerifyArgs {
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
         let mut dict = self.etherscan.dict();
+        dict.extend(self.rpc.dict());
+
         if let Some(root) = self.root.as_ref() {
             dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
         }
@@ -154,7 +174,23 @@ impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
-        let chain = config.chain.unwrap_or_default();
+
+        if self.guess_constructor_args && config.get_rpc_url().is_none() {
+            eyre::bail!(
+                "You have to provide a valid RPC URL to use --guess-constructor-args feature"
+            )
+        }
+
+        // If chain is not set, we try to get it from the RPC
+        // If RPC is not set, the default chain is used
+        let chain = match config.get_rpc_url() {
+            Some(_) => {
+                let provider = utils::get_provider(&config)?;
+                utils::get_chain(config.chain, provider).await?
+            }
+            None => config.chain.unwrap_or_default(),
+        };
+
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
@@ -205,13 +241,13 @@ pub struct VerifyCheckArgs {
     /// For Sourcify - Contract Address.
     id: String,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     retry: RetryArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     verifier: VerifierArgs,
 }
 

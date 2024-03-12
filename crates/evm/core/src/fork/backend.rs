@@ -4,7 +4,7 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{Block, BlockId, Transaction};
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -74,7 +74,7 @@ enum BackendRequest {
 ///
 /// This handler will remain active as long as it is reachable (request channel still open) and
 /// requests are in progress.
-#[must_use = "BackendHandler does nothing unless polled."]
+#[must_use = "futures do nothing unless polled"]
 pub struct BackendHandler<P> {
     provider: P,
     /// Stores all the data.
@@ -759,7 +759,7 @@ mod tests {
             evm_opts,
         };
 
-        let backend = Backend::spawn(Some(fork)).await;
+        let backend = Backend::spawn(Some(fork));
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

@@ -12,13 +12,13 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Parser)]
 pub struct FlattenArgs {
     /// The path to the contract to flatten.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
 
     /// The path to output the flattened contract.
     ///
     /// If not specified, the flattened contract will be output to stdout.
-    #[clap(
+    #[arg(
         long,
         short,
         value_hint = ValueHint::FilePath,
@@ -26,7 +26,7 @@ pub struct FlattenArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     project_paths: ProjectPathsArgs,
 }
 

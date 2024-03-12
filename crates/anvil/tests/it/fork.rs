@@ -5,7 +5,7 @@ use crate::{
     utils::{self, ethers_http_provider},
 };
 use alloy_primitives::{address, U256 as rU256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest as CallRequest},
     BlockNumberOrTag,
@@ -1121,6 +1121,55 @@ async fn test_arbitrum_fork_dev_balance() {
         let balance = api.balance(acc.address(), Some(Default::default())).await.unwrap();
         assert_eq!(balance, rU256::from(100000000000000000000u128));
     }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6749>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_fork_block_number() {
+    // fork to get initial block for test
+    let (_, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(None::<u64>)
+            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+    )
+    .await;
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let initial_block_number = provider.get_block_number().await.unwrap().as_u64();
+
+    // fork again at block number returned by `eth_blockNumber`
+    // if wrong block number returned (e.g. L1) then fork will fail with error code -32000: missing
+    // trie node
+    let (api, _) = spawn(
+        fork_config()
+            .with_fork_block_number(Some(initial_block_number))
+            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+    )
+    .await;
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, initial_block_number);
+
+    // take snapshot at initial block number
+    let snapshot = api.evm_snapshot().await.unwrap();
+
+    // mine new block and check block number returned by `eth_blockNumber`
+    api.mine_one().await;
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, initial_block_number + 1);
+
+    // revert to recorded snapshot and check block number
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, initial_block_number);
+
+    // reset fork to different block number and compare with block returned by `eth_blockNumber`
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some("https://arb1.arbitrum.io/rpc".to_string()),
+        block_number: Some(initial_block_number - 2),
+    }))
+    .await
+    .unwrap();
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, initial_block_number - 2);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7023>

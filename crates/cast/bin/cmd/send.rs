@@ -1,4 +1,5 @@
-use cast::{Cast, TxBuilder};
+use crate::tx;
+use cast::Cast;
 use clap::Parser;
 use ethers_core::types::NameOrAddress;
 use ethers_middleware::SignerMiddleware;
@@ -22,7 +23,7 @@ pub struct SendTxArgs {
     /// The destination of the transaction.
     ///
     /// If not provided, you must use cast send --create.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -32,39 +33,39 @@ pub struct SendTxArgs {
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
-    #[clap(name = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
 
     /// The number of confirmations until the receipt is fetched.
-    #[clap(long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     confirmations: usize,
 
     /// Print the transaction receipt as JSON.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
     /// Reuse the latest nonce for the sender account.
-    #[clap(long, conflicts_with = "nonce")]
+    #[arg(long, conflicts_with = "nonce")]
     resend: bool,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Option<SendTxSubcommands>,
 
     /// Send via `eth_sendTransaction using the `--from` argument or $ETH_FROM as sender
-    #[clap(long, requires = "from")]
+    #[arg(long, requires = "from")]
     unlocked: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]
 pub enum SendTxSubcommands {
     /// Use to deploy raw contract bytecode.
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// The bytecode of the contract to deploy.
         code: String,
@@ -82,7 +83,7 @@ impl SendTxArgs {
         let SendTxArgs {
             eth,
             to,
-            sig,
+            mut sig,
             cast_async,
             mut args,
             mut tx,
@@ -93,24 +94,20 @@ impl SendTxArgs {
             unlocked,
         } = self;
 
-        let mut sig = sig.unwrap_or_default();
         let code = if let Some(SendTxSubcommands::Create {
             code,
             sig: constructor_sig,
             args: constructor_args,
         }) = command
         {
-            sig = constructor_sig.unwrap_or_default();
+            sig = constructor_sig;
             args = constructor_args;
             Some(code)
         } else {
             None
         };
 
-        // ensure mandatory fields are provided
-        if code.is_none() && to.is_none() {
-            eyre::bail!("Must specify a recipient address or contract code to deploy");
-        }
+        tx::validate_to_address(&code, &to)?;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -155,7 +152,8 @@ impl SendTxArgs {
                 config.sender.to_ethers(),
                 to,
                 code,
-                (sig, args),
+                sig,
+                args,
                 tx,
                 chain,
                 api_key,
@@ -173,19 +171,7 @@ impl SendTxArgs {
             let signer = eth.wallet.signer().await?;
             let from = signer.address();
 
-            // prevent misconfigured hwlib from sending a transaction that defies
-            // user-specified --from
-            if let Some(specified_from) = eth.wallet.from {
-                if specified_from != from.to_alloy() {
-                    eyre::bail!(
-                        "\
-The specified sender via CLI/env vars does not match the sender configured via
-the hardware wallet's HD Path.
-Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
-corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
-                    )
-                }
-            }
+            tx::validate_from_address(eth.wallet.from, from.to_alloy())?;
 
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
@@ -198,7 +184,8 @@ corresponds to the sender, or let foundry automatically detect it by not specify
                 from,
                 to,
                 code,
-                (sig, args),
+                sig,
+                args,
                 tx,
                 chain,
                 api_key,
@@ -217,7 +204,8 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     from: F,
     to: Option<T>,
     code: Option<String>,
-    args: (String, Vec<String>),
+    sig: Option<String>,
+    args: Vec<String>,
     tx: TransactionOpts,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -228,30 +216,8 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
 where
     M::Error: 'static,
 {
-    let (sig, params) = args;
-    let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
-    builder
-        .etherscan_api_key(etherscan_api_key)
-        .gas(tx.gas_limit)
-        .gas_price(tx.gas_price)
-        .priority_gas_price(tx.priority_gas_price)
-        .value(tx.value)
-        .nonce(tx.nonce);
-
-    if let Some(code) = code {
-        let mut data = hex::decode(code)?;
-
-        if let Some((sig, args)) = params {
-            let (mut sigdata, _) = builder.create_args(sig, args).await?;
-            data.append(&mut sigdata);
-        }
-
-        builder.set_data(data);
-    } else {
-        builder.args(params).await?;
-    };
-    let builder_output = builder.build();
+    let builder_output =
+        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key).await?;
 
     let cast = Cast::new(provider);
 

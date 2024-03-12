@@ -23,9 +23,9 @@
 //! // A new clap subcommand that accepts both `EvmArgs` and `BuildArgs`
 //! #[derive(Clone, Debug, Parser)]
 //! pub struct MyArgs {
-//!     #[clap(flatten)]
+//!     #[command(flatten)]
 //!     evm_opts: EvmArgs,
-//!     #[clap(flatten)]
+//!     #[command(flatten)]
 //!     opts: BuildArgs,
 //! }
 //!
@@ -56,12 +56,9 @@ pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod remove;
-pub mod retry;
-pub mod script;
 pub mod selectors;
 pub mod snapshot;
 pub mod test;
 pub mod tree;
 pub mod update;
-pub mod verify;
 pub mod watch;

@@ -514,6 +514,89 @@ casttest!(logs_sig_2, |_prj, cmd| {
     );
 });
 
+casttest!(mktx, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
+    );
+});
+
+// ensure recipient or code is required
+casttest!(mktx_requires_to, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert_eq!(
+        output.trim(),
+        "Error: \nMust specify a recipient address or contract code to deploy"
+    );
+});
+
+casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--from",
+        "0x0000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert!(
+        output.contains("The specified sender via CLI/env vars does not match the sender configured via\nthe hardware wallet's HD Path.")
+    );
+});
+
+casttest!(mktx_signer_from_match, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
+    );
+});
+
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -673,4 +756,38 @@ casttest!(balance, |_prj, cmd| {
 
     assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
     assert_eq!(alias_result, usdt_result);
+});
+
+// tests that `cast interface` excludes the constructor
+// <https://github.com/alloy-rs/core/issues/555>
+casttest!(interface_no_constructor, |prj, cmd| {
+    let interface = include_str!("../fixtures/interface.json");
+
+    let path = prj.root().join("interface.json");
+    fs::write(&path, interface).unwrap();
+    // Call `cast find-block`
+    cmd.args(["interface"]).arg(&path);
+    let output = cmd.stdout_lossy();
+
+    let s = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface Interface {
+    type SpendAssetsHandleType is uint8;
+
+    function getIntegrationManager() external view returns (address integrationManager_);
+    function lend(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+    function parseAssetsForAction(address, bytes4 _selector, bytes memory _actionData)
+        external
+        view
+        returns (
+            SpendAssetsHandleType spendAssetsHandleType_,
+            address[] memory spendAssets_,
+            uint256[] memory spendAssetAmounts_,
+            address[] memory incomingAssets_,
+            uint256[] memory minIncomingAssetAmounts_
+        );
+    function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+}"#;
+    assert_eq!(output.trim(), s);
 });

@@ -1,6 +1,7 @@
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockTransactions;
+use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -25,36 +26,36 @@ pub struct RunArgs {
     tx_hash: String,
 
     /// Opens the transaction in the debugger.
-    #[clap(long, short)]
+    #[arg(long, short)]
     debug: bool,
 
     /// Print out opcode traces.
-    #[clap(long, short)]
+    #[arg(long, short)]
     trace_printer: bool,
 
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
-    #[clap(long, short)]
+    #[arg(long, short)]
     quick: bool,
 
     /// Prints the full address of the contract.
-    #[clap(long, short)]
+    #[arg(long, short)]
     verbose: bool,
 
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
-    #[clap(long, short)]
+    #[arg(long, short)]
     label: Vec<String>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[clap(long, short)]
+    #[arg(long, short)]
     evm_version: Option<EvmVersion>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -62,7 +63,7 @@ pub struct RunArgs {
     /// default value: 330
     ///
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(long, alias = "cups", value_name = "CUPS")]
+    #[arg(long, alias = "cups", value_name = "CUPS")]
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting for this node's provider.
@@ -70,7 +71,7 @@ pub struct RunArgs {
     /// default value: false
     ///
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
+    #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 }
 
@@ -121,8 +122,7 @@ impl RunArgs {
 
         let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-        let mut executor =
-            TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug).await;
+        let mut executor = TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug);
 
         env.block.number = U256::from(tx_block_number);
 
@@ -135,6 +135,9 @@ impl RunArgs {
             env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
             env.block.gas_limit = block.header.gas_limit;
         }
+
+        let mut env =
+            EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {
