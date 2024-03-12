@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
@@ -171,7 +171,7 @@ pub struct DebugStep {
     /// Memory *prior* to running the associated opcode
     pub memory: Vec<u8>,
     /// Calldata *prior* to running the associated opcode
-    pub calldata: Vec<u8>,
+    pub calldata: Bytes,
     /// Returndata *prior* to running the associated opcode
     pub returndata: Vec<u8>,
     /// Opcode to be executed
