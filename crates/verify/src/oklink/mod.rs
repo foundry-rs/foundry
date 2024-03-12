@@ -34,12 +34,12 @@ pub static BASE_URL: &str = "https://www.oklink.com/";
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
-pub struct OklinkVerificationProvider {
+pub struct OKLinkVerificationProvider {
     /// Memoized cached entry of the target contract
     cached_entry: Option<(PathBuf, CacheEntry, CompactContract)>,
 }
 
-/// The contract source provider for [OklinkVerificationProvider]
+/// The contract source provider for [OKLinkVerificationProvider]
 ///
 /// Returns source, contract_name and the source [CodeFormat]
 trait OklinkSourceProvider: Send + Sync + Debug {
@@ -53,7 +53,7 @@ trait OklinkSourceProvider: Send + Sync + Debug {
 }
 
 #[async_trait::async_trait]
-impl VerificationProvider for OklinkVerificationProvider {
+impl VerificationProvider for OKLinkVerificationProvider {
     async fn preflight_check(&mut self, args: VerifyArgs) -> Result<()> {
         let _ = self.prepare_request(&args).await?;
         Ok(())
@@ -144,12 +144,10 @@ impl VerificationProvider for OklinkVerificationProvider {
 
     /// Executes the command to check verification status on Oklink
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        // let config = args.try_load_config_emit_warnings()?;
         let oklink = self.client(
             args.etherscan.chain.unwrap_or_default(),
             args.verifier.verifier_url.as_deref(),
             args.oklink.key().as_deref(),
-            // &config,
         )?;
         let retry: Retry = args.retry.into();
         retry
@@ -198,7 +196,7 @@ impl VerificationProvider for OklinkVerificationProvider {
     }
 }
 
-impl OklinkVerificationProvider {
+impl OKLinkVerificationProvider {
     /// Create a source provider
     fn source_provider(&self, args: &VerifyArgs) -> Box<dyn OklinkSourceProvider> {
         if args.flatten {
@@ -245,7 +243,6 @@ impl OklinkVerificationProvider {
             args.etherscan.chain.unwrap_or_default(),
             args.verifier.verifier_url.as_deref(),
             args.oklink.key().as_deref(),
-            // &config,
         )?;
         let verify_args = self.create_verify_request(args, Some(config)).await?;
         Ok((client, verify_args))
@@ -460,4 +457,167 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
     } else {
         Ok(lookup_compiler_version(&version).await?)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use foundry_common::fs;
+    use foundry_test_utils::forgetest_async;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_check() {
+        let args: VerifyCheckArgs = VerifyCheckArgs::parse_from([
+            "foundry-cli",
+            "--verifier",
+            "oklink",
+            "--verifier-url",
+            "https://www.oklink.com/api/explorer/v1/contract/verify/async/api/ethgoerli/",
+            "--chain",
+            "goerli",
+            "0x1AbDA080f4b493672336289e0A580FB1783306FD",
+        ]);
+
+        let oklink = OKLinkVerificationProvider::default();
+        let result = oklink.check(args).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fails_on_disabled_cache_and_missing_info() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        let root_path = root.as_os_str().to_str().unwrap();
+
+        let config = r"
+                [profile.default]
+                cache = false
+            ";
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+
+        let address = "0x1AbDA080f4b493672336289e0A580FB1783306FD";
+        let contract_name = "Counter";
+        let src_dir = "src";
+        fs::create_dir_all(root.join(src_dir)).unwrap();
+        let contract_path = format!("{src_dir}/Counter.sol");
+        fs::write(root.join(&contract_path), "").unwrap();
+
+        let mut oklink = OKLinkVerificationProvider::default();
+
+        // No compiler argument
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            address,
+            &format!("{contract_path}:{contract_name}"),
+            "--root",
+            root_path,
+        ]);
+
+        let result = oklink.preflight_check(args).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
+        );
+
+        // No contract path
+        let args =
+            VerifyArgs::parse_from(["foundry-cli", address, contract_name, "--root", root_path]);
+
+        let result = oklink.preflight_check(args).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "If cache is disabled, contract info must be provided in the format <path>:<name>"
+        );
+
+        // Constructor args path
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            address,
+            &format!("{contract_path}:{contract_name}"),
+            "--constructor-args-path",
+            ".",
+            "--compiler-version",
+            "0.8.15",
+            "--root",
+            root_path,
+        ]);
+
+        let result = oklink.preflight_check(args).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Cache must be enabled in order to use the `--constructor-args-path` option",
+        );
+    }
+
+    forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
+        prj.add_source("Counter1", "contract Counter {}").unwrap();
+        prj.add_source("Counter2", "contract Counter {}").unwrap();
+
+        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
+
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter1.sol:Counter",
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        let mut oklink = OKLinkVerificationProvider::default();
+        oklink.preflight_check(args).await.unwrap();
+    });
+
+    forgetest_async!(test_verify, |prj, cmd| {
+        prj.add_source(
+            "Counter1",
+            "// SPDX-License-Identifier: UNLICENSED
+            pragma solidity ^0.8.13;
+            
+            contract Counter {
+                uint256 public number;
+            
+                function setNumber(uint256 newNumber) public {
+                    number = newNumber;
+                }
+            
+                function increment() public {
+                    number++;
+                }
+            }
+        ",
+        )
+        .unwrap();
+        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
+
+        let args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "--verifier",
+            "oklink",
+            "--verifier-url",
+            "https://www.oklink.com/api/explorer/v1/contract/verify/async/api/ethgoerli/",
+            "--chain",
+            "goerli",
+            "--num-of-optimizations",
+            "200",
+            "--watch",
+            "--compiler-version",
+            "v0.8.19+commit.7dd6d404",
+            "--skip-is-verified-check",
+            "0x1AbDA080f4b493672336289e0A580FB1783306FD",
+            "src/Counter1.sol:Counter",
+            "--root",
+            &prj.root().to_string_lossy(),
+        ]);
+
+        let mut oklink = OKLinkVerificationProvider::default();
+        let result = oklink.verify(args).await;
+        assert!(result.is_ok());
+    });
 }

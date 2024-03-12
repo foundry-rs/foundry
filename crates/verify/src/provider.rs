@@ -1,5 +1,5 @@
 use super::{
-    etherscan::EtherscanVerificationProvider, oklink::OklinkVerificationProvider,
+    etherscan::EtherscanVerificationProvider, oklink::OKLinkVerificationProvider,
     sourcify::SourcifyVerificationProvider, VerifyArgs, VerifyCheckArgs,
 };
 use async_trait::async_trait;
@@ -84,7 +84,7 @@ impl VerificationProviderType {
             VerificationProviderType::Blockscout => {
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
-            VerificationProviderType::Oklink => Ok(Box::<OklinkVerificationProvider>::default()),
+            VerificationProviderType::Oklink => Ok(Box::<OKLinkVerificationProvider>::default()),
         }
     }
 }
