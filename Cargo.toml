@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.75" # Remember to update clippy.toml as well
+rust-version = "1.75"                                       # Remember to update clippy.toml as well
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -138,7 +138,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.9", default-features = false }
+foundry-compilers = { version = "0.3.10", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -186,7 +186,10 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 eyre = "0.6"
@@ -217,3 +220,5 @@ tower-http = "0.4"
 # revm-interpreter = { path = "../../danipopes/revm/crates/interpreter" }
 # revm-primitives = { path = "../../danipopes/revm/crates/primitives" }
 # revm-precompile = { path = "../../danipopes/revm/crates/precompile" }
+[patch.crates-io]
+foundry-compilers = { git = "https://github.com/klkvr/compilers", branch = "klkvr/refactor-cache"}
