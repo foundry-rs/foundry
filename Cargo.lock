@@ -3287,7 +3287,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.3.10"
-source = "git+https://github.com/klkvr/compilers?branch=klkvr/refactor-cache#8eb160a8bea8947d182f993a60c1117abe40ebe9"
+source = "git+https://github.com/klkvr/compilers?branch=klkvr/refactor-cache#a0325189d8407a3753dd2764e6bc453f8c91bab8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
