@@ -1,5 +1,6 @@
 use crate::opcodes;
 use alloy_primitives::{Address, Bytes, U256};
+use arrayvec::ArrayVec;
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
@@ -176,8 +177,10 @@ pub struct DebugStep {
     pub returndata: Bytes,
     /// Opcode to be executed
     pub instruction: Instruction,
-    /// Optional bytes that are being pushed onto the stack
-    pub push_bytes: Option<Vec<u8>>,
+    /// Optional bytes that are being pushed onto the stack.
+    /// Empty if the opcode is not a push or PUSH0.
+    #[serde(serialize_with = "hex::serialize", deserialize_with = "deserialize_arrayvec_hex")]
+    pub push_bytes: ArrayVec<u8, 32>,
     /// The program counter at this step.
     ///
     /// Note: To map this step onto source code using a source map, you must convert the program
@@ -195,7 +198,7 @@ impl Default for DebugStep {
             calldata: Default::default(),
             returndata: Default::default(),
             instruction: Instruction::OpCode(revm::interpreter::opcode::INVALID),
-            push_bytes: None,
+            push_bytes: Default::default(),
             pc: 0,
             total_gas_used: 0,
         }
@@ -205,8 +208,8 @@ impl Default for DebugStep {
 impl DebugStep {
     /// Pretty print the step's opcode
     pub fn pretty_opcode(&self) -> String {
-        if let Some(push_bytes) = &self.push_bytes {
-            format!("{}(0x{})", self.instruction, hex::encode(push_bytes))
+        if !self.push_bytes.is_empty() {
+            format!("{}(0x{})", self.instruction, hex::encode(&self.push_bytes))
         } else {
             self.instruction.to_string()
         }
@@ -265,4 +268,13 @@ impl Instruction {
             _ => None,
         }
     }
+}
+
+fn deserialize_arrayvec_hex<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ArrayVec<u8, 32>, D::Error> {
+    let bytes: Vec<u8> = hex::deserialize(deserializer)?;
+    let mut array = ArrayVec::new();
+    array.try_extend_from_slice(&bytes).map_err(serde::de::Error::custom)?;
+    Ok(array)
 }
