@@ -38,6 +38,7 @@ revm-inspectors.workspace = true
 
 itertools.workspace = true
 
+arrayvec.workspace = true
 eyre = "0.6"
 hex.workspace = true
 parking_lot = "0.12"

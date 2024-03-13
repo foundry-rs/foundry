@@ -37,6 +37,7 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
+arrayvec.workspace = true
 auto_impl = "1"
 derive_more.workspace = true
 eyre = "0.6"
