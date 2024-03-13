@@ -87,8 +87,8 @@ impl DebugArena {
                 out.push(node.flat());
             }
 
-            for child in &node.children.into_iter().rev() {
-                stack.push(*child);
+            for child in node.children.iter().rev() {
+                stack.push_back(*child);
             }
         }
     }
