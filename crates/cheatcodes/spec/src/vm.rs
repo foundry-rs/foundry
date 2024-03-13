@@ -1914,6 +1914,22 @@ interface Vm {
 
     // -------- Forge execution context cheatcodes --------
 
+    /// Returns true if `forge` command was executed with `script --broadcast` option.
+    #[cheatcode(group = Context)]
+    function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
+
+    /// Returns true if `forge` command was executed with `script` option.
+    #[cheatcode(group = Context)]
+    function isScriptContext() external view returns (bool isScript);
+
+    /// Returns true if `forge` command was executed with `script` option.
+    #[cheatcode(group = Context)]
+    function isScriptDryRunContext() external view returns (bool isScriptDryRun);
+
+    /// Returns true if `forge` command was executed with `script --resume` option.
+    #[cheatcode(group = Context)]
+    function isScriptResumeContext() external view returns (bool isScriptResume);
+
     /// Returns true if `forge` command was executed with `test`, `coverage` or `snapshot` option.
     #[cheatcode(group = Context)]
     function isTestContext() external view returns (bool isTest);
@@ -1929,22 +1945,6 @@ interface Vm {
     /// Returns true if `forge` command was executed with `test` option.
     #[cheatcode(group = Context)]
     function isTestStandardContext() external view returns (bool isTest);
-
-    /// Returns true if `forge` command was executed with `script` option.
-    #[cheatcode(group = Context)]
-    function isScriptContext() external view returns (bool isScript);
-
-    /// Returns true if `forge` command was executed with `script --broadcast` option.
-    #[cheatcode(group = Context)]
-    function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
-
-    /// Returns true if `forge` command was executed with `script` option.
-    #[cheatcode(group = Context)]
-    function isScriptDryRunContext() external view returns (bool isScriptDryRun);
-
-    /// Returns true if `forge` command was executed with `script --resume` option.
-    #[cheatcode(group = Context)]
-    function isScriptResumeContext() external view returns (bool isScriptResume);
 
     // -------- Key Management --------
 

@@ -240,8 +240,8 @@ interface Vm {
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
-    function isScriptContext() external view returns (bool isScript);
     function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
+    function isScriptContext() external view returns (bool isScript);
     function isScriptDryRunContext() external view returns (bool isScriptDryRun);
     function isScriptResumeContext() external view returns (bool isScriptResume);
     function isTestContext() external view returns (bool isTest);
