@@ -838,11 +838,7 @@ fn convert_call_result(
         ..
     } = call_result;
 
-    let breakpoints = if let Some(c) = call_result.cheatcodes {
-        c.breakpoints
-    } else {
-        std::collections::HashMap::new()
-    };
+    let breakpoints = call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
 
     match status {
         return_ok!() => {
