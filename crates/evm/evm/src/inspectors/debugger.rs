@@ -1,4 +1,5 @@
 use alloy_primitives::Address;
+use arrayvec::ArrayVec;
 use foundry_common::{ErrorExt, SELECTOR_LEN};
 use foundry_evm_core::{
     backend::DatabaseExt,
@@ -56,15 +57,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let opcode_info = &opcode_infos[op as usize];
 
         // Extract the push bytes
-        let push_size = if opcode_info.is_push() { (op - opcode::PUSH1 + 1) as usize } else { 0 };
-        let push_bytes = match push_size {
-            0 => None,
-            n => {
-                let start = pc + 1;
-                let end = start + n;
-                Some(interp.contract.bytecode.bytecode()[start..end].to_vec())
-            }
-        };
+        let push_size = if opcode_info.is_push() { (op - opcode::PUSH0) as usize } else { 0 };
+        let push_bytes = (push_size > 0).then(|| {
+            let start = pc + 1;
+            let end = start + push_size;
+            let slice = &interp.contract.bytecode.bytecode()[start..end];
+            assert!(slice.len() <= 32);
+            let mut array = ArrayVec::new();
+            array.try_extend_from_slice(slice).unwrap();
+            array
+        });
 
         let total_gas_used = gas_used(
             ecx.spec_id(),
@@ -72,20 +74,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             interp.gas.refunded() as u64,
         );
 
-        // if the previous opcode does __not__ modify memory, we can reuse the memory of
-        // that step
+        // Reuse the memory from the previous step if the previous opcode did not modify it.
         let memory = self.arena.arena[self.head]
             .steps
             .last()
-            .and_then(|step| {
-                if !step.opcode_modifies_memory() {
-                    // reuse the memory from the previous step, because its opcode did not modify
-                    // memory
-                    Some(step.memory.clone())
-                } else {
-                    None
-                }
-            })
+            .filter(|step| !step.opcode_modifies_memory())
+            .map(|step| step.memory.clone())
             .unwrap_or_else(|| interp.shared_memory.context_memory().to_vec().into());
 
         self.arena.arena[self.head].steps.push(DebugStep {
@@ -95,7 +89,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             calldata: interp.contract().input.clone(),
             returndata: interp.return_data_buffer.clone(),
             instruction: Instruction::OpCode(op),
-            push_bytes,
+            push_bytes: push_bytes.unwrap_or_default(),
             total_gas_used,
         });
     }
