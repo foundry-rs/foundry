@@ -1791,7 +1791,7 @@ impl Backend {
         address: Address,
         block_request: BlockRequest,
     ) -> Result<U256, BlockchainError> {
-        if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
+        if let BlockRequest::Pending(pool_transactions) = &block_request {
             if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
                 return Ok(value);
             }
