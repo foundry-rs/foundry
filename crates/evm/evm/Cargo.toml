@@ -35,7 +35,6 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-arrayvec.workspace = true
 eyre = "0.6"
 hex.workspace = true
 itertools.workspace = true
