@@ -14,6 +14,8 @@ use reqwest::Url;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
+    net::SocketAddr,
+    str::FromStr,
 };
 use url::ParseError;
 
@@ -93,12 +95,16 @@ impl ProviderBuilder {
         let url = Url::parse(url_str)
             .or_else(|err| match err {
                 ParseError::RelativeUrlWithoutBase => {
-                    let path = Path::new(url_str);
-
-                    if let Ok(path) = resolve_path(path) {
-                        Url::parse(&format!("file://{}", path.display()))
+                    if let Ok(_) = SocketAddr::from_str(url_str) {
+                        Url::parse(&format!("http://{}", url_str))
                     } else {
-                        Err(err)
+                        let path = Path::new(url_str);
+
+                        if let Ok(path) = resolve_path(path) {
+                            Url::parse(&format!("file://{}", path.display()))
+                        } else {
+                            Err(err)
+                        }
                     }
                 }
                 _ => Err(err),
