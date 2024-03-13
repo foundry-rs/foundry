@@ -294,7 +294,7 @@ impl<'a> ContractRunner<'a> {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(func, should_fail, runner, setup, *fuzz_config)
+                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
                 } else {
                     debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
@@ -604,8 +604,12 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let fuzzed_executor =
-            FuzzedExecutor::new(self.executor.clone(), runner.clone(), self.sender, fuzz_config);
+        let fuzzed_executor = FuzzedExecutor::new(
+            self.executor.clone(),
+            runner.clone(),
+            self.sender,
+            fuzz_config.clone(),
+        );
         let state = fuzzed_executor.build_fuzz_state();
         let result = fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder);
 

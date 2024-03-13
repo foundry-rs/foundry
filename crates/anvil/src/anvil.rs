@@ -30,7 +30,7 @@ pub enum AnvilSubcommand {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> eyre::Result<()> {
     utils::load_dotenv();
 
     let mut app = Anvil::parse();

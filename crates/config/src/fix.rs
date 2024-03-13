@@ -15,20 +15,24 @@ struct TomlFile {
 }
 
 impl TomlFile {
-    fn open(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn open(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let path = path.as_ref().to_owned();
         let doc = fs::read_to_string(&path)?.parse()?;
         Ok(Self { doc, path })
     }
+
     fn doc(&self) -> &toml_edit::Document {
         &self.doc
     }
+
     fn doc_mut(&mut self) -> &mut toml_edit::Document {
         &mut self.doc
     }
+
     fn path(&self) -> &Path {
         self.path.as_ref()
     }
+
     fn save(&self) -> io::Result<()> {
         fs::write(self.path(), self.doc().to_string())
     }

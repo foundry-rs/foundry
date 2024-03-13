@@ -1,11 +1,20 @@
-use crate::{execute::LinkedState, ScriptArgs, ScriptConfig};
+use crate::{
+    broadcast::BundledState,
+    execute::LinkedState,
+    multi_sequence::MultiChainSequence,
+    sequence::{ScriptSequence, ScriptSequenceKind},
+    ScriptArgs, ScriptConfig,
+};
 
 use alloy_primitives::{Address, Bytes};
+use ethers_providers::Middleware;
 use eyre::{Context, OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
+    provider::ethers::try_get_http_provider,
+    types::ToAlloy,
     ContractsByArtifact,
 };
 use foundry_compilers::{
@@ -16,7 +25,7 @@ use foundry_compilers::{
     ArtifactId,
 };
 use foundry_linking::{LinkOutput, Linker};
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
 pub struct BuildData {
@@ -244,5 +253,104 @@ impl CompiledState {
         let build_data = build_data.link(known_libraries, sender, nonce)?;
 
         Ok(LinkedState { args, script_config, script_wallets, build_data })
+    }
+
+    /// Tries loading the resumed state from the cache files, skipping simulation stage.
+    pub async fn resume(self) -> Result<BundledState> {
+        let chain = if self.args.multi {
+            None
+        } else {
+            let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
+            let provider = Arc::new(try_get_http_provider(fork_url)?);
+            Some(provider.get_chainid().await?.as_u64())
+        };
+
+        let sequence = match self.try_load_sequence(chain, false) {
+            Ok(sequence) => sequence,
+            Err(_) => {
+                // If the script was simulated, but there was no attempt to broadcast yet,
+                // try to read the script sequence from the `dry-run/` folder
+                let mut sequence = self.try_load_sequence(chain, true)?;
+
+                // If sequence was in /dry-run, Update its paths so it is not saved into /dry-run
+                // this time as we are about to broadcast it.
+                sequence.update_paths_to_broadcasted(
+                    &self.script_config.config,
+                    &self.args.sig,
+                    &self.build_data.target,
+                )?;
+
+                sequence.save(true, true)?;
+                sequence
+            }
+        };
+
+        let (args, build_data, script_wallets, script_config) = if !self.args.unlocked {
+            let mut froms = sequence.sequences().iter().flat_map(|s| {
+                s.transactions
+                    .iter()
+                    .skip(s.receipts.len())
+                    .map(|t| t.transaction.from().expect("from is missing in script artifact"))
+            });
+
+            let available_signers = self
+                .script_wallets
+                .signers()
+                .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+
+            if !froms.all(|from| available_signers.contains(&from.to_alloy())) {
+                // IF we are missing required signers, execute script as we might need to collect
+                // private keys from the execution.
+                let executed = self.link()?.prepare_execution().await?.execute().await?;
+                (
+                    executed.args,
+                    executed.build_data.build_data,
+                    executed.script_wallets,
+                    executed.script_config,
+                )
+            } else {
+                (self.args, self.build_data, self.script_wallets, self.script_config)
+            }
+        } else {
+            (self.args, self.build_data, self.script_wallets, self.script_config)
+        };
+
+        // Collect libraries from sequence and link contracts with them.
+        let libraries = match sequence {
+            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.libraries)?,
+            // Library linking is not supported for multi-chain sequences
+            ScriptSequenceKind::Multi(_) => Libraries::default(),
+        };
+
+        let linked_build_data = build_data.link_with_libraries(libraries)?;
+
+        Ok(BundledState {
+            args,
+            script_config,
+            script_wallets,
+            build_data: linked_build_data,
+            sequence,
+        })
+    }
+
+    fn try_load_sequence(&self, chain: Option<u64>, dry_run: bool) -> Result<ScriptSequenceKind> {
+        if let Some(chain) = chain {
+            let sequence = ScriptSequence::load(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                chain,
+                dry_run,
+            )?;
+            Ok(ScriptSequenceKind::Single(sequence))
+        } else {
+            let sequence = MultiChainSequence::load(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                dry_run,
+            )?;
+            Ok(ScriptSequenceKind::Multi(sequence))
+        }
     }
 }

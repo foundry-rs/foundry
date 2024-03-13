@@ -96,6 +96,9 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
+ "c-kzg",
+ "sha2 0.10.8",
+ "thiserror",
 ]
 
 [[package]]
@@ -595,6 +598,7 @@ dependencies = [
  "alloy-rpc-types",
  "anvil-core",
  "bytes",
+ "c-kzg",
  "foundry-common",
  "foundry-evm",
  "hash-db",
