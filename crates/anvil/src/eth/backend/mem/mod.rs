@@ -1789,7 +1789,7 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        block_request: Option<BlockRequest>,
+        block_request: BlockRequest,
     ) -> Result<U256, BlockchainError> {
         if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
             if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
@@ -1797,11 +1797,11 @@ impl Backend {
             }
         }
         let final_block_request = match block_request {
-            Some(BlockRequest::Pending(_)) | None => Some(BlockRequest::Number(self.best_number())),
-            Some(BlockRequest::Number(bn)) => Some(BlockRequest::Number(bn)),
+            BlockRequest::Pending(_) => BlockRequest::Number(self.best_number()),
+            BlockRequest::Number(bn) => BlockRequest::Number(bn),
         };
 
-        self.with_database_at(final_block_request, |db, _| {
+        self.with_database_at(Some(final_block_request), |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(U256::from(db.basic_ref(address)?.unwrap_or_default().nonce))
         })
