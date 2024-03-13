@@ -1,11 +1,10 @@
 use clap::Parser;
 use forge::TestFilter;
 use foundry_cli::utils::FoundryPathExt;
-use foundry_common::glob::GlobMatcher;
+use foundry_common::{glob::GlobMatcher, CoverageFilter};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::Config;
 use std::{fmt, path::Path};
-use foundry_common::CoverageFilter;
 
 /// The filter to use during testing.
 ///
@@ -43,7 +42,7 @@ pub struct FilterArgs {
     pub path_pattern_inverse: Option<GlobMatcher>,
 
     /// Only show coverage for files that do not match the specified glob pattern.
-    #[arg(long = "no-coverage-path", visible_alias = "ncp", value_name = "GLOB")]
+    #[arg(long = "ignore-coverage-path", visible_alias = "icp", value_name = "GLOB")]
     pub path_pattern_ignore_coverage: Option<GlobMatcher>,
 }
 
@@ -79,7 +78,8 @@ impl FilterArgs {
             self.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
         if self.path_pattern_ignore_coverage.is_none() {
-            self.path_pattern_ignore_coverage = config.path_pattern_ignore_coverage.clone().map(Into::into);
+            self.path_pattern_ignore_coverage =
+                config.path_pattern_ignore_coverage.clone().map(Into::into);
         }
         ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
     }
@@ -94,7 +94,10 @@ impl fmt::Debug for FilterArgs {
             .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
-            .field("no-coverage-path", &self.path_pattern_ignore_coverage.as_ref().map(|g| g.as_str()))
+            .field(
+                "ignore-coverage-path",
+                &self.path_pattern_ignore_coverage.as_ref().map(|g| g.as_str()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -181,7 +184,7 @@ impl fmt::Display for FilterArgs {
             writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
         }
         if let Some(p) = &self.path_pattern_ignore_coverage {
-            writeln!(f, "\tno-coverage-path: `{}`", p.as_str())?;
+            writeln!(f, "\tignore-coverage-path: `{}`", p.as_str())?;
         }
         Ok(())
     }

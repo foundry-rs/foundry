@@ -73,7 +73,7 @@ impl<'a> ContractVisitor<'a> {
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
         if kind == "constructor" || kind == "receive" {
-            return Ok(())
+            return Ok(());
         }
 
         match node.body.take() {
@@ -472,7 +472,7 @@ impl SourceAnalyzer {
         for (source_id, ast) in asts.into_iter() {
             for child in ast.nodes {
                 if !matches!(child.node_type, NodeType::ContractDefinition) {
-                    continue
+                    continue;
                 }
 
                 let node_id =

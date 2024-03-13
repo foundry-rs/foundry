@@ -114,7 +114,7 @@ match_contract = "Foo"
 no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
-no_coverage_path = "*/Baz*"
+ignore_coverage_path = "*/Baz*"
 ffi = false
 always_use_create_2_factory = false
 # These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`

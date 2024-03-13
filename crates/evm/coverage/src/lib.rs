@@ -14,8 +14,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
+    path::Path,
 };
-use std::path::Path;
 
 use eyre::{Context, Result};
 use foundry_common::CoverageFilter;
@@ -78,7 +78,7 @@ impl CoverageReport {
     }
 
     /// Get coverage summaries by source file path
-    pub fn summary_by_file(&self) -> impl Iterator<Item=(String, CoverageSummary)> {
+    pub fn summary_by_file(&self) -> impl Iterator<Item = (String, CoverageSummary)> {
         let mut summaries: BTreeMap<String, CoverageSummary> = BTreeMap::new();
 
         for (version, items) in self.items.iter() {
@@ -101,7 +101,7 @@ impl CoverageReport {
     }
 
     /// Get coverage items by source file path
-    pub fn items_by_source(&self) -> impl Iterator<Item=(String, Vec<CoverageItem>)> {
+    pub fn items_by_source(&self) -> impl Iterator<Item = (String, Vec<CoverageItem>)> {
         let mut items_by_source: BTreeMap<String, Vec<CoverageItem>> = BTreeMap::new();
 
         for (version, items) in self.items.iter() {
@@ -155,14 +155,20 @@ impl CoverageReport {
         Ok(())
     }
 
+    /// Removes all the coverage items that should be ignored by the filter.
+    ///
+    /// This function should only be called after all the sources were used, otherwise, the output
+    /// will be missing the ones that are dependent on them.
     pub fn filter_out_ignored_sources(&mut self, filter: &impl CoverageFilter) {
         let mut new_items = HashMap::new();
         for (version, items) in self.items.iter() {
             let new_items_for_version = items
                 .iter()
-                .filter(|item| filter.matches_file_path(
-                    Path::new(&self.get_source_path(version, item.loc.source_id))
-                ))
+                .filter(|item| {
+                    filter.matches_file_path(Path::new(
+                        &self.get_source_path(version, item.loc.source_id),
+                    ))
+                })
                 .cloned()
                 .collect();
             new_items.insert(version.clone(), new_items_for_version);
@@ -170,13 +176,12 @@ impl CoverageReport {
         self.items = new_items;
     }
 
+    /// Get the source path for a specific source file ID and version.
     fn get_source_path(&self, version: &Version, source_id: usize) -> String {
         self.source_paths
             .get(&(version.clone(), source_id))
             .cloned()
-            .unwrap_or_else(|| {
-                format!("Unknown (ID: {}, solc: {version})", source_id)
-            })
+            .unwrap_or_else(|| format!("Unknown (ID: {}, solc: {version})", source_id))
     }
 }
 
