@@ -1,20 +1,21 @@
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas},
-    primitives::{HashMap, SpecId},
+    primitives::SpecId,
 };
+use rustc_hash::FxHashMap;
 
 /// Maps from program counter to instruction counter.
 ///
 /// Inverse of [`IcPcMap`].
 pub struct PcIcMap {
-    pub inner: HashMap<usize, usize>,
+    pub inner: FxHashMap<usize, usize>,
 }
 
 impl PcIcMap {
     /// Creates a new `PcIcMap` for the given code.
     pub fn new(spec: SpecId, code: &[u8]) -> Self {
         let opcode_infos = spec_opcode_gas(spec);
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
 
         let mut i = 0;
         let mut cumulative_push_size = 0;
@@ -44,14 +45,14 @@ impl PcIcMap {
 ///
 /// Inverse of [`PcIcMap`].
 pub struct IcPcMap {
-    pub inner: HashMap<usize, usize>,
+    pub inner: FxHashMap<usize, usize>,
 }
 
 impl IcPcMap {
     /// Creates a new `IcPcMap` for the given code.
     pub fn new(spec: SpecId, code: &[u8]) -> Self {
         let opcode_infos = spec_opcode_gas(spec);
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
 
         let mut i = 0;
         let mut cumulative_push_size = 0;
