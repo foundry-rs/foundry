@@ -20,6 +20,7 @@ use foundry_common::{
     evm::EvmArgs,
     shell,
 };
+use foundry_compilers::artifacts::output_selection::OutputSelection;
 use foundry_config::{
     figment,
     figment::{
@@ -145,10 +146,8 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.solc_config.settings.output_selection.0 = BTreeMap::from([(
-            "*".to_string(),
-            BTreeMap::from([("*".to_string(), vec!["abi".to_string()])]),
-        )]);
+        project.solc_config.settings.output_selection =
+            OutputSelection::common_output_selection(["abi".to_string()]);
         let output = project.compile()?;
 
         // ABIs of all sources
