@@ -1789,19 +1789,19 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        block_request: Option<BlockRequest>,
+        block_request: BlockRequest,
     ) -> Result<U256, BlockchainError> {
-        if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
+        if let BlockRequest::Pending(pool_transactions) = &block_request {
             if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
                 return Ok(value);
             }
         }
         let final_block_request = match block_request {
-            Some(BlockRequest::Pending(_)) => Some(BlockRequest::Number(self.best_number())),
-            Some(BlockRequest::Number(bn)) => Some(BlockRequest::Number(bn)),
-            None => None,
+            BlockRequest::Pending(_) => BlockRequest::Number(self.best_number()),
+            BlockRequest::Number(bn) => BlockRequest::Number(bn),
         };
-        self.with_database_at(final_block_request, |db, _| {
+
+        self.with_database_at(Some(final_block_request), |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(U256::from(db.basic_ref(address)?.unwrap_or_default().nonce))
         })
@@ -2276,19 +2276,14 @@ fn get_pool_transactions_nonce(
     pool_transactions: &[Arc<PoolTransaction>],
     address: Address,
 ) -> Option<U256> {
-    let highest_nonce_tx = pool_transactions
+    if let Some(highest_nonce) = pool_transactions
         .iter()
         .filter(|tx| *tx.pending_transaction.sender() == address)
-        .reduce(|accum, item| {
-            let nonce = item.pending_transaction.nonce();
-            if nonce > accum.pending_transaction.nonce() {
-                item
-            } else {
-                accum
-            }
-        });
-    if let Some(highest_nonce_tx) = highest_nonce_tx {
-        return Some(highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::from(1)));
+        .map(|tx| tx.pending_transaction.nonce())
+        .max()
+    {
+        let tx_count = highest_nonce.saturating_add(U256::from(1));
+        return Some(tx_count)
     }
     None
 }
