@@ -6,7 +6,6 @@ use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -14,7 +13,7 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{fmt, str::FromStr, sync::Arc};
+use std::{collections::HashSet, fmt, str::FromStr, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///

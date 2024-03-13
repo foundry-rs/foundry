@@ -16,7 +16,7 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
-revm-primitives = { workspace = true, default-features = false, features = ["std"] }
+revm-primitives.workspace = true
 
 dirs-next = "2"
 dunce = "1"

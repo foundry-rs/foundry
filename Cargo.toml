@@ -142,8 +142,8 @@ foundry-compilers = { version = "0.3.13", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "7.1", default-features = false }
-revm-primitives = { version = "3", default-features = false }
+revm = { version = "7.1", default-features = false, features = ["std"] }
+revm-primitives = { version = "3", default-features = false, features = ["std"] }
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "ba0b6ab", features = [
     "serde",
 ] }
@@ -211,9 +211,3 @@ axum = "0.6"
 hyper = "0.14"
 tower = "0.4"
 tower-http = "0.4"
-
-# [patch.crates-io]
-# revm = { path = "../../danipopes/revm/crates/revm" }
-# revm-interpreter = { path = "../../danipopes/revm/crates/interpreter" }
-# revm-primitives = { path = "../../danipopes/revm/crates/primitives" }
-# revm-precompile = { path = "../../danipopes/revm/crates/precompile" }
