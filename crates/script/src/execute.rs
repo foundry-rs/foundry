@@ -98,7 +98,11 @@ impl PreExecutionState {
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
             .script_config
-            .get_runner_with_cheatcodes(self.script_wallets.clone(), self.args.debug)
+            .get_runner_with_cheatcodes(
+                self.build_data.build_data.artifact_ids.clone(),
+                self.script_wallets.clone(),
+                self.args.debug,
+            )
             .await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
 

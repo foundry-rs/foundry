@@ -142,8 +142,9 @@ pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
     let opts = &*EVM_OPTS;
     let env = opts.local_evm_env();
     let output = COMPILED.clone();
+    let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
     base_runner()
-        .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
+        .with_cheats_config(CheatsConfig::new(&config, opts.clone(), Some(artifact_ids), None))
         .sender(config.sender)
         .build(root, output, env, opts.clone())
         .unwrap()

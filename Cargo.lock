@@ -3184,6 +3184,7 @@ dependencies = [
  "p256",
  "parking_lot",
  "revm",
+ "semver 1.0.22",
  "serde_json",
  "thiserror",
  "toml 0.8.10",
@@ -3289,9 +3290,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.10"
+version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f5a6dffd81de844c96fea0aaf825cd2a9760c4a768ae3f5786d431ef3c57d69"
+checksum = "1cc03b422b28e49d6dd61b8442bcee16c22edd975be1764de5a39c4037ecb478"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

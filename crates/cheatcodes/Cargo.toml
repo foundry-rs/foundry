@@ -42,3 +42,4 @@ k256.workspace = true
 walkdir = "2"
 p256 = "0.13.2"
 thiserror = "1"
+semver = "1"
