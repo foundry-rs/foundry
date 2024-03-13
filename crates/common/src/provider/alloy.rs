@@ -12,10 +12,10 @@ use foundry_common::types::ToAlloy;
 use foundry_config::NamedChain;
 use reqwest::Url;
 use std::{
-    path::{Path, PathBuf},
-    time::Duration,
     net::SocketAddr,
+    path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 use url::ParseError;
 
@@ -95,7 +95,7 @@ impl ProviderBuilder {
         let url = Url::parse(url_str)
             .or_else(|err| match err {
                 ParseError::RelativeUrlWithoutBase => {
-                    if let Ok(_) = SocketAddr::from_str(url_str) {
+                    if SocketAddr::from_str(url_str).is_ok() {
                         Url::parse(&format!("http://{}", url_str))
                     } else {
                         let path = Path::new(url_str);
