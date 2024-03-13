@@ -3,9 +3,9 @@ Compiling 1 files with 0.8.23
 Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:USDCCallingTest
-[PASS] test() (gas: 16799)
+[PASS] test() (gas: 16821)
 Traces:
-  [16799] USDCCallingTest::test()
+  [16821] USDCCallingTest::test()
     ├─ [0] VM::createSelectFork("<url>")
     │   └─ ← 0
     ├─ [10350] 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48::name() [staticcall]

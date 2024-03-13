@@ -1,10 +1,6 @@
 //! Forge test runner for multiple contracts.
 
-use crate::{
-    link::{LinkOutput, Linker},
-    result::SuiteResult,
-    ContractRunner, TestFilter, TestOptions,
-};
+use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
@@ -19,6 +15,7 @@ use foundry_evm::{
     opts::EvmOpts,
     revm,
 };
+use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -348,7 +345,7 @@ impl MultiContractRunnerBuilder {
             }
 
             if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
-                known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec()));
+                known_contracts.insert(id.clone(), (abi.clone(), bytes.into_owned().into()));
             }
         }
 

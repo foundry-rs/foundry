@@ -83,8 +83,12 @@ pub struct NodeArgs {
     pub hardfork: Option<Hardfork>,
 
     /// Block time in seconds for interval mining.
-    #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS")]
-    pub block_time: Option<u64>,
+    #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
+    pub block_time: Option<Duration>,
+
+    /// Slots in an epoch
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
     #[arg(long, value_name = "OUT_FILE")]
@@ -194,7 +198,7 @@ impl NodeArgs {
             .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
             .with_gas_price(self.evm_opts.gas_price.map(U256::from))
             .with_hardfork(self.hardfork)
-            .with_blocktime(self.block_time.map(Duration::from_secs))
+            .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
@@ -230,6 +234,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_optimism(self.evm_opts.optimism)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
+            .with_slots_in_an_epoch(self.slots_in_an_epoch)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -264,7 +269,7 @@ impl NodeArgs {
     /// Starts the node
     ///
     /// See also [crate::spawn()]
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(self) -> eyre::Result<()> {
         let dump_state = self.dump_state_path();
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
@@ -670,6 +675,14 @@ impl FromStr for ForkUrl {
 /// Clap's value parser for genesis. Loads a genesis.json file.
 fn read_genesis_file(path: &str) -> Result<Genesis, String> {
     foundry_common::fs::read_json_file(path.as_ref()).map_err(|err| err.to_string())
+}
+
+fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
+    let s = s.parse::<f64>().map_err(|e| e.to_string())?;
+    if s == 0.0 {
+        return Err("Duration must be greater than 0".to_string());
+    }
+    Duration::try_from_secs_f64(s).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

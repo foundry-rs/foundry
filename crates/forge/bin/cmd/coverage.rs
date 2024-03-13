@@ -26,6 +26,7 @@ use foundry_compilers::{
     Artifact, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
+use rustc_hash::FxHashMap;
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use std::ops::Deref;
@@ -157,8 +158,8 @@ impl CoverageArgs {
         let mut report = CoverageReport::default();
 
         // Collect ASTs and sources
-        let mut versioned_asts: HashMap<Version, HashMap<usize, Ast>> = HashMap::new();
-        let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
+        let mut versioned_asts: HashMap<Version, FxHashMap<usize, Ast>> = HashMap::new();
+        let mut versioned_sources: HashMap<Version, FxHashMap<usize, String>> = HashMap::new();
         for (path, mut source_file, version) in sources.into_sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 

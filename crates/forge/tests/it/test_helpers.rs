@@ -94,6 +94,9 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
                 max_fuzz_dictionary_values: 10_000,
                 max_calldata_fuzz_dictionary_addresses: 0,
             },
+            gas_report_samples: 256,
+            failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+            failure_persist_file: Some("testfailure".to_string()),
         })
         .invariant(InvariantConfig {
             runs: 256,
@@ -111,6 +114,8 @@ pub static TEST_OPTS: Lazy<TestOptions> = Lazy::new(|| {
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18u32),
             preserve_state: false,
+            max_assume_rejects: 65536,
+            gas_report_samples: 256,
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")
@@ -123,6 +128,6 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: Executor) -> FuzzedExecutor {
         executor,
         proptest::test_runner::TestRunner::new(cfg),
         CALLER,
-        TEST_OPTS.fuzz,
+        TEST_OPTS.fuzz.clone(),
     )
 }

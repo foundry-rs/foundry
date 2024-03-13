@@ -1,25 +1,12 @@
 use crate::cmd::{
-    bind::BindArgs,
-    build::BuildArgs,
-    cache::CacheArgs,
-    config, coverage,
-    create::CreateArgs,
-    debug::DebugArgs,
-    doc::DocArgs,
-    flatten,
-    fmt::FmtArgs,
-    geiger, generate,
-    init::InitArgs,
-    inspect,
-    install::InstallArgs,
-    remappings::RemappingArgs,
-    remove::RemoveArgs,
-    script::ScriptArgs,
-    selectors::SelectorsSubcommands,
-    snapshot, test, tree, update,
-    verify::{VerifyArgs, VerifyCheckArgs},
+    bind::BindArgs, build::BuildArgs, cache::CacheArgs, config, coverage, create::CreateArgs,
+    debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs,
+    inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
+    selectors::SelectorsSubcommands, snapshot, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
+use forge_script::ScriptArgs;
+use forge_verify::{VerifyArgs, VerifyCheckArgs};
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(

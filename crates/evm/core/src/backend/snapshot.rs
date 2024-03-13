@@ -39,7 +39,7 @@ impl<T> BackendSnapshot<T> {
     /// journaled_state includes the same logs, we can simply replace use that See also
     /// `DatabaseExt::revert`
     pub fn merge(&mut self, current: &JournaledState) {
-        self.journaled_state.logs = current.logs.clone();
+        self.journaled_state.logs.clone_from(&current.logs);
     }
 }
 

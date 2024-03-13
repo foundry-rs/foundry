@@ -7,7 +7,7 @@ use foundry_evm::{
     debug::DebugArena,
     executors::EvmError,
     fuzz::{CounterExample, FuzzCase},
-    traces::{CallTraceDecoder, TraceKind, Traces},
+    traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,6 +16,8 @@ use std::{
     time::Duration,
 };
 use yansi::Paint;
+
+use crate::gas_report::GasReport;
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -32,12 +34,14 @@ pub struct TestOutcome {
     ///
     /// Note that `Address` fields only contain the last executed test case's data.
     pub decoder: Option<CallTraceDecoder>,
+    /// The gas report, if requested.
+    pub gas_report: Option<GasReport>,
 }
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
     pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, decoder: None }
+        Self { results, allow_failure, decoder: None, gas_report: None }
     }
 
     /// Creates a new empty test outcome.
@@ -357,6 +361,10 @@ pub struct TestResult {
     /// Traces
     #[serde(skip)]
     pub traces: Traces,
+
+    /// Additional traces to use for gas report.
+    #[serde(skip)]
+    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 
     /// Raw coverage info
     #[serde(skip)]

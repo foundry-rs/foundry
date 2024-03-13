@@ -4,7 +4,7 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{Block, BlockId, Transaction};
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -18,6 +18,7 @@ use revm::{
     db::DatabaseRef,
     primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
 };
+use rustc_hash::FxHashMap;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -86,7 +87,7 @@ pub struct BackendHandler<P> {
     /// Listeners that wait for a `get_storage_at` response
     storage_requests: HashMap<(Address, U256), Vec<StorageSender>>,
     /// Listeners that wait for a `get_block` response
-    block_requests: HashMap<u64, Vec<BlockHashSender>>,
+    block_requests: FxHashMap<u64, Vec<BlockHashSender>>,
     /// Incoming commands.
     incoming: Receiver<BackendRequest>,
     /// unprocessed queued requests

@@ -4,9 +4,7 @@
 //! concurrently active pairs at once.
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
-use alloy_providers::provider::Provider;
-use alloy_transport::BoxTransport;
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -169,7 +167,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Arc<Provider<BoxTransport>>>;
+type Handler = BackendHandler<Arc<RetryProvider>>;
 
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;

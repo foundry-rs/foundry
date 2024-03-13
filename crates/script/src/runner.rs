@@ -1,20 +1,14 @@
 use super::ScriptResult;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use forge::{
+use foundry_config::Config;
+use foundry_evm::{
     constants::CALLER,
     executors::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
-use foundry_config::Config;
 use yansi::Paint;
-
-/// Represents which simulation stage is the script execution at.
-pub enum SimulationStage {
-    Local,
-    OnChain,
-}
 
 /// Drives script execution
 #[derive(Debug)]
@@ -317,7 +311,7 @@ impl ScriptRunner {
                 match res.exit_reason {
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFund => {
+                    InstructionResult::OutOfFunds => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {

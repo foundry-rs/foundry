@@ -2,7 +2,7 @@
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256, U64};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_trace_types::{
     geth::{GethDebugTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace as Trace,
@@ -79,15 +79,13 @@ impl ClientFork {
         let base_fee = block.header.base_fee_per_gas;
         let total_difficulty = block.header.total_difficulty.unwrap_or_default();
 
-        self.config.write().update_block(
-            block.header.number.ok_or(BlockchainError::BlockNotFound)?.to::<u64>(),
-            block_hash,
-            timestamp,
-            base_fee,
-            total_difficulty,
-        );
+        let number = block.header.number.ok_or(BlockchainError::BlockNotFound)?.to::<u64>();
+        self.config.write().update_block(number, block_hash, timestamp, base_fee, total_difficulty);
 
         self.clear_cached_storage();
+
+        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
+
         Ok(())
     }
 
@@ -172,26 +170,8 @@ impl ClientFork {
         request: &TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
-        let request = Arc::new(request.clone());
         let block = block.unwrap_or(BlockNumber::Latest);
-
-        if let BlockNumber::Number(num) = block {
-            // check if this request was already been sent
-            let key = (request.clone(), num);
-            if let Some(res) = self.storage_read().eth_call.get(&key).cloned() {
-                return Ok(res);
-            }
-        }
-
-        let block_id: BlockId = block.into();
-
-        let res: Bytes = self.provider().call((*request).clone(), Some(block_id)).await?;
-
-        if let BlockNumber::Number(num) = block {
-            // cache result
-            let mut storage = self.storage_write();
-            storage.eth_call.insert((request, num), res.clone());
-        }
+        let res = self.provider().call((*request).clone(), Some(block.into())).await?;
 
         Ok(res)
     }
@@ -202,26 +182,8 @@ impl ClientFork {
         request: &TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<U256, TransportError> {
-        let request = Arc::new(request.clone());
         let block = block.unwrap_or(BlockNumber::Latest);
-
-        if let BlockNumber::Number(num) = block {
-            // check if this request was already been sent
-            let key = (request.clone(), num);
-            if let Some(res) = self.storage_read().eth_gas_estimations.get(&key).cloned() {
-                return Ok(res);
-            }
-        }
-
-        let block_id: BlockId = block.into();
-
-        let res = self.provider().estimate_gas((*request).clone(), Some(block_id)).await?;
-
-        if let BlockNumber::Number(num) = block {
-            // cache result
-            let mut storage = self.storage_write();
-            storage.eth_gas_estimations.insert((request, num), res);
-        }
+        let res = self.provider().estimate_gas(request.clone(), Some(block.into())).await?;
 
         Ok(res)
     }
@@ -662,6 +624,8 @@ impl ClientForkConfig {
 }
 
 /// Contains cached state fetched to serve EthApi requests
+///
+/// This is used as a cache so repeated requests to the same data are not sent to the remote client
 #[derive(Clone, Debug, Default)]
 pub struct ForkedStorage {
     pub uncles: HashMap<B256, Vec<Block>>,
@@ -674,8 +638,6 @@ pub struct ForkedStorage {
     pub geth_transaction_traces: HashMap<B256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<TransactionReceipt>>,
-    pub eth_gas_estimations: HashMap<(Arc<TransactionRequest>, u64), U256>,
-    pub eth_call: HashMap<(Arc<TransactionRequest>, u64), Bytes>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
 

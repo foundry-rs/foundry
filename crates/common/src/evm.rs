@@ -11,11 +11,11 @@ use foundry_config::{
     },
     Chain, Config,
 };
+use rustc_hash::FxHashMap;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
-pub type Breakpoints = HashMap<char, (Address, usize)>;
+pub type Breakpoints = FxHashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 /// All vars are opt-in, their default values are expected to be set by the
@@ -272,6 +272,10 @@ pub struct EnvArgs {
     #[arg(long, value_name = "MEMORY_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,
+
+    /// Whether to disable the block gas limit checks.
+    #[arg(long, visible_alias = "no-gas-limit")]
+    pub disable_block_gas_limit: bool,
 }
 
 impl EvmArgs {

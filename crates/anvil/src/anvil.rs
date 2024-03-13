@@ -1,6 +1,8 @@
 //! The `anvil` cli
+
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
+use foundry_cli::utils;
 
 /// A fast local Ethereum development node.
 #[derive(Parser)]
@@ -28,7 +30,9 @@ pub enum AnvilSubcommand {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> eyre::Result<()> {
+    utils::load_dotenv();
+
     let mut app = Anvil::parse();
     app.node.evm_opts.resolve_rpc_alias();
 

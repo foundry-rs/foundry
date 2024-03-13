@@ -1,13 +1,43 @@
-use crate::cmd::{
-    retry::RetryArgs,
-    verify::{VerifierArgs, VerifyArgs},
-};
+use crate::{build::LinkedBuildData, sequence::ScriptSequenceKind, ScriptArgs, ScriptConfig};
+
 use alloy_primitives::Address;
+use eyre::Result;
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
+
+/// State after we have broadcasted the script.
+/// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
+/// broadcasted transactions.
+pub struct BroadcastedState {
+    pub args: ScriptArgs,
+    pub script_config: ScriptConfig,
+    pub build_data: LinkedBuildData,
+    pub sequence: ScriptSequenceKind,
+}
+
+impl BroadcastedState {
+    pub async fn verify(self) -> Result<()> {
+        let Self { args, script_config, build_data, mut sequence, .. } = self;
+
+        let verify = VerifyBundle::new(
+            &script_config.config.project()?,
+            &script_config.config,
+            build_data.get_flattened_contracts(false),
+            args.retry,
+            args.verifier,
+        );
+
+        for sequence in sequence.sequences_mut() {
+            sequence.verify_contracts(&script_config.config, verify.clone()).await?;
+        }
+
+        Ok(())
+    }
+}
 
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
 #[derive(Clone)]
@@ -105,6 +135,7 @@ impl VerifyBundle {
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
+                    rpc: Default::default(),
                     flatten: false,
                     force: false,
                     skip_is_verified_check: true,
@@ -116,6 +147,7 @@ impl VerifyBundle {
                     via_ir: self.via_ir,
                     evm_version: None,
                     show_standard_json_input: false,
+                    guess_constructor_args: false,
                 };
 
                 return Some(verify)

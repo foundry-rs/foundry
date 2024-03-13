@@ -259,6 +259,15 @@ impl FeeHistoryService {
                                 .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
                                 .to::<u64>()
                         }
+                        // TODO: This probably needs to be extended to extract 4844 info.
+                        Some(TypedTransaction::EIP4844(t)) => {
+                            U256::from(t.tx().tx().max_priority_fee_per_gas)
+                                .min(
+                                    U256::from(t.tx().tx().max_fee_per_gas)
+                                        .saturating_sub(base_fee),
+                                )
+                                .to::<u64>()
+                        }
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };

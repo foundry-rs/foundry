@@ -757,3 +757,37 @@ casttest!(balance, |_prj, cmd| {
     assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
     assert_eq!(alias_result, usdt_result);
 });
+
+// tests that `cast interface` excludes the constructor
+// <https://github.com/alloy-rs/core/issues/555>
+casttest!(interface_no_constructor, |prj, cmd| {
+    let interface = include_str!("../fixtures/interface.json");
+
+    let path = prj.root().join("interface.json");
+    fs::write(&path, interface).unwrap();
+    // Call `cast find-block`
+    cmd.args(["interface"]).arg(&path);
+    let output = cmd.stdout_lossy();
+
+    let s = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface Interface {
+    type SpendAssetsHandleType is uint8;
+
+    function getIntegrationManager() external view returns (address integrationManager_);
+    function lend(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+    function parseAssetsForAction(address, bytes4 _selector, bytes memory _actionData)
+        external
+        view
+        returns (
+            SpendAssetsHandleType spendAssetsHandleType_,
+            address[] memory spendAssets_,
+            uint256[] memory spendAssetAmounts_,
+            address[] memory incomingAssets_,
+            uint256[] memory minIncomingAssetAmounts_
+        );
+    function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+}"#;
+    assert_eq!(output.trim(), s);
+});

@@ -30,9 +30,13 @@ pub struct InvariantConfig {
     pub shrink_run_limit: usize,
     /// If set to true then VM state is committed and available for next call
     /// Useful for handlers that use cheatcodes as roll or warp
-    /// Applies only when `fail_on_revert` set to true. Use it with caution, introduces performance
-    /// penalty.
+    /// Use it with caution, introduces performance penalty.
     pub preserve_state: bool,
+    /// The maximum number of rejects via `vm.assume` which can be encountered during a single
+    /// invariant run.
+    pub max_assume_rejects: u32,
+    /// Number of runs to execute and include in the gas report.
+    pub gas_report_samples: u32,
 }
 
 impl Default for InvariantConfig {
@@ -46,6 +50,8 @@ impl Default for InvariantConfig {
             shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18_u32),
             preserve_state: false,
+            max_assume_rejects: 65536,
+            gas_report_samples: 256,
         }
     }
 }

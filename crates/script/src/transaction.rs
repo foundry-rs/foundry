@@ -44,7 +44,7 @@ pub struct TransactionWithMetadata {
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
-    pub rpc: Option<RpcUrl>,
+    pub rpc: RpcUrl,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
@@ -80,7 +80,7 @@ impl TransactionWithMetadata {
 
     pub fn new(
         transaction: TransactionRequest,
-        rpc: Option<RpcUrl>,
+        rpc: RpcUrl,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,
@@ -195,6 +195,7 @@ impl TransactionWithMetadata {
         decoder: &CallTraceDecoder,
     ) -> Result<()> {
         self.opcode = CallKind::Call;
+        self.contract_address = Some(target);
 
         let Some(data) = self.transaction.data() else { return Ok(()) };
         if data.len() < SELECTOR_LEN {
@@ -211,10 +212,6 @@ impl TransactionWithMetadata {
             decoder.functions.get(selector).and_then(|v| v.first())
         };
         if let Some(function) = function {
-            if self.contract_address.is_none() {
-                self.contract_name = decoder.contracts.get(&target).cloned();
-            }
-
             self.function = Some(function.signature());
 
             let values = function.abi_decode_input(data, false).map_err(|e| {
@@ -229,13 +226,7 @@ impl TransactionWithMetadata {
             self.arguments = Some(values.iter().map(format_token_raw).collect());
         }
 
-        self.contract_address = Some(target);
-
         Ok(())
-    }
-
-    pub fn set_tx(&mut self, tx: TypedTransaction) {
-        self.transaction = tx;
     }
 
     pub fn change_type(&mut self, is_legacy: bool) {
@@ -406,7 +397,7 @@ pub mod wrapper {
         pub cumulative_gas_used: U256,
         /// Gas used by this transaction alone.
         ///
-        /// Gas used is `None` if the the client is running in light client mode.
+        /// Gas used is `None` if the client is running in light client mode.
         #[serde(rename = "gasUsed")]
         pub gas_used: Option<U256>,
         /// Contract address created, or `None` if not a deployment.

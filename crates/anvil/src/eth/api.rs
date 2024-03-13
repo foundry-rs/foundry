@@ -1733,7 +1733,7 @@ impl EthApi {
             current_block_number: U64::from(self.backend.best_number()),
             current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
             current_block_hash: self.backend.best_hash(),
-            hard_fork: env.cfg.spec_id,
+            hard_fork: env.handler_cfg.spec_id,
             transaction_order: match *tx_order {
                 TransactionOrder::Fifo => "fifo".to_string(),
                 TransactionOrder::Fees => "fees".to_string(),
@@ -2259,7 +2259,7 @@ impl EthApi {
             return_ok!() => {
                 // succeeded
             }
-            InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
+            InstructionResult::OutOfGas | InstructionResult::OutOfFunds => {
                 return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
@@ -2340,7 +2340,7 @@ impl EthApi {
                     // gas).
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFund |
+                    InstructionResult::OutOfFunds |
                     // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
                     InstructionResult::InvalidFEOpcode => {
                         lowest_gas_limit = mid_gas_limit;
@@ -2535,7 +2535,7 @@ impl EthApi {
             }
         }
 
-        let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
+        let nonce = self.backend.get_nonce(address, block_request).await?;
 
         Ok(nonce)
     }
@@ -2585,6 +2585,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
             TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
@@ -2671,6 +2672,10 @@ fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
                 TxKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP2930(req) => match req.to {
+                TxKind::Call(_) => MIN_TRANSACTION_GAS,
+                TxKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::EIP4844(req) => match req.tx().to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },

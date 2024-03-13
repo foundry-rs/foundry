@@ -16,13 +16,14 @@ use anvil_core::eth::{
 use foundry_evm::{
     backend::DatabaseError,
     inspectors::{TracingInspector, TracingInspectorConfig},
-    revm,
     revm::{
         interpreter::InstructionResult,
-        primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
+        primitives::{
+            BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
+            SpecId,
+        },
     },
     traces::CallTraceNode,
-    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use std::sync::Arc;
 
@@ -75,6 +76,14 @@ impl ExecutedTransaction {
                 },
                 bloom,
             }),
+            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(ReceiptWithBloom {
+                receipt: Receipt {
+                    success: status_code == 1,
+                    cumulative_gas_used: used_gas.to::<u64>(),
+                    logs,
+                },
+                bloom,
+            }),
             TypedTransaction::Deposit(_) => TypedReceipt::Deposit(ReceiptWithBloom {
                 receipt: Receipt {
                     success: status_code == 1,
@@ -108,7 +117,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
-    pub cfg_env: CfgEnv,
+    /// The configuration environment and spec id
+    pub cfg_env: CfgEnvWithHandlerCfg,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
@@ -131,7 +141,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
         let timestamp = self.block_env.timestamp.to::<u64>();
-        let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
+        let base_fee = if (self.cfg_env.handler_cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
             Some(self.block_env.basefee)
         } else {
             None
@@ -220,8 +230,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         ExecutedTransactions { block, included, invalid }
     }
 
-    fn env_for(&self, tx: &PendingTransaction) -> Env {
-        Env { cfg: self.cfg_env.clone(), block: self.block_env.clone(), tx: tx.to_revm_tx_env() }
+    fn env_for(&self, tx: &PendingTransaction) -> EnvWithHandlerCfg {
+        EnvWithHandlerCfg::new_with_cfg_env(
+            self.cfg_env.clone(),
+            self.block_env.clone(),
+            tx.to_revm_tx_env(),
+        )
     }
 }
 
@@ -269,33 +283,40 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         let nonce = account.nonce;
 
-        let mut evm = revm::EVM::new();
-        evm.env = env;
-        evm.database(&mut self.db);
-
         // records all call and step traces
         let mut inspector = Inspector::default().with_tracing();
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }
 
-        trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        // transact and commit the transaction
-        let exec_result = match evm.inspect_commit(&mut inspector) {
-            Ok(exec_result) => exec_result,
-            Err(err) => {
-                warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
-                match err {
-                    EVMError::Database(err) => {
-                        return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
-                    }
-                    EVMError::Transaction(err) => {
-                        return Some(TransactionExecutionOutcome::Invalid(transaction, err.into()))
-                    }
-                    // This will correspond to prevrandao not set, and it should never happen.
-                    // If it does, it's a bug.
-                    e => {
-                        panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
+        let exec_result = {
+            let mut evm =
+                foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
+
+            trace!(target: "backend", "[{:?}] executing", transaction.hash());
+            // transact and commit the transaction
+            match evm.transact_commit() {
+                Ok(exec_result) => exec_result,
+                Err(err) => {
+                    warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                    match err {
+                        EVMError::Database(err) => {
+                            return Some(TransactionExecutionOutcome::DatabaseError(
+                                transaction,
+                                err,
+                            ))
+                        }
+                        EVMError::Transaction(err) => {
+                            return Some(TransactionExecutionOutcome::Invalid(
+                                transaction,
+                                err.into(),
+                            ))
+                        }
+                        // This will correspond to prevrandao not set, and it should never happen.
+                        // If it does, it's a bug.
+                        e => {
+                            panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
+                        }
                     }
                 }
             }
@@ -304,14 +325,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
-                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+                (reason.into(), gas_used, Some(output), Some(logs))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (halt_to_instruction_result(reason), gas_used, None, None)
-            }
+            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
         };
 
         if exit_reason == InstructionResult::OutOfGas {
@@ -330,11 +349,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             exit_reason,
             out,
             gas_used,
-            logs: logs
-                .unwrap_or_default()
-                .into_iter()
-                .map(|log| Log::new_unchecked(log.address, log.topics, log.data))
-                .collect(),
+            logs: logs.unwrap_or_default(),
             traces: inspector
                 .tracer
                 .unwrap_or(TracingInspector::new(TracingInspectorConfig::all()))

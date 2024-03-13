@@ -397,12 +397,18 @@ pub async fn handle_traces(
         .build();
 
     let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    for (_, trace) in &mut result.traces {
-        decoder.identify(trace, &mut etherscan_identifier);
+    if let Some(etherscan_identifier) = &mut etherscan_identifier {
+        for (_, trace) in &mut result.traces {
+            decoder.identify(trace, etherscan_identifier);
+        }
     }
 
     if debug {
-        let sources = etherscan_identifier.get_compiled_contracts().await?;
+        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
+            etherscan_identifier.get_compiled_contracts().await?
+        } else {
+            Default::default()
+        };
         let mut debugger = Debugger::builder()
             .debug_arena(&result.debug)
             .decoder(&decoder)

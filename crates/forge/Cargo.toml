@@ -25,6 +25,7 @@ foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
+foundry-linking.workspace = true
 
 ethers-contract.workspace = true
 ethers-core.workspace = true
@@ -45,6 +46,8 @@ yansi = "0.5"
 # bin
 forge-doc.workspace = true
 forge-fmt.workspace = true
+forge-verify.workspace = true
+forge-script.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
@@ -76,6 +79,7 @@ thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 watchexec = "2.3.2"
 evm-disassembler.workspace = true
+rustc-hash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -98,7 +102,12 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [features]
 default = ["rustls"]
-rustls = ["foundry-cli/rustls", "foundry-wallets/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
+rustls = [
+    "foundry-cli/rustls",
+    "foundry-wallets/rustls",
+    "reqwest/rustls-tls",
+    "reqwest/rustls-tls-native-roots",
+]
 openssl = ["foundry-cli/openssl", "reqwest/default-tls", "foundry-wallets/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 
