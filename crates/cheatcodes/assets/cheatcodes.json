@@ -4621,7 +4621,7 @@
     {
       "func": {
         "id": "getCode",
-        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the \nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4641,7 +4641,7 @@
     {
       "func": {
         "id": "getDeployedCode",
-        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the \nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
         "visibility": "external",
         "mutability": "view",
