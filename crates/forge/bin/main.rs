@@ -112,7 +112,9 @@ fn main() -> Result<()> {
 /// cheatcodes.
 fn init_execution_context(subcommand: &ForgeSubcommand) {
     let context = match subcommand {
-        ForgeSubcommand::Test(_) => ForgeContext::Test,
+        ForgeSubcommand::Test(_) => ForgeContext::TestStandard,
+        ForgeSubcommand::Coverage(_) => ForgeContext::TestCoverage,
+        ForgeSubcommand::Snapshot(_) => ForgeContext::TestSnapshot,
         ForgeSubcommand::Script(cmd) => {
             if cmd.broadcast {
                 ForgeContext::ScriptBroadcast
@@ -122,8 +124,6 @@ fn init_execution_context(subcommand: &ForgeSubcommand) {
                 ForgeContext::ScriptDryRun
             }
         }
-        ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
-        ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
         _ => ForgeContext::Unknown,
     };
     ForgeContext::set_execution_context(context);

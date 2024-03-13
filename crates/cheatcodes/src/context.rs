@@ -11,11 +11,11 @@ static FORGE_CONTEXT: OnceCell<ForgeContext> = OnceCell::new();
 /// Possible forge execution contexts.
 pub enum ForgeContext {
     /// `forge test` command execution context.
-    Test,
+    TestStandard,
     /// `forge coverage` command execution context.
-    Coverage,
+    TestCoverage,
     /// `forge snapshot` command execution context.
-    Snapshot,
+    TestSnapshot,
     /// `forge script` command execution context.
     ScriptDryRun,
     /// `forge script --broadcast` command execution context.
@@ -36,31 +36,49 @@ impl ForgeContext {
 
 impl Cheatcode for isTestContextCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(is_forge_context(ForgeContext::Test).abi_encode())
+        Ok((is_forge_context(ForgeContext::TestStandard) ||
+            is_forge_context(ForgeContext::TestCoverage) ||
+            is_forge_context(ForgeContext::TestSnapshot))
+        .abi_encode())
     }
 }
 
-impl Cheatcode for isCoverageContextCall {
+impl Cheatcode for isTestCoverageContextCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(is_forge_context(ForgeContext::Coverage).abi_encode())
+        Ok(is_forge_context(ForgeContext::TestCoverage).abi_encode())
     }
 }
 
-impl Cheatcode for isSnapshotContextCall {
+impl Cheatcode for isTestSnapshotContextCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(is_forge_context(ForgeContext::Snapshot).abi_encode())
+        Ok(is_forge_context(ForgeContext::TestSnapshot).abi_encode())
     }
 }
 
-impl Cheatcode for isScriptDryRunContextCall {
+impl Cheatcode for isTestStandardContextCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        Ok(is_forge_context(ForgeContext::ScriptDryRun).abi_encode())
+        Ok(is_forge_context(ForgeContext::TestStandard).abi_encode())
+    }
+}
+
+impl Cheatcode for isScriptContextCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok((is_forge_context(ForgeContext::ScriptDryRun) ||
+            is_forge_context(ForgeContext::ScriptBroadcast) ||
+            is_forge_context(ForgeContext::ScriptResume))
+        .abi_encode())
     }
 }
 
 impl Cheatcode for isScriptBroadcastContextCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(is_forge_context(ForgeContext::ScriptBroadcast).abi_encode())
+    }
+}
+
+impl Cheatcode for isScriptDryRunContextCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        Ok(is_forge_context(ForgeContext::ScriptDryRun).abi_encode())
     }
 }
 

@@ -7921,7 +7921,7 @@
     {
       "func": {
         "id": "isTestContext",
-        "description": "Returns true if the current execution context is test.",
+        "description": "Returns true if the current execution context is forge test, coverage or snapshot.",
         "declaration": "function isTestContext() external view returns (bool isTest);",
         "visibility": "external",
         "mutability": "view",
@@ -7940,18 +7940,18 @@
     },
     {
       "func": {
-        "id": "isCoverageContext",
+        "id": "isTestCoverageContext",
         "description": "Returns true if the current execution context is coverage.",
-        "declaration": "function isCoverageContext() external view returns (bool isCoverage);",
+        "declaration": "function isTestCoverageContext() external view returns (bool isCoverage);",
         "visibility": "external",
         "mutability": "view",
-        "signature": "isCoverageContext()",
-        "selector": "0x5b2e21ea",
+        "signature": "isTestCoverageContext()",
+        "selector": "0x9553b81b",
         "selectorBytes": [
-          91,
-          46,
-          33,
-          234
+          149,
+          83,
+          184,
+          27
         ]
       },
       "group": "context",
@@ -7960,18 +7960,18 @@
     },
     {
       "func": {
-        "id": "isSnapshotContext",
+        "id": "isTestSnapshotContext",
         "description": "Returns true if the current execution context is snapshot.",
-        "declaration": "function isSnapshotContext() external view returns (bool isSnapshot);",
+        "declaration": "function isTestSnapshotContext() external view returns (bool isSnapshot);",
         "visibility": "external",
         "mutability": "view",
-        "signature": "isSnapshotContext()",
-        "selector": "0xaa8ce5f3",
+        "signature": "isTestSnapshotContext()",
+        "selector": "0xdfa7a646",
         "selectorBytes": [
-          170,
-          140,
-          229,
-          243
+          223,
+          167,
+          166,
+          70
         ]
       },
       "group": "context",
@@ -7980,18 +7980,38 @@
     },
     {
       "func": {
-        "id": "isScriptDryRunContext",
-        "description": "Returns true if the current execution context is script dry run.",
-        "declaration": "function isScriptDryRunContext() external view returns (bool isScriptDryRun);",
+        "id": "isTestStandardContext",
+        "description": "Returns true if the current execution context is standard forge test.",
+        "declaration": "function isTestStandardContext() external view returns (bool isTest);",
         "visibility": "external",
         "mutability": "view",
-        "signature": "isScriptDryRunContext()",
-        "selector": "0xe932f8ee",
+        "signature": "isTestStandardContext()",
+        "selector": "0x8822f284",
         "selectorBytes": [
-          233,
-          50,
-          248,
-          238
+          136,
+          34,
+          242,
+          132
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isScriptContext",
+        "description": "Returns true if the current execution context is script.",
+        "declaration": "function isScriptContext() external view returns (bool isScript);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isScriptContext()",
+        "selector": "0x9260998c",
+        "selectorBytes": [
+          146,
+          96,
+          153,
+          140
         ]
       },
       "group": "context",
@@ -8012,6 +8032,26 @@
           200,
           116,
           119
+        ]
+      },
+      "group": "context",
+      "status": "unstable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isScriptDryRunContext",
+        "description": "Returns true if the current execution context is script dry run.",
+        "declaration": "function isScriptDryRunContext() external view returns (bool isScriptDryRun);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isScriptDryRunContext()",
+        "selector": "0xe932f8ee",
+        "selectorBytes": [
+          233,
+          50,
+          248,
+          238
         ]
       },
       "group": "context",
