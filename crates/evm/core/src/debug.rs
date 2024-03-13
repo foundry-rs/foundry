@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use crate::opcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use revm::interpreter::OpCode;
@@ -75,14 +76,20 @@ impl DebugArena {
     ///
     /// See [`flatten`](Self::flatten) for more information.
     pub fn flatten_to(&self, entry: usize, out: &mut Vec<DebugNodeFlat>) {
-        let node = &self.arena[entry];
 
-        if !node.steps.is_empty() {
-            out.push(node.flat());
-        }
+        let mut stack = VecDeque::new();
+        stack.push_back(entry);
 
-        for child in &node.children {
-            self.flatten_to(*child, out);
+        while let Some(entry) = stack.pop_back() {
+            let node = &self.arena[entry];
+
+            if !node.steps.is_empty() {
+                out.push(node.flat());
+            }
+
+            for child in &node.children.into_iter().rev() {
+                stack.push(*child);
+            }
         }
     }
 }
