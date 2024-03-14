@@ -820,7 +820,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(self.transact(fun)?.buffer)
     }
 
-    /// Turn a chunk and its surrounding comments into a a string
+    /// Turn a chunk and its surrounding comments into a string
     fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
         self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
     }
