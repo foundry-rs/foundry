@@ -1,7 +1,8 @@
-use super::{fuzz_calldata_with_config, fuzz_param_from_state, CalldataFuzzDictionary};
+use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
     invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, SenderFilters},
     strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
+    FuzzFixtures,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes};
@@ -14,7 +15,7 @@ pub fn override_call_strat(
     fuzz_state: EvmFuzzState,
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,
-    calldata_fuzz_config: CalldataFuzzDictionary,
+    fuzz_fixtures: FuzzFixtures,
 ) -> SBoxedStrategy<(Address, Bytes)> {
     let contracts_ref = contracts.clone();
 
@@ -28,16 +29,11 @@ pub fn override_call_strat(
     ])
     .prop_flat_map(move |target_address| {
         let fuzz_state = fuzz_state.clone();
-        let calldata_fuzz_config = calldata_fuzz_config.clone();
+        let fixtures = fuzz_fixtures.clone();
         let (_, abi, functions) = contracts.lock().get(&target_address).unwrap().clone();
         let func = select_random_function(abi, functions);
         func.prop_flat_map(move |func| {
-            fuzz_contract_with_calldata(
-                fuzz_state.clone(),
-                calldata_fuzz_config.clone(),
-                target_address,
-                func,
-            )
+            fuzz_contract_with_calldata(fuzz_state.clone(), target_address, func, fixtures.clone())
         })
     })
     .sboxed()
@@ -58,11 +54,11 @@ pub fn invariant_strat(
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
     dictionary_weight: u32,
-    calldata_fuzz_config: CalldataFuzzDictionary,
+    fuzz_fixtures: FuzzFixtures,
 ) -> impl Strategy<Value = BasicTxDetails> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    generate_call(fuzz_state, senders, contracts, dictionary_weight, calldata_fuzz_config)
+    generate_call(fuzz_state, senders, contracts, dictionary_weight, fuzz_fixtures)
 }
 
 /// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
@@ -72,7 +68,7 @@ fn generate_call(
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
     dictionary_weight: u32,
-    calldata_fuzz_config: CalldataFuzzDictionary,
+    fuzz_fixtures: FuzzFixtures,
 ) -> BoxedStrategy<BasicTxDetails> {
     let random_contract = select_random_contract(contracts);
     let senders = Rc::new(senders);
@@ -81,7 +77,7 @@ fn generate_call(
             let func = select_random_function(abi, functions);
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
-            let calldata_fuzz_config = calldata_fuzz_config.clone();
+            let fixture = fuzz_fixtures.clone();
             func.prop_flat_map(move |func| {
                 let sender =
                     select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
@@ -89,9 +85,9 @@ fn generate_call(
                     sender,
                     fuzz_contract_with_calldata(
                         fuzz_state.clone(),
-                        calldata_fuzz_config.clone(),
                         contract,
                         func,
+                        fixture.clone(),
                     ),
                 )
             })
@@ -183,16 +179,16 @@ fn select_random_function(
 /// for that function's input types.
 pub fn fuzz_contract_with_calldata(
     fuzz_state: EvmFuzzState,
-    calldata_fuzz_config: CalldataFuzzDictionary,
     contract: Address,
     func: Function,
+    fuzz_fixtures: FuzzFixtures,
 ) -> impl Strategy<Value = (Address, Bytes)> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning
     #[allow(clippy::arc_with_non_send_sync)]
     let strats = prop_oneof![
-        60 => fuzz_calldata_with_config(func.clone(), Some(calldata_fuzz_config)),
+        60 => fuzz_calldata(func.clone(), fuzz_fixtures),
         40 => fuzz_calldata_from_state(func, fuzz_state),
     ];
     strats.prop_map(move |calldata| {

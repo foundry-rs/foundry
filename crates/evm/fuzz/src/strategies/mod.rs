@@ -1,3 +1,6 @@
+mod address;
+pub use address::AddressStrategy;
+
 mod int;
 pub use int::IntStrategy;
 
@@ -8,9 +11,7 @@ mod param;
 pub use param::{fuzz_param, fuzz_param_from_state};
 
 mod calldata;
-pub use calldata::{
-    fuzz_calldata, fuzz_calldata_with_config, CalldataFuzzDictionary, CalldataFuzzDictionaryConfig,
-};
+pub use calldata::fuzz_calldata;
 
 mod state;
 pub use state::{

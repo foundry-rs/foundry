@@ -181,7 +181,7 @@ impl TestArgs {
 
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.clone().fuzz)
-            .invariant(config.invariant)
+            .invariant(config.clone().invariant)
             .profiles(profiles)
             .build(&output, project_root)?;
 
@@ -202,7 +202,7 @@ impl TestArgs {
         let runner = MultiContractRunnerBuilder::default()
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
+            .evm_spec(config.clone().evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
@@ -221,7 +221,7 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
+        let outcome = self.run_tests(runner, config.clone(), verbosity, &filter).await?;
 
         if should_debug {
             // There is only one test.

@@ -14,7 +14,7 @@ use foundry_evm_fuzz::{
         build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
         EvmFuzzState,
     },
-    BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzTestResult,
+    BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
@@ -61,6 +61,7 @@ impl FuzzedExecutor {
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
+        fuzz_fixtures: FuzzFixtures,
     ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
@@ -85,7 +86,7 @@ impl FuzzedExecutor {
         let mut weights = vec![];
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         if self.config.dictionary.dictionary_weight < 100 {
-            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone())));
+            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone(), fuzz_fixtures)));
         }
         if dictionary_weight > 0 {
             weights.push((

@@ -33,6 +33,9 @@ pub trait TestFunctionExt {
 
     /// Returns whether this function is a `setUp` function.
     fn is_setup(&self) -> bool;
+
+    /// Returns whether this function is a `fixtures` function.
+    fn is_fixtures(&self) -> bool;
 }
 
 impl TestFunctionExt for Function {
@@ -56,6 +59,10 @@ impl TestFunctionExt for Function {
     fn is_setup(&self) -> bool {
         self.name.is_setup()
     }
+
+    fn is_fixtures(&self) -> bool {
+        self.name.is_fixtures()
+    }
 }
 
 impl TestFunctionExt for String {
@@ -78,6 +85,10 @@ impl TestFunctionExt for String {
     fn is_setup(&self) -> bool {
         self.as_str().is_setup()
     }
+
+    fn is_fixtures(&self) -> bool {
+        self.as_str().is_fixtures()
+    }
 }
 
 impl TestFunctionExt for str {
@@ -99,6 +110,10 @@ impl TestFunctionExt for str {
 
     fn is_setup(&self) -> bool {
         self.eq_ignore_ascii_case("setup")
+    }
+
+    fn is_fixtures(&self) -> bool {
+        self.starts_with("fixtures")
     }
 }
 

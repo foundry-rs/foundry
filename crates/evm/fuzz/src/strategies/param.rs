@@ -1,5 +1,4 @@
 use super::state::EvmFuzzState;
-use crate::strategies::calldata::CalldataFuzzDictionary;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, FixedBytes, I256, U256};
 use arbitrary::Unstructured;
@@ -8,42 +7,35 @@ use proptest::prelude::*;
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
-/// Given a parameter type, returns a strategy for generating values for that type.
+/// Given a parameter type and configured fixtures for param name, returns a strategy for generating
+/// values for that type. Fixtures can be currently generated for uint, int and address types and
+/// are defined for named parameter.
+///
+/// For example, fixtures for parameter `owner` of type `address` can be defined in a function with
+/// a `function fixtures_owner() public returns (address[] memory)` signature.
+///
+/// Fixtures are matched on parameter name, hence fixtures defined in
+/// `fixtures_owner` function can be used in a fuzzed test function with a signature like
+/// `function testFuzz_ownerAddress(address owner, uint amount)`.
+///
+/// If the type of fixtures is different than the parameter type then error is raised and a random
+/// value is generated.
 ///
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param(
     param: &DynSolType,
-    config: Option<CalldataFuzzDictionary>,
+    fixtures: Option<&[DynSolValue]>,
 ) -> BoxedStrategy<DynSolValue> {
     let param = param.to_owned();
     match param {
-        DynSolType::Address => {
-            if config.is_some() {
-                let fuzz_config = config.unwrap().inner;
-                let address_dict_len = fuzz_config.addresses.len();
-                if address_dict_len > 0 {
-                    // Create strategy to return random address from configured dictionary.
-                    return any::<prop::sample::Index>()
-                        .prop_map(move |index| index.index(address_dict_len))
-                        .prop_map(move |index| {
-                            DynSolValue::Address(fuzz_config.addresses.get(index).cloned().unwrap())
-                        })
-                        .boxed()
-                }
-            }
-
-            // If no config for addresses dictionary then create unbounded addresses strategy.
-            any::<[u8; 32]>()
-                .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
-                .boxed()
-        }
+        DynSolType::Address => super::AddressStrategy::address_strategy(fixtures),
         DynSolType::Int(n) => {
-            let strat = super::IntStrategy::new(n, vec![]);
+            let strat = super::IntStrategy::new(n, fixtures);
             let strat = strat.prop_map(move |x| DynSolValue::Int(x, n));
             strat.boxed()
         }
         DynSolType::Uint(n) => {
-            let strat = super::UintStrategy::new(n, vec![]);
+            let strat = super::UintStrategy::new(n, fixtures);
             let strat = strat.prop_map(move |x| DynSolValue::Uint(x, n));
             strat.boxed()
         }
@@ -71,17 +63,17 @@ pub fn fuzz_param(
             .boxed(),
         DynSolType::Tuple(params) => params
             .iter()
-            .map(|p| fuzz_param(p, config.clone()))
+            .map(|p| fuzz_param(p, None))
             .collect::<Vec<_>>()
             .prop_map(DynSolValue::Tuple)
             .boxed(),
         DynSolType::FixedArray(param, size) => {
-            proptest::collection::vec(fuzz_param(&param, config), size)
+            proptest::collection::vec(fuzz_param(&param, None), size)
                 .prop_map(DynSolValue::FixedArray)
                 .boxed()
         }
         DynSolType::Array(param) => {
-            proptest::collection::vec(fuzz_param(&param, config), 0..MAX_ARRAY_LEN)
+            proptest::collection::vec(fuzz_param(&param, None), 0..MAX_ARRAY_LEN)
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
@@ -193,7 +185,10 @@ pub fn fuzz_param_from_state(
 
 #[cfg(test)]
 mod tests {
-    use crate::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
+    use crate::{
+        strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
+        FuzzFixtures,
+    };
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use revm::db::{CacheDB, EmptyDB};
@@ -203,9 +198,11 @@ mod tests {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
+        let config = &FuzzDictionaryConfig::default();
+        let state = build_initial_state(&db, config);
+        let fuzz_fixtures = FuzzFixtures::default();
         let strat = proptest::strategy::Union::new_weighted(vec![
-            (60, fuzz_calldata(func.clone())),
+            (60, fuzz_calldata(func.clone(), fuzz_fixtures)),
             (40, fuzz_calldata_from_state(func, state)),
         ]);
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };

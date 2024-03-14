@@ -272,3 +272,22 @@ impl FuzzedCases {
         self.lowest().map(|c| c.gas).unwrap_or_default()
     }
 }
+
+#[derive(Clone, Default, Debug)]
+pub struct FuzzFixtures {
+    inner: HashMap<String, DynSolValue>,
+}
+
+impl FuzzFixtures {
+    pub fn new(fixtures: HashMap<String, DynSolValue>) -> FuzzFixtures {
+        Self { inner: fixtures }
+    }
+
+    pub fn param_fixtures(&self, param_name: &String) -> Option<&[DynSolValue]> {
+        if let Some(param_fixtures) = self.inner.get(param_name) {
+            param_fixtures.as_array()
+        } else {
+            None
+        }
+    }
+}

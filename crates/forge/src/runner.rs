@@ -22,7 +22,7 @@ use foundry_evm::{
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
         CallResult, EvmError, ExecutionErr, Executor,
     },
-    fuzz::{invariant::InvariantContract, CounterExample},
+    fuzz::{invariant::InvariantContract, CounterExample, FuzzFixtures},
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -182,6 +182,26 @@ impl<'a> ContractRunner<'a> {
         Ok(setup)
     }
 
+    fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
+        // collect test fixtures param:array of values
+        let fixtures_fns: Vec<_> =
+            self.contract.functions().filter(|func| func.name.is_fixtures()).collect();
+        let mut fixtures = HashMap::new();
+        fixtures_fns.iter().for_each(|func| {
+            if let Ok(CallResult { result, .. }) = self.executor.call(
+                CALLER,
+                address,
+                func.signature_with_outputs(),
+                vec![],
+                U256::ZERO,
+                None,
+            ) {
+                fixtures.insert(func.name.strip_prefix("fixtures_").unwrap().to_string(), result);
+            }
+        });
+        FuzzFixtures::new(fixtures)
+    }
+
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         mut self,
@@ -254,6 +274,12 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
+        // Collect fixtures from test contract. Fixtures are functions prefixed with `fixture_` and
+        // followed by the name of the parameter. For example:
+        // `fixture_test() returns (address[] memory)` function define an array of addresses to be
+        // used for fuzzed `test` named parameter, in scope of the current test.
+        let fuzz_fixtures = self.fuzz_fixtures(setup.address);
+
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
@@ -289,12 +315,20 @@ impl<'a> ContractRunner<'a> {
                         func,
                         known_contracts,
                         identified_contracts.as_ref().unwrap(),
+                        fuzz_fixtures.clone(),
                     )
                 } else if func.is_fuzz_test() {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                    self.run_fuzz_test(
+                        func,
+                        should_fail,
+                        runner,
+                        setup,
+                        fuzz_config.clone(),
+                        fuzz_fixtures.clone(),
+                    )
                 } else {
                     debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
@@ -443,6 +477,7 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[instrument(name = "invariant_test", skip_all)]
     pub fn run_invariant_test(
         &self,
@@ -452,6 +487,7 @@ impl<'a> ContractRunner<'a> {
         func: &Function,
         known_contracts: Option<&ContractsByArtifact>,
         identified_contracts: &ContractsByAddress,
+        fuzz_fixtures: FuzzFixtures,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let empty = ContractsByArtifact::default();
@@ -493,7 +529,7 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_function: func, abi: self.contract };
 
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
-            match evm.invariant_fuzz(invariant_contract.clone()) {
+            match evm.invariant_fuzz(invariant_contract.clone(), fuzz_fixtures) {
                 Ok(x) => x,
                 Err(e) => {
                     return TestResult {
@@ -586,6 +622,7 @@ impl<'a> ContractRunner<'a> {
         runner: TestRunner,
         setup: TestSetup,
         fuzz_config: FuzzConfig,
+        fuzz_fixtures: FuzzFixtures,
     ) -> TestResult {
         let span = info_span!("fuzz_test", %should_fail);
         if !span.is_disabled() {
@@ -611,7 +648,8 @@ impl<'a> ContractRunner<'a> {
             fuzz_config.clone(),
         );
         let state = fuzzed_executor.build_fuzz_state();
-        let result = fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder);
+        let result =
+            fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder, fuzz_fixtures);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();
