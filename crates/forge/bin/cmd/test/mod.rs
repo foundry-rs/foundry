@@ -150,6 +150,11 @@ impl TestArgs {
             OutputSelection::common_output_selection(["abi".to_string()]);
         let output = project.compile()?;
 
+        if output.has_compiler_errors() {
+            println!("{}", output);
+            eyre::bail!("Compilation failed");
+        }
+
         // ABIs of all sources
         let abis = output
             .into_artifacts()
