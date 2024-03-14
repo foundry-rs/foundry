@@ -129,8 +129,8 @@ async fn test_persist_fuzz_failure() {
     }
 
     // record initial counterexample calldata
-    let intial_counterexample = get_failure_result!();
-    let initial_calldata = match intial_counterexample {
+    let initial_counterexample = get_failure_result!();
+    let initial_calldata = match initial_counterexample {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),
     };
