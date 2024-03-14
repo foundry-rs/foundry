@@ -3,7 +3,7 @@ use crate::{
     utils::{ethers_http_provider, ethers_ws_provider},
 };
 use alloy_primitives::U256;
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     contract::ContractInstance,
     prelude::{
@@ -76,7 +76,7 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Shanghai))).await;
     let provider = ethers_ws_provider(&handle.ws_endpoint());
     let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
