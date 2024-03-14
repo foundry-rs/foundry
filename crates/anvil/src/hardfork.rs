@@ -44,10 +44,8 @@ impl Hardfork {
             Hardfork::ArrowGlacier => 13773000,
             Hardfork::GrayGlacier => 15050000,
             Hardfork::Paris => 15537394,
-            Hardfork::Shanghai | Hardfork::Latest => 17034870,
-
-            // TODO: set block number after activation
-            Hardfork::Cancun => unreachable!(),
+            Hardfork::Shanghai => 17034870,
+            Hardfork::Cancun | Hardfork::Latest => 19426587,
         }
     }
 
@@ -94,7 +92,7 @@ impl Hardfork {
             Hardfork::Paris => ForkId { hash: ForkHash([0x4f, 0xb8, 0xa8, 0x72]), next: 17034870 },
             Hardfork::Shanghai | Hardfork::Latest => {
                 // update `next` when another fork block num is known
-                ForkId { hash: ForkHash([0xc1, 0xfd, 0xf1, 0x81]), next: 0 }
+                ForkId { hash: ForkHash([0xc1, 0xfd, 0xf1, 0x81]), next: 19426587 }
             }
             Hardfork::Cancun => {
                 // TODO: set fork hash once known
@@ -152,10 +150,8 @@ impl From<Hardfork> for SpecId {
             Hardfork::ArrowGlacier => SpecId::LONDON,
             Hardfork::GrayGlacier => SpecId::GRAY_GLACIER,
             Hardfork::Paris => SpecId::MERGE,
-            Hardfork::Shanghai | Hardfork::Latest => SpecId::SHANGHAI,
-
-            // TODO: switch to latest after activation
-            Hardfork::Cancun => SpecId::CANCUN,
+            Hardfork::Shanghai => SpecId::SHANGHAI,
+            Hardfork::Cancun | Hardfork::Latest => SpecId::CANCUN,
         }
     }
 }
@@ -182,6 +178,7 @@ impl<T: Into<BlockNumberOrTag>> From<T> for Hardfork {
             _i if num < 13_773_000 => Hardfork::London,
             _i if num < 15_050_000 => Hardfork::ArrowGlacier,
             _i if num < 17_034_870 => Hardfork::Paris,
+            _i if num < 19_426_587 => Hardfork::Shanghai,
             _ => Hardfork::Latest,
         }
     }
