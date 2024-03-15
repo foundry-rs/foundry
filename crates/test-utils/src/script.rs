@@ -75,7 +75,7 @@ impl ScriptTester {
 
         // copy the broadcast test
         fs::copy(
-            Self::testdata_path().join("cheats/Broadcast.t.sol"),
+            Self::testdata_path().join("default/cheats/Broadcast.t.sol"),
             project_root.join(BROADCAST_TEST_PATH),
         )
         .expect("Failed to initialize broadcast contract");
@@ -90,8 +90,11 @@ impl ScriptTester {
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
-            .expect("Failed to initialize broadcast contract");
+        fs::copy(
+            testdata.join("default/cheats/Broadcast.t.sol"),
+            project_root.join(BROADCAST_TEST_PATH),
+        )
+        .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, None, project_root, &target_contract)
     }

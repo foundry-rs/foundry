@@ -1,6 +1,6 @@
 //! Forge tests for core functionality.
 
-use crate::config::*;
+use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use forge::result::SuiteResult;
 use foundry_evm::traces::TraceKind;
 use foundry_test_utils::Filter;
@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, env};
 #[tokio::test(flavor = "multi_thread")]
 async fn test_core() {
     let filter = Filter::new(".*", ".*", ".*core");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let results = runner.test_collect(&filter);
 
     assert_multiple(
@@ -79,7 +79,7 @@ async fn test_core() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_linking() {
     let filter = Filter::new(".*", ".*", ".*linking");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let results = runner.test_collect(&filter);
 
     assert_multiple(
@@ -113,7 +113,7 @@ async fn test_linking() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_logs() {
     let filter = Filter::new(".*", ".*", ".*logs");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let results = runner.test_collect(&filter);
 
     assert_multiple(
@@ -678,7 +678,7 @@ async fn test_env_vars() {
     env::remove_var(env_var_key);
 
     let filter = Filter::new("testSetEnv", ".*", ".*");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let _ = runner.test_collect(&filter);
 
     assert_eq!(env::var(env_var_key).unwrap(), env_var_val);
@@ -687,7 +687,7 @@ async fn test_env_vars() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_doesnt_run_abstract_contract() {
     let filter = Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str());
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let results = runner.test_collect(&filter);
     assert!(!results.contains_key("core/Abstract.t.sol:AbstractTestBase"));
     assert!(results.contains_key("core/Abstract.t.sol:AbstractTest"));
@@ -696,7 +696,7 @@ async fn test_doesnt_run_abstract_contract() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace() {
     let filter = Filter::new(".*", ".*", ".*trace");
-    let mut runner = tracing_runner();
+    let mut runner = tracing_runner(&TEST_DATA_DEFAULT);
     let suite_result = runner.test_collect(&filter);
 
     // TODO: This trace test is very basic - it is probably a good candidate for snapshot

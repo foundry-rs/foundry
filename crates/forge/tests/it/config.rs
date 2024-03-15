@@ -1,6 +1,6 @@
 //! Test config.
 
-use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT, TEST_OPTS};
+use crate::test_helpers::ForgeTestData;
 use forge::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner, MultiContractRunnerBuilder,
@@ -29,10 +29,6 @@ pub struct TestConfig {
 impl TestConfig {
     pub fn new(runner: MultiContractRunner) -> Self {
         Self::with_filter(runner, Filter::matches_all())
-    }
-
-    pub fn filter(filter: Filter) -> Self {
-        Self::with_filter(runner(), filter)
     }
 
     pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
@@ -119,48 +115,49 @@ pub fn manifest_root() -> &'static Path {
 }
 
 /// Builds a base runner
-pub fn base_runner() -> MultiContractRunnerBuilder {
+pub fn base_runner(test_data: &ForgeTestData) -> MultiContractRunnerBuilder {
     init_tracing();
     MultiContractRunnerBuilder::default()
-        .sender(EVM_OPTS.sender)
-        .with_test_options(TEST_OPTS.clone())
+        .sender(test_data.evm_opts.sender)
+        .with_test_options(test_data.test_opts.clone())
 }
 
 /// Builds a non-tracing runner
-pub fn runner() -> MultiContractRunner {
-    let mut config = Config::with_root(PROJECT.root());
+pub fn runner(test_data: &ForgeTestData) -> MultiContractRunner {
+    let mut config = test_data.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
-    runner_with_config(config)
+    runner_with_config(test_data, config)
 }
 
 /// Builds a non-tracing runner
-pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
+pub fn runner_with_config(test_data: &ForgeTestData, mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
     config.allow_paths.push(manifest_root().to_path_buf());
 
-    let root = &PROJECT.paths.root;
-    let opts = &*EVM_OPTS;
+    let root = test_data.project.root();
+    let opts = test_data.evm_opts.clone();
     let env = opts.local_evm_env();
-    let output = COMPILED.clone();
-    base_runner()
+    let output = test_data.output.clone();
+    base_runner(test_data)
         .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
         .sender(config.sender)
+        .with_test_options(test_data.test_opts.clone())
         .build(root, output, env, opts.clone())
         .unwrap()
 }
 
 /// Builds a tracing runner
-pub fn tracing_runner() -> MultiContractRunner {
-    let mut opts = EVM_OPTS.clone();
+pub fn tracing_runner(test_data: &ForgeTestData) -> MultiContractRunner {
+    let mut opts = test_data.evm_opts.clone();
     opts.verbosity = 5;
-    base_runner()
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.local_evm_env(), opts)
+    base_runner(test_data)
+        .build(test_data.project.root(), test_data.output.clone(), opts.local_evm_env(), opts)
         .unwrap()
 }
 
 // Builds a runner that runs against forked state
-pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
-    let mut opts = EVM_OPTS.clone();
+pub async fn forked_runner(test_data: &ForgeTestData, rpc: &str) -> MultiContractRunner {
+    let mut opts = test_data.evm_opts.clone();
 
     opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
     opts.fork_url = Some(rpc.to_string());
@@ -168,9 +165,9 @@ pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
     let env = opts.evm_env().await.expect("Could not instantiate fork environment");
     let fork = opts.get_fork(&Default::default(), env.clone());
 
-    base_runner()
+    base_runner(test_data)
         .with_fork(fork)
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), env, opts)
+        .build(test_data.project.root(), test_data.output.clone(), env, opts)
         .unwrap()
 }
 

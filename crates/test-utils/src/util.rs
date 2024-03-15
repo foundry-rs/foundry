@@ -568,7 +568,7 @@ impl TestProject {
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/logs/console.sol");
+        let s = include_str!("../../../testdata/default/logs/console.sol");
         self.add_source("console.sol", s).unwrap()
     }
 

@@ -1,6 +1,6 @@
 //! Invariant tests.
 
-use crate::{config::*, test_helpers::TEST_OPTS};
+use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::{fuzz::CounterExample, result::TestStatus, TestOptions};
 use foundry_test_utils::Filter;
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let results = runner.test_collect(&filter);
 
     assert_multiple(
@@ -152,7 +152,7 @@ async fn test_invariant() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_override() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     runner.test_options.invariant.call_override = true;
     let results = runner.test_collect(&filter);
 
@@ -168,7 +168,7 @@ async fn test_invariant_override() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_fail_on_revert() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     runner.test_options.invariant.fail_on_revert = true;
     runner.test_options.invariant.runs = 1;
     runner.test_options.invariant.depth = 10;
@@ -193,7 +193,7 @@ async fn test_invariant_fail_on_revert() {
 #[ignore]
 async fn test_invariant_storage() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     runner.test_options.invariant.depth = 100 + (50 * cfg!(windows) as u32);
     runner.test_options.fuzz.seed = Some(U256::from(6u32));
     let results = runner.test_collect(&filter);
@@ -216,7 +216,7 @@ async fn test_invariant_storage() {
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     runner.test_options.fuzz.seed = Some(U256::from(119u32));
     let results = runner.test_collect(&filter);
 
@@ -258,7 +258,7 @@ async fn test_invariant_shrink() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_assert_shrink() {
-    let mut opts = TEST_OPTS.clone();
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
     opts.fuzz.seed = Some(U256::from(119u32));
 
     // ensure assert and require shrinks to same sequence of 3 or less
@@ -272,7 +272,7 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
         contract_pattern,
         ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
     );
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     runner.test_options = opts.clone();
     let results = runner.test_collect(&filter);
     let results = results.values().last().expect("`InvariantShrinkWithAssert` should be testable.");
@@ -301,7 +301,7 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_preserve_state() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     // Should not fail with default options.
     runner.test_options.invariant.fail_on_revert = true;
     let results = runner.test_collect(&filter);
@@ -335,7 +335,7 @@ async fn test_invariant_preserve_state() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_calldata_fuzz_dictionary_addresses() {
     // should not fail with default options (address dict not finite)
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     let results = runner.test_collect(&Filter::new(
         ".*",
         ".*",
@@ -375,7 +375,7 @@ async fn test_invariant_calldata_fuzz_dictionary_addresses() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_assume_does_not_revert() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAssume.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     // Should not treat vm.assume as revert.
     runner.test_options.invariant.fail_on_revert = true;
     let results = runner.test_collect(&filter);
@@ -391,7 +391,7 @@ async fn test_invariant_assume_does_not_revert() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_assume_respects_restrictions() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAssume.t.sol");
-    let mut runner = runner();
+    let mut runner = runner(&TEST_DATA_DEFAULT);
     runner.test_options.invariant.max_assume_rejects = 1;
     let results = runner.test_collect(&filter);
     assert_multiple(
