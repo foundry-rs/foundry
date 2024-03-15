@@ -8,6 +8,7 @@ pragma experimental ABIEncoderV2;
 interface Vm {
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
     enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodehash, Extcodecopy }
+    enum ForgeContext { TestGroup, Test, Coverage, Snapshot, ScriptGroup, ScriptDryRun, ScriptBroadcast, ScriptResume, Unknown }
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
@@ -237,17 +238,10 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
+    function isContext(ForgeContext context) external view returns (bool isContext);
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
-    function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
-    function isScriptContext() external view returns (bool isScript);
-    function isScriptDryRunContext() external view returns (bool isScriptDryRun);
-    function isScriptResumeContext() external view returns (bool isScriptResume);
-    function isTestContext() external view returns (bool isTest);
-    function isTestCoverageContext() external view returns (bool isCoverage);
-    function isTestSnapshotContext() external view returns (bool isSnapshot);
-    function isTestStandardContext() external view returns (bool isTest);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);

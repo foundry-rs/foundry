@@ -83,6 +83,48 @@
           "description": "The account's code was copied."
         }
       ]
+    },
+    {
+      "name": "ForgeContext",
+      "description": "Forge execution contexts.",
+      "variants": [
+        {
+          "name": "TestGroup",
+          "description": "Test group execution context (test, coverage or snapshot)."
+        },
+        {
+          "name": "Test",
+          "description": "Forge standard test execution context."
+        },
+        {
+          "name": "Coverage",
+          "description": "Forge coverage execution context."
+        },
+        {
+          "name": "Snapshot",
+          "description": "Forge snapshot execution context."
+        },
+        {
+          "name": "ScriptGroup",
+          "description": "Script group execution context (dry run, broadcast or resume)."
+        },
+        {
+          "name": "ScriptDryRun",
+          "description": "Forge script dry run execution context."
+        },
+        {
+          "name": "ScriptBroadcast",
+          "description": "Forge script broadcast execution context."
+        },
+        {
+          "name": "ScriptResume",
+          "description": "Forge script resume execution context."
+        },
+        {
+          "name": "Unknown",
+          "description": "Unknown forge execution context."
+        }
+      ]
     }
   ],
   "structs": [
@@ -4800,6 +4842,26 @@
     },
     {
       "func": {
+        "id": "isContext",
+        "description": "Returns true if current `forge` execution context.",
+        "declaration": "function isContext(ForgeContext context) external view returns (bool isContext);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isContext(ForgeContext context)",
+        "selector": "0x59b468d9",
+        "selectorBytes": [
+          89,
+          180,
+          104,
+          217
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "isDir",
         "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
         "declaration": "function isDir(string calldata path) external returns (bool result);",
@@ -4857,166 +4919,6 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "isScriptBroadcastContext",
-        "description": "Returns true if `forge` command was executed with `script --broadcast` option.",
-        "declaration": "function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isScriptBroadcastContext()",
-        "selector": "0xd0c87477",
-        "selectorBytes": [
-          208,
-          200,
-          116,
-          119
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isScriptContext",
-        "description": "Returns true if `forge` command was executed with `script` option.",
-        "declaration": "function isScriptContext() external view returns (bool isScript);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isScriptContext()",
-        "selector": "0x9260998c",
-        "selectorBytes": [
-          146,
-          96,
-          153,
-          140
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isScriptDryRunContext",
-        "description": "Returns true if `forge` command was executed with `script` option.",
-        "declaration": "function isScriptDryRunContext() external view returns (bool isScriptDryRun);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isScriptDryRunContext()",
-        "selector": "0xe932f8ee",
-        "selectorBytes": [
-          233,
-          50,
-          248,
-          238
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isScriptResumeContext",
-        "description": "Returns true if `forge` command was executed with `script --resume` option.",
-        "declaration": "function isScriptResumeContext() external view returns (bool isScriptResume);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isScriptResumeContext()",
-        "selector": "0x3d51d384",
-        "selectorBytes": [
-          61,
-          81,
-          211,
-          132
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isTestContext",
-        "description": "Returns true if `forge` command was executed with `test`, `coverage` or `snapshot` option.",
-        "declaration": "function isTestContext() external view returns (bool isTest);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isTestContext()",
-        "selector": "0x6e90e283",
-        "selectorBytes": [
-          110,
-          144,
-          226,
-          131
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isTestCoverageContext",
-        "description": "Returns true if `forge` command was executed with `coverage` option.",
-        "declaration": "function isTestCoverageContext() external view returns (bool isCoverage);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isTestCoverageContext()",
-        "selector": "0x9553b81b",
-        "selectorBytes": [
-          149,
-          83,
-          184,
-          27
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isTestSnapshotContext",
-        "description": "Returns true if `forge` command was executed with `snapshot` option.",
-        "declaration": "function isTestSnapshotContext() external view returns (bool isSnapshot);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isTestSnapshotContext()",
-        "selector": "0xdfa7a646",
-        "selectorBytes": [
-          223,
-          167,
-          166,
-          70
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "isTestStandardContext",
-        "description": "Returns true if `forge` command was executed with `test` option.",
-        "declaration": "function isTestStandardContext() external view returns (bool isTest);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "isTestStandardContext()",
-        "selector": "0x8822f284",
-        "selectorBytes": [
-          136,
-          34,
-          242,
-          132
-        ]
-      },
-      "group": "context",
-      "status": "stable",
-      "safety": "safe"
     },
     {
       "func": {

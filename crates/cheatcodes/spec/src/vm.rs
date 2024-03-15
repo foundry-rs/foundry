@@ -63,6 +63,28 @@ interface Vm {
         Extcodecopy,
     }
 
+    /// Forge execution contexts.
+    enum ForgeContext {
+        /// Test group execution context (test, coverage or snapshot).
+        TestGroup,
+        /// `forge test` execution context.
+        Test,
+        /// `forge coverage` execution context.
+        Coverage,
+        /// `forge snapshot` execution context.
+        Snapshot,
+        /// Script group execution context (dry run, broadcast or resume).
+        ScriptGroup,
+        /// `forge script` execution context.
+        ScriptDryRun,
+        /// `forge script --broadcast` execution context.
+        ScriptBroadcast,
+        /// `forge script --resume` execution context.
+        ScriptResume,
+        /// Unknown `forge` execution context.
+        Unknown,
+    }
+
     /// An Ethereum log. Returned by `getRecordedLogs`.
     struct Log {
         /// The topics of the log, including the signature, if any.
@@ -1549,6 +1571,10 @@ interface Vm {
         external view
         returns (bytes[] memory value);
 
+    /// Returns true if `forge` command was executed in given context.
+    #[cheatcode(group = Environment)]
+    function isContext(ForgeContext context) external view returns (bool isContext);
+
     // ======== Scripts ========
 
     // -------- Broadcasting Transactions --------
@@ -1911,40 +1937,6 @@ interface Vm {
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
-
-    // -------- Forge execution context cheatcodes --------
-
-    /// Returns true if `forge` command was executed with `script --broadcast` option.
-    #[cheatcode(group = Context)]
-    function isScriptBroadcastContext() external view returns (bool isScriptBroadcast);
-
-    /// Returns true if `forge` command was executed with `script` option.
-    #[cheatcode(group = Context)]
-    function isScriptContext() external view returns (bool isScript);
-
-    /// Returns true if `forge` command was executed with `script` option.
-    #[cheatcode(group = Context)]
-    function isScriptDryRunContext() external view returns (bool isScriptDryRun);
-
-    /// Returns true if `forge` command was executed with `script --resume` option.
-    #[cheatcode(group = Context)]
-    function isScriptResumeContext() external view returns (bool isScriptResume);
-
-    /// Returns true if `forge` command was executed with `test`, `coverage` or `snapshot` option.
-    #[cheatcode(group = Context)]
-    function isTestContext() external view returns (bool isTest);
-
-    /// Returns true if `forge` command was executed with `coverage` option.
-    #[cheatcode(group = Context)]
-    function isTestCoverageContext() external view returns (bool isCoverage);
-
-    /// Returns true if `forge` command was executed with `snapshot` option.
-    #[cheatcode(group = Context)]
-    function isTestSnapshotContext() external view returns (bool isSnapshot);
-
-    /// Returns true if `forge` command was executed with `test` option.
-    #[cheatcode(group = Context)]
-    function isTestStandardContext() external view returns (bool isTest);
 
     // -------- Key Management --------
 

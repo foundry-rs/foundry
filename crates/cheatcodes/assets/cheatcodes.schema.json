@@ -306,13 +306,6 @@
           ]
         },
         {
-          "description": "Utility cheatcodes to check forge execution context.\n\nExamples: `isTestContext`, `isScriptBroadcastContext`.\n\nSafety: safe.",
-          "type": "string",
-          "enum": [
-            "context"
-          ]
-        },
-        {
           "description": "Generic, uncategorized utilities.\n\nExamples: `toString`, `parse*`, `serialize*`.\n\nSafety: safe.",
           "type": "string",
           "enum": [

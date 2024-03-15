@@ -4,7 +4,11 @@ use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
-use std::env;
+use once_cell::sync::OnceCell;
+use std::{env, mem::discriminant};
+
+/// Stores the forge execution context for the duration of the program.
+static FORGE_CONTEXT: OnceCell<ForgeContext> = OnceCell::new();
 
 impl Cheatcode for setEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -235,6 +239,33 @@ impl Cheatcode for envOr_13Call {
     }
 }
 
+impl Cheatcode for isContextCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { context } = self;
+        match context {
+            ForgeContext::TestGroup => {
+                let is_test_group = is_forge_context(&ForgeContext::Test) ||
+                    is_forge_context(&ForgeContext::Snapshot) ||
+                    is_forge_context(&ForgeContext::Coverage);
+                Ok(is_test_group.abi_encode())
+            }
+            ForgeContext::ScriptGroup => {
+                let is_script_group = is_forge_context(&ForgeContext::ScriptDryRun) ||
+                    is_forge_context(&ForgeContext::ScriptBroadcast) ||
+                    is_forge_context(&ForgeContext::ScriptResume);
+                Ok(is_script_group.abi_encode())
+            }
+            _ => Ok(is_forge_context(context).abi_encode()),
+        }
+    }
+}
+
+/// Set `forge` command current execution context for the duration of the program.
+/// Execution context is immutable, subsequent calls of this function won't change the context.
+pub fn set_execution_context(context: ForgeContext) {
+    let _ = FORGE_CONTEXT.set(context);
+}
+
 fn env(key: &str, ty: &DynSolType) -> Result {
     get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, &val)))
 }
@@ -261,6 +292,10 @@ fn get_env(key: &str) -> Result<String> {
             Err(fmt_err!("environment variable {key:?} was not valid unicode: {s:?}"))
         }
     }
+}
+
+fn is_forge_context(context: &ForgeContext) -> bool {
+    discriminant(context) == discriminant(FORGE_CONTEXT.get().unwrap())
 }
 
 /// Converts the error message of a failed parsing attempt to a more user-friendly message that

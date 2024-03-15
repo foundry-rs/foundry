@@ -10,7 +10,7 @@ mod cmd;
 mod opts;
 
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
-use foundry_evm::inspectors::cheatcodes::ForgeContext;
+use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
 use opts::{Forge, ForgeSubcommand};
 
 fn main() -> Result<()> {
@@ -112,9 +112,9 @@ fn main() -> Result<()> {
 /// cheatcodes.
 fn init_execution_context(subcommand: &ForgeSubcommand) {
     let context = match subcommand {
-        ForgeSubcommand::Test(_) => ForgeContext::TestStandard,
-        ForgeSubcommand::Coverage(_) => ForgeContext::TestCoverage,
-        ForgeSubcommand::Snapshot(_) => ForgeContext::TestSnapshot,
+        ForgeSubcommand::Test(_) => ForgeContext::Test,
+        ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
+        ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
         ForgeSubcommand::Script(cmd) => {
             if cmd.broadcast {
                 ForgeContext::ScriptBroadcast
@@ -126,5 +126,5 @@ fn init_execution_context(subcommand: &ForgeSubcommand) {
         }
         _ => ForgeContext::Unknown,
     };
-    ForgeContext::set_execution_context(context);
+    set_execution_context(context);
 }

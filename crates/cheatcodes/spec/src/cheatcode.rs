@@ -120,12 +120,6 @@ pub enum Group {
     ///
     /// Safety: safe.
     Utilities,
-    /// Utility cheatcodes to check forge execution context.
-    ///
-    /// Examples: `isTestContext`, `isScriptBroadcastContext`.
-    ///
-    /// Safety: safe.
-    Context,
 }
 
 impl Group {
@@ -143,7 +137,6 @@ impl Group {
             Self::String |
             Self::Json |
             Self::Toml |
-            Self::Context |
             Self::Utilities => Some(Safety::Safe),
         }
     }
@@ -161,7 +154,6 @@ impl Group {
             Self::Json => "json",
             Self::Toml => "toml",
             Self::Utilities => "utilities",
-            Self::Context => "context",
         }
     }
 }
