@@ -2768,9 +2768,9 @@ dependencies = [
 
 [[package]]
 name = "evm-disassembler"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f6fc9c732a3210153e6aa26746f0abd8773dbf204c64ae3e824309b32b384c5"
+checksum = "ded685d9f07315ff689ba56e7d84e6f1e782db19b531a46c34061a733bba7258"
 dependencies = [
  "eyre",
  "hex",
