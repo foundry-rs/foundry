@@ -11,6 +11,7 @@ use foundry_compilers::{
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
+use rustc_hash::FxHashMap;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
@@ -278,7 +279,7 @@ pub struct ContractSources {
     /// Map over artifacts' contract names -> vector of file IDs
     pub ids_by_name: HashMap<String, Vec<u32>>,
     /// Map over file_id -> (source code, contract)
-    pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
+    pub sources_by_id: FxHashMap<u32, (String, ContractBytecodeSome)>,
 }
 
 impl ContractSources {

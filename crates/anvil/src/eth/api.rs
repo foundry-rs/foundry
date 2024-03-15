@@ -2535,7 +2535,7 @@ impl EthApi {
             }
         }
 
-        let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
+        let nonce = self.backend.get_nonce(address, block_request).await?;
 
         Ok(nonce)
     }

@@ -383,7 +383,7 @@ impl<'a> ContractRunner<'a> {
                         err.stipend,
                         None,
                         err.state_changeset,
-                        HashMap::new(),
+                        Default::default(),
                     )
                 }
                 Err(EvmError::SkipError) => {
