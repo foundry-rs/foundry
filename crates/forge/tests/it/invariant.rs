@@ -16,11 +16,11 @@ async fn test_invariant() {
         &results,
         BTreeMap::from([
             (
-                "fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
+                "default/fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
                 vec![("statefulFuzz_BrokenInvariant()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
+                "default/fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
                 vec![(
                     "invariantHideJesus()",
                     false,
@@ -30,11 +30,11 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
+                "default/fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
                 vec![("invariantNotStolen()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
+                "default/fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
                 vec![
                     ("invariant_neverFalse()", false, Some("revert: false".into()), None, None),
                     (
@@ -47,15 +47,15 @@ async fn test_invariant() {
                 ],
             ),
             (
-                "fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",
+                "default/fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",
                 vec![("invariantTrueWorld()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/target/TargetContracts.t.sol:TargetContracts",
+                "default/fuzz/invariant/target/TargetContracts.t.sol:TargetContracts",
                 vec![("invariantTrueWorld()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
+                "default/fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
                 vec![(
                     "invariantTrueWorld()",
                     false,
@@ -65,7 +65,7 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldInterfaces",
+                "default/fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldInterfaces",
                 vec![(
                     "invariantTrueWorld()",
                     false,
@@ -75,19 +75,19 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "fuzz/invariant/target/ExcludeSenders.t.sol:ExcludeSenders",
+                "default/fuzz/invariant/target/ExcludeSenders.t.sol:ExcludeSenders",
                 vec![("invariantTrueWorld()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/target/TargetSelectors.t.sol:TargetSelectors",
+                "default/fuzz/invariant/target/TargetSelectors.t.sol:TargetSelectors",
                 vec![("invariantTrueWorld()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:ExcludeArtifacts",
+                "default/fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:ExcludeArtifacts",
                 vec![("invariantShouldPass()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/targetAbi/TargetArtifacts.t.sol:TargetArtifacts",
+                "default/fuzz/invariant/targetAbi/TargetArtifacts.t.sol:TargetArtifacts",
                 vec![
                     ("invariantShouldPass()", true, None, None, None),
                     (
@@ -100,11 +100,11 @@ async fn test_invariant() {
                 ],
             ),
             (
-                "fuzz/invariant/targetAbi/TargetArtifactSelectors.t.sol:TargetArtifactSelectors",
+                "default/fuzz/invariant/targetAbi/TargetArtifactSelectors.t.sol:TargetArtifactSelectors",
                 vec![("invariantShouldPass()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2",
+                "default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2",
                 vec![(
                     "invariantShouldFail()",
                     false,
@@ -114,7 +114,7 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert",
+                "default/fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert",
                 vec![(
                     "invariant_with_assert()",
                     false,
@@ -124,7 +124,7 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithRequire",
+                "default/fuzz/invariant/common/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithRequire",
                 vec![(
                     "invariant_with_require()",
                     false,
@@ -134,15 +134,15 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
+                "default/fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
                 vec![("invariant_preserve_state()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
+                "default/fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
                 vec![("invariant_owner_never_changes()", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
+                "default/fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
                 vec![("invariant_dummy()", true, None, None, None)],
             ),
         ]),
@@ -159,7 +159,7 @@ async fn test_invariant_override() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
+            "default/fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
             vec![("invariantNotStolen()", false, Some("revert: stolen".into()), None, None)],
         )]),
     );
@@ -177,7 +177,7 @@ async fn test_invariant_fail_on_revert() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
+            "default/fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
             vec![(
                 "statefulFuzz_BrokenInvariant()",
                 false,
@@ -201,7 +201,7 @@ async fn test_invariant_storage() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/storage/InvariantStorageTest.t.sol:InvariantStorageTest",
+            "default/fuzz/invariant/storage/InvariantStorageTest.t.sol:InvariantStorageTest",
             vec![
                 ("invariantChangeAddress()", false, Some("changedAddr".to_string()), None, None),
                 ("invariantChangeString()", false, Some("changedString".to_string()), None, None),
@@ -241,14 +241,14 @@ async fn test_invariant_shrink() {
             let create_fren_sequence = sequence[0].clone();
             assert_eq!(
                 create_fren_sequence.contract_name.unwrap(),
-                "fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
+                "default/fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
             );
             assert_eq!(create_fren_sequence.signature.unwrap(), "create_fren()");
 
             let betray_sequence = sequence[1].clone();
             assert_eq!(
                 betray_sequence.contract_name.unwrap(),
-                "fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
+                "default/fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
             );
             assert_eq!(betray_sequence.signature.unwrap(), "betray()");
         }
@@ -308,7 +308,7 @@ async fn test_invariant_preserve_state() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
+            "default/fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
             vec![("invariant_preserve_state()", true, None, None, None)],
         )]),
     );
@@ -320,7 +320,7 @@ async fn test_invariant_preserve_state() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
+            "default/fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
             vec![(
                 "invariant_preserve_state()",
                 false,
@@ -344,7 +344,7 @@ async fn test_invariant_calldata_fuzz_dictionary_addresses() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
+            "default/fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
             vec![("invariant_owner_never_changes()", true, None, None, None)],
         )]),
     );
@@ -360,7 +360,7 @@ async fn test_invariant_calldata_fuzz_dictionary_addresses() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
+            "default/fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
             vec![(
                 "invariant_owner_never_changes()",
                 false,
@@ -382,7 +382,7 @@ async fn test_invariant_assume_does_not_revert() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
+            "default/fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
             vec![("invariant_dummy()", true, None, None, None)],
         )]),
     );
@@ -397,7 +397,7 @@ async fn test_invariant_assume_respects_restrictions() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
+            "default/fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
             vec![(
                 "invariant_dummy()",
                 false,

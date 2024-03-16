@@ -91,7 +91,7 @@ async fn test_fuzz_collection() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/FuzzCollection.t.sol:SampleContractTest",
+            "default/fuzz/FuzzCollection.t.sol:SampleContractTest",
             vec![
                 ("invariantCounter", false, Some("broken counter.".into()), None, None),
                 (
@@ -117,7 +117,7 @@ async fn test_persist_fuzz_failure() {
         () => {
             runner
                 .test_collect(&filter)
-                .get("fuzz/FuzzFailurePersist.t.sol:FuzzFailurePersistTest")
+                .get("default/fuzz/FuzzFailurePersist.t.sol:FuzzFailurePersistTest")
                 .unwrap()
                 .test_results
                 .get("test_persist_fuzzed_failure(uint256,int256,address,bool,string,(address,uint256),address[])")
