@@ -61,7 +61,10 @@ async fn test_core() {
                 "default/core/PaymentFailure.t.sol:PaymentFailureTest",
                 vec![("testCantPay()", false, Some("EvmError: Revert".to_string()), None, None)],
             ),
-            ("default/core/Abstract.t.sol:AbstractTest", vec![("testSomething()", true, None, None, None)]),
+            (
+                "default/core/Abstract.t.sol:AbstractTest",
+                vec![("testSomething()", true, None, None, None)],
+            ),
             (
                 "default/core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
                 vec![(
