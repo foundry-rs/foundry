@@ -38,6 +38,8 @@ impl ScriptTester {
             "script",
             "-R",
             "ds-test/=lib/",
+            "-R",
+            "cheats/=cheats/",
             target_contract,
             "--root",
             project_root.to_str().unwrap(),
@@ -107,7 +109,8 @@ impl ScriptTester {
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
+        fs::create_dir_all(current_dir.join("cheats"))?;
+        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("cheats/Vm.sol"))?;
         fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
         Ok(())
     }
