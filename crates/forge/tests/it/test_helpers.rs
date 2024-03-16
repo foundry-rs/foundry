@@ -122,6 +122,7 @@ impl ForgeTestProfile {
     pub fn config(&self) -> Config {
         let mut config = Config::with_root(self.root());
 
+        config.ast = true;
         config.src = self.root().join(self.to_string());
         config.out = self.root().join("out").join(self.to_string());
         config.cache_path = self.root().join("cache").join(self.to_string());

@@ -35,7 +35,7 @@ contract ExcludeArtifacts is DSTest {
 
     function excludeArtifacts() public returns (string[] memory) {
         string[] memory abis = new string[](1);
-        abis[0] = "fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:Excluded";
+        abis[0] = "default/fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:Excluded";
         return abis;
     }
 

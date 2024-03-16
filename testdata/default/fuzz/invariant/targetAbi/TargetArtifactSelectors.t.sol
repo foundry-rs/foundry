@@ -31,7 +31,7 @@ contract TargetArtifactSelectors is DSTest {
         FuzzAbiSelector[] memory targets = new FuzzAbiSelector[](1);
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = Hi.no_change.selector;
-        targets[0] = FuzzAbiSelector("fuzz/invariant/targetAbi/TargetArtifactSelectors.t.sol:Hi", selectors);
+        targets[0] = FuzzAbiSelector("default/fuzz/invariant/targetAbi/TargetArtifactSelectors.t.sol:Hi", selectors);
         return targets;
     }
 

@@ -51,11 +51,11 @@ contract TargetArtifactSelectors2 is DSTest {
         bytes4[] memory selectors_child = new bytes4[](1);
 
         selectors_child[0] = Child.change_parent.selector;
-        targets[0] = FuzzAbiSelector("fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Child", selectors_child);
+        targets[0] = FuzzAbiSelector("default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Child", selectors_child);
 
         bytes4[] memory selectors_parent = new bytes4[](1);
         selectors_parent[0] = Parent.create.selector;
-        targets[1] = FuzzAbiSelector("fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Parent", selectors_parent);
+        targets[1] = FuzzAbiSelector("default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Parent", selectors_parent);
         return targets;
     }
 

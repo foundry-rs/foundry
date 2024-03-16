@@ -30,7 +30,7 @@ contract TargetArtifacts is DSTest {
 
     function targetArtifacts() public returns (string[] memory) {
         string[] memory abis = new string[](1);
-        abis[0] = "fuzz/invariant/targetAbi/TargetArtifacts.t.sol:Targeted";
+        abis[0] = "default/fuzz/invariant/targetAbi/TargetArtifacts.t.sol:Targeted";
         return abis;
     }
 

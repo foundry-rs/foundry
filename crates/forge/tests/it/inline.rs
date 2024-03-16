@@ -14,7 +14,7 @@ async fn inline_config_run_fuzz() {
     let mut runner = runner(&TEST_DATA_DEFAULT);
     let result = runner.test_collect(&filter);
     let suite_result: &SuiteResult =
-        result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
+        result.get("default/inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
     let test_result: &TestResult =
         suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
     match &test_result.kind {
@@ -29,7 +29,7 @@ async fn inline_config_run_fuzz() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_invariant() {
-    const ROOT: &str = "inline/InvariantInlineConf.t.sol";
+    const ROOT: &str = "default/inline/InvariantInlineConf.t.sol";
 
     let filter = Filter::new(".*", ".*", ".*inline/InvariantInlineConf.t.sol");
     let mut runner = runner(&TEST_DATA_DEFAULT);
