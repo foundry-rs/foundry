@@ -238,20 +238,22 @@ pub fn initialize(target: &Path) {
         // Release the read lock and acquire a write lock, initializing the lock file.
         _read = None;
         let mut write = lock.write().unwrap();
-        write.write_all(b"1").unwrap();
 
-        // Initialize and build.
-        let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-        eprintln!("- initializing template dir in {}", prj.root().display());
+        if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
+            write.write_all(b"1").unwrap();
+            // Initialize and build.
+            let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+            eprintln!("- initializing template dir in {}", prj.root().display());
 
-        cmd.args(["init", "--force"]).assert_success();
-        cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+            cmd.args(["init", "--force"]).assert_success();
+            cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
 
-        // Remove the existing template, if any.
-        let _ = fs::remove_dir_all(tpath);
+            // Remove the existing template, if any.
+            let _ = fs::remove_dir_all(tpath);
 
-        // Copy the template to the global template path.
-        pretty_err(tpath, copy_dir(prj.root(), tpath));
+            // Copy the template to the global template path.
+            pretty_err(tpath, copy_dir(prj.root(), tpath));
+        }
 
         // Release the write lock and acquire a new read lock.
         drop(write);
