@@ -22,6 +22,7 @@ use std::{
 pub const RE_PATH_SEPARATOR: &str = "/";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
+/// Profile for the tests group. Used to configure separate configurations for test runs.
 pub enum ForgeTestProfile {
     Default,
     Cancun,
@@ -41,6 +42,7 @@ impl ForgeTestProfile {
         PathBuf::from(TESTDATA)
     }
 
+    /// Configures the solc settings for the test profile.
     pub fn solc_config(&self) -> SolcConfig {
         let libs =
             ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
@@ -119,6 +121,13 @@ impl ForgeTestProfile {
         }
     }
 
+    /// Build [Config] for test profile.
+    ///
+    /// Project source files are read from testdata/{profile_name}
+    /// Project output files are written to testdata/out/{profile_name}
+    /// Cache is written to testdata/cache/{profile_name}
+    ///
+    /// AST output is enabled by default to support inline configs.
     pub fn config(&self) -> Config {
         let mut config = Config::with_root(self.root());
 
@@ -138,6 +147,7 @@ impl ForgeTestProfile {
     }
 }
 
+/// Container for test data for a specific test profile.
 pub struct ForgeTestData {
     pub project: Project,
     pub output: ProjectCompileOutput,
@@ -147,6 +157,9 @@ pub struct ForgeTestData {
 }
 
 impl ForgeTestData {
+    /// Builds [ForgeTestData] for the given [ForgeTestProfile].
+    ///
+    /// Uses [get_compiled] to lazily compile the project.
     pub fn new(profile: ForgeTestProfile) -> Self {
         let project = profile.project();
         let output = get_compiled(&project);
@@ -185,7 +198,10 @@ pub fn get_compiled(project: &Project) -> ProjectCompileOutput {
     out
 }
 
+/// Default data for the tests group.
 pub static TEST_DATA_DEFAULT: Lazy<ForgeTestData> =
     Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Default));
+
+/// Data for tests requiring Cancun support on Solc and EVM level.
 pub static TEST_DATA_CANCUN: Lazy<ForgeTestData> =
     Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Cancun));
