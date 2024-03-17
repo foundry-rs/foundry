@@ -135,6 +135,14 @@ pub struct CoreBuildArgs {
     #[command(flatten)]
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
+
+    /// If generate a file with the signatures of the functions and events of the project.
+    /// The file will be saved in the foundry cache directory.
+    ///
+    /// default value: false
+    #[arg(long, short = 'G', visible_alias = "gs")]
+    #[serde(skip)]
+    pub generate_local_signatures: bool,
 }
 
 impl CoreBuildArgs {

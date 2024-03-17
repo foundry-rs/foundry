@@ -16,7 +16,7 @@ use foundry_evm::{
     traces::{
         debug::DebugTraceIdentifier,
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
@@ -163,14 +163,14 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return matches!(
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia |
-                NamedChain::Moonbeam |
-                NamedChain::Moonriver |
-                NamedChain::Moonbase |
-                NamedChain::MoonbeamDev
+            NamedChain::Arbitrum
+                | NamedChain::ArbitrumTestnet
+                | NamedChain::ArbitrumGoerli
+                | NamedChain::ArbitrumSepolia
+                | NamedChain::Moonbeam
+                | NamedChain::Moonriver
+                | NamedChain::Moonbase
+                | NamedChain::MoonbeamDev
         );
     }
     false
@@ -181,10 +181,10 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
+            NamedChain::Arbitrum
+                | NamedChain::ArbitrumTestnet
+                | NamedChain::ArbitrumGoerli
+                | NamedChain::ArbitrumSepolia
         );
     }
     true
@@ -425,5 +425,27 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     }
 
     println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+pub fn generate_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let mut cached_signatures = CachedSignatures::default();
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+        }
+    });
+    let path = cache_path.join("signatures");
+    if !path.is_file() {
+        std::fs::create_dir_all(&cache_path)?;
+    }
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }

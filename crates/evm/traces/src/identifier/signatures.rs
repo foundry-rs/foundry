@@ -16,9 +16,9 @@ use tokio::sync::RwLock;
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct CachedSignatures {
-    events: BTreeMap<String, String>,
-    functions: BTreeMap<String, String>,
+pub struct CachedSignatures {
+    pub events: BTreeMap<String, String>,
+    pub functions: BTreeMap<String, String>,
 }
 
 /// An identifier that tries to identify functions and events using signatures found at
