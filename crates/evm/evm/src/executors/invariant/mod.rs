@@ -138,7 +138,7 @@ impl<'a> InvariantExecutor<'a> {
             &mut failures.borrow_mut(),
             self.config.shrink_sequence,
             self.config.shrink_run_limit,
-        ));
+        )?);
 
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
@@ -241,7 +241,8 @@ impl<'a> InvariantExecutor<'a> {
                             self.config.shrink_sequence,
                             self.config.shrink_run_limit,
                             &mut run_traces,
-                        );
+                        )
+                        .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                     if !can_continue || current_run == self.config.depth - 1 {
                         last_run_calldata.borrow_mut().clone_from(&inputs);
@@ -777,7 +778,7 @@ fn can_continue(
     shrink_sequence: bool,
     shrink_run_limit: usize,
     run_traces: &mut Vec<CallTraceArena>,
-) -> RichInvariantResults {
+) -> eyre::Result<RichInvariantResults> {
     let mut call_results = None;
 
     // Detect handler assertion failures first.
@@ -799,9 +800,9 @@ fn can_continue(
             failures,
             shrink_sequence,
             shrink_run_limit,
-        );
+        )?;
         if call_results.is_none() {
-            return RichInvariantResults::new(false, None)
+            return Ok(RichInvariantResults::new(false, None));
         }
     } else {
         // Increase the amount of reverts.
@@ -821,8 +822,8 @@ fn can_continue(
             let error = InvariantFuzzError::Revert(case_data);
             failures.error = Some(error);
 
-            return RichInvariantResults::new(false, None)
+            return Ok(RichInvariantResults::new(false, None));
         }
     }
-    RichInvariantResults::new(true, call_results)
+    Ok(RichInvariantResults::new(true, call_results))
 }

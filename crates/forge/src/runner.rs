@@ -460,7 +460,7 @@ impl<'a> ContractRunner<'a> {
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
-        if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
+        if let Err(EvmError::SkipError) = self.executor.clone().execute_test(
             self.sender,
             address,
             func.clone(),
@@ -541,7 +541,7 @@ impl<'a> ContractRunner<'a> {
             // If invariants ran successfully, replay the last run to collect logs and
             // traces.
             _ => {
-                replay_run(
+                if let Err(err) = replay_run(
                     &invariant_contract,
                     self.executor.clone(),
                     known_contracts,
@@ -551,7 +551,9 @@ impl<'a> ContractRunner<'a> {
                     &mut coverage,
                     func.clone(),
                     last_run_inputs.clone(),
-                );
+                ) {
+                    error!(%err, "Failed to replay last invariant run");
+                }
             }
         }
 
