@@ -246,7 +246,7 @@ pub fn initialize(target: &Path) {
             write.set_len(0).unwrap();
             write.seek(std::io::SeekFrom::Start(0)).unwrap();
             write.write_all(b"1").unwrap();
-            
+
             // Initialize and build.
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             eprintln!("- initializing template dir in {}", prj.root().display());
