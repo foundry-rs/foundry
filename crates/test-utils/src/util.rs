@@ -13,9 +13,8 @@ use regex::Regex;
 use std::{
     env,
     ffi::OsStr,
-    fs,
-    fs::File,
-    io::{BufWriter, IsTerminal, Write},
+    fs::{self, File},
+    io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
@@ -237,21 +236,30 @@ pub fn initialize(target: &Path) {
 
         // Release the read lock and acquire a write lock, initializing the lock file.
         _read = None;
+
         let mut write = lock.write().unwrap();
-        write.write_all(b"1").unwrap();
 
-        // Initialize and build.
-        let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-        eprintln!("- initializing template dir in {}", prj.root().display());
+        let mut data = String::new();
+        write.read_to_string(&mut data).unwrap();
 
-        cmd.args(["init", "--force"]).assert_success();
-        cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+        if data != "1" {
+            write.set_len(0).unwrap();
+            write.seek(std::io::SeekFrom::Start(0)).unwrap();
+            write.write_all(b"1").unwrap();
 
-        // Remove the existing template, if any.
-        let _ = fs::remove_dir_all(tpath);
+            // Initialize and build.
+            let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+            eprintln!("- initializing template dir in {}", prj.root().display());
 
-        // Copy the template to the global template path.
-        pretty_err(tpath, copy_dir(prj.root(), tpath));
+            cmd.args(["init", "--force"]).assert_success();
+            cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+
+            // Remove the existing template, if any.
+            let _ = fs::remove_dir_all(tpath);
+
+            // Copy the template to the global template path.
+            pretty_err(tpath, copy_dir(prj.root(), tpath));
+        }
 
         // Release the write lock and acquire a new read lock.
         drop(write);
