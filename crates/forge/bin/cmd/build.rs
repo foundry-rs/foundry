@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{
+    opts::CoreBuildArgs,
+    utils::{generate_local_signatures, LoadConfig},
+};
 use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
 use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
@@ -101,6 +104,16 @@ impl BuildArgs {
 
         if self.format_json {
             println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
+        }
+
+        if self.args.generate_local_signatures {
+            if let Err(err) =
+                generate_local_signatures(&output, Config::foundry_cache_dir().unwrap())
+            {
+                warn!(target: "forge::build", ?err, "failed to flush signature cache");
+            } else {
+                trace!(target: "forge::build", "flushed signature cache")
+            }
         }
 
         Ok(output)
