@@ -13,9 +13,8 @@ use regex::Regex;
 use std::{
     env,
     ffi::OsStr,
-    fs,
-    fs::File,
-    io::{BufWriter, IsTerminal, Write},
+    fs::{self, File},
+    io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
@@ -237,10 +236,17 @@ pub fn initialize(target: &Path) {
 
         // Release the read lock and acquire a write lock, initializing the lock file.
         _read = None;
+
         let mut write = lock.write().unwrap();
 
-        if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
+        let mut data = String::new();
+        write.read_to_string(&mut data).unwrap();
+
+        if data != "1" {
+            write.set_len(0).unwrap();
+            write.seek(std::io::SeekFrom::Start(0)).unwrap();
             write.write_all(b"1").unwrap();
+            
             // Initialize and build.
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             eprintln!("- initializing template dir in {}", prj.root().display());
