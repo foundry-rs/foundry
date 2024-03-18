@@ -32,20 +32,22 @@ impl NatSpec {
         let solc = SolcParser::new();
         let solang = SolangParser::new();
         for (id, artifact) in output.artifact_ids() {
-            let path = id.source.as_path();
-            let path = path.strip_prefix(root).unwrap_or(path);
-            let mut used_solc = false;
+            let abs_path = id.source.as_path();
+            let path = abs_path.strip_prefix(root).unwrap_or(abs_path);
+            // `id.identifier` but with the stripped path.
+            let contract = format!("{}:{}", path.display(), id.name);
+
+            let mut used_solc_ast = false;
             if let Some(ast) = &artifact.ast {
-                // `id.identifier` but with the stripped path.
-                let contract = format!("{}:{}", path.display(), id.name);
                 if let Some(node) = solc.contract_root_node(&ast.nodes, &contract) {
                     solc.parse(&mut natspecs, &contract, node);
-                    used_solc = true;
+                    used_solc_ast = true;
                 }
             }
-            if !used_solc {
-                if let Ok(src) = std::fs::read_to_string(path) {
-                    solang.parse(&mut natspecs, &src, &id.name);
+
+            if !used_solc_ast {
+                if let Ok(src) = std::fs::read_to_string(abs_path) {
+                    solang.parse(&mut natspecs, &src, &contract, &id.name);
                 }
             }
         }
@@ -173,13 +175,19 @@ impl SolangParser {
         Self { _private: () }
     }
 
-    fn parse(&self, natspecs: &mut Vec<NatSpec>, src: &str, contract: &str) {
+    fn parse(
+        &self,
+        natspecs: &mut Vec<NatSpec>,
+        src: &str,
+        contract_id: &str,
+        contract_name: &str,
+    ) {
         let Ok((pt, comments)) = solang_parser::parse(src, 0) else { return };
         let mut prev_end = 0;
         for item in &pt.0 {
             let pt::SourceUnitPart::ContractDefinition(c) = item else { continue };
             let Some(id) = c.name.as_ref() else { continue };
-            if id.name != contract {
+            if id.name != contract_name {
                 continue
             };
             for part in &c.parts {
@@ -193,7 +201,7 @@ impl SolangParser {
                     .filter(|doc| doc.value.contains(INLINE_CONFIG_PREFIX));
                 for doc in docs {
                     natspecs.push(NatSpec {
-                        contract: contract.to_string(),
+                        contract: contract_id.to_string(),
                         function: f.name.as_ref().map(|id| id.to_string()).unwrap_or_default(),
                         line: "0:0:0".to_string(),
                         docs: doc.value,
@@ -231,36 +239,74 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
 ";
         let mut natspecs = vec![];
         let solang = SolangParser::new();
-        solang.parse(&mut natspecs, src, "C");
+        let id = || "path.sol:C".to_string();
+        let default_line = || "0:0:0".to_string();
+        solang.parse(&mut natspecs, src, &id(), "C");
         assert_eq!(
             natspecs,
             [
                 // f1
                 NatSpec {
-                    contract: "C".to_string(),
+                    contract: id(),
                     function: "f1".to_string(),
-                    line: "0:0:0".to_string(),
+                    line: default_line(),
                     docs: "forge-config: default.fuzz.runs = 600\nforge-config: default.fuzz.runs = 601".to_string(),
                 },
                 // f2
                 NatSpec {
-                    contract: "C".to_string(),
+                    contract: id(),
                     function: "f2".to_string(),
-                    line: "0:0:0".to_string(),
+                    line: default_line(),
                     docs: "forge-config: default.fuzz.runs = 700".to_string(),
                 },
                 // f3
                 NatSpec {
-                    contract: "C".to_string(),
+                    contract: id(),
                     function: "f3".to_string(),
-                    line: "0:0:0".to_string(),
+                    line: default_line(),
                     docs: "forge-config: default.fuzz.runs = 800".to_string(),
                 },
                 // f4
                 NatSpec {
-                    contract: "C".to_string(),
+                    contract: id(),
                     function: "f4".to_string(),
-                    line: "0:0:0".to_string(),
+                    line: default_line(),
+                    docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_solang_2() {
+        let src = r#"
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity >=0.8.0;
+
+import "ds-test/test.sol";
+
+contract FuzzInlineConf is DSTest {
+    /**
+     * forge-config: default.fuzz.runs = 1024
+     * forge-config: default.fuzz.max-test-rejects = 500
+     */
+    function testInlineConfFuzz(uint8 x) public {
+        require(true, "this is not going to revert");
+    }
+}
+        "#;
+        let mut natspecs = vec![];
+        let solang = SolangParser::new();
+        let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
+        let default_line = || "0:0:0".to_string();
+        solang.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
+        assert_eq!(
+            natspecs,
+            [
+                NatSpec {
+                    contract: id(),
+                    function: "testInlineConfFuzz".to_string(),
+                    line: default_line(),
                     docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
                 },
             ]
