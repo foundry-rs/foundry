@@ -18,7 +18,7 @@ use foundry_evm_fuzz::{
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{borrow::Cow, cell::RefCell};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -208,19 +208,16 @@ impl FuzzedExecutor {
         should_fail: bool,
         calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
-        let call = self
+        let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
-        let state_changeset = call
-            .state_changeset
-            .as_ref()
-            .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
+        let state_changeset = call.state_changeset.take().unwrap();
 
         // Build fuzzer state
         collect_state_from_call(
             &call.logs,
-            state_changeset,
+            &state_changeset,
             state.clone(),
             &self.config.dictionary,
         );
@@ -235,8 +232,12 @@ impl FuzzedExecutor {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success =
-            self.executor.is_raw_call_success(address, state_changeset.clone(), &call, should_fail);
+        let success = self.executor.is_raw_call_success(
+            address,
+            Cow::Owned(state_changeset),
+            &call,
+            should_fail,
+        );
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {

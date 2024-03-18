@@ -1,6 +1,8 @@
 use crate::{
     fork::fork_config,
-    utils::{ethers_http_provider, ethers_ws_provider},
+    utils::{
+        ethers_http_provider, ethers_ws_provider, ContractInstanceCompat, DeploymentTxFactoryCompat,
+    },
 };
 use alloy_primitives::U256;
 use anvil::{spawn, Hardfork, NodeConfig};
@@ -13,8 +15,8 @@ use ethers::{
     types::{ActionType, Address, GethDebugTracingCallOptions, Trace},
     utils::hex,
 };
-use ethers_solc::{project_util::TempProject, Artifact};
 use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -82,10 +84,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -132,10 +134,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),

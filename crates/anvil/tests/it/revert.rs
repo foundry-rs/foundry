@@ -6,7 +6,7 @@ use ethers::{
     types::U256,
     utils::WEI_IN_ETHER,
 };
-use ethers_solc::{project_util::TempProject, Artifact};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
