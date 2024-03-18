@@ -4,10 +4,11 @@ use foundry_compilers::{
     ProjectCompileOutput,
 };
 use serde_json::Value;
+use solang_parser::pt;
 use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NatSpec {
     /// The parent contract of the natspec
     pub contract: String,
@@ -28,14 +29,25 @@ impl NatSpec {
     pub fn parse(output: &ProjectCompileOutput, root: &Path) -> Vec<Self> {
         let mut natspecs: Vec<Self> = vec![];
 
+        let solc = SolcParser::new();
+        let solang = SolangParser::new();
         for (id, artifact) in output.artifact_ids() {
-            let Some(ast) = &artifact.ast else { continue };
             let path = id.source.as_path();
             let path = path.strip_prefix(root).unwrap_or(path);
-            // id.identifier
-            let contract = format!("{}:{}", path.display(), id.name);
-            let Some(node) = contract_root_node(&ast.nodes, &contract) else { continue };
-            apply(&mut natspecs, &contract, node)
+            let mut used_solc = false;
+            if let Some(ast) = &artifact.ast {
+                // `id.identifier` but with the stripped path.
+                let contract = format!("{}:{}", path.display(), id.name);
+                if let Some(node) = solc.contract_root_node(&ast.nodes, &contract) {
+                    solc.parse(&mut natspecs, &contract, node);
+                    used_solc = true;
+                }
+            }
+            if !used_solc {
+                if let Ok(src) = std::fs::read_to_string(path) {
+                    solang.parse(&mut natspecs, &src, &id.name);
+                }
+            }
         }
 
         natspecs
@@ -67,85 +79,175 @@ impl NatSpec {
     }
 }
 
-/// Given a list of nodes, find a "ContractDefinition" node that matches
-/// the provided contract_id.
-fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a Node> {
-    for n in nodes.iter() {
-        if let NodeType::ContractDefinition = n.node_type {
-            let contract_data = &n.other;
-            if let Value::String(contract_name) = contract_data.get("name")? {
-                if contract_id.ends_with(contract_name) {
-                    return Some(n)
+struct SolcParser {
+    _private: (),
+}
+
+impl SolcParser {
+    fn new() -> Self {
+        Self { _private: () }
+    }
+
+    /// Given a list of nodes, find a "ContractDefinition" node that matches
+    /// the provided contract_id.
+    fn contract_root_node<'a>(&self, nodes: &'a [Node], contract_id: &str) -> Option<&'a Node> {
+        for n in nodes.iter() {
+            if let NodeType::ContractDefinition = n.node_type {
+                let contract_data = &n.other;
+                if let Value::String(contract_name) = contract_data.get("name")? {
+                    if contract_id.ends_with(contract_name) {
+                        return Some(n)
+                    }
                 }
             }
         }
+        None
     }
-    None
-}
 
-/// Implements a DFS over a compiler output node and its children.
-/// If a natspec is found it is added to `natspecs`
-fn apply(natspecs: &mut Vec<NatSpec>, contract: &str, node: &Node) {
-    for n in node.nodes.iter() {
-        if let Some((function, docs, line)) = get_fn_data(n) {
-            natspecs.push(NatSpec { contract: contract.into(), function, line, docs })
+    /// Implements a DFS over a compiler output node and its children.
+    /// If a natspec is found it is added to `natspecs`
+    fn parse(&self, natspecs: &mut Vec<NatSpec>, contract: &str, node: &Node) {
+        for n in node.nodes.iter() {
+            if let Some((function, docs, line)) = self.get_fn_data(n) {
+                natspecs.push(NatSpec { contract: contract.into(), function, line, docs })
+            }
+            self.parse(natspecs, contract, n);
         }
-        apply(natspecs, contract, n);
-    }
-}
-
-/// Given a compilation output node, if it is a function definition
-/// that also contains a natspec then return a tuple of:
-/// - Function name
-/// - Natspec text
-/// - Natspec position with format "row:col:length"
-///
-/// Return None otherwise.
-fn get_fn_data(node: &Node) -> Option<(String, String, String)> {
-    if let NodeType::FunctionDefinition = node.node_type {
-        let fn_data = &node.other;
-        let fn_name: String = get_fn_name(fn_data)?;
-        let (fn_docs, docs_src_line): (String, String) = get_fn_docs(fn_data)?;
-        return Some((fn_name, fn_docs, docs_src_line))
     }
 
-    None
-}
+    /// Given a compilation output node, if it is a function definition
+    /// that also contains a natspec then return a tuple of:
+    /// - Function name
+    /// - Natspec text
+    /// - Natspec position with format "row:col:length"
+    ///
+    /// Return None otherwise.
+    fn get_fn_data(&self, node: &Node) -> Option<(String, String, String)> {
+        if let NodeType::FunctionDefinition = node.node_type {
+            let fn_data = &node.other;
+            let fn_name: String = self.get_fn_name(fn_data)?;
+            let (fn_docs, docs_src_line): (String, String) = self.get_fn_docs(fn_data)?;
+            return Some((fn_name, fn_docs, docs_src_line))
+        }
 
-/// Given a dictionary of function data returns the name of the function.
-fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
-    match fn_data.get("name")? {
-        Value::String(fn_name) => Some(fn_name.into()),
-        _ => None,
+        None
     }
-}
 
-/// Inspects Solc compiler output for documentation comments. Returns:
-/// - `Some((String, String))` in case the function has natspec comments. First item is a textual
-///   natspec representation, the second item is the natspec src line, in the form "raw:col:length".
-/// - `None` in case the function has not natspec comments.
-fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
-    if let Value::Object(fn_docs) = fn_data.get("documentation")? {
-        if let Value::String(comment) = fn_docs.get("text")? {
-            if comment.contains(INLINE_CONFIG_PREFIX) {
-                let mut src_line = fn_docs
-                    .get("src")
-                    .map(|src| src.to_string())
-                    .unwrap_or_else(|| String::from("<no-src-line-available>"));
+    /// Given a dictionary of function data returns the name of the function.
+    fn get_fn_name(&self, fn_data: &BTreeMap<String, Value>) -> Option<String> {
+        match fn_data.get("name")? {
+            Value::String(fn_name) => Some(fn_name.into()),
+            _ => None,
+        }
+    }
 
-                src_line.retain(|c| c != '"');
-                return Some((comment.into(), src_line))
+    /// Inspects Solc compiler output for documentation comments. Returns:
+    /// - `Some((String, String))` in case the function has natspec comments. First item is a
+    ///   textual natspec representation, the second item is the natspec src line, in the form
+    ///   "raw:col:length".
+    /// - `None` in case the function has not natspec comments.
+    fn get_fn_docs(&self, fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
+        if let Value::Object(fn_docs) = fn_data.get("documentation")? {
+            if let Value::String(comment) = fn_docs.get("text")? {
+                if comment.contains(INLINE_CONFIG_PREFIX) {
+                    let mut src_line = fn_docs
+                        .get("src")
+                        .map(|src| src.to_string())
+                        .unwrap_or_else(|| String::from("<no-src-line-available>"));
+
+                    src_line.retain(|c| c != '"');
+                    return Some((comment.into(), src_line))
+                }
             }
         }
+        None
     }
-    None
+}
+
+struct SolangParser {
+    _private: (),
+}
+
+impl SolangParser {
+    fn new() -> Self {
+        Self { _private: () }
+    }
+
+    fn parse(&self, natspecs: &mut Vec<NatSpec>, src: &str, contract: &str) {
+        let Ok((pt, comments)) = solang_parser::parse(src, 0) else { return };
+        let mut prev_end = 0;
+        for item in &pt.0 {
+            let pt::SourceUnitPart::ContractDefinition(c) = item else { continue };
+            let Some(id) = c.name.as_ref() else { continue };
+            if id.name != contract {
+                continue
+            };
+            for part in &c.parts {
+                let pt::ContractPart::FunctionDefinition(f) = part else { continue };
+                let start = f.loc.start();
+                // Parse doc comments in between the previous function and the current one.
+                let docs = solang_parser::doccomment::parse_doccomments(&comments, prev_end, start);
+                let docs = docs
+                    .into_iter()
+                    .flat_map(|doc| doc.into_comments())
+                    .filter(|doc| doc.value.contains(INLINE_CONFIG_PREFIX));
+                for doc in docs {
+                    natspecs.push(NatSpec {
+                        contract: contract.to_string(),
+                        function: f.name.as_ref().map(|id| id.to_string()).unwrap_or_default(),
+                        line: "0:0:0".to_string(),
+                        docs: doc.value,
+                    });
+                }
+                prev_end = f.loc.end();
+            }
+            prev_end = c.loc.end();
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{inline::natspec::get_fn_docs, NatSpec};
-    use serde_json::{json, Value};
-    use std::collections::BTreeMap;
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_solang() {
+        let src = "
+contract C { /// forge-config: default.fuzz.runs = 600
+    function f1() {}
+       /** forge-config: default.fuzz.runs = 700 */
+function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
+
+}
+";
+        let mut natspecs = vec![];
+        let solang = SolangParser::new();
+        solang.parse(&mut natspecs, src, "C");
+        assert_eq!(
+            natspecs,
+            [
+                NatSpec {
+                    contract: "C".to_string(),
+                    function: "f1".to_string(),
+                    line: "0:0:0".to_string(),
+                    docs: "forge-config: default.fuzz.runs = 600".to_string(),
+                },
+                NatSpec {
+                    contract: "C".to_string(),
+                    function: "f2".to_string(),
+                    line: "0:0:0".to_string(),
+                    docs: "forge-config: default.fuzz.runs = 700".to_string(),
+                },
+                NatSpec {
+                    contract: "C".to_string(),
+                    function: "f3".to_string(),
+                    line: "0:0:0".to_string(),
+                    docs: "forge-config: default.fuzz.runs = 800".to_string(),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn config_lines() {
@@ -195,7 +297,7 @@ mod tests {
         let mut fn_data: BTreeMap<String, Value> = BTreeMap::new();
         let doc_without_src_field = json!({ "text":  "forge-config:default.fuzz.runs=600" });
         fn_data.insert("documentation".into(), doc_without_src_field);
-        let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
+        let (_, src_line) = SolcParser::new().get_fn_docs(&fn_data).expect("Some docs");
         assert_eq!(src_line, "<no-src-line-available>".to_string());
     }
 
@@ -205,7 +307,7 @@ mod tests {
         let doc_without_src_field =
             json!({ "text":  "forge-config:default.fuzz.runs=600", "src": "73:21:12" });
         fn_data.insert("documentation".into(), doc_without_src_field);
-        let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
+        let (_, src_line) = SolcParser::new().get_fn_docs(&fn_data).expect("Some docs");
         assert_eq!(src_line, "73:21:12".to_string());
     }
 
