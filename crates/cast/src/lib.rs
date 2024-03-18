@@ -38,11 +38,6 @@ use tx::TxBuilderPeekOutput;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
-pub use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-pub use rusoto_kms::KmsClient;
 pub use tx::{TxBuilder, TxBuilderOutput};
 
 pub mod base;

@@ -1,9 +1,8 @@
 use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
+use alloy_signer::Signer;
 use clap::Parser;
-use ethers_signers::Signer;
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use serde::Serialize;
 
 /// The wallet options can either be:
@@ -95,7 +94,7 @@ impl WalletOpts {
                 .await?
         } else if self.aws {
             let key_id = std::env::var("AWS_KMS_KEY_ID")?;
-            WalletSigner::from_aws(&key_id).await?
+            WalletSigner::from_aws(key_id).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -139,7 +138,7 @@ of the unlocked account you want to use, or provide the --from flag with the add
         if let Some(from) = self.from {
             from
         } else if let Ok(signer) = self.signer().await {
-            signer.address().to_alloy()
+            signer.address()
         } else {
             Address::ZERO
         }

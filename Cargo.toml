@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.75" # Remember to update clippy.toml as well
+rust-version = "1.75"                                       # Remember to update clippy.toml as well
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -104,9 +104,6 @@ codegen-units = 1
 [profile.release.package]
 mdbook.opt-level = 1
 protobuf.opt-level = 1
-rusoto_core.opt-level = 1
-rusoto_credential.opt-level = 1
-rusoto_kms.opt-level = 1
 toml_edit.opt-level = 1
 trezor-client.opt-level = 1
 
@@ -171,6 +168,9 @@ alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90",
 alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
 alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
+alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
@@ -188,7 +188,10 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"

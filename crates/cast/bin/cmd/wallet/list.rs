@@ -61,7 +61,7 @@ impl ListArgs {
                                 .available_senders(self.max_senders.unwrap())
                                 .await?
                                 .iter()
-                                .for_each(|sender| println!("{} ({})", sender.to_alloy(), $label));
+                                .for_each(|sender| println!("{} ({})", sender, $label));
                         }
                     }
                     Err(e) => {

@@ -1,3 +1,4 @@
+use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, Signature};
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},
@@ -7,7 +8,7 @@ use clap::Parser;
 use ethers_core::types::transaction::eip712::TypedData;
 use ethers_signers::Signer;
 use eyre::{Context, Result};
-use foundry_common::{fs, types::ToAlloy};
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
@@ -258,7 +259,7 @@ impl WalletSubcommands {
                     .signer()
                     .await?;
                 let addr = wallet.address();
-                println!("{}", addr.to_alloy().to_checksum(None));
+                println!("{}", addr.to_checksum(None));
             }
             WalletSubcommands::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
@@ -270,11 +271,11 @@ impl WalletSubcommands {
                         // data is a json string
                         serde_json::from_str(&message)?
                     };
-                    wallet.sign_typed_data(&typed_data).await?
+                    wallet.sign_typed_data(&typed_data, typed_data.domain()).await?
                 } else if no_hash {
-                    wallet.sign_hash(&message.parse()?).await?
+                    wallet.sign_hash(message.parse()?).await?
                 } else {
-                    wallet.sign_message(Self::hex_str_to_bytes(&message)?).await?
+                    wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
                 println!("0x{sig}");
             }

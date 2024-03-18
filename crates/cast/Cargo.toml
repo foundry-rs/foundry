@@ -48,8 +48,7 @@ serde_json.workspace = true
 serde.workspace = true
 
 # aws
-rusoto_core = { version = "0.48", default-features = false }
-rusoto_kms = { version = "0.48", default-features = false }
+aws-sdk-kms = { version = "1", default-features = false }
 
 # bin
 foundry-cli.workspace = true
@@ -83,7 +82,7 @@ criterion = "0.5"
 [features]
 default = ["rustls"]
 rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
-openssl = ["foundry-cli/openssl", "foundry-wallets/openssl"]
+openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 
 [[bench]]
