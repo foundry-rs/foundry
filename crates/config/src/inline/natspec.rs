@@ -34,6 +34,7 @@ impl NatSpec {
         for (id, artifact) in output.artifact_ids() {
             let abs_path = id.source.as_path();
             let path = abs_path.strip_prefix(root).unwrap_or(abs_path);
+            let contract_name = id.name.split('.').next().unwrap();
             // `id.identifier` but with the stripped path.
             let contract = format!("{}:{}", path.display(), id.name);
 
@@ -47,7 +48,7 @@ impl NatSpec {
 
             if !used_solc_ast {
                 if let Ok(src) = std::fs::read_to_string(abs_path) {
-                    solang.parse(&mut natspecs, &src, &contract, &id.name);
+                    solang.parse(&mut natspecs, &src, &contract, &contract_name);
                 }
             }
         }
