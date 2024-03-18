@@ -129,15 +129,14 @@ pub fn fuzz_param_from_state(
                     DynSolValue::Int(I256::from_raw(U256::from_be_bytes(value)), 256)
                 })
                 .boxed(),
-            y @ 1..=31 => value()
+            1..=31 => value()
                 .prop_map(move |value| {
                     // Generate a uintN in the correct range, then shift it to the range of intN
                     // by subtracting 2^(N-1)
-                    let uint =
-                        U256::from_be_bytes(value) % U256::from(2usize).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2usize).pow(U256::from(y * 8 - 1));
+                    let uint = U256::from_be_bytes(value) % U256::from(1).wrapping_shl(n);
+                    let max_int_plus1 = U256::from(1).wrapping_shl(n - 1);
                     let num = I256::from_raw(uint.wrapping_sub(max_int_plus1));
-                    DynSolValue::Int(num, y * 8)
+                    DynSolValue::Int(num, n)
                 })
                 .boxed(),
             _ => unreachable!(),
@@ -146,12 +145,9 @@ pub fn fuzz_param_from_state(
             32 => value()
                 .prop_map(move |value| DynSolValue::Uint(U256::from_be_bytes(value), 256))
                 .boxed(),
-            y @ 1..=31 => value()
+            1..=31 => value()
                 .prop_map(move |value| {
-                    DynSolValue::Uint(
-                        U256::from_be_bytes(value) % U256::from(2).pow(U256::from(y * 8)),
-                        y * 8,
-                    )
+                    DynSolValue::Uint(U256::from_be_bytes(value) % U256::from(1).wrapping_shl(n), n)
                 })
                 .boxed(),
             _ => unreachable!(),
