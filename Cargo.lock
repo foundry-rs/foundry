@@ -3292,9 +3292,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cc03b422b28e49d6dd61b8442bcee16c22edd975be1764de5a39c4037ecb478"
+checksum = "21eea332056d354044d94dee89e5885061199746046a3c9f61db0eead7bfbf69"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3318,7 +3318,7 @@ dependencies = [
  "sha2 0.10.8",
  "solang-parser",
  "svm-rs",
- "svm-rs-builds 0.3.5",
+ "svm-rs-builds 0.3.6",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3580,13 +3580,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs2"
-version = "0.4.3"
+name = "fs4"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+checksum = "29f9df8a11882c4e3335eb2d18a0137c505d9ca927470b0cac9c6f0ae07d28f7"
 dependencies = [
- "libc",
- "winapi",
+ "rustix",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -7404,13 +7404,13 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11297baafe5fa0c99d5722458eac6a5e25c01eb1b8e5cd137f54079093daa7a4"
+checksum = "f9b34cc1af809be8d20575428638da2c6a1eb12b1da06dae79c1b82a4ddf83ac"
 dependencies = [
+ "const-hex",
  "dirs 5.0.1",
- "fs2",
- "hex",
+ "fs4",
  "once_cell",
  "reqwest",
  "semver 1.0.22",
@@ -7437,12 +7437,12 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b8d3c94c4d3337336f58493471b98d712c267c66977b0fbe48efd6cbf69ffd0"
+checksum = "0d482af665b54264c23571bba709b9e50ecc0639e10b88bdfd019839473846f9"
 dependencies = [
  "build_const",
- "hex",
+ "const-hex",
  "semver 1.0.22",
  "serde_json",
  "svm-rs",
