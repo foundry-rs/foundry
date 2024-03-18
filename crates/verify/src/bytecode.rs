@@ -206,7 +206,6 @@ impl VerifyBytecodeArgs {
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
-        find_mismatch_in_settings(etherscan_metadata, &config)?;
         // Append constructor args to the local_bytecode
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
@@ -225,14 +224,18 @@ impl VerifyBytecodeArgs {
                 println!(
                     "{} with status {}",
                     Paint::green("Creation code matched").bold(),
-                    Paint::green(res.1.unwrap()).bold()
+                    Paint::green(res.1.clone().unwrap()).bold()
                 );
+                if res.1.unwrap() == "partial" {
+                    find_mismatch_in_settings(etherscan_metadata, &config)?;
+                }
             }
             false => {
                 println!(
                     "{}",
                     Paint::red("Creation code did not match - This may be due to varying compiler settings").bold()
                 );
+                find_mismatch_in_settings(etherscan_metadata, &config)?;
             }
         }
         // Get contract creation block
@@ -263,10 +266,12 @@ impl VerifyBytecodeArgs {
 
         let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
         fork_config.fork_block_number = Some(simulation_block - 1);
+        fork_config.evm_version = etherscan_metadata.evm_version().unwrap().unwrap();
         let (mut env, fork, _chain) =
             TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, Some(config.evm_version), false);
+        let mut executor =
+            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false);
         env.block.number = U256::from(simulation_block);
         let block = provider.get_block(simulation_block.into(), true).await?;
 
@@ -288,36 +293,45 @@ impl VerifyBytecodeArgs {
         }
 
         configure_tx_env(&mut env, &transaction);
+
         let env_with_handler =
             EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
-        // Get the nonce of the contract creator at the block where the contract was created
-        let deploy_result = match executor.deploy_with_env(env_with_handler, None) {
-            Ok(result) => result,
-            Err(error) => {
-                eyre::bail!(
-                    "Failed contract deploy transaction in block {} | Err: {:?}",
-                    env.block.number,
-                    error
-                );
+
+        let contract_address = match transaction.to {
+            Some(to) => {
+                if to != DEFAULT_CREATE2_DEPLOYER {
+                    eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
+                }
+                let result = executor.commit_tx_with_env(env_with_handler.to_owned())?;
+
+                if result.result.len() > 20 {
+                    eyre::bail!("Failed to deploy contract using commit_tx_with_env on fork at block {} | Err: Call result is greater than 20 bytes, cannot be converted to Address", simulation_block);
+                }
+
+                Address::from_slice(&result.result)
+            }
+            None => {
+                let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
+                deploy_result.address
             }
         };
 
         // State commited using deploy_with_env, now get the runtime bytecode from the db.
-        let fork_runtime_code = match executor.backend.basic(deploy_result.address)? {
+        let fork_runtime_code = match executor.backend.basic(contract_address)? {
             Some(account) => {
                 if let Some(code) = account.code {
                     code
                 } else {
                     eyre::bail!(
                         "Bytecode does not exist for contract deployed on fork at address {}",
-                        deploy_result.address
+                        contract_address
                     );
                 }
             }
             None => {
                 eyre::bail!(
                     "Failed to get runtime code for contract deployed on fork at address {}",
-                    deploy_result.address
+                    contract_address
                 );
             }
         };
