@@ -36,7 +36,10 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<N: Network, P: Provider<N>>(&self, provider: &P) -> Result<Address, EnsResolutionError> {
+    pub async fn resolve<N: Network, P: Provider<N>>(
+        &self,
+        provider: &P,
+    ) -> Result<Address, EnsResolutionError> {
         let name = match self {
             NameOrAddress::Name(name) => name.clone(),
             NameOrAddress::Address(addr) => return Ok(*addr),

@@ -26,6 +26,7 @@ alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
+alloy-signer.workspace = true
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 parking_lot = "0.12"
 

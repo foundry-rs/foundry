@@ -3,9 +3,10 @@ use crate::{
     backend::{DatabaseError, DatabaseResult},
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_provider::Provider;
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
+use alloy_provider::{network::Ethereum, Network, Provider};
 use alloy_rpc_types::{Block, BlockId, Transaction};
+use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::{
@@ -21,6 +22,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
+    marker::PhantomData,
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -31,7 +33,7 @@ use std::{
 // Various future/request type aliases
 
 type AccountFuture<Err> =
-    Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
+    Pin<Box<dyn Future<Output = (Result<(U256, U64, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<B256, Err>, u64)> + Send>>;
 type FullBlockFuture<Err> =
@@ -76,8 +78,9 @@ enum BackendRequest {
 /// This handler will remain active as long as it is reachable (request channel still open) and
 /// requests are in progress.
 #[must_use = "futures do nothing unless polled"]
-pub struct BackendHandler<P> {
+pub struct BackendHandler<T, P> {
     provider: P,
+    transport: PhantomData<T>,
     /// Stores all the data.
     db: BlockchainDb,
     /// Requests currently in progress
@@ -97,9 +100,10 @@ pub struct BackendHandler<P> {
     block_id: Option<BlockId>,
 }
 
-impl<P, N> BackendHandler<P>
+impl<T, P> BackendHandler<T, P>
 where
-    P: Provider<N> + Clone + 'static,
+    T: Transport + Clone,
+    P: Provider<Ethereum, T> + Clone + Unpin + 'static,
 {
     fn new(
         provider: P,
@@ -117,6 +121,7 @@ where
             queued_requests: Default::default(),
             incoming: rx,
             block_id,
+            transport: PhantomData,
         }
     }
 
@@ -197,7 +202,7 @@ where
         let fut = Box::pin(async move {
             let balance = provider.get_balance(address, block_id);
             let nonce = provider.get_transaction_count(address, block_id);
-            let code = provider.get_code_at(address, block_id);
+            let code = provider.get_code_at(address, block_id.unwrap_or_default());
             let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
             (resp, address)
         });
@@ -283,9 +288,10 @@ where
     }
 }
 
-impl<P> Future for BackendHandler<P>
+impl<T, P> Future for BackendHandler<T, P>
 where
-    P: Provider<N> + Clone + Unpin + 'static,
+    T: Transport + Clone + Unpin,
+    P: Provider<Ethereum, T> + Clone + Unpin + 'static,
 {
     type Output = ();
 
@@ -512,9 +518,14 @@ impl SharedBackend {
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub async fn spawn_backend<P>(provider: P, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
+    pub async fn spawn_backend<T, P>(
+        provider: P,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+    ) -> Self
     where
-        P: TempProvider + Unpin + 'static + Clone,
+        T: Transport + Clone + Unpin,
+        P: Provider<Ethereum, T> + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
         // spawn the provider handler to a task
@@ -525,13 +536,14 @@ impl SharedBackend {
 
     /// Same as `Self::spawn_backend` but spawns the `BackendHandler` on a separate `std::thread` in
     /// its own `tokio::Runtime`
-    pub fn spawn_backend_thread<P>(
+    pub fn spawn_backend_thread<T, P>(
         provider: P,
         db: BlockchainDb,
         pin_block: Option<BlockId>,
     ) -> Self
     where
-        P: Provider + Unpin + 'static + Clone,
+        T: Transport + Clone + Unpin,
+        P: Provider<Ethereum, T> + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
 
@@ -554,13 +566,14 @@ impl SharedBackend {
     }
 
     /// Returns a new `SharedBackend` and the `BackendHandler`
-    pub fn new<P>(
+    pub fn new<T, P>(
         provider: P,
         db: BlockchainDb,
         pin_block: Option<BlockId>,
-    ) -> (Self, BackendHandler<P>)
+    ) -> (Self, BackendHandler<T, P>)
     where
-        P: Provider<N> + Clone + 'static,
+        T: Transport + Clone + Unpin,
+        P: Provider<Ethereum, T> + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
         let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));

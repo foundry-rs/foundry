@@ -365,8 +365,8 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
     };
     Ok(FfiResult {
         exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout,
-        stderr: output.stderr,
+        stdout: encoded_stdout.into(),
+        stderr: output.stderr.into(),
     })
 }
 

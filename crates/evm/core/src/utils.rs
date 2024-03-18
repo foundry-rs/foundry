@@ -76,6 +76,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
         .access_list
         .clone()
         .unwrap_or_default()
+        .0
         .into_iter()
         .map(|item| {
             (

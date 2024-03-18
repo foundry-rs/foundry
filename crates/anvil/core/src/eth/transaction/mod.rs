@@ -8,8 +8,8 @@ use alloy_consensus::{
     BlobTransactionSidecar, ReceiptWithBloom, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant,
     TxEip4844WithSidecar, TxLegacy,
 };
-use alloy_network::{Signed, Transaction, TxKind};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
+use alloy_consensus::{Transaction, Signed};
+use alloy_primitives::{Address, Bloom, Bytes, Log, Signatureigned, TxHash, B256, U128, U256, U64};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessList, Signature as RpcSignature,

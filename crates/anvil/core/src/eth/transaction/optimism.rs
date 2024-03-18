@@ -1,6 +1,5 @@
-use alloy_consensus::TxType;
-use alloy_network::{Transaction, TxKind};
-use alloy_primitives::{Address, Bytes, ChainId, Signature, B256, U256};
+use alloy_consensus::{Transaction, TxType};
+use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
     length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
@@ -158,7 +157,7 @@ impl Transaction for DepositTransactionRequest {
         u64::MAX
     }
 
-    fn decode_signed(buf: &mut &[u8]) -> alloy_rlp::Result<alloy_network::Signed<Self>>
+    fn decode_signed(buf: &mut &[u8]) -> alloy_rlp::Result<alloy_consensus::Signed<Self>>
     where
         Self: Sized,
     {
@@ -189,11 +188,11 @@ impl Transaction for DepositTransactionRequest {
         &mut self.input
     }
 
-    fn into_signed(self, signature: Signature) -> alloy_network::Signed<Self, Self::Signature>
+    fn into_signed(self, signature: Signature) -> alloy_consensus::Signed<Self, Self::Signature>
     where
         Self: Sized,
     {
-        alloy_network::Signed::new_unchecked(self.clone(), signature, self.signature_hash())
+        alloy_consensus::Signed::new_unchecked(self.clone(), signature, self.signature_hash())
     }
 
     fn set_chain_id(&mut self, _chain_id: ChainId) {}

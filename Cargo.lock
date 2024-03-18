@@ -3249,6 +3249,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=47e349f)",
+ "alloy-signer",
  "alloy-signer-wallet",
  "alloy-sol-types",
  "base64 0.22.0",

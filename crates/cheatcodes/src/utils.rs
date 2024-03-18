@@ -2,13 +2,14 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, B256, U256};
-use alloy_signer::{
+use alloy_signer_wallet::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalWallet, MnemonicBuilder, Signer, SignerSync,
+    LocalWallet, MnemonicBuilder,
 };
+use alloy_signer::{Signer, SignerSync};
 use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use k256::{
@@ -160,7 +161,7 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
 
-    let sig = wallet.sign_hash_sync(*digest)?;
+    let sig = wallet.sign_hash_sync(digest)?;
     let recovered = sig.recover_address_from_prehash(digest)?;
 
     assert_eq!(recovered, wallet.address());
