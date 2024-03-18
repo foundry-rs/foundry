@@ -13,7 +13,7 @@ use proptest::test_runner::TestError;
 use rand::{seq, thread_rng, Rng};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm::primitives::U256;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 /// Stores information about failures and reverts of the invariant tests.
 #[derive(Clone, Default)]
@@ -244,7 +244,7 @@ impl FailedInvariantCaseData {
                     .expect("bad call to evm");
                 let is_success = executor.is_raw_call_success(
                     self.addr,
-                    call_result.state_changeset.take().unwrap(),
+                    Cow::Owned(call_result.state_changeset.take().unwrap()),
                     &call_result,
                     false,
                 );

@@ -28,6 +28,7 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap},
     time::Instant,
 };
@@ -415,7 +416,7 @@ impl<'a> ContractRunner<'a> {
         let success = executor.is_success(
             setup.address,
             reverted,
-            state_changeset.expect("we should have a state changeset"),
+            Cow::Owned(state_changeset.unwrap()),
             should_fail,
         );
 

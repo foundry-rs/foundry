@@ -30,7 +30,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{primitives::HashMap, DatabaseCommit};
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError, InvariantFuzzTestResult};
@@ -236,7 +236,7 @@ impl<'a> InvariantExecutor<'a> {
                             &inputs,
                             &mut failures.borrow_mut(),
                             &targeted_contracts,
-                            state_changeset,
+                            &state_changeset,
                             self.config.fail_on_revert,
                             self.config.shrink_sequence,
                             self.config.shrink_run_limit,
@@ -772,7 +772,7 @@ fn can_continue(
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     targeted_contracts: &FuzzRunIdentifiedContracts,
-    state_changeset: StateChangeset,
+    state_changeset: &StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
     shrink_run_limit: usize,
@@ -781,10 +781,9 @@ fn can_continue(
     let mut call_results = None;
 
     // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts
-        .lock()
-        .iter()
-        .any(|contract| !executor.is_success(*contract.0, false, state_changeset.clone(), false));
+    let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
+        !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
+    });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
