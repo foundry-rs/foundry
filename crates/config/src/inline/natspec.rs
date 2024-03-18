@@ -182,6 +182,11 @@ impl SolangParser {
         contract_id: &str,
         contract_name: &str,
     ) {
+        // Fast path to avoid parsing the file.
+        if !src.contains(INLINE_CONFIG_PREFIX) {
+            return;
+        }
+
         let Ok((pt, comments)) = solang_parser::parse(src, 0) else { return };
         let mut prev_end = 0;
         for item in &pt.0 {
