@@ -519,23 +519,24 @@ impl Executor {
             return Ok(should_fail)
         }
 
-        // Construct a new VM with the state changeset
-        let mut backend = self.backend.clone_empty();
-
-        // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
-        // success
-        for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend.basic_ref(addr)?.unwrap_or_default();
-            backend.insert_account_info(addr, acc);
-        }
-
-        // If this test failed any asserts, then this changeset will contain changes `false -> true`
-        // for the contract's `failed` variable and the `globalFailure` flag in the state of the
-        // cheatcode address which are both read when we call `"failed()(bool)"` in the next step
-        backend.commit(state_changeset);
-
         let mut success = !reverted;
         if success {
+            // Construct a new VM with the state changeset
+            let mut backend = self.backend.clone_empty();
+
+            // we only clone the test contract and cheatcode accounts, that's all we need to
+            // evaluate success
+            for addr in [address, CHEATCODE_ADDRESS] {
+                let acc = self.backend.basic_ref(addr)?.unwrap_or_default();
+                backend.insert_account_info(addr, acc);
+            }
+
+            // If this test failed any asserts, then this changeset will contain changes `false ->
+            // true` for the contract's `failed` variable and the `globalFailure` flag
+            // in the state of the cheatcode address which are both read when we call
+            // `"failed()(bool)"` in the next step
+            backend.commit(state_changeset);
+
             // Check if a DSTest assertion failed
             let executor =
                 Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
