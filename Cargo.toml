@@ -46,6 +46,7 @@ debug = 1
 # Solc and artifacts
 foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
+lalrpop-util.opt-level = 3
 serde_json.opt-level = 3
 
 # EVM

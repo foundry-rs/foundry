@@ -18,6 +18,8 @@ alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 revm-primitives = { workspace = true, default-features = false, features = ["std"] }
 
+solang-parser.workspace = true
+
 dirs-next = "2"
 dunce = "1"
 eyre.workspace = true
