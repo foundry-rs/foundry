@@ -46,12 +46,8 @@ pub async fn build_tx<P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAdd
     etherscan_api_key: Option<String>,
 ) -> Result<TxBuilderOutput> {
     let from = from.into().resolve(provider).await?;
-    let to = if let Some(to) = to {
-        Some(to.into().resolve(provider).await?)
-    } else {
-        None
-    };
-    
+    let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
+
     let mut builder = TxBuilder::new(provider, from, to, chain, tx.legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)
