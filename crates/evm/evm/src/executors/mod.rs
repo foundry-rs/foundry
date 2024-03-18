@@ -32,7 +32,7 @@ use revm::{
         SpecId, TransactTo, TxEnv,
     },
 };
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -197,7 +197,7 @@ impl Executor {
         match res.state_changeset.as_ref() {
             Some(changeset) => {
                 let success = self
-                    .ensure_success(to, res.reverted, changeset.clone(), false)
+                    .ensure_success(to, res.reverted, Cow::Borrowed(changeset), false)
                     .map_err(|err| EvmError::Eyre(eyre::eyre!(err.to_string())))?;
                 if success {
                     Ok(res)
@@ -472,7 +472,7 @@ impl Executor {
         &self,
         address: Address,
         reverted: bool,
-        state_changeset: StateChangeset,
+        state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> bool {
         self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
@@ -496,7 +496,7 @@ impl Executor {
     pub fn is_raw_call_success(
         &self,
         address: Address,
-        state_changeset: StateChangeset,
+        state_changeset: Cow<'_, StateChangeset>,
         call_result: &RawCallResult,
         should_fail: bool,
     ) -> bool {
@@ -511,7 +511,7 @@ impl Executor {
         &self,
         address: Address,
         reverted: bool,
-        state_changeset: StateChangeset,
+        state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> Result<bool, DatabaseError> {
         if self.backend.has_snapshot_failure() {
@@ -519,23 +519,24 @@ impl Executor {
             return Ok(should_fail)
         }
 
-        // Construct a new VM with the state changeset
-        let mut backend = self.backend.clone_empty();
-
-        // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
-        // success
-        for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend.basic_ref(addr)?.unwrap_or_default();
-            backend.insert_account_info(addr, acc);
-        }
-
-        // If this test failed any asserts, then this changeset will contain changes `false -> true`
-        // for the contract's `failed` variable and the `globalFailure` flag in the state of the
-        // cheatcode address which are both read when we call `"failed()(bool)"` in the next step
-        backend.commit(state_changeset);
-
         let mut success = !reverted;
         if success {
+            // Construct a new bare-bones backend to evaluate success.
+            let mut backend = self.backend.clone_empty();
+
+            // We only clone the test contract and cheatcode accounts,
+            // that's all we need to evaluate success.
+            for addr in [address, CHEATCODE_ADDRESS] {
+                let acc = self.backend.basic_ref(addr)?.unwrap_or_default();
+                backend.insert_account_info(addr, acc);
+            }
+
+            // If this test failed any asserts, then this changeset will contain changes
+            // `false -> true` for the contract's `failed` variable and the `globalFailure` flag
+            // in the state of the cheatcode address,
+            // which are both read when we call `"failed()(bool)"` in the next step.
+            backend.commit(state_changeset.into_owned());
+
             // Check if a DSTest assertion failed
             let executor =
                 Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
