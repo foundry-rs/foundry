@@ -6040,6 +6040,46 @@
     },
     {
       "func": {
+        "id": "prompt",
+        "description": "Prompts the user for a string value in the terminal.",
+        "declaration": "function prompt(string calldata promptText) external returns (string memory input);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prompt(string)",
+        "selector": "0x47eaf474",
+        "selectorBytes": [
+          71,
+          234,
+          244,
+          116
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptSecret",
+        "description": "Prompts the user for a hidden string value in the terminal.",
+        "declaration": "function promptSecret(string calldata promptText) external returns (string memory input);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptSecret(string)",
+        "selector": "0x1e279d41",
+        "selectorBytes": [
+          30,
+          39,
+          157,
+          65
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "readCallers",
         "description": "Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.",
         "declaration": "function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);",

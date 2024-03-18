@@ -2091,7 +2091,9 @@ checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
 dependencies = [
  "console",
  "shell-words",
+ "tempfile",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -3167,6 +3169,7 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.0",
  "const-hex",
+ "dialoguer",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
