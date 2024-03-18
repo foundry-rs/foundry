@@ -1,5 +1,6 @@
 //! wrappers for transactions
-use ethers_core::types::{BlockId, TransactionReceipt};
+use alloy_providers::tmp::TempProvider;
+use alloy_rpc_types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -19,23 +20,23 @@ pub struct TransactionReceiptWithRevertReason {
 impl TransactionReceiptWithRevertReason {
     /// Returns if the status of the transaction is 0 (failure)
     pub fn is_failure(&self) -> Option<bool> {
-        self.receipt.status.map(|status| status.as_u64() == 0)
+        self.receipt.status_code.map(|status| status.is_zero())
     }
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<M: Middleware>(&mut self, provider: &M) -> Result<()> {
+    pub async fn update_revert_reason<P: TempProvider>(&mut self, provider: &P) -> Result<()> {
         self.revert_reason = self.fetch_revert_reason(provider).await?;
         Ok(())
     }
 
-    async fn fetch_revert_reason<M: Middleware>(&self, provider: &M) -> Result<Option<String>> {
+    async fn fetch_revert_reason<P: TempProvider>(&self, provider: &P) -> Result<Option<String>> {
         if let Some(false) | None = self.is_failure() {
             return Ok(None)
         }
 
         if let Some(ref transaction) = provider
-            .get_transaction(self.receipt.transaction_hash)
+            .get_transaction_by_hash(self.receipt.transaction_hash)
             .await
             .map_err(|_| eyre::eyre!("unable to fetch transaction"))?
         {

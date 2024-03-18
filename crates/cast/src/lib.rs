@@ -320,7 +320,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn block<T: Into<BlockId>>(
+    pub async fn block<T: Into<AlloyBlockId>>(
         &self,
         block: T,
         full: bool,
@@ -328,45 +328,27 @@ where
         to_json: bool,
     ) -> Result<String> {
         let block = block.into();
-        let block = if full {
-            let block = self
-                .provider
-                .get_block_with_txs(block)
-                .await?
-                .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
-            if let Some(ref field) = field {
-                get_pretty_block_attr(&block, field)
-                    .unwrap_or_else(|| format!("{field} is not a valid block field"))
-            } else if to_json {
-                serde_json::to_value(&block).unwrap().to_string()
-            } else {
-                block.pretty()
+        if let Some(field) = field {
+            if field == "transactions" && !full {
+                eyre::bail!("use --full to view transactions")
             }
-        } else {
-            let block = self
-                .provider
-                .get_block(block)
-                .await?
-                .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+        }
 
-            if let Some(ref field) = field {
-                if field == "transactions" {
-                    "use --full to view transactions".to_string()
-                } else {
-                    get_pretty_block_attr(&block, field)
-                        .unwrap_or_else(|| format!("{field} is not a valid block field"))
-                }
-            } else if to_json {
-                serde_json::to_value(&block).unwrap().to_string()
-            } else {
-                block.pretty()
-            }
+        let block = self.alloy_provider.get_block(block, full).await?.ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+
+        let block = if let Some(ref field) = field {
+            get_pretty_block_attr(&block, field)
+                .unwrap_or_else(|| format!("{field} is not a valid block field"))
+        } else if to_json {
+            serde_json::to_value(&block).unwrap().to_string()
+        } else {
+            block.pretty()
         };
 
         Ok(block)
     }
 
-    async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
+    async fn block_field_as_num<T: Into<AlloyBlockId>>(&self, block: T, field: String) -> Result<U256> {
         let block = block.into();
         let block_field = Cast::block(
             self,

@@ -2,7 +2,7 @@
 
 use crate::TransactionReceiptWithRevertReason;
 use alloy_primitives::*;
-use ethers_core::types::{Block, Log, OtherFields, Transaction, TransactionReceipt, TxHash};
+use alloy_rpc_types::{other::OtherFields, Block, BlockTransactions, Log, Transaction, TransactionReceipt};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -65,7 +65,7 @@ impl UIfmt for bool {
     }
 }
 
-impl UIfmt for U256 {
+impl<const BITS: usize, const LIMBS: usize> UIfmt for Uint<BITS, LIMBS> {
     fn pretty(&self) -> String {
         self.to_string()
     }
@@ -119,12 +119,6 @@ impl UIfmt for [u8] {
     }
 }
 
-impl UIfmt for U64 {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
         let Self {
@@ -138,8 +132,8 @@ impl UIfmt for TransactionReceipt {
             gas_used,
             contract_address,
             logs,
-            status,
-            root,
+            status_code,
+            state_root,
             logs_bloom,
             transaction_type,
             effective_gas_price,
@@ -172,8 +166,8 @@ type                    {}",
             gas_used.pretty(),
             serde_json::to_string(logs).unwrap(),
             logs_bloom.pretty(),
-            root.pretty(),
-            status.pretty(),
+            state_root.pretty(),
+            status_code.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),
             transaction_type.pretty()
@@ -218,7 +212,7 @@ transactionIndex: {}",
     }
 }
 
-impl UIfmt for Block<Transaction> {
+impl UIfmt for Block {
     fn pretty(&self) -> String {
         format!(
             "
@@ -230,15 +224,12 @@ transactions         {}",
     }
 }
 
-impl UIfmt for Block<TxHash> {
+impl UIfmt for BlockTransactions {
     fn pretty(&self) -> String {
-        format!(
-            "
-{}
-transactions:        {}",
-            pretty_block_basics(self),
-            self.transactions.pretty()
-        )
+        match self {
+            BlockTransactions::Hashes(hashes) => hashes.pretty(),
+            BlockTransactions::Full(transactions) => transactions.pretty(),
+        }
     }
 }
 
@@ -286,11 +277,11 @@ value                {}{}",
             self.hash.pretty(),
             self.input.pretty(),
             self.nonce.pretty(),
-            to_bytes(self.r).pretty(),
-            to_bytes(self.s).pretty(),
+            self.signature.map(|s| s.r.to_be_bytes()).pretty(),
+            self.signature.map(|s| s.s.to_be_bytes()).pretty(),
             self.to.pretty(),
             self.transaction_index.pretty(),
-            self.v.pretty(),
+            self.signature.map(|s| s.v).pretty(),
             self.value.pretty(),
             self.other.pretty()
         )
@@ -385,11 +376,11 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "hash" => Some(transaction.hash.pretty()),
         "input" => Some(transaction.input.pretty()),
         "nonce" => Some(transaction.nonce.pretty()),
-        "s" => Some(to_bytes(transaction.s).pretty()),
-        "r" => Some(to_bytes(transaction.r).pretty()),
+        "s" => transaction.signature.map(|s| s.s.pretty()),
+        "r" => transaction.signature.map(|s| s.r.pretty()),
         "to" => Some(transaction.to.pretty()),
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
-        "v" => Some(transaction.v.pretty()),
+        "v" => transaction.signature.map(|s| s.v.pretty()),
         "value" => Some(transaction.value.pretty()),
         other => {
             if let Some(value) = transaction.other.get(other) {
@@ -418,8 +409,8 @@ pub fn get_pretty_tx_receipt_attr(
         "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
         "logs" => Some(receipt.receipt.logs.pretty()),
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
-        "root" => Some(receipt.receipt.root.pretty()),
-        "status" => Some(receipt.receipt.status.pretty()),
+        "root" | "stateRoot" | "state_root "=> Some(receipt.receipt.state_root.pretty()),
+        "status" | "statusCode" | "status_code" => Some(receipt.receipt.status_code.pretty()),
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
             Some(receipt.receipt.transaction_index.pretty())
@@ -431,28 +422,27 @@ pub fn get_pretty_tx_receipt_attr(
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String> {
+pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
     match attr {
-        "baseFeePerGas" | "base_fee_per_gas" => Some(block.base_fee_per_gas.pretty()),
-        "difficulty" => Some(block.difficulty.pretty()),
-        "extraData" | "extra_data" => Some(block.extra_data.pretty()),
-        "gasLimit" | "gas_limit" => Some(block.gas_limit.pretty()),
-        "gasUsed" | "gas_used" => Some(block.gas_used.pretty()),
-        "hash" => Some(block.hash.pretty()),
-        "logsBloom" | "logs_bloom" => Some(block.logs_bloom.pretty()),
-        "miner" | "author" => Some(block.author.pretty()),
-        "mixHash" | "mix_hash" => Some(block.mix_hash.pretty()),
-        "nonce" => Some(block.nonce.pretty()),
-        "number" => Some(block.number.pretty()),
-        "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
-        "transactionsRoot" | "transactions_root" => Some(block.transactions_root.pretty()),
-        "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
-        "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
-        "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
+        "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
+        "difficulty" => Some(block.header.difficulty.pretty()),
+        "extraData" | "extra_data" => Some(block.header.extra_data.pretty()),
+        "gasLimit" | "gas_limit" => Some(block.header.gas_limit.pretty()),
+        "gasUsed" | "gas_used" => Some(block.header.gas_used.pretty()),
+        "hash" => Some(block.header.hash.pretty()),
+        "logsBloom" | "logs_bloom" => Some(block.header.logs_bloom.pretty()),
+        "miner" | "author" => Some(block.header.miner.pretty()),
+        "mixHash" | "mix_hash" => Some(block.header.mix_hash.pretty()),
+        "nonce" => Some(block.header.nonce.pretty()),
+        "number" => Some(block.header.number.pretty()),
+        "parentHash" | "parent_hash" => Some(block.header.parent_hash.pretty()),
+        "transactionsRoot" | "transactions_root" => Some(block.header.transactions_root.pretty()),
+        "receiptsRoot" | "receipts_root" => Some(block.header.receipts_root.pretty()),
+        "sha3Uncles" | "sha_3_uncles" => Some(block.header.uncles_hash.pretty()),
         "size" => Some(block.size.pretty()),
-        "stateRoot" | "state_root" => Some(block.state_root.pretty()),
-        "timestamp" => Some(block.timestamp.pretty()),
-        "totalDifficulty" | "total_difficult" => Some(block.total_difficulty.pretty()),
+        "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
+        "timestamp" => Some(block.header.timestamp.pretty()),
+        "totalDifficulty" | "total_difficult" => Some(block.header.total_difficulty.pretty()),
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
@@ -463,7 +453,7 @@ pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String
     }
 }
 
-fn pretty_block_basics<T>(block: &Block<T>) -> String {
+fn pretty_block_basics(block: &Block) -> String {
     format!(
         "
 baseFeePerGas        {}
@@ -480,34 +470,32 @@ number               {}
 parentHash           {}
 transactionsRoot     {}
 receiptsRoot         {}
-sealFields           {}
 sha3Uncles           {}
 size                 {}
 stateRoot            {}
 timestamp            {}
 withdrawalsRoot      {}
 totalDifficulty      {}{}",
-        block.base_fee_per_gas.pretty(),
-        block.difficulty.pretty(),
-        block.extra_data.pretty(),
-        block.gas_limit.pretty(),
-        block.gas_used.pretty(),
-        block.hash.pretty(),
-        block.logs_bloom.pretty(),
-        block.author.pretty(),
-        block.mix_hash.pretty(),
-        block.nonce.pretty(),
-        block.number.pretty(),
-        block.parent_hash.pretty(),
-        block.transactions_root.pretty(),
-        block.receipts_root.pretty(),
-        block.seal_fields.pretty(),
-        block.uncles_hash.pretty(),
+        block.header.base_fee_per_gas.pretty(),
+        block.header.difficulty.pretty(),
+        block.header.extra_data.pretty(),
+        block.header.gas_limit.pretty(),
+        block.header.gas_used.pretty(),
+        block.header.hash.pretty(),
+        block.header.logs_bloom.pretty(),
+        block.header.miner.pretty(),
+        block.header.mix_hash.pretty(),
+        block.header.nonce.pretty(),
+        block.header.number.pretty(),
+        block.header.parent_hash.pretty(),
+        block.header.transactions_root.pretty(),
+        block.header.receipts_root.pretty(),
+        block.header.uncles_hash.pretty(),
         block.size.pretty(),
-        block.state_root.pretty(),
-        block.timestamp.pretty(),
-        block.withdrawals_root.pretty(),
-        block.total_difficulty.pretty(),
+        block.header.state_root.pretty(),
+        block.header.timestamp.pretty(),
+        block.header.withdrawals_root.pretty(),
+        block.header.total_difficulty.pretty(),
         block.other.pretty()
     )
 }
