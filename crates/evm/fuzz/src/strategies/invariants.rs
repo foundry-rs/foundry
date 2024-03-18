@@ -68,11 +68,16 @@ fn generate_call(
     let senders = Rc::new(senders);
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
-            let contracts = contracts.lock();
-            let contracts = contracts.iter().filter(|(_, (_, abi, _))| !abi.functions.is_empty());
-            let (&contract, (_, abi, functions)) = selector.select(contracts);
+            let (contract, func) = {
+                let contracts = contracts.lock();
+                let contracts =
+                    contracts.iter().filter(|(_, (_, abi, _))| !abi.functions.is_empty());
+                let (&contract, (_, abi, functions)) = selector.select(contracts);
 
-            let func = select_random_function(abi, functions);
+                let func = select_random_function(abi, functions);
+                (contract, func)
+            };
+
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
             let calldata_fuzz_config = calldata_fuzz_config.clone();
