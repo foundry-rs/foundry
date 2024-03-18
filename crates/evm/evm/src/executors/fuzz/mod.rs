@@ -82,19 +82,11 @@ impl FuzzedExecutor {
 
         let state = self.build_fuzz_state();
 
-        let mut weights = vec![];
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        if self.config.dictionary.dictionary_weight < 100 {
-            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone())));
-        }
-        if dictionary_weight > 0 {
-            weights.push((
-                self.config.dictionary.dictionary_weight,
-                fuzz_calldata_from_state(func.clone(), state.clone()),
-            ));
-        }
-
-        let strat = proptest::strategy::Union::new_weighted(weights);
+        let strat = proptest::prop_oneof![
+            100 - dictionary_weight => fuzz_calldata(func.clone()),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+        ];
         debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata)?;
@@ -218,12 +210,7 @@ impl FuzzedExecutor {
             .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
         // Build fuzzer state
-        collect_state_from_call(
-            &call.logs,
-            state_changeset,
-            state.clone(),
-            &self.config.dictionary,
-        );
+        collect_state_from_call(&call.logs, state_changeset, state, &self.config.dictionary);
 
         // When the `assume` cheatcode is called it returns a special string
         if call.result.as_ref() == MAGIC_ASSUME {
