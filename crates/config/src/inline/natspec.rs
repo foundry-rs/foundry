@@ -75,7 +75,7 @@ impl NatSpec {
 
     /// Returns a list of all the configuration lines available in the natspec
     pub fn config_lines(&self) -> impl Iterator<Item = String> + '_ {
-        self.docs.lines().map(remove_whitespaces).filter(|line| line.contains(INLINE_CONFIG_PREFIX))
+        self.docs.lines().filter(|line| line.contains(INLINE_CONFIG_PREFIX)).map(remove_whitespaces)
     }
 }
 
@@ -192,21 +192,12 @@ impl SolangParser {
                     .flat_map(|doc| doc.into_comments())
                     .filter(|doc| doc.value.contains(INLINE_CONFIG_PREFIX));
                 for doc in docs {
-                    let make = |value| NatSpec {
+                    natspecs.push(NatSpec {
                         contract: contract.to_string(),
                         function: f.name.as_ref().map(|id| id.to_string()).unwrap_or_default(),
                         line: "0:0:0".to_string(),
-                        docs: value,
-                    };
-                    if doc.value.contains('\n') {
-                        for line in
-                            doc.value.trim().lines().filter(|l| l.contains(INLINE_CONFIG_PREFIX))
-                        {
-                            natspecs.push(make(line.to_string()));
-                        }
-                    } else {
-                        natspecs.push(make(doc.value));
-                    };
+                        docs: doc.value,
+                    });
                 }
                 prev_end = f.loc.end();
             }
@@ -231,6 +222,11 @@ contract C { /// forge-config: default.fuzz.runs = 600
        /** forge-config: default.fuzz.runs = 700 */
 function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
 
+/**
+ * forge-config: default.fuzz.runs = 1024
+ * forge-config: default.fuzz.max-test-rejects = 500
+ */
+    function f4() {}
 }
 ";
         let mut natspecs = vec![];
@@ -239,29 +235,33 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
         assert_eq!(
             natspecs,
             [
+                // f1
                 NatSpec {
                     contract: "C".to_string(),
                     function: "f1".to_string(),
                     line: "0:0:0".to_string(),
-                    docs: "forge-config: default.fuzz.runs = 600".to_string(),
+                    docs: "forge-config: default.fuzz.runs = 600\nforge-config: default.fuzz.runs = 601".to_string(),
                 },
-                NatSpec {
-                    contract: "C".to_string(),
-                    function: "f1".to_string(),
-                    line: "0:0:0".to_string(),
-                    docs: "forge-config: default.fuzz.runs = 601".to_string(),
-                },
+                // f2
                 NatSpec {
                     contract: "C".to_string(),
                     function: "f2".to_string(),
                     line: "0:0:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 700".to_string(),
                 },
+                // f3
                 NatSpec {
                     contract: "C".to_string(),
                     function: "f3".to_string(),
                     line: "0:0:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 800".to_string(),
+                },
+                // f4
+                NatSpec {
+                    contract: "C".to_string(),
+                    function: "f4".to_string(),
+                    line: "0:0:0".to_string(),
+                    docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
                 },
             ]
         );
