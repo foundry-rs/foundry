@@ -499,9 +499,9 @@ impl Executor {
                 Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             if let Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { _0: failed } }) =
-                &call
+                call
             {
-                debug!(?failed, "DSTest");
+                debug!(failed, "DSTest::failed()");
                 success = !failed;
             }
         }
