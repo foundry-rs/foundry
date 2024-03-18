@@ -9,6 +9,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::invariant::{BasicTxDetails, InvariantContract};
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
 use revm::primitives::U256;
+use std::borrow::Cow;
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
@@ -37,13 +38,12 @@ pub fn assert_invariants(
         U256::ZERO,
     )?;
 
-    let is_err = call_result.reverted ||
-        !executor.is_raw_call_success(
-            invariant_contract.address,
-            call_result.state_changeset.take().expect("we should have a state changeset"),
-            &call_result,
-            false,
-        );
+    let is_err = !executor.is_raw_call_success(
+        invariant_contract.address,
+        Cow::Owned(call_result.state_changeset.take().unwrap()),
+        &call_result,
+        false,
+    );
     if is_err {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.error.is_none() {
