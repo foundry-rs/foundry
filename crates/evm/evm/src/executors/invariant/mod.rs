@@ -250,7 +250,7 @@ impl<'a> InvariantExecutor<'a> {
                         &mut state_changeset,
                         sender,
                         &call_result,
-                        fuzz_state.clone(),
+                        &fuzz_state,
                         &self.config.dictionary,
                     );
 
@@ -369,7 +369,7 @@ impl<'a> InvariantExecutor<'a> {
             Arc::new(Mutex::new(targeted_contracts));
 
         let calldata_fuzz_config =
-            CalldataFuzzDictionary::new(&self.config.dictionary, fuzz_state.clone());
+            CalldataFuzzDictionary::new(&self.config.dictionary, &fuzz_state);
 
         // Creates the invariant strategy.
         let strat = invariant_strat(
@@ -667,7 +667,7 @@ fn collect_data(
     state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
-    fuzz_state: EvmFuzzState,
+    fuzz_state: &EvmFuzzState,
     config: &FuzzDictionaryConfig,
 ) {
     // Verify it has no code.
