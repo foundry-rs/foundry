@@ -138,7 +138,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.12", default-features = false }
+foundry-compilers = { version = "0.3.13", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -156,7 +156,6 @@ ethers-contract-abigen = { version = "2.0.14", default-features = false }
 ethers-providers = { version = "2.0.14", default-features = false }
 ethers-signers = { version = "2.0.14", default-features = false }
 ethers-middleware = { version = "2.0.14", default-features = false }
-ethers-solc = { version = "2.0.14", default-features = false }
 
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }

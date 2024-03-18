@@ -96,7 +96,7 @@ globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
 pretty_assertions.workspace = true
-svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
+svm = { package = "svm-rs", version = "0.4", default-features = false, features = ["rustls"] }
 tempfile = "3"
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
