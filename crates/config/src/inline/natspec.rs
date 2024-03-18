@@ -48,7 +48,7 @@ impl NatSpec {
 
             if !used_solc_ast {
                 if let Ok(src) = std::fs::read_to_string(abs_path) {
-                    solang.parse(&mut natspecs, &src, &contract, &contract_name);
+                    solang.parse(&mut natspecs, &src, &contract, contract_name);
                 }
             }
         }
