@@ -189,13 +189,19 @@ impl Executor {
     ///
     /// Ayn changes made during the setup call to env's block environment are persistent, for
     /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
-    pub fn setup(&mut self, from: Option<Address>, to: Address) -> Result<RawCallResult, EvmError> {
+    pub fn setup(
+        &mut self,
+        from: Option<Address>,
+        to: Address,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<RawCallResult, EvmError> {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
         self.backend.set_test_contract(to).set_caller(from);
         let calldata = Bytes::from_static(&ITest::setUpCall::SELECTOR);
-        let res = self.call_raw_committing(from, to, calldata, U256::ZERO)?;
+        let mut res = self.call_raw_committing(from, to, calldata, U256::ZERO)?;
+        res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
         self.env.block = res.env.block.clone();

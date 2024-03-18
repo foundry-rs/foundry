@@ -87,7 +87,7 @@ impl ScriptRunner {
             self.executor.backend.set_test_contract(address);
             (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
-            match self.executor.setup(Some(self.sender), address) {
+            match self.executor.setup(Some(self.sender), address, None) {
                 Ok(RawCallResult {
                     reverted,
                     traces: setup_traces,

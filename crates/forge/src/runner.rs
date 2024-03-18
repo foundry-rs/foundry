@@ -153,7 +153,7 @@ impl<'a> ContractRunner<'a> {
         // Optionally call the `setUp` function
         let setup = if setup {
             trace!("setting up");
-            let res = self.executor.setup(None, address);
+            let res = self.executor.setup(None, address, Some(self.revert_decoder));
             let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match res {
                 Ok(RawCallResult { traces, labels, logs, coverage, .. }) => {
                     trace!(contract=%address, "successfully setUp test");
@@ -164,11 +164,9 @@ impl<'a> ContractRunner<'a> {
                         raw: RawCallResult { traces, labels, logs, coverage, .. },
                         reason,
                     } = *err;
-                    error!(%reason, contract=%address, "setUp failed");
                     (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
                 }
                 Err(err) => {
-                    error!(reason=%err, contract=%address, "setUp failed");
                     (Vec::new(), None, HashMap::new(), Some(format!("setup failed: {err}")), None)
                 }
             };
