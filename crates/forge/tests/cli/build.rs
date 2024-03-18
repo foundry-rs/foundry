@@ -31,3 +31,12 @@ forgetest_init!(exact_build_output, |prj, cmd| {
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiling"), "\n{stdout}");
 });
+
+// tests build output is as expected
+forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
+    cmd.args(["build", "--sizes"]);
+    let stdout = cmd.stdout_lossy();
+    assert!(!stdout.contains("console"), "\n{stdout}");
+    assert!(!stdout.contains("std"), "\n{stdout}");
+    assert!(stdout.contains("Counter"), "\n{stdout}");
+});
