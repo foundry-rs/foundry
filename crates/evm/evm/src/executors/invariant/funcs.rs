@@ -21,7 +21,7 @@ pub fn assert_invariants(
     invariant_failures: &mut InvariantFailures,
     shrink_sequence: bool,
     shrink_run_limit: usize,
-) -> Option<RawCallResult> {
+) -> eyre::Result<Option<RawCallResult>> {
     let mut inner_sequence = vec![];
 
     if let Some(fuzzer) = &executor.inspector.fuzzer {
@@ -31,14 +31,12 @@ pub fn assert_invariants(
     }
 
     let func = invariant_contract.invariant_function;
-    let mut call_result = executor
-        .call_raw(
-            CALLER,
-            invariant_contract.address,
-            func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
-            U256::ZERO,
-        )
-        .expect("EVM error");
+    let mut call_result = executor.call_raw(
+        CALLER,
+        invariant_contract.address,
+        func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
+        U256::ZERO,
+    )?;
 
     let is_err = !executor.is_raw_call_success(
         invariant_contract.address,
@@ -59,11 +57,11 @@ pub fn assert_invariants(
                 shrink_run_limit,
             );
             invariant_failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data));
-            return None
+            return Ok(None);
         }
     }
 
-    Some(call_result)
+    Ok(Some(call_result))
 }
 
 /// Replays the provided invariant run for collecting the logs and traces from all depths.
@@ -78,7 +76,7 @@ pub fn replay_run(
     coverage: &mut Option<HitMaps>,
     func: Function,
     inputs: Vec<BasicTxDetails>,
-) {
+) -> eyre::Result<()> {
     // We want traces for a failed case.
     executor.set_tracing(true);
 
@@ -86,25 +84,18 @@ pub fn replay_run(
 
     // Replay each call from the sequence until we break the invariant.
     for (sender, (addr, bytes)) in inputs.iter() {
-        let call_result = executor
-            .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
-            .expect("bad call to evm");
+        let call_result =
+            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
 
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
 
-        let old_coverage = std::mem::take(coverage);
-        match (old_coverage, call_result.coverage) {
-            (Some(old_coverage), Some(call_coverage)) => {
-                *coverage = Some(old_coverage.merge(call_coverage));
+        if let Some(new_coverage) = call_result.coverage {
+            if let Some(old_coverage) = coverage {
+                *coverage = Some(std::mem::take(old_coverage).merge(new_coverage));
+            } else {
+                *coverage = Some(new_coverage);
             }
-            (None, Some(call_coverage)) => {
-                *coverage = Some(call_coverage);
-            }
-            (Some(old_coverage), None) => {
-                *coverage = Some(old_coverage);
-            }
-            (None, None) => {}
         }
 
         // Identify newly generated contracts, if they exist.
@@ -114,17 +105,16 @@ pub fn replay_run(
         ));
 
         // Checks the invariant.
-        let error_call_result = executor
-            .call_raw(
-                CALLER,
-                invariant_contract.address,
-                func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
-                U256::ZERO,
-            )
-            .expect("bad call to evm");
+        let error_call_result = executor.call_raw(
+            CALLER,
+            invariant_contract.address,
+            func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
+            U256::ZERO,
+        )?;
 
         traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
 
         logs.extend(error_call_result.logs);
     }
+    Ok(())
 }

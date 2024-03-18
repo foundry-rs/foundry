@@ -150,7 +150,7 @@ impl FailedInvariantCaseData {
         };
 
         if self.shrink {
-            calls = self.try_shrinking(&calls, &executor).into_iter().cloned().collect();
+            calls = self.try_shrinking(&calls, &executor)?.into_iter().cloned().collect();
         } else {
             trace!(target: "forge::test", "Shrinking disabled.");
         }
@@ -162,9 +162,8 @@ impl FailedInvariantCaseData {
 
         // Replay each call from the sequence until we break the invariant.
         for (sender, (addr, bytes)) in calls.iter() {
-            let call_result = executor
-                .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
-                .expect("bad call to evm");
+            let call_result =
+                executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
 
             logs.extend(call_result.logs);
             traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
@@ -185,9 +184,8 @@ impl FailedInvariantCaseData {
 
             // Checks the invariant.
             if let Some(func) = &self.func {
-                let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
-                    .expect("bad call to evm");
+                let error_call_result =
+                    executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
 
@@ -210,10 +208,10 @@ impl FailedInvariantCaseData {
         calls: &[BasicTxDetails],
         use_calls: &[usize],
         curr_seq: Arc<RwLock<Vec<usize>>>,
-    ) {
+    ) -> eyre::Result<()> {
         if curr_seq.read().len() == 1 {
             // if current sequence is already the smallest possible, just return
-            return;
+            return Ok(());
         }
 
         let mut new_sequence = Vec::with_capacity(calls.len());
@@ -226,22 +224,19 @@ impl FailedInvariantCaseData {
 
             // If the new sequence is already longer than the known best, skip execution
             if new_sequence.len() >= curr_seq.read().len() {
-                return
+                return Ok(());
             }
         }
 
         for (seq_idx, call_index) in new_sequence.iter().enumerate() {
             let (sender, (addr, bytes)) = &calls[*call_index];
 
-            executor
-                .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
-                .expect("bad call to evm");
+            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
 
             // Checks the invariant. If we revert or fail before the last call, all the better.
             if let Some(func) = &self.func {
-                let mut call_result = executor
-                    .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
-                    .expect("bad call to evm");
+                let mut call_result =
+                    executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
                 let is_success = executor.is_raw_call_success(
                     self.addr,
                     Cow::Owned(call_result.state_changeset.take().unwrap()),
@@ -257,6 +252,7 @@ impl FailedInvariantCaseData {
                 }
             }
         }
+        Ok(())
     }
 
     /// Tries to shrink the failure case to its smallest sequence of calls.
@@ -266,21 +262,20 @@ impl FailedInvariantCaseData {
         &self,
         calls: &'a [BasicTxDetails],
         executor: &Executor,
-    ) -> Vec<&'a BasicTxDetails> {
+    ) -> eyre::Result<Vec<&'a BasicTxDetails>> {
         trace!(target: "forge::test", "Shrinking.");
 
         // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
         // break the invariant -- consider emitting a warning.
         if let Some(func) = &self.func {
-            let error_call_result = executor
-                .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
-                .expect("bad call to evm");
+            let error_call_result =
+                executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
             if error_call_result.reverted {
-                return vec![];
+                return Ok(vec![]);
             }
         }
 
-        let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0);
+        let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0)?;
 
         // We recreate the call sequence in the same order as they reproduce the failure,
         // otherwise we could end up with inverted sequence.
@@ -289,7 +284,7 @@ impl FailedInvariantCaseData {
         // 2. Bob calls transferOwnership to Alice
         // 3. Alice calls acceptOwnership and test fails
         // we shrink to indices of [2, 1] and we recreate call sequence in same order.
-        shrunk_call_indices.iter().map(|idx| &calls[*idx]).collect()
+        Ok(shrunk_call_indices.iter().map(|idx| &calls[*idx]).collect())
     }
 
     /// We try to construct a [powerset](https://en.wikipedia.org/wiki/Power_set) of the sequence if
@@ -310,7 +305,7 @@ impl FailedInvariantCaseData {
         executor: &Executor,
         runs: usize,
         retries: usize,
-    ) -> Vec<usize> {
+    ) -> eyre::Result<Vec<usize>> {
         // Construct a ArcRwLock vector of indices of `calls`
         let shrunk_call_indices = Arc::new(RwLock::new((0..calls.len()).collect()));
         let shrink_limit = self.shrink_run_limit - runs;
@@ -319,7 +314,7 @@ impl FailedInvariantCaseData {
         // We construct either a full powerset (this guarantees we maximally shrunk for the given
         // calls) or a random subset
         let (set_of_indices, is_powerset): (Vec<_>, bool) = if calls.len() <= 64 &&
-            2_usize.pow(calls.len() as u32) <= shrink_limit
+            (1 << calls.len() as u32) <= shrink_limit
         {
             // We add the last tx always because thats ultimately what broke the invariant
             let powerset = (0..upper_bound)
@@ -357,14 +352,17 @@ impl FailedInvariantCaseData {
         let new_runs = set_of_indices.len();
 
         // just try all of them in parallel
-        set_of_indices.par_iter().for_each(|use_calls| {
-            self.set_fails_successfully(
-                executor.clone(),
-                calls,
-                use_calls,
-                Arc::clone(&shrunk_call_indices),
-            );
-        });
+        set_of_indices
+            .par_iter()
+            .map(|use_calls| {
+                self.set_fails_successfully(
+                    executor.clone(),
+                    calls,
+                    use_calls,
+                    Arc::clone(&shrunk_call_indices),
+                )
+            })
+            .collect::<eyre::Result<()>>()?;
 
         // There are no more live references to shrunk_call_indices as the parallel execution is
         // finished, so it is fine to get the inner value via `Arc::unwrap`.
@@ -372,7 +370,7 @@ impl FailedInvariantCaseData {
 
         if is_powerset {
             // A powerset is guaranteed to be smallest local subset, so we return early.
-            return shrunk_call_indices
+            return Ok(shrunk_call_indices);
         }
 
         let computation_budget_not_hit = new_runs + runs < self.shrink_run_limit;
@@ -399,13 +397,8 @@ impl FailedInvariantCaseData {
                 let new_calls: Vec<_> = calls
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, call)| {
-                        if shrunk_call_indices.contains(&i) {
-                            Some(call.clone())
-                        } else {
-                            None
-                        }
-                    })
+                    .filter(|(i, _)| shrunk_call_indices.contains(i))
+                    .map(|(_, call)| call.clone())
                     .collect();
 
                 // We rerun this algorithm as if the new smaller subset above were the original
@@ -415,13 +408,13 @@ impl FailedInvariantCaseData {
                 // returns [1]. This means `call3` is all that is required to break
                 // the invariant.
                 let new_calls_idxs =
-                    self.try_shrinking_recurse(&new_calls, executor, runs + new_runs, 0);
+                    self.try_shrinking_recurse(&new_calls, executor, runs + new_runs, 0)?;
 
                 // Notably, the indices returned above are relative to `new_calls`, *not* the
                 // originally passed in `calls`. So we map back by filtering
                 // `new_calls` by index if the index was returned above, and finding the position
                 // of the `new_call` in the passed in `call`
-                new_calls
+                Ok(new_calls
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, new_call)| {
@@ -431,12 +424,12 @@ impl FailedInvariantCaseData {
                             calls.iter().position(|r| r == new_call)
                         }
                     })
-                    .collect()
+                    .collect())
             }
             _ => {
                 // The computation budget has been hit or no retries remaining, stop trying to make
                 // progress
-                shrunk_call_indices
+                Ok(shrunk_call_indices)
             }
         }
     }

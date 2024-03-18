@@ -545,7 +545,7 @@ impl<'a> ContractRunner<'a> {
             // If invariants ran successfully, replay the last run to collect logs and
             // traces.
             _ => {
-                replay_run(
+                if let Err(err) = replay_run(
                     &invariant_contract,
                     self.executor.clone(),
                     known_contracts,
@@ -555,7 +555,9 @@ impl<'a> ContractRunner<'a> {
                     &mut coverage,
                     func.clone(),
                     last_run_inputs.clone(),
-                );
+                ) {
+                    error!(%err, "Failed to replay last invariant run");
+                }
             }
         }
 
