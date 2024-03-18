@@ -35,20 +35,18 @@ impl TransactionReceiptWithRevertReason {
             return Ok(None)
         }
 
-        if let Some(ref transaction) = provider
-            .get_transaction_by_hash(self.receipt.transaction_hash)
+        let transaction = provider
+            .get_transaction_by_hash(self.receipt.transaction_hash.unwrap())
             .await
-            .map_err(|_| eyre::eyre!("unable to fetch transaction"))?
-        {
-            if let Some(block_hash) = self.receipt.block_hash {
-                match provider.call(&transaction.into(), Some(BlockId::Hash(block_hash))).await {
-                    Err(e) => return Ok(extract_revert_reason(e.to_string())),
-                    Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
-                }
+            .map_err(|_| eyre::eyre!("unable to fetch transaction"))?;
+
+        if let Some(block_hash) = self.receipt.block_hash {
+            match provider.call(transaction.into(), Some(BlockId::Hash(block_hash))).await {
+                Err(e) => return Ok(extract_revert_reason(e.to_string())),
+                Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }
-            eyre::bail!("unable to fetch block_hash")
         }
-        Err(eyre::eyre!("transaction does not exist"))
+        eyre::bail!("unable to fetch block_hash")
     }
 }
 
