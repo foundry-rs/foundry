@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
 use alloy_primitives::{Address, Bytes};
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, Libraries},
@@ -194,10 +196,9 @@ impl Linker {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, path::PathBuf};
-
     use super::*;
     use foundry_compilers::{Project, ProjectPathsConfig};
+    use std::collections::HashMap;
 
     struct LinkerTest {
         project: Project,

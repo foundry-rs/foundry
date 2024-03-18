@@ -14,7 +14,7 @@ use std::str::FromStr;
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
     /// The destination of the transaction.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -24,7 +24,7 @@ pub struct EstimateArgs {
     args: Vec<String>,
 
     /// The sender account.
-    #[clap(
+    #[arg(
         short,
         long,
         value_parser = NameOrAddress::from_str,
@@ -38,23 +38,23 @@ pub struct EstimateArgs {
     /// Either specified in wei, or as a string with a unit type:
     ///
     /// Examples: 1ether, 10gwei, 0.01ether
-    #[clap(long, value_parser = parse_ether_value)]
+    #[arg(long, value_parser = parse_ether_value)]
     value: Option<U256>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Option<EstimateSubcommands>,
 }
 
 #[derive(Debug, Parser)]
 pub enum EstimateSubcommands {
     /// Estimate gas cost to deploy a smart contract
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// The bytecode of contract
         code: String,
@@ -70,7 +70,7 @@ pub enum EstimateSubcommands {
         /// Either specified in wei, or as a string with a unit type:
         ///
         /// Examples: 1ether, 10gwei, 0.01ether
-        #[clap(long, value_parser = parse_ether_value)]
+        #[arg(long, value_parser = parse_ether_value)]
         value: Option<U256>,
     },
 }

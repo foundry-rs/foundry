@@ -26,6 +26,7 @@ use foundry_compilers::{
     Artifact, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
+use rustc_hash::FxHashMap;
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use yansi::Paint;
@@ -42,20 +43,20 @@ pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
     /// This flag can be used multiple times.
-    #[clap(long, value_enum, default_value = "summary")]
+    #[arg(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
 
     /// Enable viaIR with minimum optimization
     ///
     /// This can fix most of the "stack too deep" errors while resulting a
     /// relatively accurate source map.
-    #[clap(long)]
+    #[arg(long)]
     ir_minimum: bool,
 
     /// The path to output the report.
     ///
     /// If not specified, the report will be stored in the root of the project.
-    #[clap(
+    #[arg(
         long,
         short,
         value_hint = ValueHint::FilePath,
@@ -63,13 +64,13 @@ pub struct CoverageArgs {
     )]
     report_file: Option<PathBuf>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     filter: FilterArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 }
 
@@ -88,6 +89,9 @@ impl CoverageArgs {
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
+        // Coverage analysis requires the Solc AST output.
+        config.ast = true;
+
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
         let report = self.prepare(&config, output.clone())?;
@@ -99,47 +103,41 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let project = {
-            let mut project = config.ephemeral_no_artifacts_project()?;
-
-            if self.ir_minimum {
-                // TODO: How to detect solc version if the user does not specify a solc version in
-                // config  case1: specify local installed solc ?
-                //  case2: multiple solc versions used and  auto_detect_solc == true
-                if let Some(SolcReq::Version(version)) = &config.solc {
-                    if *version < Version::new(0, 8, 13) {
-                        return Err(eyre::eyre!(
+        let mut project = config.ephemeral_no_artifacts_project()?;
+        if self.ir_minimum {
+            // TODO: How to detect solc version if the user does not specify a solc version in
+            // config  case1: specify local installed solc ?
+            //  case2: multiple solc versions used and  auto_detect_solc == true
+            if let Some(SolcReq::Version(version)) = &config.solc {
+                if *version < Version::new(0, 8, 13) {
+                    return Err(eyre::eyre!(
                             "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
                         ));
-                    }
                 }
-
-                // print warning message
-                p_println!(!self.opts.silent => "{}",
-                Paint::yellow(
-                concat!(
-                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, which can result in inaccurate source mappings.\n",
-                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
-                "See more:\n",
-                "https://github.com/foundry-rs/foundry/issues/3357\n"
-                )));
-
-                // Enable viaIR with minimum optimization
-                // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
-                // And also in new releases of solidity:
-                // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-                project.solc_config.settings =
-                    project.solc_config.settings.with_via_ir_minimum_optimization()
-            } else {
-                project.solc_config.settings.optimizer.disable();
-                project.solc_config.settings.optimizer.runs = None;
-                project.solc_config.settings.optimizer.details = None;
-                project.solc_config.settings.via_ir = None;
             }
 
-            project
-        };
+            // print warning message
+            let msg = Paint::yellow(concat!(
+                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
+                 which can result in inaccurate source mappings.\n",
+                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                "See more: https://github.com/foundry-rs/foundry/issues/3357",
+            ));
+            p_println!(!self.opts.silent => "{msg}");
+
+            // Enable viaIR with minimum optimization
+            // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+            // And also in new releases of solidity:
+            // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
+            project.solc_config.settings =
+                project.solc_config.settings.with_via_ir_minimum_optimization()
+        } else {
+            project.solc_config.settings.optimizer.disable();
+            project.solc_config.settings.optimizer.runs = None;
+            project.solc_config.settings.optimizer.details = None;
+            project.solc_config.settings.via_ir = None;
+        }
 
         let output = ProjectCompiler::default()
             .compile(&project)?
@@ -158,8 +156,8 @@ impl CoverageArgs {
         let mut report = CoverageReport::default();
 
         // Collect ASTs and sources
-        let mut versioned_asts: HashMap<Version, HashMap<usize, Ast>> = HashMap::new();
-        let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
+        let mut versioned_asts: HashMap<Version, FxHashMap<usize, Ast>> = HashMap::new();
+        let mut versioned_sources: HashMap<Version, FxHashMap<usize, String>> = HashMap::new();
         for (path, mut source_file, version) in sources.into_sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
@@ -303,7 +301,7 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
+            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
             .with_test_options(TestOptions {
                 fuzz: config.fuzz,
                 invariant: config.invariant,
@@ -316,9 +314,7 @@ impl CoverageArgs {
         let known_contracts = runner.known_contracts.clone();
         let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle = tokio::task::spawn(async move {
-            runner.test(&filter, tx, runner.test_options.clone()).await
-        });
+        let handle = tokio::task::spawn_blocking(move || runner.test(&filter, tx));
 
         // Add hit data to the coverage report
         let data = rx

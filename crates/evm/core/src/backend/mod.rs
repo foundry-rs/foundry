@@ -9,16 +9,17 @@ use crate::{
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
-    precompile::{Precompiles, SpecId},
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        StorageSlot, TransactTo, KECCAK_EMPTY,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
+        ResultAndState, SpecId, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
-    Database, DatabaseCommit, Inspector, JournaledState, EVM,
+    Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -31,8 +32,8 @@ pub use diagnostic::RevertDiagnostic;
 mod error;
 pub use error::{DatabaseError, DatabaseResult};
 
-mod fuzz;
-pub use fuzz::FuzzBackendWrapper;
+mod cow;
+pub use cow::CowBackend;
 
 mod in_memory_db;
 pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
@@ -62,6 +63,7 @@ const GLOBAL_FAILURE_SLOT: B256 =
     b256!("6661696c65640000000000000000000000000000000000000000000000000000");
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
+#[auto_impl::auto_impl(&mut)]
 pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Creates a new snapshot at the current point of execution.
     ///
@@ -193,7 +195,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
         inspector: &mut I,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<()>
+    where
+        Self: Sized;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -272,14 +276,20 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn add_persistent_account(&mut self, account: Address) -> bool;
 
     /// Removes persistent status from all given accounts
-    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
+    where
+        Self: Sized,
+    {
         for acc in accounts {
             self.remove_persistent_account(&acc);
         }
     }
 
     /// Extends the persistent accounts with the accounts the iterator yields.
-    fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+    fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
+    where
+        Self: Sized,
+    {
         for acc in accounts {
             self.add_persistent_account(acc);
         }
@@ -293,30 +303,32 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Revokes cheatcode access for the given account
     ///
     /// Returns true if the `account` was previously allowed cheatcode access
-    fn revoke_cheatcode_access(&mut self, account: Address) -> bool;
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool;
 
     /// Returns `true` if the given account is allowed to execute cheatcodes
-    fn has_cheatcode_access(&self, account: Address) -> bool;
+    fn has_cheatcode_access(&self, account: &Address) -> bool;
 
     /// Ensures that `account` is allowed to execute cheatcodes
     ///
     /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
-    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), DatabaseError> {
+    fn ensure_cheatcode_access(&self, account: &Address) -> Result<(), DatabaseError> {
         if !self.has_cheatcode_access(account) {
-            return Err(DatabaseError::NoCheats(account));
+            return Err(DatabaseError::NoCheats(*account));
         }
         Ok(())
     }
 
     /// Same as [`Self::ensure_cheatcode_access()`] but only enforces it if the backend is currently
     /// in forking mode
-    fn ensure_cheatcode_access_forking_mode(&self, account: Address) -> Result<(), DatabaseError> {
+    fn ensure_cheatcode_access_forking_mode(&self, account: &Address) -> Result<(), DatabaseError> {
         if self.is_forked_mode() {
             return self.ensure_cheatcode_access(account);
         }
         Ok(())
     }
 }
+
+struct _ObjectSafe(dyn DatabaseExt);
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -405,8 +417,8 @@ pub struct Backend {
 
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
-    pub async fn spawn(fork: Option<CreateFork>) -> Self {
-        Self::new(MultiFork::spawn().await, fork)
+    pub fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn(), fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -449,16 +461,11 @@ impl Backend {
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) async fn new_with_fork(
-        id: &ForkId,
-        fork: Fork,
-        journaled_state: JournaledState,
-    ) -> Self {
-        let mut backend = Self::spawn(None).await;
+    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
+        let mut backend = Self::spawn(None);
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
-
         backend
     }
 
@@ -531,7 +538,7 @@ impl Backend {
         // toggle the previous sender
         if let Some(current) = self.inner.test_contract_address.take() {
             self.remove_persistent_account(&current);
-            self.revoke_cheatcode_access(acc);
+            self.revoke_cheatcode_access(&acc);
         }
 
         self.add_persistent_account(acc);
@@ -550,8 +557,8 @@ impl Backend {
 
     /// Sets the current spec id
     pub fn set_spec_id(&mut self, spec_id: SpecId) -> &mut Self {
-        trace!("setting precompile id");
-        self.inner.precompile_id = spec_id;
+        trace!(?spec_id, "setting spec ID");
+        self.inner.spec_id = spec_id;
         self
     }
 
@@ -747,9 +754,9 @@ impl Backend {
     /// Initializes settings we need to keep track of.
     ///
     /// We need to track these mainly to prevent issues when switching between different evms
-    pub(crate) fn initialize(&mut self, env: &Env) {
+    pub(crate) fn initialize(&mut self, env: &EnvWithHandlerCfg) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(SpecId::from_spec_id(env.cfg.spec_id));
+        self.set_spec_id(env.handler_cfg.spec_id);
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
@@ -764,21 +771,28 @@ impl Backend {
         self.set_test_contract(test_contract);
     }
 
-    /// Executes the configured test call of the `env` without committing state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
-    ) -> eyre::Result<ResultAndState>
-    where
-        INSP: Inspector<Self>,
-    {
-        self.initialize(env);
+    /// Returns the `EnvWithHandlerCfg` with the current `spec_id` set.
+    fn env_with_handler_cfg(&self, env: Env) -> EnvWithHandlerCfg {
+        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.inner.spec_id)
+    }
 
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
-            Ok(res) => Ok(res),
-            Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
-        }
+    /// Executes the configured test call of the `env` without committing state changes.
+    ///
+    /// Note: in case there are any cheatcodes executed that modify the environment, this will
+    /// update the given `env` with the new values.
+    pub fn inspect<'a, I: Inspector<&'a mut Self>>(
+        &'a mut self,
+        env: &mut EnvWithHandlerCfg,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState> {
+        self.initialize(env);
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+
+        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+
+        env.env = evm.context.evm.inner.env;
+
+        Ok(res)
     }
 
     /// Returns true if the address is a precompile
@@ -881,6 +895,7 @@ impl Backend {
 
         let fork_id = self.ensure_fork_id(id)?.clone();
 
+        let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
@@ -907,7 +922,7 @@ impl Backend {
                     journaled_state,
                     fork,
                     &fork_id,
-                    NoOpInspector,
+                    &mut NoOpInspector,
                 )?;
             }
         }
@@ -1237,6 +1252,7 @@ impl DatabaseExt for Backend {
         let mut env = env.clone();
         update_env_block(&mut env, fork_block, &block);
 
+        let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector)
     }
@@ -1363,8 +1379,9 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn is_persistent(&self, acc: &Address) -> bool {
-        self.inner.persistent_accounts.contains(acc)
+    fn add_persistent_account(&mut self, account: Address) -> bool {
+        trace!(?account, "add persistent account");
+        self.inner.persistent_accounts.insert(account)
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {
@@ -1372,9 +1389,8 @@ impl DatabaseExt for Backend {
         self.inner.persistent_accounts.remove(account)
     }
 
-    fn add_persistent_account(&mut self, account: Address) -> bool {
-        trace!(?account, "add persistent account");
-        self.inner.persistent_accounts.insert(account)
+    fn is_persistent(&self, acc: &Address) -> bool {
+        self.inner.persistent_accounts.contains(acc)
     }
 
     fn allow_cheatcode_access(&mut self, account: Address) -> bool {
@@ -1382,13 +1398,13 @@ impl DatabaseExt for Backend {
         self.inner.cheatcode_access_accounts.insert(account)
     }
 
-    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
         trace!(?account, "revoke cheatcode access");
-        self.inner.cheatcode_access_accounts.remove(&account)
+        self.inner.cheatcode_access_accounts.remove(account)
     }
 
-    fn has_cheatcode_access(&self, account: Address) -> bool {
-        self.inner.cheatcode_access_accounts.contains(&account)
+    fn has_cheatcode_access(&self, account: &Address) -> bool {
+        self.inner.cheatcode_access_accounts.contains(account)
     }
 }
 
@@ -1556,8 +1572,8 @@ pub struct BackendInner {
     ///
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
-    /// The configured precompile spec id
-    pub precompile_id: revm::precompile::SpecId,
+    /// The configured spec id
+    pub spec_id: SpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
 }
@@ -1720,29 +1736,12 @@ impl BackendInner {
     }
 
     pub fn precompiles(&self) -> &'static Precompiles {
-        Precompiles::new(self.precompile_id)
+        Precompiles::new(PrecompileSpecId::from_spec_id(self.spec_id))
     }
 
     /// Returns a new, empty, `JournaledState` with set precompiles
     pub fn new_journaled_state(&self) -> JournaledState {
-        /// Helper function to convert from a `revm::precompile::SpecId` into a
-        /// `revm::primitives::SpecId` This only matters if the spec is Cancun or later, or
-        /// pre-Spurious Dragon.
-        fn precompiles_spec_id_to_primitives_spec_id(spec: SpecId) -> revm::primitives::SpecId {
-            match spec {
-                SpecId::HOMESTEAD => revm::primitives::SpecId::HOMESTEAD,
-                SpecId::BYZANTIUM => revm::primitives::SpecId::BYZANTIUM,
-                SpecId::ISTANBUL => revm::primitives::ISTANBUL,
-                SpecId::BERLIN => revm::primitives::BERLIN,
-                SpecId::CANCUN => revm::primitives::CANCUN,
-                // Point latest to berlin for now, as we don't wanna accidentally point to Cancun.
-                SpecId::LATEST => revm::primitives::BERLIN,
-            }
-        }
-        JournaledState::new(
-            precompiles_spec_id_to_primitives_spec_id(self.precompile_id),
-            self.precompiles().addresses().into_iter().copied().collect(),
-        )
+        JournaledState::new(self.spec_id, self.precompiles().addresses().copied().collect())
     }
 }
 
@@ -1759,7 +1758,7 @@ impl Default for BackendInner {
             caller: None,
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),
-            precompile_id: revm::precompile::SpecId::LATEST,
+            spec_id: SpecId::LATEST,
             // grant the cheatcode,default test and caller address access to execute cheatcodes
             // itself
             cheatcode_access_accounts: HashSet::from([
@@ -1870,33 +1869,26 @@ fn update_env_block(env: &mut Env, fork_block: U64, block: &Block) {
 /// state, with an optional inspector
 fn commit_transaction<I: Inspector<Backend>>(
     tx: Transaction,
-    mut env: Env,
+    mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
     inspector: I,
 ) -> eyre::Result<()> {
-    configure_tx_env(&mut env, &tx);
+    configure_tx_env(&mut env.env, &tx);
 
     let now = Instant::now();
-    let state = {
-        let mut evm = EVM::new();
-        evm.env = env;
-
+    let res = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
-        let db = crate::utils::RuntimeOrHandle::new()
-            .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
-        evm.database(db);
-
-        match evm.inspect(inspector) {
-            Ok(res) => res.state,
-            Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
-        }
+        let db = Backend::new_with_fork(fork_id, fork, journaled_state);
+        crate::utils::new_evm_with_inspector(db, env, inspector)
+            .transact()
+            .wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(state, journaled_state, fork);
+    apply_state_changeset(res.state, journaled_state, fork);
     Ok(())
 }
 

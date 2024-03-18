@@ -1,4 +1,5 @@
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Address;
+use arrayvec::ArrayVec;
 use foundry_common::{ErrorExt, SELECTOR_LEN};
 use foundry_evm_core::{
     backend::DatabaseExt,
@@ -9,9 +10,10 @@ use foundry_evm_core::{
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
-        CallInputs, CreateInputs, Gas, InstructionResult, Interpreter,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
+        InterpreterResult,
     },
-    EVMData, Inspector,
+    EvmContext, Inspector,
 };
 use revm_inspectors::tracing::types::CallKind;
 
@@ -46,57 +48,62 @@ impl Debugger {
 
 impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let pc = interpreter.program_counter();
-        let op = interpreter.current_opcode();
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        let pc = interp.program_counter();
+        let op = interp.current_opcode();
 
         // Get opcode information
-        let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);
+        let opcode_infos = spec_opcode_gas(ecx.spec_id());
         let opcode_info = &opcode_infos[op as usize];
 
         // Extract the push bytes
-        let push_size = if opcode_info.is_push() { (op - opcode::PUSH1 + 1) as usize } else { 0 };
-        let push_bytes = match push_size {
-            0 => None,
-            n => {
-                let start = pc + 1;
-                let end = start + n;
-                Some(interpreter.contract.bytecode.bytecode()[start..end].to_vec())
-            }
-        };
+        let push_size = if opcode_info.is_push() { (op - opcode::PUSH0) as usize } else { 0 };
+        let push_bytes = (push_size > 0).then(|| {
+            let start = pc + 1;
+            let end = start + push_size;
+            let slice = &interp.contract.bytecode.bytecode()[start..end];
+            assert!(slice.len() <= 32);
+            let mut array = ArrayVec::new();
+            array.try_extend_from_slice(slice).unwrap();
+            array
+        });
 
         let total_gas_used = gas_used(
-            data.env.cfg.spec_id,
-            interpreter.gas.limit().saturating_sub(interpreter.gas.remaining()),
-            interpreter.gas.refunded() as u64,
+            ecx.spec_id(),
+            interp.gas.limit().saturating_sub(interp.gas.remaining()),
+            interp.gas.refunded() as u64,
         );
+
+        // Reuse the memory from the previous step if the previous opcode did not modify it.
+        let memory = self.arena.arena[self.head]
+            .steps
+            .last()
+            .filter(|step| !step.opcode_modifies_memory())
+            .map(|step| step.memory.clone())
+            .unwrap_or_else(|| interp.shared_memory.context_memory().to_vec().into());
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
-            stack: interpreter.stack().data().clone(),
-            memory: interpreter.shared_memory.context_memory().to_vec(),
-            calldata: interpreter.contract().input.to_vec(),
-            returndata: interpreter.return_data_buffer.to_vec(),
+            stack: interp.stack().data().clone(),
+            memory,
+            calldata: interp.contract().input.clone(),
+            returndata: interp.return_data_buffer.clone(),
             instruction: Instruction::OpCode(op),
-            push_bytes,
+            push_bytes: push_bytes.unwrap_or_default(),
             total_gas_used,
         });
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.enter(
-            data.journaled_state.depth() as usize,
-            call.context.code_address,
-            call.context.scheme.into(),
+            ecx.journaled_state.depth() as usize,
+            inputs.context.code_address,
+            inputs.context.scheme.into(),
         );
 
-        if call.contract == CHEATCODE_ADDRESS {
-            if let Some(selector) = call.input.get(..SELECTOR_LEN) {
+        if inputs.contract == CHEATCODE_ADDRESS {
+            if let Some(selector) = inputs.input.get(..SELECTOR_LEN) {
                 self.arena.arena[self.head].steps.push(DebugStep {
                     instruction: Instruction::Cheatcode(selector.try_into().unwrap()),
                     ..Default::default()
@@ -104,57 +111,58 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             }
         }
 
-        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
-        _: &CallInputs,
-        gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        _context: &mut EvmContext<DB>,
+        _inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
         self.exit();
 
-        (status, gas, retdata)
+        outcome
     }
 
     #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        // TODO: Does this increase gas cost?
-        if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
-            let gas = Gas::new(call.gas_limit);
-            return (InstructionResult::Revert, None, gas, err.abi_encode_revert());
+        ecx: &mut EvmContext<DB>,
+        inputs: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        if let Err(err) = ecx.load_account(inputs.caller) {
+            let gas = Gas::new(inputs.gas_limit);
+            return Some(CreateOutcome::new(
+                InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output: err.abi_encode_revert(),
+                    gas,
+                },
+                None,
+            ));
         }
 
-        let nonce = data.journaled_state.account(call.caller).info.nonce;
+        let nonce = ecx.journaled_state.account(inputs.caller).info.nonce;
         self.enter(
-            data.journaled_state.depth() as usize,
-            call.created_address(nonce),
+            ecx.journaled_state.depth() as usize,
+            inputs.created_address(nonce),
             CallKind::Create,
         );
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn create_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
-        _: &CreateInputs,
-        status: InstructionResult,
-        address: Option<Address>,
-        gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        _context: &mut EvmContext<DB>,
+        _inputs: &CreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
         self.exit();
 
-        (status, address, gas, retdata)
+        outcome
     }
 }

@@ -1,7 +1,7 @@
 use crate::errors::FunctionSignatureError;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256, U64};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest as AlloyTransactionRequest};
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, TransactionRequest,

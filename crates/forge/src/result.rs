@@ -7,7 +7,7 @@ use foundry_evm::{
     debug::DebugArena,
     executors::EvmError,
     fuzz::{CounterExample, FuzzCase},
-    traces::{CallTraceDecoder, TraceKind, Traces},
+    traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,6 +16,8 @@ use std::{
     time::Duration,
 };
 use yansi::Paint;
+
+use crate::gas_report::GasReport;
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -32,17 +34,19 @@ pub struct TestOutcome {
     ///
     /// Note that `Address` fields only contain the last executed test case's data.
     pub decoder: Option<CallTraceDecoder>,
+    /// The gas report, if requested.
+    pub gas_report: Option<GasReport>,
 }
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
     pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, decoder: None }
+        Self { results, allow_failure, decoder: None, gas_report: None }
     }
 
     /// Creates a new empty test outcome.
     pub fn empty(allow_failure: bool) -> Self {
-        Self { results: BTreeMap::new(), allow_failure, decoder: None }
+        Self::new(BTreeMap::new(), allow_failure)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -112,13 +116,15 @@ impl TestOutcome {
         self.failures().count()
     }
 
-    /// Calculates the total duration of all test suites.
-    pub fn duration(&self) -> Duration {
+    /// Sums up all the durations of all individual test suites.
+    ///
+    /// Note that this is not necessarily the wall clock time of the entire test run.
+    pub fn total_time(&self) -> Duration {
         self.results.values().map(|suite| suite.duration).sum()
     }
 
     /// Formats the aggregated summary of all test suites into a string (for printing).
-    pub fn summary(&self) -> String {
+    pub fn summary(&self, wall_clock_time: Duration) -> String {
         let num_test_suites = self.results.len();
         let suites = if num_test_suites == 1 { "suite" } else { "suites" };
         let total_passed = self.passed();
@@ -126,10 +132,11 @@ impl TestOutcome {
         let total_skipped = self.skipped();
         let total_tests = total_passed + total_failed + total_skipped;
         format!(
-            "\nRan {} test {} in {:.2?}: {} tests passed, {} failed, {} skipped ({} total tests)",
+            "\nRan {} test {} in {:.2?} ({:.2?} CPU time): {} tests passed, {} failed, {} skipped ({} total tests)",
             num_test_suites,
             suites,
-            self.duration(),
+            wall_clock_time,
+            self.total_time(),
             Paint::green(total_passed),
             Paint::red(total_failed),
             Paint::yellow(total_skipped),
@@ -180,7 +187,7 @@ impl TestOutcome {
 /// A set of test results for a single test suite, which is all the tests in a single contract.
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
-    /// Total duration of the test run for this block of tests.
+    /// Wall clock time it took to execute all tests in this suite.
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -242,17 +249,25 @@ impl SuiteResult {
         self.test_results.len()
     }
 
+    /// Sums up all the durations of all individual tests in this suite.
+    ///
+    /// Note that this is not necessarily the wall clock time of the entire test suite.
+    pub fn total_time(&self) -> Duration {
+        self.test_results.values().map(|result| result.duration).sum()
+    }
+
     /// Returns the summary of a single test suite.
     pub fn summary(&self) -> String {
         let failed = self.failed();
         let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
+            "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
             result,
             Paint::green(self.passed()),
             Paint::red(failed),
             Paint::yellow(self.skipped()),
             self.duration,
+            self.total_time(),
         )
     }
 }
@@ -347,6 +362,10 @@ pub struct TestResult {
     #[serde(skip)]
     pub traces: Traces,
 
+    /// Additional traces to use for gas report.
+    #[serde(skip)]
+    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
+
     /// Raw coverage info
     #[serde(skip)]
     pub coverage: Option<HitMaps>,
@@ -356,6 +375,8 @@ pub struct TestResult {
 
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+
+    pub duration: Duration,
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,

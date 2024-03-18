@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockId;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
@@ -18,7 +18,7 @@ use std::str::FromStr;
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -28,51 +28,51 @@ pub struct CallArgs {
     args: Vec<String>,
 
     /// Data for the transaction.
-    #[clap(
+    #[arg(
         long,
         conflicts_with_all = &["sig", "args"]
     )]
     data: Option<String>,
 
     /// Forks the remote rpc, executes the transaction locally and prints a trace
-    #[clap(long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     trace: bool,
 
     /// Opens an interactive debugger.
     /// Can only be used with `--trace`.
-    #[clap(long, requires = "trace")]
+    #[arg(long, requires = "trace")]
     debug: bool,
 
     /// Labels to apply to the traces; format: `address:label`.
     /// Can only be used with `--trace`.
-    #[clap(long, requires = "trace")]
+    #[arg(long, requires = "trace")]
     labels: Vec<String>,
 
     /// The EVM Version to use.
     /// Can only be used with `--trace`.
-    #[clap(long, requires = "trace")]
+    #[arg(long, requires = "trace")]
     evm_version: Option<EvmVersion>,
 
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long, short)]
+    #[arg(long, short)]
     block: Option<BlockId>,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Option<CallSubcommands>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]
 pub enum CallSubcommands {
     /// ignores the address field and simulates creating a contract
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// Bytecode of contract.
         code: String,
@@ -88,7 +88,7 @@ pub enum CallSubcommands {
         /// Either specified in wei, or as a string with a unit type.
         ///
         /// Examples: 1ether, 10gwei, 0.01ether
-        #[clap(long, value_parser = parse_ether_value)]
+        #[arg(long, value_parser = parse_ether_value)]
         value: Option<U256>,
     },
 }
@@ -144,9 +144,7 @@ impl CallArgs {
                     let (env, fork, chain) =
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-                    let mut executor =
-                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
-                            .await;
+                    let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
                     let trace = match executor.deploy(
                         sender,
@@ -179,9 +177,7 @@ impl CallArgs {
                     let (env, fork, chain) =
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-                    let mut executor =
-                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
-                            .await;
+                    let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
                     let (tx, _) = builder.build();
 

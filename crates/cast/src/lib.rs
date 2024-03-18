@@ -2,13 +2,13 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
-    Address, Bytes, B256, I256, U256, U64,
+    Address, Bytes, Keccak256, B256, I256, U256, U64,
 };
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId as AlloyBlockId, BlockNumberOrTag};
 use base::{Base, NumberWithBase, ToBase};
-use chrono::NaiveDateTime;
+use chrono::DateTime;
 use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, BlockId, Filter, Signature, H256},
     utils::rlp,
@@ -32,7 +32,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-use tx::{TxBuilderAlloyOutput, TxBuilderOutput, TxBuilderPeekOutput};
+pub use tx::{TxBuilder, TxBuilderAlloyOutput, TxBuilderOutput, TxBuilderPeekOutput};
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -41,7 +41,6 @@ pub use rusoto_core::{
     request::HttpClient as AwsHttpClient, Client as AwsClient,
 };
 pub use rusoto_kms::KmsClient;
-pub use tx::TxBuilder;
 
 pub mod base;
 pub mod errors;
@@ -394,8 +393,7 @@ where
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
         let timestamp_str =
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime =
-            NaiveDateTime::from_timestamp_opt(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
+        let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
@@ -434,6 +432,10 @@ where
             }
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
+            }
+            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
+            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
+                "fraxtal-testnet"
             }
             "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
                 "arbitrum-mainnet"
@@ -1598,7 +1600,10 @@ impl SimpleCast {
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
     /// interface and their name.
-    /// ```ignore
+    ///
+    /// Note: This removes the constructor from the ABI before generating the interface.
+    ///
+    /// ```no_run
     /// use cast::{AbiPath, SimpleCast as Cast};
     /// # async fn foo() -> eyre::Result<()> {
     /// let path =
@@ -1609,7 +1614,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
-        let (contract_abis, contract_names) = match address_or_path {
+        let (mut contract_abis, contract_names) = match address_or_path {
             AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
                 let obj: ContractObject = serde_json::from_str(&file)?;
@@ -1632,9 +1637,12 @@ impl SimpleCast {
             }
         };
         contract_abis
-            .iter()
+            .iter_mut()
             .zip(contract_names)
             .map(|(contract_abi, name)| {
+                // need to filter out the constructor
+                contract_abi.constructor.take();
+
                 let source = foundry_cli::utils::abi_to_solidity(contract_abi, &name)?;
                 Ok(InterfaceSource {
                     name,
@@ -1645,16 +1653,20 @@ impl SimpleCast {
             .collect::<Result<Vec<InterfaceSource>>>()
     }
 
-    /// Prints the slot number for the specified mapping type and input data
-    /// Uses abi_encode to pad the data to 32 bytes.
-    /// For value types v, slot number of v is keccak256(concat(h(v) , p)) where h is the padding
-    /// function and p is slot number of the mapping.
+    /// Prints the slot number for the specified mapping type and input data.
+    ///
+    /// For value types `v`, slot number of `v` is `keccak256(concat(h(v), p))` where `h` is the
+    /// padding function for `v`'s type, and `p` is slot number of the mapping.
+    ///
+    /// See [the Solidity documentation](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays)
+    /// for more details.
     ///
     /// # Example
     ///
     /// ```
     /// # use cast::SimpleCast as Cast;
     ///
+    /// // Value types.
     /// assert_eq!(
     ///     Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5", "2").unwrap().as_str(),
     ///     "0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb"
@@ -1663,13 +1675,48 @@ impl SimpleCast {
     ///     Cast::index("uint256", "42", "6").unwrap().as_str(),
     ///     "0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1"
     /// );
+    ///
+    /// // Strings and byte arrays.
+    /// assert_eq!(
+    ///     Cast::index("string", "hello", "1").unwrap().as_str(),
+    ///     "0x8404bb4d805e9ca2bd5dd5c43a107e935c8ec393caa7851b353b3192cd5379ae"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
-        let sig = format!("x({from_type},uint256)");
-        let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
-        let location: String = Self::keccak(&encoded)?;
-        Ok(location)
+        let mut hasher = Keccak256::new();
+
+        let v_ty = DynSolType::parse(from_type).wrap_err("Could not parse type")?;
+        let v = v_ty.coerce_str(from_value).wrap_err("Could not parse value")?;
+        match v_ty {
+            // For value types, `h` pads the value to 32 bytes in the same way as when storing the
+            // value in memory.
+            DynSolType::Bool |
+            DynSolType::Int(_) |
+            DynSolType::Uint(_) |
+            DynSolType::FixedBytes(_) |
+            DynSolType::Address |
+            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+
+            // For strings and byte arrays, `h(k)` is just the unpadded data.
+            DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
+
+            DynSolType::Array(..) |
+            DynSolType::FixedArray(..) |
+            DynSolType::Tuple(..) |
+            DynSolType::CustomStruct { .. } => {
+                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
+            }
+        }
+
+        let p = DynSolType::Uint(256)
+            .coerce_str(slot_number)
+            .wrap_err("Could not parse slot number")?;
+        let p = p.as_word().unwrap();
+        hasher.update(p);
+
+        let location = hasher.finalize();
+        Ok(location.to_string())
     }
 
     /// Converts ENS names to their namehash representation

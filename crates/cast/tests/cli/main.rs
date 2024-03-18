@@ -2,7 +2,7 @@
 
 use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
 use foundry_test_utils::{casttest, util::OutputExt};
-use std::{io::Write, path::Path};
+use std::{fs, io::Write, path::Path};
 
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
@@ -129,6 +129,27 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
     ]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+});
+
+// tests that `cast wallet list` outputs the local accounts
+casttest!(wallet_list_local_accounts, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(keystore_path).unwrap();
+    cmd.set_current_dir(prj.root());
+
+    // empty results
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
+    let list_output = cmd.stdout_lossy();
+    assert!(list_output.is_empty());
+
+    // create 10 wallets
+    cmd.cast_fuse().args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"]);
+    cmd.stdout_lossy();
+
+    // test list new wallet
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
+    let list_output = cmd.stdout_lossy();
+    assert_eq!(list_output.matches('\n').count(), 10);
 });
 
 // tests that `cast estimate` is working correctly.
@@ -493,6 +514,89 @@ casttest!(logs_sig_2, |_prj, cmd| {
     );
 });
 
+casttest!(mktx, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
+    );
+});
+
+// ensure recipient or code is required
+casttest!(mktx_requires_to, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert_eq!(
+        output.trim(),
+        "Error: \nMust specify a recipient address or contract code to deploy"
+    );
+});
+
+casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--from",
+        "0x0000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert!(
+        output.contains("The specified sender via CLI/env vars does not match the sender configured via\nthe hardware wallet's HD Path.")
+    );
+});
+
+casttest!(mktx_signer_from_match, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
+    );
+});
+
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -583,6 +687,50 @@ casttest!(storage, |_prj, cmd| {
     assert_eq!(cmd.stdout_lossy().trim(), issued);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/6319>
+casttest!(storage_layout, |_prj, cmd| {
+    cmd.cast_fuse().args([
+        "storage",
+        "--rpc-url",
+        "https://mainnet.optimism.io",
+        "--block",
+        "110000000",
+        "--etherscan-api-key",
+        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
+        "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
+    ]);
+    let output = r#"| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
+|-------------------------------|-----------------------------------------------------------------|------|--------|-------|---------------------------------------------------|--------------------------------------------------------------------|----------------------------------------------------|
+| gov                           | address                                                         | 0    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
+| _status                       | uint256                                                         | 1    | 0      | 32    | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| admin                         | address                                                         | 2    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
+| feeCalculator                 | address                                                         | 3    | 0      | 20    | 1297482016264593221714872710065075000476194625473 | 0x000000000000000000000000e3451b170806aab3e24b5cd03a331c1ccdb4d7c1 | contracts/perp/PositionManager.sol:PositionManager |
+| oracle                        | address                                                         | 4    | 0      | 20    | 241116142622541106669066767052022920958068430970  | 0x0000000000000000000000002a3c0592dcb58accd346ccee2bb46e3fb744987a | contracts/perp/PositionManager.sol:PositionManager |
+| referralStorage               | address                                                         | 5    | 0      | 20    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| minExecutionFee               | uint256                                                         | 6    | 0      | 32    | 20000                                             | 0x0000000000000000000000000000000000000000000000000000000000004e20 | contracts/perp/PositionManager.sol:PositionManager |
+| minBlockDelayKeeper           | uint256                                                         | 7    | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| minTimeExecuteDelayPublic     | uint256                                                         | 8    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
+| minTimeCancelDelayPublic      | uint256                                                         | 9    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
+| maxTimeDelay                  | uint256                                                         | 10   | 0      | 32    | 1800                                              | 0x0000000000000000000000000000000000000000000000000000000000000708 | contracts/perp/PositionManager.sol:PositionManager |
+| isUserExecuteEnabled          | bool                                                            | 11   | 0      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| isUserCancelEnabled           | bool                                                            | 11   | 1      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| allowPublicKeeper             | bool                                                            | 11   | 2      | 1     | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| allowUserCloseOnly            | bool                                                            | 11   | 3      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequestKeys       | bytes32[]                                                       | 12   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequestKeys      | bytes32[]                                                       | 13   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequestKeysStart  | uint256                                                         | 14   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequestKeysStart | uint256                                                         | 15   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
+| isPositionKeeper              | mapping(address => bool)                                        | 16   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionsIndex            | mapping(address => uint256)                                     | 17   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequests          | mapping(bytes32 => struct PositionManager.OpenPositionRequest)  | 18   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionsIndex           | mapping(address => uint256)                                     | 19   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequests         | mapping(bytes32 => struct PositionManager.ClosePositionRequest) | 20   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| managers                      | mapping(address => bool)                                        | 21   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| approvedManagers              | mapping(address => mapping(address => bool))                    | 22   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+"#;
+    assert_eq!(cmd.stdout_lossy(), output);
+});
+
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
@@ -608,4 +756,38 @@ casttest!(balance, |_prj, cmd| {
 
     assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
     assert_eq!(alias_result, usdt_result);
+});
+
+// tests that `cast interface` excludes the constructor
+// <https://github.com/alloy-rs/core/issues/555>
+casttest!(interface_no_constructor, |prj, cmd| {
+    let interface = include_str!("../fixtures/interface.json");
+
+    let path = prj.root().join("interface.json");
+    fs::write(&path, interface).unwrap();
+    // Call `cast find-block`
+    cmd.args(["interface"]).arg(&path);
+    let output = cmd.stdout_lossy();
+
+    let s = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface Interface {
+    type SpendAssetsHandleType is uint8;
+
+    function getIntegrationManager() external view returns (address integrationManager_);
+    function lend(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+    function parseAssetsForAction(address, bytes4 _selector, bytes memory _actionData)
+        external
+        view
+        returns (
+            SpendAssetsHandleType spendAssetsHandleType_,
+            address[] memory spendAssets_,
+            uint256[] memory spendAssetAmounts_,
+            address[] memory incomingAssets_,
+            uint256[] memory minIncomingAssetAmounts_
+        );
+    function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+}"#;
+    assert_eq!(output.trim(), s);
 });

@@ -1,6 +1,6 @@
 use crate::opts::parse_slot;
 use alloy_primitives::{Address, B256, U256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockId;
 use cast::Cast;
 use clap::Parser;
@@ -35,26 +35,26 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Clone, Debug, Parser)]
 pub struct StorageArgs {
     /// The contract address.
-    #[clap(value_parser = NameOrAddress::from_str)]
+    #[arg(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
     /// The storage slot number.
-    #[clap(value_parser = parse_slot)]
+    #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long, short)]
+    #[arg(long, short)]
     block: Option<BlockId>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     etherscan: EtherscanOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     build: CoreBuildArgs,
 }
 
@@ -193,13 +193,13 @@ impl StorageValue {
                 end = 32;
             }
         }
-        let mut value = [0u8; 32];
 
         // reverse range, because the value is stored in big endian
-        let offset = 32 - offset;
-        let end = 32 - end;
+        let raw_sliced_value = &self.raw_slot_value.as_slice()[32 - end..32 - offset];
 
-        value[end..offset].copy_from_slice(&self.raw_slot_value.as_slice()[end..offset]);
+        // copy the raw sliced value as tail
+        let mut value = [0u8; 32];
+        value[32 - raw_sliced_value.len()..32].copy_from_slice(raw_sliced_value);
         B256::from(value)
     }
 }

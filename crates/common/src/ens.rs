@@ -1,7 +1,7 @@
 //! ENS Name resolving utilities.
 #![allow(missing_docs)]
 use alloy_primitives::{address, keccak256, Address, B256};
-use alloy_providers::provider::TempProvider;
+use alloy_providers::tmp::TempProvider;
 use alloy_sol_types::sol;
 use std::str::FromStr;
 

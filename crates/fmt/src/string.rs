@@ -65,7 +65,7 @@ impl<'a> Iterator for QuoteStateCharIndices<'a> {
     }
 }
 
-/// An iterator over the the indices of quoted string locations
+/// An iterator over the indices of quoted string locations
 pub struct QuotedRanges<'a>(QuoteStateCharIndices<'a>);
 
 impl<'a> QuotedRanges<'a> {

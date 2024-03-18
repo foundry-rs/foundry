@@ -198,12 +198,15 @@ impl FeeHistoryService {
         self.fee_history_limit
     }
 
+    /// Inserts a new cache entry for the given block
+    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256) {
+        let (result, block_number) = self.create_cache_entry(hash);
+        self.insert_cache_entry(result, block_number);
+    }
+
     /// Create a new history entry for the block
-    fn create_cache_entry(
-        &self,
-        hash: B256,
-        elasticity: f64,
-    ) -> (FeeHistoryCacheItem, Option<u64>) {
+    fn create_cache_entry(&self, hash: B256) -> (FeeHistoryCacheItem, Option<u64>) {
+        let elasticity = self.fees.elasticity();
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
         let reward_percentiles: Vec<f64> = {
@@ -254,6 +257,15 @@ impl FeeHistoryService {
                         Some(TypedTransaction::EIP1559(t)) => {
                             U256::from(t.max_priority_fee_per_gas)
                                 .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
+                                .to::<u64>()
+                        }
+                        // TODO: This probably needs to be extended to extract 4844 info.
+                        Some(TypedTransaction::EIP4844(t)) => {
+                            U256::from(t.tx().tx().max_priority_fee_per_gas)
+                                .min(
+                                    U256::from(t.tx().tx().max_fee_per_gas)
+                                        .saturating_sub(base_fee),
+                                )
                                 .to::<u64>()
                         }
                         Some(TypedTransaction::Deposit(_)) => 0,
@@ -315,11 +327,9 @@ impl Future for FeeHistoryService {
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
             let hash = notification.hash;
-            let elasticity = default_elasticity();
 
             // add the imported block.
-            let (result, block_number) = pin.create_cache_entry(hash, elasticity);
-            pin.insert_cache_entry(result, block_number)
+            pin.insert_cache_entry_for_block(hash);
         }
 
         Poll::Pending

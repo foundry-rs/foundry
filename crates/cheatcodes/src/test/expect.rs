@@ -1,5 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{address, Address, Bytes, LogData as RawLog, B256, U256};
+use alloy_primitives::{address, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
@@ -201,7 +201,7 @@ impl Cheatcode for expectEmit_0Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
-            ccx.data.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth(),
             [checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
         )
@@ -213,7 +213,7 @@ impl Cheatcode for expectEmit_1Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
-            ccx.data.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth(),
             [checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
         )
@@ -223,69 +223,69 @@ impl Cheatcode for expectEmit_1Call {
 impl Cheatcode for expectEmit_2Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.data.journaled_state.depth(), [true; 4], None)
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 4], None)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.data.journaled_state.depth(), [true; 4], Some(emitter))
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 4], Some(emitter))
     }
 }
 
 impl Cheatcode for expectRevert_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.data.journaled_state.depth(), false)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.data.journaled_state.depth(), false)
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for expectRevert_2Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.data.journaled_state.depth(), false)
+        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        expect_revert(ccx.state, None, ccx.data.journaled_state.depth(), true)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.data.journaled_state.depth(), true)
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), true)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.data.journaled_state.depth(), true)
+        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), true)
     }
 }
 
 impl Cheatcode for expectSafeMemoryCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.data.journaled_state.depth())
+        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ccx.state.allowed_mem_writes.remove(&ccx.data.journaled_state.depth());
+        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
     }
 }
@@ -293,7 +293,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 impl Cheatcode for expectSafeMemoryCallCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.data.journaled_state.depth() + 1)
+        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
     }
 }
 
@@ -398,12 +398,7 @@ fn expect_emit(
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_emit(
-    state: &mut Cheatcodes,
-    address: &Address,
-    topics: &[B256],
-    data: &Bytes,
-) {
+pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives::Log) {
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -431,20 +426,21 @@ pub(crate) fn handle_expect_emit(
 
     let Some(expected) = &event_to_fill_or_check.log else {
         // Fill the event.
-        event_to_fill_or_check.log = Some(RawLog::new_unchecked(topics.to_vec(), data.clone()));
+        event_to_fill_or_check.log = Some(log.data.clone());
         state.expected_emits.push_back(event_to_fill_or_check);
         return
     };
 
     let expected_topic_0 = expected.topics().first();
-    let log_topic_0 = topics.first();
+    let log_topic_0 = log.topics().first();
 
     if expected_topic_0
         .zip(log_topic_0)
-        .map_or(false, |(a, b)| a == b && expected.topics().len() == topics.len())
+        .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len())
     {
         // Match topics
-        event_to_fill_or_check.found = topics
+        event_to_fill_or_check.found = log
+            .topics()
             .iter()
             .skip(1)
             .enumerate()
@@ -453,12 +449,12 @@ pub(crate) fn handle_expect_emit(
 
         // Maybe match source address
         if let Some(addr) = event_to_fill_or_check.address {
-            event_to_fill_or_check.found &= addr == *address;
+            event_to_fill_or_check.found &= addr == log.address;
         }
 
         // Maybe match data
         if event_to_fill_or_check.checks[3] {
-            event_to_fill_or_check.found &= expected.data == *data;
+            event_to_fill_or_check.found &= expected.data.as_ref() == log.data.data.as_ref();
         }
     }
 

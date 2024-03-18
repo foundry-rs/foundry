@@ -2,17 +2,17 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracePrinter, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
-use alloy_signer::LocalWallet;
+use alloy_primitives::{Address, Bytes, Log, U256};
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Stack,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
-    primitives::{BlockEnv, Env},
-    EVMData, Inspector,
+    primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, State, TransactTo},
+    DatabaseCommit, EvmContext, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -45,6 +45,10 @@ pub struct InspectorStackBuilder {
     pub print: Option<bool>,
     /// The chisel state inspector.
     pub chisel_state: Option<usize>,
+    /// Whether to enable call isolation.
+    /// In isolation mode all top-level calls are executed as a separate transaction in a separate
+    /// EVM context, enabling more precise gas accounting and transaction state changes.
+    pub enable_isolation: bool,
 }
 
 impl InspectorStackBuilder {
@@ -124,6 +128,14 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable the call isolation.
+    /// For description of call isolation, see [`InspectorStack::enable_isolation`].
+    #[inline]
+    pub fn enable_isolation(mut self, yes: bool) -> Self {
+        self.enable_isolation = yes;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     ///
     /// See also [`revm::Evm::inspect_ref`] and [`revm::Evm::commit_ref`].
@@ -139,6 +151,7 @@ impl InspectorStackBuilder {
             coverage,
             print,
             chisel_state,
+            enable_isolation,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -157,6 +170,8 @@ impl InspectorStackBuilder {
         stack.enable_debugger(debug.unwrap_or(false));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace.unwrap_or(false));
+
+        stack.enable_isolation(enable_isolation);
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -181,6 +196,38 @@ macro_rules! call_inspectors {
     )+}}
 }
 
+/// Same as [call_inspectors] macro, but with depth adjustment for isolated execution.
+macro_rules! call_inspectors_adjust_depth {
+    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr, $self:ident, $data:ident $(,)?) => {
+        if $self.in_inner_context {
+            $data.journaled_state.depth += 1;
+        }
+        {$(
+            if let Some($id) = $inspector {
+                if let Some(result) = $call {
+                    if $self.in_inner_context {
+                        $data.journaled_state.depth -= 1;
+                    }
+                    return result;
+                }
+            }
+        )+}
+        if $self.in_inner_context {
+            $data.journaled_state.depth -= 1;
+        }
+    }
+}
+
+/// Helper method which updates data in the state with the data from the database.
+fn update_state<DB: DatabaseExt>(state: &mut State, db: &mut DB) {
+    for (addr, acc) in state.iter_mut() {
+        acc.info = db.basic(*addr).unwrap().unwrap_or_default();
+        for (key, val) in acc.storage.iter_mut() {
+            val.present_value = db.storage(*addr, *key).unwrap();
+        }
+    }
+}
+
 /// The collected results of [`InspectorStack`].
 pub struct InspectorData {
     pub logs: Vec<Log>,
@@ -189,8 +236,25 @@ pub struct InspectorData {
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
-    pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+}
+
+/// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
+/// Used to adjust EVM state while in inner context.
+///
+/// We need this to avoid breaking changes due to EVM behavior differences in isolated vs
+/// non-isolated mode. For descriptions and workarounds for those changes see: https://github.com/foundry-rs/foundry/pull/7186#issuecomment-1959102195
+#[derive(Debug, Clone)]
+pub struct InnerContextData {
+    /// The sender of the inner EVM context.
+    /// It is also an origin of the transaction that created the inner EVM context.
+    sender: Address,
+    /// Nonce of the sender before invocation of the inner EVM context.
+    original_sender_nonce: u64,
+    /// Origin of the transaction in the outer EVM context.
+    original_origin: Address,
+    /// Whether the inner context was created by a CREATE transaction.
+    is_create: bool,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -207,6 +271,11 @@ pub struct InspectorStack {
     pub log_collector: Option<LogCollector>,
     pub printer: Option<TracePrinter>,
     pub tracer: Option<TracingInspector>,
+    pub enable_isolation: bool,
+
+    /// Flag marking if we are in the inner EVM context.
+    pub in_inner_context: bool,
+    pub inner_context_data: Option<InnerContextData>,
 }
 
 impl InspectorStack {
@@ -273,6 +342,12 @@ impl InspectorStack {
         self.debugger = yes.then(Default::default);
     }
 
+    /// Set whether to enable call isolation.
+    #[inline]
+    pub fn enable_isolation(&mut self, yes: bool) {
+        self.enable_isolation = yes;
+    }
+
     /// Set whether to enable the log collector.
     #[inline]
     pub fn collect_logs(&mut self, yes: bool) {
@@ -295,7 +370,6 @@ impl InspectorStack {
                 record_stack_snapshots: StackSnapshotType::None,
                 record_state_diff: false,
                 exclude_precompile_calls: false,
-                record_call_return_data: true,
                 record_logs: true,
             })
         });
@@ -316,12 +390,6 @@ impl InspectorStack {
             traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
-            #[allow(clippy::useless_asref)] // https://github.com/rust-lang/rust-clippy/issues/12135
-            script_wallets: self
-                .cheatcodes
-                .as_ref()
-                .map(|cheatcodes| cheatcodes.script_wallets.clone())
-                .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
             chisel_state: self.chisel_state.and_then(|state| state.state),
         }
@@ -329,13 +397,12 @@ impl InspectorStack {
 
     fn do_call_end<DB: DatabaseExt>(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!(
+        ecx: &mut EvmContext<&mut DB>,
+        inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
+        let result = outcome.result.result;
+        call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
                 &mut self.debugger,
@@ -346,27 +413,171 @@ impl InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (new_status, new_gas, new_retdata) =
-                    inspector.call_end(data, call, remaining_gas, status, retdata.clone());
+                let new_outcome = inspector.call_end(ecx, inputs, outcome.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                if new_status != status ||
-                    (new_status == InstructionResult::Revert && new_retdata != retdata)
+                if new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output())
                 {
-                    return (new_status, new_gas, new_retdata);
+                    Some(new_outcome)
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            ecx
         );
 
-        (status, remaining_gas, retdata)
+        outcome
+    }
+
+    fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
+        &mut self,
+        ecx: &mut EvmContext<&mut DB>,
+        transact_to: TransactTo,
+        caller: Address,
+        input: Bytes,
+        gas_limit: u64,
+        value: U256,
+    ) -> (InterpreterResult, Option<Address>) {
+        let ecx = &mut ecx.inner;
+
+        ecx.db.commit(ecx.journaled_state.state.clone());
+
+        let nonce = ecx
+            .journaled_state
+            .load_account(caller, &mut ecx.db)
+            .expect("failed to load caller")
+            .0
+            .info
+            .nonce;
+
+        let cached_env = ecx.env.clone();
+
+        ecx.env.block.basefee = U256::ZERO;
+        ecx.env.tx.caller = caller;
+        ecx.env.tx.transact_to = transact_to.clone();
+        ecx.env.tx.data = input;
+        ecx.env.tx.value = value;
+        ecx.env.tx.nonce = Some(nonce);
+        // Add 21000 to the gas limit to account for the base cost of transaction.
+        ecx.env.tx.gas_limit = gas_limit + 21000;
+        // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
+        // exceed block gas limit.
+        if !ecx.env.cfg.disable_block_gas_limit {
+            ecx.env.tx.gas_limit =
+                std::cmp::min(ecx.env.tx.gas_limit, ecx.env.block.gas_limit.to());
+        }
+        ecx.env.tx.gas_price = U256::ZERO;
+
+        self.inner_context_data = Some(InnerContextData {
+            sender: ecx.env.tx.caller,
+            original_origin: cached_env.tx.caller,
+            original_sender_nonce: nonce,
+            is_create: matches!(transact_to, TransactTo::Create(_)),
+        });
+        self.in_inner_context = true;
+
+        let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
+        let res = {
+            let mut evm = crate::utils::new_evm_with_inspector(&mut *ecx.db, env, &mut *self);
+            let res = evm.transact();
+
+            // need to reset the env in case it was modified via cheatcodes during execution
+            ecx.env = evm.context.evm.inner.env;
+            res
+        };
+
+        self.in_inner_context = false;
+        self.inner_context_data = None;
+
+        ecx.env.tx = cached_env.tx;
+        ecx.env.block.basefee = cached_env.block.basefee;
+
+        let mut gas = Gas::new(gas_limit);
+
+        let Ok(mut res) = res else {
+            // Should we match, encode and propagate error as a revert reason?
+            let result =
+                InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
+            return (result, None)
+        };
+
+        // Commit changes after transaction
+        ecx.db.commit(res.state.clone());
+
+        // Update both states with new DB data after commit.
+        update_state(&mut ecx.journaled_state.state, &mut ecx.db);
+        update_state(&mut res.state, &mut ecx.db);
+
+        // Merge transaction journal into the active journal.
+        for (addr, acc) in res.state {
+            if let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) {
+                acc_mut.status |= acc.status;
+                for (key, val) in acc.storage {
+                    if !acc_mut.storage.contains_key(&key) {
+                        acc_mut.storage.insert(key, val);
+                    }
+                }
+            } else {
+                ecx.journaled_state.state.insert(addr, acc);
+            }
+        }
+
+        let (result, address, output) = match res.result {
+            ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
+                gas.set_refund(gas_refunded as i64);
+                gas.record_cost(gas_used);
+                let address = match output {
+                    Output::Create(_, address) => address,
+                    Output::Call(_) => None,
+                };
+                (reason.into(), address, output.into_data())
+            }
+            ExecutionResult::Halt { reason, gas_used } => {
+                gas.record_cost(gas_used);
+                (reason.into(), None, Bytes::new())
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                gas.record_cost(gas_used);
+                (InstructionResult::Revert, None, output)
+            }
+        };
+        (InterpreterResult { result, output, gas }, address)
+    }
+
+    /// Adjusts the EVM data for the inner EVM context.
+    /// Should be called on the top-level call of inner context (depth == 0 &&
+    /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
+    /// Updates tx.origin to the value before entering inner context
+    fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut EvmContext<&mut DB>,
+    ) {
+        let inner_context_data =
+            self.inner_context_data.as_ref().expect("should be called in inner context");
+        let sender_acc = ecx
+            .journaled_state
+            .state
+            .get_mut(&inner_context_data.sender)
+            .expect("failed to load sender");
+        if !inner_context_data.is_create {
+            sender_acc.info.nonce = inner_context_data.original_sender_nonce;
+        }
+        ecx.env.tx.caller = inner_context_data.original_origin;
     }
 }
 
-impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
-        call_inspectors!(
+// NOTE: `&mut DB` is required because we recurse inside of `transact_inner` and we need to use the
+// same reference to the DB, otherwise there's infinite recursion and Rust fails to instatiate this
+// implementation. This currently works because internally we only use `&mut DB` anyways, but if
+// this ever needs to be changed, this can be reverted back to using just `DB`, and instead using
+// dynamic dispatch (`&mut dyn ...`) in `transact_inner`.
+impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut DB>) {
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.coverage,
@@ -376,20 +587,16 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.initialize_interp(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
-                }
-            }
+                inspector.initialize_interp(interpreter, ecx);
+                None::<()>
+            },
+            self,
+            ecx
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
-        call_inspectors!(
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut DB>) {
+        call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
                 &mut self.debugger,
@@ -400,35 +607,16 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                inspector.step(interpreter, data);
-
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
-                }
-            }
+                inspector.step(interpreter, ecx);
+                None::<()>
+            },
+            self,
+            ecx
         );
     }
 
-    fn log(
-        &mut self,
-        evm_data: &mut EVMData<'_, DB>,
-        address: &Address,
-        topics: &[B256],
-        data: &Bytes,
-    ) {
-        call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| {
-                inspector.log(evm_data, address, topics, data);
-            }
-        );
-    }
-
-    fn step_end(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        let res = interpreter.instruction_result;
-        call_inspectors!(
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut DB>) {
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.tracer,
@@ -438,23 +626,37 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                inspector.step_end(interpreter, data);
+                inspector.step_end(interpreter, ecx);
+                None::<()>
+            },
+            self,
+            ecx
+        );
+    }
 
-                // Allow inspectors to exit early
-                if interpreter.instruction_result != res {
-                    #[allow(clippy::needless_return)]
-                    return;
-                }
-            }
+    fn log(&mut self, ecx: &mut EvmContext<&mut DB>, log: &Log) {
+        call_inspectors_adjust_depth!(
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                inspector.log(ecx, log);
+                None::<()>
+            },
+            self,
+            ecx
         );
     }
 
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!(
+    ) -> Option<CallOutcome> {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
+            return None;
+        }
+
+        call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
                 &mut self.debugger,
@@ -465,47 +667,73 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (status, gas, retdata) = inspector.call(data, call);
-
-                // Allow inspectors to exit early
-                #[allow(clippy::needless_return)]
-                if status != InstructionResult::Continue {
-                    return (status, gas, retdata);
+                let mut out = None;
+                if let Some(output) = inspector.call(ecx, call) {
+                    if output.result.result != InstructionResult::Continue {
+                        out = Some(Some(output));
+                    }
                 }
-            }
+                out
+            },
+            self,
+            ecx
         );
 
-        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+        if self.enable_isolation &&
+            call.context.scheme == CallScheme::Call &&
+            !self.in_inner_context &&
+            ecx.journaled_state.depth == 1
+        {
+            let (result, _) = self.transact_inner(
+                ecx,
+                TransactTo::Call(call.contract),
+                call.context.caller,
+                call.input.clone(),
+                call.gas_limit,
+                call.transfer.value,
+            );
+            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() })
+        }
+
+        None
     }
 
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
-        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
+        ecx: &mut EvmContext<&mut DB>,
+        inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            return outcome
+        }
 
-        if matches!(res.0, return_revert!()) {
+        let outcome = self.do_call_end(ecx, inputs, outcome);
+        if outcome.result.is_revert() {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
             // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
             // before revm reverts the state itself
             if let Some(cheats) = self.cheatcodes.as_mut() {
-                cheats.on_revert(data);
+                cheats.on_revert(ecx);
             }
         }
 
-        res
+        outcome
     }
 
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        call_inspectors!(
+        ecx: &mut EvmContext<&mut DB>,
+        create: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
+            return None;
+        }
+
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.tracer,
@@ -514,29 +742,41 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
-            |inspector| {
-                let (status, addr, gas, retdata) = inspector.create(data, call);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return (status, addr, gas, retdata);
-                }
-            }
+            |inspector| { inspector.create(ecx, create).map(Some) },
+            self,
+            ecx
         );
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+            let (result, address) = self.transact_inner(
+                ecx,
+                TransactTo::Create(create.scheme),
+                create.caller,
+                create.init_code.clone(),
+                create.gas_limit,
+                create.value,
+            );
+            return Some(CreateOutcome { result, address })
+        }
+
+        None
     }
 
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &CreateInputs,
-        status: InstructionResult,
-        address: Option<Address>,
-        remaining_gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        call_inspectors!(
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            return outcome
+        }
+
+        let result = outcome.result.result;
+
+        call_inspectors_adjust_depth!(
             [
                 &mut self.debugger,
                 &mut self.tracer,
@@ -546,22 +786,24 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
-                    data,
-                    call,
-                    status,
-                    address,
-                    remaining_gas,
-                    retdata.clone(),
-                );
+                let new_outcome = inspector.create_end(ecx, call, outcome.clone());
 
-                if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata);
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output())
+                {
+                    Some(new_outcome)
+                } else {
+                    None
                 }
-            }
+            },
+            self,
+            ecx
         );
 
-        (status, address, remaining_gas, retdata)
+        outcome
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {

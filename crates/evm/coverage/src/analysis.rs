@@ -1,6 +1,7 @@
 use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
+use rustc_hash::FxHashMap;
 use semver::Version;
 use std::collections::{HashMap, HashSet};
 
@@ -443,9 +444,9 @@ pub struct SourceAnalysis {
 #[derive(Clone, Debug, Default)]
 pub struct SourceAnalyzer {
     /// A map of source IDs to their source code
-    sources: HashMap<usize, String>,
+    sources: FxHashMap<usize, String>,
     /// A map of AST node IDs of contracts to their contract IDs.
-    contract_ids: HashMap<usize, ContractId>,
+    contract_ids: FxHashMap<usize, ContractId>,
     /// A map of contract IDs to their AST nodes.
     contracts: HashMap<ContractId, Node>,
     /// A collection of coverage items.
@@ -463,8 +464,8 @@ impl SourceAnalyzer {
     /// (defined by `version`).
     pub fn new(
         version: Version,
-        asts: HashMap<usize, Ast>,
-        sources: HashMap<usize, String>,
+        asts: FxHashMap<usize, Ast>,
+        sources: FxHashMap<usize, String>,
     ) -> eyre::Result<Self> {
         let mut analyzer = SourceAnalyzer { sources, ..Default::default() };
 
@@ -576,7 +577,7 @@ impl SourceAnalyzer {
     fn analyze_contracts(&mut self) -> eyre::Result<()> {
         for contract_id in self.contracts.keys() {
             // Find this contract's coverage items if we haven't already
-            if self.contract_items.get(contract_id).is_none() {
+            if !self.contract_items.contains_key(contract_id) {
                 let ContractVisitor { items, base_contract_node_ids, .. } = ContractVisitor::new(
                     contract_id.source_id,
                     self.sources.get(&contract_id.source_id).unwrap_or_else(|| {

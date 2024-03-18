@@ -4,6 +4,7 @@ use forge_doc::{
     ContractInheritance, Deployments, DocBuilder, GitSource, InferInlineHyperlinks, Inheritdoc,
 };
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
+use foundry_common::compile::ProjectCompiler;
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
@@ -16,13 +17,13 @@ pub struct DocArgs {
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
     /// The doc's output path.
     ///
     /// By default, it is the `docs/` in project root.
-    #[clap(
+    #[arg(
         long,
         short,
         value_hint = ValueHint::DirPath,
@@ -31,32 +32,32 @@ pub struct DocArgs {
     out: Option<PathBuf>,
 
     /// Build the `mdbook` from generated files.
-    #[clap(long, short)]
+    #[arg(long, short)]
     build: bool,
 
     /// Serve the documentation.
-    #[clap(long, short)]
+    #[arg(long, short)]
     serve: bool,
 
     /// Open the documentation in a browser after serving.
-    #[clap(long, requires = "serve")]
+    #[arg(long, requires = "serve")]
     open: bool,
 
     /// Hostname for serving documentation.
-    #[clap(long, requires = "serve")]
+    #[arg(long, requires = "serve")]
     hostname: Option<String>,
 
     /// Port for serving documentation.
-    #[clap(long, short, requires = "serve")]
+    #[arg(long, short, requires = "serve")]
     port: Option<usize>,
 
     /// The relative path to the `hardhat-deploy` or `forge-deploy` artifact directory. Leave blank
     /// for default.
-    #[clap(long)]
+    #[arg(long)]
     deployments: Option<Option<PathBuf>>,
 
     /// Whether to create docs for external libraries.
-    #[clap(long, short)]
+    #[arg(long, short)]
     include_libraries: bool,
 }
 
@@ -64,6 +65,9 @@ impl DocArgs {
     pub fn run(self) -> Result<()> {
         let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new().quiet(true);
+        let _output = compiler.compile(&project)?;
 
         let mut doc_config = config.doc.clone();
         if let Some(out) = self.out {

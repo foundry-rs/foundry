@@ -2,8 +2,11 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use alloy_signer::Signer;
+use alloy_signer::{LocalWallet, Signer};
 use foundry_config::Config;
+use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -72,6 +75,49 @@ pub struct Broadcast {
     pub single_call: bool,
 }
 
+/// Contains context for wallet management.
+#[derive(Debug)]
+pub struct ScriptWalletsInner {
+    /// All signers in scope of the script.
+    pub multi_wallet: MultiWallet,
+    /// Optional signer provided as `--sender` flag.
+    pub provided_sender: Option<Address>,
+}
+
+/// Clonable wrapper around [ScriptWalletsInner].
+#[derive(Debug, Clone)]
+pub struct ScriptWallets {
+    /// Inner data.
+    pub inner: Arc<Mutex<ScriptWalletsInner>>,
+}
+
+impl ScriptWallets {
+    #[allow(missing_docs)]
+    pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
+        Self { inner: Arc::new(Mutex::new(ScriptWalletsInner { multi_wallet, provided_sender })) }
+    }
+
+    /// Consumes [ScriptWallets] and returns [MultiWallet].
+    ///
+    /// Panics if [ScriptWallets] is still in use.
+    pub fn into_multi_wallet(self) -> MultiWallet {
+        Arc::into_inner(self.inner)
+            .map(|m| m.into_inner().multi_wallet)
+            .unwrap_or_else(|| panic!("not all instances were dropped"))
+    }
+
+    /// Locks inner Mutex and adds a signer to the [MultiWallet].
+    pub fn add_signer(&self, private_key: impl AsRef<[u8]>) -> Result {
+        self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
+        Ok(Default::default())
+    }
+
+    /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
+    pub fn signers(&self) -> Result<Vec<Address>> {
+        Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
+    }
+}
+
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
@@ -86,11 +132,28 @@ fn broadcast<DB: DatabaseExt>(
 
     correct_sender_nonce(ccx)?;
 
+    let mut new_origin = new_origin.cloned();
+
+    if new_origin.is_none() {
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            let mut script_wallets = script_wallets.inner.lock();
+            if let Some(provided_sender) = script_wallets.provided_sender {
+                new_origin = Some(provided_sender);
+            } else {
+                let signers = script_wallets.multi_wallet.signers()?;
+                if signers.len() == 1 {
+                    let address = signers.keys().next().unwrap();
+                    new_origin = Some(*address);
+                }
+            }
+        }
+    }
+
     let broadcast = Broadcast {
-        new_origin: *new_origin.unwrap_or(&ccx.data.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
         original_caller: ccx.caller,
-        original_origin: ccx.data.env.tx.caller,
-        depth: ccx.data.journaled_state.depth(),
+        original_origin: ccx.ecx.env.tx.caller,
+        depth: ccx.ecx.journaled_state.depth(),
         single_call,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
@@ -106,13 +169,15 @@ fn broadcast_key<DB: DatabaseExt>(
     private_key: &U256,
     single_call: bool,
 ) -> Result {
-    let mut wallet = super::utils::parse_wallet(private_key)?;
-    wallet.set_chain_id(Some(ccx.data.env.cfg.chain_id));
-    let new_origin = &wallet.address();
+    let key = super::utils::parse_private_key(private_key)?;
+    let new_origin = LocalWallet::from(key.clone()).address();
 
-    let result = broadcast(ccx, Some(new_origin), single_call);
+    let result = broadcast(ccx, Some(&new_origin), single_call);
+
     if result.is_ok() {
-        ccx.state.script_wallets.push(wallet);
+        if let Some(script_wallets) = &ccx.state.script_wallets {
+            script_wallets.add_signer(key.to_bytes())?;
+        }
     }
     result
 }
@@ -121,9 +186,9 @@ fn broadcast_key<DB: DatabaseExt>(
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
-    let sender = ccx.data.env.tx.caller;
+    let sender = ccx.ecx.env.tx.caller;
     if !ccx.state.corrected_nonce && sender != Config::DEFAULT_SENDER {
-        let account = super::evm::journaled_account(ccx.data, sender)?;
+        let account = super::evm::journaled_account(ccx.ecx, sender)?;
         let prev = account.info.nonce;
         account.info.nonce = prev.saturating_sub(1);
         debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");

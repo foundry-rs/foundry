@@ -22,17 +22,17 @@ pub struct LogsArgs {
     /// The block height to start query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long)]
+    #[arg(long)]
     from_block: Option<BlockId>,
 
     /// The block height to stop query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[clap(long)]
+    #[arg(long)]
     to_block: Option<BlockId>,
 
     /// The contract address to filter on.
-    #[clap(
+    #[arg(
         long,
         value_parser = NameOrAddress::from_str
     )]
@@ -40,24 +40,24 @@ pub struct LogsArgs {
 
     /// The signature of the event to filter logs by which will be converted to the first topic or
     /// a topic to filter on.
-    #[clap(value_name = "SIG_OR_TOPIC")]
+    #[arg(value_name = "SIG_OR_TOPIC")]
     sig_or_topic: Option<String>,
 
     /// If used with a signature, the indexed fields of the event to filter by. Otherwise, the
     /// remaining topics of the filter.
-    #[clap(value_name = "TOPICS_OR_ARGS")]
+    #[arg(value_name = "TOPICS_OR_ARGS")]
     topics_or_args: Vec<String>,
 
     /// If the RPC type and endpoints supports `eth_subscribe` stream logs instead of printing and
     /// exiting. Will continue until interrupted or TO_BLOCK is reached.
-    #[clap(long)]
+    #[arg(long)]
     subscribe: bool,
 
     /// Print the logs as JSON.s
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 }
 
@@ -286,8 +286,7 @@ pub fn sanitize_token(token: Token) -> Token {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::{H160, H256};
-    use std::str::FromStr;
+    use ethers_core::types::H160;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";

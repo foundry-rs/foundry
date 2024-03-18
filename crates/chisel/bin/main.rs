@@ -41,7 +41,7 @@ const VERSION_MESSAGE: &str = concat!(
 
 /// Fast, utilitarian, and verbose Solidity REPL.
 #[derive(Debug, Parser)]
-#[clap(name = "chisel", version = VERSION_MESSAGE)]
+#[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
     #[command(subcommand)]
     pub cmd: Option<ChiselSubcommand>,
@@ -50,21 +50,21 @@ pub struct Chisel {
     ///
     /// These files will be evaluated before the top-level of the
     /// REPL, therefore functioning as a prelude
-    #[clap(long, help_heading = "REPL options")]
+    #[arg(long, help_heading = "REPL options")]
     pub prelude: Option<PathBuf>,
 
     /// Disable the default `Vm` import.
-    #[clap(long, help_heading = "REPL options", long_help = format!(
+    #[arg(long, help_heading = "REPL options", long_help = format!(
         "Disable the default `Vm` import.\n\n\
          The import is disabled by default if the Solc version is less than {}.",
         chisel::session_source::MIN_VM_VERSION
     ))]
     pub no_vm: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub evm_opts: EvmArgs,
 }
 

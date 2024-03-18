@@ -1,69 +1,67 @@
-use self::{build::BuildOutput, runner::ScriptRunner};
-use super::{build::BuildArgs, retry::RetryArgs};
-use alloy_dyn_abi::FunctionExt;
-use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, U256, U64};
-use alloy_rpc_types::request::TransactionRequest;
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
+#[macro_use]
+extern crate tracing;
+
+use self::transaction::AdditionalContract;
+use crate::runner::ScriptRunner;
+use alloy_json_abi::{Function, JsonAbi};
+use alloy_primitives::{Address, Bytes, Log, U256};
+use broadcast::next_nonce;
+use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers_providers::{Http, Middleware};
-use ethers_signers::LocalWallet;
+use ethers_signers::Signer;
 use eyre::{ContextCompat, Result, WrapErr};
-use forge::{
-    backend::Backend,
-    debug::DebugArena,
-    decode::decode_console_logs,
-    opts::EvmOpts,
-    traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
-    },
-};
+use forge_verify::RetryArgs;
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    contracts::get_contract_name,
+    compile::SkipBuildFilter,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    fmt::{format_token, format_token_raw},
     provider::ethers::RpcUrl,
-    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell,
+    types::ToAlloy,
+    CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
-use foundry_compilers::{
-    artifacts::{ContractBytecodeSome, Libraries},
-    contracts::ArtifactContracts,
-    ArtifactId,
-};
+use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
 use foundry_config::{
     figment,
     figment::{
         value::{Dict, Map},
         Metadata, Profile, Provider,
     },
-    Config, NamedChain,
+    Config,
 };
 use foundry_evm::{
+    backend::Backend,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    decode::RevertDecoder,
-    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    debug::DebugArena,
+    executors::ExecutorBuilder,
+    inspectors::{
+        cheatcodes::{BroadcastableTransactions, ScriptWallets},
+        CheatsConfig,
+    },
+    opts::EvmOpts,
+    traces::Traces,
 };
-use foundry_wallets::MultiWallet;
-use futures::future;
-use itertools::Itertools;
+use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use yansi::Paint;
 
 mod artifacts;
 mod broadcast;
 mod build;
-mod cmd;
-mod executor;
-mod multi;
+mod execute;
+mod multi_sequence;
 mod providers;
 mod receipts;
 mod runner;
 mod sequence;
-pub mod transaction;
+mod simulate;
+mod transaction;
 mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -76,22 +74,22 @@ pub struct ScriptArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath)]
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: String,
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
+    #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()")]
+    #[arg(long, short, default_value = "run()")]
     pub sig: String,
 
     /// Max priority fee per gas for EIP1559 transactions.
-    #[clap(
+    #[arg(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
         value_parser = foundry_cli::utils::parse_ether_value,
@@ -102,23 +100,23 @@ pub struct ScriptArgs {
     /// Use legacy transactions instead of EIP1559 ones.
     ///
     /// This is auto-enabled for common networks without EIP1559.
-    #[clap(long)]
+    #[arg(long)]
     pub legacy: bool,
 
     /// Broadcasts the transactions.
-    #[clap(long)]
+    #[arg(long)]
     pub broadcast: bool,
 
     /// Skips on-chain simulation.
-    #[clap(long)]
+    #[arg(long)]
     pub skip_simulation: bool,
 
     /// Relative percentage to multiply gas estimates by.
-    #[clap(long, short, default_value = "130")]
+    #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
-    #[clap(
+    #[arg(
         long,
         requires = "sender",
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
@@ -131,44 +129,44 @@ pub struct ScriptArgs {
     ///
     /// Example: If transaction N has a nonce of 22, then the account should have a nonce of 22,
     /// otherwise it fails.
-    #[clap(long)]
+    #[arg(long)]
     pub resume: bool,
 
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
-    #[clap(long)]
+    #[arg(long)]
     pub multi: bool,
 
     /// Open the script in the debugger.
     ///
     /// Takes precedence over broadcast.
-    #[clap(long)]
+    #[arg(long)]
     pub debug: bool,
 
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
-    #[clap(long)]
+    #[arg(long)]
     pub slow: bool,
 
     /// Disables interactive prompts that might appear when deploying big contracts.
     ///
     /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
-    #[clap(long)]
+    #[arg(long)]
     pub non_interactive: bool,
 
     /// The Etherscan (or equivalent) API key
-    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
-    #[clap(long)]
+    #[arg(long)]
     pub verify: bool,
 
     /// Output results in JSON format.
-    #[clap(long)]
+    #[arg(long)]
     pub json: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[clap(
+    #[arg(
         long,
         env = "ETH_GAS_PRICE",
         value_parser = foundry_cli::utils::parse_ether_value,
@@ -176,258 +174,133 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    #[clap(flatten)]
-    pub opts: BuildArgs,
+    /// Skip building files whose names contain the given filter.
+    ///
+    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
+    #[arg(long, num_args(1..))]
+    pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten)]
-    pub wallets: MultiWallet,
+    #[command(flatten)]
+    pub opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
+    pub wallets: MultiWalletOpts,
+
+    #[command(flatten)]
     pub evm_opts: EvmArgs,
 
-    #[clap(flatten)]
-    pub verifier: super::verify::VerifierArgs,
+    #[command(flatten)]
+    pub verifier: forge_verify::VerifierArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub retry: RetryArgs,
 }
 
 // === impl ScriptArgs ===
 
 impl ScriptArgs {
-    fn decode_traces(
-        &self,
-        script_config: &ScriptConfig,
-        result: &mut ScriptResult,
-        known_contracts: &ContractsByArtifact,
-    ) -> Result<CallTraceDecoder> {
-        let verbosity = script_config.evm_opts.verbosity;
-        let mut etherscan_identifier = EtherscanIdentifier::new(
-            &script_config.config,
-            script_config.evm_opts.get_remote_chain_id(),
-        )?;
+    async fn preprocess(self) -> Result<PreprocessedState> {
+        let script_wallets =
+            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
-        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
-        let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.clone())
-            .with_verbosity(verbosity)
-            .with_local_identifier_abis(&local_identifier)
-            .with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                script_config.config.offline,
-            )?)
-            .build();
+        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecessarily.
-        // Therefore, we only try and use etherscan if the user has provided an API key.
-        let should_use_etherscan_traces = script_config.config.etherscan_api_key.is_some();
-
-        for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &mut local_identifier);
-            if should_use_etherscan_traces {
-                decoder.identify(trace, &mut etherscan_identifier);
-            }
+        if let Some(sender) = self.maybe_load_private_key()? {
+            evm_opts.sender = sender;
         }
-        Ok(decoder)
+
+        let script_config = ScriptConfig::new(config, evm_opts).await?;
+
+        Ok(PreprocessedState { args: self, script_config, script_wallets })
     }
 
-    fn get_returns(
-        &self,
-        script_config: &ScriptConfig,
-        returned: &Bytes,
-    ) -> Result<HashMap<String, NestedValue>> {
-        let func = script_config.called_function.as_ref().expect("There should be a function.");
-        let mut returns = HashMap::new();
+    /// Executes the script
+    pub async fn run_script(self) -> Result<()> {
+        trace!(target: "script", "executing script command");
 
-        match func.abi_decode_output(returned, false) {
-            Ok(decoded) => {
-                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type =
-                        output.internal_type.clone().unwrap_or(InternalType::Other {
-                            contract: None,
-                            ty: "unknown".to_string(),
-                        });
+        let compiled = self.preprocess().await?.compile()?;
 
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
-                        index.to_string()
-                    };
+        // Move from `CompiledState` to `BundledState` either by resuming or executing and
+        // simulating script.
+        let bundled = if compiled.args.resume || (compiled.args.verify && !compiled.args.broadcast)
+        {
+            compiled.resume().await?
+        } else {
+            // Drive state machine to point at which we have everything needed for simulation.
+            let pre_simulation = compiled
+                .link()?
+                .prepare_execution()
+                .await?
+                .execute()
+                .await?
+                .prepare_simulation()
+                .await?;
 
-                    returns.insert(
-                        label,
-                        NestedValue {
-                            internal_type: internal_type.to_string(),
-                            value: format_token_raw(token),
-                        },
-                    );
-                }
-            }
-            Err(_) => {
-                shell::println(format!("{returned:?}"))?;
-            }
-        }
-
-        Ok(returns)
-    }
-
-    async fn show_traces(
-        &self,
-        script_config: &ScriptConfig,
-        decoder: &CallTraceDecoder,
-        result: &mut ScriptResult,
-    ) -> Result<()> {
-        let verbosity = script_config.evm_opts.verbosity;
-        let func = script_config.called_function.as_ref().expect("There should be a function.");
-
-        if !result.success || verbosity > 3 {
-            if result.traces.is_empty() {
-                warn!(verbosity, "no traces");
+            if pre_simulation.args.debug {
+                pre_simulation.run_debugger()?;
             }
 
-            shell::println("Traces:")?;
-            for (kind, trace) in &result.traces {
-                let should_include = match kind {
-                    TraceKind::Setup => verbosity >= 5,
-                    TraceKind::Execution => verbosity > 3,
-                    _ => false,
-                } || !result.success;
-
-                if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
-                }
+            if pre_simulation.args.json {
+                pre_simulation.show_json()?;
+            } else {
+                pre_simulation.show_traces().await?;
             }
-            shell::println(String::new())?;
-        }
 
-        if result.success {
-            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
-        }
-
-        if script_config.evm_opts.fork_url.is_none() {
-            shell::println(format!("Gas used: {}", result.gas_used))?;
-        }
-
-        if result.success && !result.returned.is_empty() {
-            shell::println("\n== Return ==")?;
-            match func.abi_decode_output(&result.returned, false) {
-                Ok(decoded) => {
-                    for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                        let internal_type =
-                            output.internal_type.clone().unwrap_or(InternalType::Other {
-                                contract: None,
-                                ty: "unknown".to_string(),
-                            });
-
-                        let label = if !output.name.is_empty() {
-                            output.name.to_string()
-                        } else {
-                            index.to_string()
-                        };
-                        shell::println(format!(
-                            "{}: {internal_type} {}",
-                            label.trim_end(),
-                            format_token(token)
-                        ))?;
-                    }
-                }
-                Err(_) => {
-                    shell::println(format!("{:x?}", (&result.returned)))?;
-                }
+            // Ensure that we have transactions to simulate/broadcast, otherwise exit early to avoid
+            // hard error.
+            if pre_simulation
+                .execution_result
+                .transactions
+                .as_ref()
+                .map_or(true, |txs| txs.is_empty())
+            {
+                return Ok(());
             }
-        }
 
-        let console_logs = decode_console_logs(&result.logs);
-        if !console_logs.is_empty() {
-            shell::println("\n== Logs ==")?;
-            for log in console_logs {
-                shell::println(format!("  {log}"))?;
+            // Check if there are any missing RPCs and exit early to avoid hard error.
+            if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
+                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                return Ok(());
             }
+
+            pre_simulation.args.check_contract_sizes(
+                &pre_simulation.execution_result,
+                &pre_simulation.build_data.highlevel_known_contracts,
+            )?;
+
+            pre_simulation.fill_metadata().await?.bundle().await?
+        };
+
+        // Exit early in case user didn't provide any broadcast/verify related flags.
+        if !bundled.args.broadcast && !bundled.args.resume && !bundled.args.verify {
+            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            return Ok(());
         }
 
-        if !result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
-            ));
+        // Exit early if something is wrong with verification options.
+        if bundled.args.verify {
+            bundled.verify_preflight_check()?;
+        }
+
+        // Wait for pending txes and broadcast others.
+        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+
+        if broadcasted.args.verify {
+            broadcasted.verify().await?;
         }
 
         Ok(())
     }
 
-    fn show_json(&self, script_config: &ScriptConfig, result: &ScriptResult) -> Result<()> {
-        let returns = self.get_returns(script_config, &result.returned)?;
-
-        let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
-        let j = serde_json::to_string(&output)?;
-        shell::println(j)?;
-
-        if !result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// It finds the deployer from the running script and uses it to predeploy libraries.
-    ///
-    /// If there are multiple candidate addresses, it skips everything and lets `--sender` deploy
-    /// them instead.
-    fn maybe_new_sender(
-        &self,
-        evm_opts: &EvmOpts,
-        transactions: Option<&BroadcastableTransactions>,
-        predeploy_libraries: &[Bytes],
-    ) -> Result<Option<Address>> {
-        let mut new_sender = None;
-
-        if let Some(txs) = transactions {
-            // If the user passed a `--sender` don't check anything.
-            if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
-                for tx in txs.iter() {
-                    if tx.transaction.to.is_none() {
-                        let sender = tx.transaction.from.expect("no sender");
-                        if let Some(ns) = new_sender {
-                            if sender != ns {
-                                shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
-                                return Ok(None);
-                            }
-                        } else if sender != evm_opts.sender {
-                            new_sender = Some(sender);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(new_sender)
-    }
-
-    /// Helper for building the transactions for any libraries that need to be deployed ahead of
-    /// linking
-    fn create_deploy_transactions(
-        &self,
-        from: Address,
-        nonce: u64,
-        data: &[Bytes],
-        fork_url: &Option<RpcUrl>,
-    ) -> BroadcastableTransactions {
-        data.iter()
-            .enumerate()
-            .map(|(i, bytes)| BroadcastableTransaction {
-                rpc: fork_url.clone(),
-                transaction: TransactionRequest {
-                    from: Some(from),
-                    input: Some(bytes.clone()).into(),
-                    nonce: Some(U64::from(nonce + i as u64)),
-                    ..Default::default()
-                },
-            })
-            .collect()
+    /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
+    /// `--sender`
+    fn maybe_load_private_key(&self) -> Result<Option<Address>> {
+        let maybe_sender = self
+            .wallets
+            .private_keys()?
+            .filter(|pks| pks.len() == 1)
+            .map(|pks| pks.first().unwrap().address().to_alloy());
+        Ok(maybe_sender)
     }
 
     /// Returns the Function and calldata based on the signature
@@ -596,8 +469,27 @@ pub struct ScriptResult {
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
-    pub script_wallets: Vec<LocalWallet>,
     pub breakpoints: Breakpoints,
+}
+
+impl ScriptResult {
+    pub fn get_created_contracts(&self) -> Vec<AdditionalContract> {
+        self.traces
+            .iter()
+            .flat_map(|(_, traces)| {
+                traces.nodes().iter().filter_map(|node| {
+                    if node.trace.kind.is_any_create() {
+                        return Some(AdditionalContract {
+                            opcode: node.trace.kind,
+                            address: node.trace.address,
+                            init_code: node.trace.data.clone(),
+                        });
+                    }
+                    None
+                })
+            })
+            .collect()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -613,98 +505,107 @@ pub struct NestedValue {
     pub value: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
-    /// Script target contract
-    pub target_contract: Option<ArtifactId>,
-    /// Function called by the script
-    pub called_function: Option<Function>,
-    /// Unique list of rpc urls present
-    pub total_rpcs: HashSet<RpcUrl>,
-    /// If true, one of the transactions did not have a rpc
-    pub missing_rpc: bool,
-    /// Should return some debug information
-    pub debug: bool,
 }
 
 impl ScriptConfig {
-    fn collect_rpcs(&mut self, txs: &BroadcastableTransactions) {
-        self.missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-
-        self.total_rpcs
-            .extend(txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>());
-
-        if let Some(rpc) = &self.evm_opts.fork_url {
-            self.total_rpcs.insert(rpc.clone());
-        }
+    pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
+        let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
+            next_nonce(evm_opts.sender, fork_url, None).await?
+        } else {
+            // dapptools compatibility
+            1
+        };
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::new() })
     }
 
-    fn has_multiple_rpcs(&self) -> bool {
-        self.total_rpcs.len() > 1
+    pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
+        self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+            next_nonce(sender, fork_url, None).await?
+        } else {
+            // dapptools compatibility
+            1
+        };
+        self.evm_opts.sender = sender;
+        Ok(())
     }
 
-    /// Certain features are disabled for multi chain deployments, and if tried, will return
-    /// error. [library support]
-    fn check_multi_chain_constraints(&self, libraries: &Libraries) -> Result<()> {
-        if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
-            shell::eprintln(format!(
-                "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
-            ))?;
-            if !libraries.libs.is_empty() {
-                eyre::bail!(
-                    "Multi chain deployment does not support library linking at the moment."
-                )
+    async fn get_runner(&mut self) -> Result<ScriptRunner> {
+        self._get_runner(None, false).await
+    }
+
+    async fn get_runner_with_cheatcodes(
+        &mut self,
+        script_wallets: ScriptWallets,
+        debug: bool,
+    ) -> Result<ScriptRunner> {
+        self._get_runner(Some(script_wallets), debug).await
+    }
+
+    async fn _get_runner(
+        &mut self,
+        script_wallets: Option<ScriptWallets>,
+        debug: bool,
+    ) -> Result<ScriptRunner> {
+        trace!("preparing script runner");
+        let env = self.evm_opts.evm_env().await?;
+
+        let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+            match self.backends.get(fork_url) {
+                Some(db) => db.clone(),
+                None => {
+                    let fork = self.evm_opts.get_fork(&self.config, env.clone());
+                    let backend = Backend::spawn(fork);
+                    self.backends.insert(fork_url.clone(), backend.clone());
+                    backend
+                }
             }
+        } else {
+            // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
+            // no need to cache it, since there won't be any onchain simulation that we'd need
+            // to cache the backend for.
+            Backend::spawn(None)
+        };
+
+        // We need to enable tracing to decode contract names: local or external.
+        let mut builder = ExecutorBuilder::new()
+            .inspectors(|stack| stack.trace(true))
+            .spec(self.config.evm_spec_id())
+            .gas_limit(self.evm_opts.gas_limit());
+
+        if let Some(script_wallets) = script_wallets {
+            builder = builder.inspectors(|stack| {
+                stack
+                    .debug(debug)
+                    .cheatcodes(
+                        CheatsConfig::new(
+                            &self.config,
+                            self.evm_opts.clone(),
+                            Some(script_wallets),
+                        )
+                        .into(),
+                    )
+                    .enable_isolation(self.evm_opts.isolate)
+            });
         }
-        Ok(())
-    }
 
-    /// Returns the script target contract
-    fn target_contract(&self) -> &ArtifactId {
-        self.target_contract.as_ref().expect("should exist after building")
-    }
-
-    /// Checks if the RPCs used point to chains that support EIP-3855.
-    /// If not, warns the user.
-    async fn check_shanghai_support(&self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = ethers_providers::Provider::<Http>::try_from(rpc).ok()?;
-            let id = provider.get_chainid().await.ok()?;
-            let id_u64: u64 = id.try_into().ok()?;
-            NamedChain::try_from(id_u64).ok()
-        });
-
-        let chains = future::join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
-        if iter.clone().any(|(s, _)| !s) {
-            let msg = format!(
-                "\
-EIP-3855 is not supported in one or more of the RPCs used.
-Unsupported Chain IDs: {}.
-Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
-For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
-                iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
-                    .format(", ")
-            );
-            shell::println(Paint::yellow(msg))?;
-        }
-        Ok(())
+        Ok(ScriptRunner::new(
+            builder.build(env, db),
+            self.evm_opts.initial_balance,
+            self.evm_opts.sender,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::utils::LoadConfig;
     use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use std::fs;
     use tempfile::tempdir;

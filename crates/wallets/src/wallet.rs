@@ -1,31 +1,10 @@
-use crate::{
-    error::{PrivateKeyError, WalletSignerError},
-    raw_wallet::RawWallet,
-};
+use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
-use async_trait::async_trait;
 use clap::Parser;
-use ethers_core::types::{
-    transaction::{eip2718::TypedTransaction, eip712::Eip712},
-    Signature,
-};
-use ethers_signers::{
-    coins_bip39::English, AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder,
-    Signer, Trezor, TrezorHDPath, WalletError,
-};
-use eyre::{bail, Result, WrapErr};
-use foundry_common::{fs, types::ToAlloy};
-use foundry_config::Config;
-use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-use rusoto_kms::KmsClient;
-use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use ethers_signers::Signer;
+use eyre::Result;
+use foundry_common::types::ToAlloy;
+use serde::Serialize;
 
 /// The wallet options can either be:
 /// 1. Raw (via private key / mnemonic file, see `RawWallet`)
@@ -34,10 +13,10 @@ use std::{
 /// 4. Keystore (via file path)
 /// 5. AWS KMS
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
-pub struct Wallet {
+#[command(next_help_heading = "Wallet options", about = None, long_about = None)]
+pub struct WalletOpts {
     /// The sender account.
-    #[clap(
+    #[arg(
         long,
         short,
         value_name = "ADDRESS",
@@ -46,11 +25,11 @@ pub struct Wallet {
     )]
     pub from: Option<Address>,
 
-    #[clap(flatten)]
-    pub raw: RawWallet,
+    #[command(flatten)]
+    pub raw: RawWalletOpts,
 
     /// Use the keystore in the given folder or file.
-    #[clap(
+    #[arg(
         long = "keystore",
         help_heading = "Wallet options - keystore",
         value_name = "PATH",
@@ -59,7 +38,7 @@ pub struct Wallet {
     pub keystore_path: Option<String>,
 
     /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
-    #[clap(
+    #[arg(
         long = "account",
         help_heading = "Wallet options - keystore",
         value_name = "ACCOUNT_NAME",
@@ -71,7 +50,7 @@ pub struct Wallet {
     /// The keystore password.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password",
         help_heading = "Wallet options - keystore",
         requires = "keystore_path",
@@ -82,7 +61,7 @@ pub struct Wallet {
     /// The keystore password file path.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password-file",
         help_heading = "Wallet options - keystore",
         requires = "keystore_path",
@@ -92,130 +71,52 @@ pub struct Wallet {
     pub keystore_password_file: Option<String>,
 
     /// Use a Ledger hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
     /// Use a Trezor hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - AWS KMS")]
+    #[arg(long, help_heading = "Wallet options - AWS KMS")]
     pub aws: bool,
 }
 
-impl Wallet {
-    pub fn interactive(&self) -> Result<Option<LocalWallet>> {
-        Ok(if self.raw.interactive { Some(self.get_from_interactive()?) } else { None })
-    }
-
-    pub fn private_key(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref private_key) = self.raw.private_key {
-            Some(self.get_from_private_key(private_key)?)
-        } else {
-            None
-        })
-    }
-
-    pub fn keystore(&self) -> Result<Option<LocalWallet>> {
-        let default_keystore_dir = Config::foundry_keystores_dir()
-            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
-        // If keystore path is provided, use it, otherwise use default path + keystore account name
-        let keystore_path: Option<String> = self.keystore_path.clone().or_else(|| {
-            self.keystore_account_name.as_ref().map(|keystore_name| {
-                default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()
-            })
-        });
-
-        self.get_from_keystore(
-            keystore_path.as_ref(),
-            self.keystore_password.as_ref(),
-            self.keystore_password_file.as_ref(),
-        )
-    }
-
-    pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref mnemonic) = self.raw.mnemonic {
-            Some(self.get_from_mnemonic(
-                mnemonic,
-                self.raw.mnemonic_passphrase.as_ref(),
-                self.raw.hd_path.as_ref(),
-                self.raw.mnemonic_index,
-            )?)
-        } else {
-            None
-        })
-    }
-
-    /// Returns the sender address of the signer or `from`.
-    pub async fn sender(&self) -> Address {
-        if let Ok(signer) = self.signer(0).await {
-            signer.address().to_alloy()
-        } else {
-            self.from.unwrap_or(Address::ZERO)
-        }
-    }
-
-    /// Tries to resolve a local wallet from the provided options.
-    #[track_caller]
-    pub fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
-        self.private_key()
-            .transpose()
-            .or_else(|| self.interactive().transpose())
-            .or_else(|| self.mnemonic().transpose())
-            .or_else(|| self.keystore().transpose())
-            .transpose()
-    }
-    /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
-    #[instrument(skip(self), level = "trace")]
-    pub async fn signer(&self, chain_id: u64) -> Result<WalletSigner> {
+impl WalletOpts {
+    pub async fn signer(&self) -> Result<WalletSigner> {
         trace!("start finding signer");
 
-        if self.ledger {
-            let derivation = match self.raw.hd_path.as_ref() {
-                Some(hd_path) => LedgerHDPath::Other(hd_path.clone()),
-                None => LedgerHDPath::LedgerLive(self.raw.mnemonic_index as usize),
-            };
-            let ledger = Ledger::new(derivation, chain_id).await.wrap_err_with(|| {
-                "\
-Could not connect to Ledger device.
-Make sure it's connected and unlocked, with no other desktop wallet apps open."
-            })?;
-
-            Ok(WalletSigner::Ledger(ledger))
+        let signer = if self.ledger {
+            utils::create_ledger_signer(self.raw.hd_path.as_deref(), self.raw.mnemonic_index)
+                .await?
         } else if self.trezor {
-            let derivation = match self.raw.hd_path.as_ref() {
-                Some(hd_path) => TrezorHDPath::Other(hd_path.clone()),
-                None => TrezorHDPath::TrezorLive(self.raw.mnemonic_index as usize),
-            };
-
-            // cached to ~/.ethers-rs/trezor/cache/trezor.session
-            let trezor = Trezor::new(derivation, chain_id, None).await.wrap_err_with(|| {
-                "\
-Could not connect to Trezor device.
-Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."
-            })?;
-
-            Ok(WalletSigner::Trezor(trezor))
+            utils::create_trezor_signer(self.raw.hd_path.as_deref(), self.raw.mnemonic_index)
+                .await?
         } else if self.aws {
-            let client =
-                AwsClient::new_with(AwsChainProvider::default(), AwsHttpClient::new().unwrap());
-
-            let kms = KmsClient::new_with_client(client, AwsRegion::default());
-
             let key_id = std::env::var("AWS_KMS_KEY_ID")?;
-
-            let aws_signer = AwsSigner::new(kms, key_id, chain_id).await?;
-
-            Ok(WalletSigner::Aws(aws_signer))
+            WalletSigner::from_aws(&key_id).await?
+        } else if let Some(raw_wallet) = self.raw.signer()? {
+            raw_wallet
+        } else if let Some(path) = utils::maybe_get_keystore_path(
+            self.keystore_path.as_deref(),
+            self.keystore_account_name.as_deref(),
+        )? {
+            let (maybe_signer, maybe_pending) = utils::create_keystore_signer(
+                &path,
+                self.keystore_password.as_deref(),
+                self.keystore_password_file.as_deref(),
+            )?;
+            if let Some(pending) = maybe_pending {
+                pending.unlock()?
+            } else if let Some(signer) = maybe_signer {
+                signer
+            } else {
+                unreachable!()
+            }
         } else {
-            trace!("finding local key");
-
-            let maybe_local = self.try_resolve_local_wallet()?;
-
-            let local = maybe_local.ok_or_else(|| {
-                eyre::eyre!(
-                    "\
+            eyre::bail!(
+                "\
 Error accessing local wallet. Did you set a private key, mnemonic or keystore?
 Run `cast send --help` or `forge create --help` and use the corresponding CLI
 flag to set your key via:
@@ -223,305 +124,67 @@ flag to set your key via:
 Alternatively, if you're using a local node with unlocked accounts,
 use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
 of the unlocked account you want to use, or provide the --from flag with the address directly."
-                )
-            })?;
+            )
+        };
 
-            Ok(WalletSigner::Local(local.with_chain_id(chain_id)))
+        Ok(signer)
+    }
+
+    /// This function prefers the `from` field and may return a different address from the
+    /// configured signer
+    /// If from is specified, returns it
+    /// If from is not specified, but there is a signer configured, returns the signer's address
+    /// If from is not specified and there is no signer configured, returns zero address
+    pub async fn sender(&self) -> Address {
+        if let Some(from) = self.from {
+            from
+        } else if let Ok(signer) = self.signer().await {
+            signer.address().to_alloy()
+        } else {
+            Address::ZERO
         }
     }
 }
 
-pub trait WalletTrait {
-    /// Returns the configured sender.
-    fn sender(&self) -> Option<Address>;
-
-    fn get_from_interactive(&self) -> Result<LocalWallet> {
-        let private_key = rpassword::prompt_password("Enter private key: ")?;
-        let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
-        Ok(LocalWallet::from_str(private_key)?)
-    }
-
-    #[track_caller]
-    fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
-        let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
-        match LocalWallet::from_str(privk) {
-            Ok(pk) => Ok(pk),
-            Err(err) => {
-                // helper closure to check if pk was meant to be an env var, this usually happens if
-                // `$` is missing
-                let ensure_not_env = |pk: &str| {
-                    // check if pk was meant to be an env var
-                    if !pk.starts_with("0x") && std::env::var(pk).is_ok() {
-                        // SAFETY: at this point we know the user actually wanted to use an env var
-                        // and most likely forgot the `$` anchor, so the
-                        // `private_key` here is an unresolved env var
-                        return Err(PrivateKeyError::ExistsAsEnvVar(pk.to_string()))
-                    }
-                    Ok(())
-                };
-                match err {
-                    WalletError::HexError(err) => {
-                        ensure_not_env(private_key)?;
-                        return Err(PrivateKeyError::InvalidHex(err).into())
-                    }
-                    WalletError::EcdsaError(_) => {
-                        ensure_not_env(private_key)?;
-                    }
-                    _ => {}
-                };
-                bail!("Failed to create wallet from private key: {err}")
-            }
-        }
-    }
-
-    fn get_from_mnemonic(
-        &self,
-        mnemonic: &String,
-        passphrase: Option<&String>,
-        derivation_path: Option<&String>,
-        index: u32,
-    ) -> Result<LocalWallet> {
-        let mnemonic = if Path::new(mnemonic).is_file() {
-            fs::read_to_string(mnemonic)?.replace('\n', "")
-        } else {
-            mnemonic.to_owned()
-        };
-        let builder = MnemonicBuilder::<English>::default().phrase(mnemonic.as_str());
-        let builder = if let Some(passphrase) = passphrase {
-            builder.password(passphrase.as_str())
-        } else {
-            builder
-        };
-        let builder = if let Some(hd_path) = derivation_path {
-            builder.derivation_path(hd_path.as_str())?
-        } else {
-            builder.index(index)?
-        };
-        Ok(builder.build()?)
-    }
-
-    /// Ensures the path to the keystore exists.
-    ///
-    /// if the path is a directory, it bails and asks the user to specify the keystore file
-    /// directly.
-    fn find_keystore_file(&self, path: impl AsRef<Path>) -> Result<PathBuf> {
-        let path = path.as_ref();
-        if !path.exists() {
-            bail!("Keystore file `{path:?}` does not exist")
-        }
-
-        if path.is_dir() {
-            bail!("Keystore path `{path:?}` is a directory. Please specify the keystore file directly.")
-        }
-
-        Ok(path.to_path_buf())
-    }
-
-    fn get_from_keystore(
-        &self,
-        keystore_path: Option<&String>,
-        keystore_password: Option<&String>,
-        keystore_password_file: Option<&String>,
-    ) -> Result<Option<LocalWallet>> {
-        Ok(match (keystore_path, keystore_password, keystore_password_file) {
-            // Path and password provided
-            (Some(path), Some(password), _) => {
-                let path = self.find_keystore_file(path)?;
-                Some(
-                    LocalWallet::decrypt_keystore(&path, password)
-                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
-                )
-            }
-            // Path and password file provided
-            (Some(path), _, Some(password_file)) => {
-                let path = self.find_keystore_file(path)?;
-                Some(
-                    LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)
-                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?} with password file {password_file:?}"))?,
-                )
-            }
-            // Only Path provided -> interactive
-            (Some(path), None, None) => {
-                let path = self.find_keystore_file(path)?;
-                let password = rpassword::prompt_password("Enter keystore password:")?;
-                Some(LocalWallet::decrypt_keystore(path, password)?)
-            }
-            // Nothing provided
-            (None, _, _) => None,
-        })
-    }
-
-    /// Attempts to read the keystore password from the password file.
-    fn password_from_file(&self, password_file: impl AsRef<Path>) -> Result<String> {
-        let password_file = password_file.as_ref();
-        if !password_file.is_file() {
-            bail!("Keystore password file `{password_file:?}` does not exist")
-        }
-
-        Ok(fs::read_to_string(password_file)?.trim_end().to_string())
-    }
-}
-
-impl From<RawWallet> for Wallet {
-    fn from(options: RawWallet) -> Self {
+impl From<RawWalletOpts> for WalletOpts {
+    fn from(options: RawWalletOpts) -> Self {
         Self { raw: options, ..Default::default() }
     }
 }
 
-impl WalletTrait for Wallet {
-    fn sender(&self) -> Option<Address> {
-        self.from
-    }
-}
-
-#[derive(Debug)]
-pub enum WalletSigner {
-    Local(LocalWallet),
-    Ledger(Ledger),
-    Trezor(Trezor),
-    Aws(AwsSigner),
-}
-
-impl From<LocalWallet> for WalletSigner {
-    fn from(wallet: LocalWallet) -> Self {
-        Self::Local(wallet)
-    }
-}
-
-impl From<Ledger> for WalletSigner {
-    fn from(hw: Ledger) -> Self {
-        Self::Ledger(hw)
-    }
-}
-
-impl From<Trezor> for WalletSigner {
-    fn from(hw: Trezor) -> Self {
-        Self::Trezor(hw)
-    }
-}
-
-impl From<AwsSigner> for WalletSigner {
-    fn from(wallet: AwsSigner) -> Self {
-        Self::Aws(wallet)
-    }
-}
-
-macro_rules! delegate {
-    ($s:ident, $inner:ident => $e:expr) => {
-        match $s {
-            Self::Local($inner) => $e,
-            Self::Ledger($inner) => $e,
-            Self::Trezor($inner) => $e,
-            Self::Aws($inner) => $e,
-        }
-    };
-}
-
-#[async_trait]
-impl Signer for WalletSigner {
-    type Error = WalletSignerError;
-
-    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(
-        &self,
-        message: S,
-    ) -> Result<Signature, Self::Error> {
-        delegate!(self, inner => inner.sign_message(message).await.map_err(Into::into))
-    }
-
-    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature, Self::Error> {
-        delegate!(self, inner => inner.sign_transaction(message).await.map_err(Into::into))
-    }
-
-    async fn sign_typed_data<T: Eip712 + Send + Sync>(
-        &self,
-        payload: &T,
-    ) -> Result<Signature, Self::Error> {
-        delegate!(self, inner => inner.sign_typed_data(payload).await.map_err(Into::into))
-    }
-
-    fn address(&self) -> ethers_core::types::Address {
-        delegate!(self, inner => inner.address())
-    }
-
-    fn chain_id(&self) -> u64 {
-        delegate!(self, inner => inner.chain_id())
-    }
-
-    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
-        match self {
-            Self::Local(inner) => Self::Local(inner.with_chain_id(chain_id)),
-            Self::Ledger(inner) => Self::Ledger(inner.with_chain_id(chain_id)),
-            Self::Trezor(inner) => Self::Trezor(inner.with_chain_id(chain_id)),
-            Self::Aws(inner) => Self::Aws(inner.with_chain_id(chain_id)),
-        }
-    }
-}
-
-#[async_trait]
-impl Signer for &WalletSigner {
-    type Error = WalletSignerError;
-
-    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(
-        &self,
-        message: S,
-    ) -> Result<Signature, Self::Error> {
-        (*self).sign_message(message).await
-    }
-
-    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature, Self::Error> {
-        (*self).sign_transaction(message).await
-    }
-
-    async fn sign_typed_data<T: Eip712 + Send + Sync>(
-        &self,
-        payload: &T,
-    ) -> Result<Signature, Self::Error> {
-        (*self).sign_typed_data(payload).await
-    }
-
-    fn address(&self) -> ethers_core::types::Address {
-        (*self).address()
-    }
-
-    fn chain_id(&self) -> u64 {
-        (*self).chain_id()
-    }
-
-    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
-        let _ = chain_id;
-        self
-    }
-}
-
-/// Excerpt of a keystore file.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct KeystoreFile {
-    pub address: Address,
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{path::Path, str::FromStr};
+
     use super::*;
 
-    #[test]
-    fn find_keystore() {
+    #[tokio::test]
+    async fn find_keystore() {
         let keystore =
             Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../cast/tests/fixtures/keystore"));
         let keystore_file = keystore
-            .join("UTC--2022-10-30T06-51-20.130356000Z--560d246fcddc9ea98a8b032c9a2f474efb493c28");
-        let wallet: Wallet = Wallet::parse_from([
+            .join("UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
+        let password_file = keystore.join("password-ec554");
+        let wallet: WalletOpts = WalletOpts::parse_from([
             "foundry-cli",
             "--from",
             "560d246fcddc9ea98a8b032c9a2f474efb493c28",
+            "--keystore",
+            keystore_file.to_str().unwrap(),
+            "--password-file",
+            password_file.to_str().unwrap(),
         ]);
-        let file = wallet.find_keystore_file(&keystore_file).unwrap();
-        assert_eq!(file, keystore_file);
+        let signer = wallet.signer().await.unwrap();
+        assert_eq!(
+            signer.address().to_alloy(),
+            Address::from_str("ec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
+        );
     }
 
-    #[test]
-    fn illformed_private_key_generates_user_friendly_error() {
-        let wallet = Wallet {
-            raw: RawWallet {
+    #[tokio::test]
+    async fn illformed_private_key_generates_user_friendly_error() {
+        let wallet = WalletOpts {
+            raw: RawWalletOpts {
                 interactive: false,
                 private_key: Some("123".to_string()),
                 mnemonic: None,
@@ -538,7 +201,7 @@ mod tests {
             trezor: false,
             aws: false,
         };
-        match wallet.private_key() {
+        match wallet.signer().await {
             Ok(_) => {
                 panic!("illformed private key shouldn't decode")
             }
@@ -549,13 +212,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn gets_password_from_file() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../cast/tests/fixtures/keystore/password");
-        let wallet: Wallet = Wallet::parse_from(["foundry-cli"]);
-        let password = wallet.password_from_file(path).unwrap();
-        assert_eq!(password, "this is keystore password")
     }
 }

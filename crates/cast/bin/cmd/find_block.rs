@@ -14,7 +14,7 @@ pub struct FindBlockArgs {
     /// The UNIX timestamp to search for, in seconds.
     timestamp: u64,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 }
 

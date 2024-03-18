@@ -2,7 +2,7 @@
 
 use crate::eth::error::{BlockchainError, InvalidTransactionError};
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_evm::revm::primitives::{AccountInfo, Env};
+use foundry_evm::revm::primitives::{AccountInfo, EnvWithHandlerCfg};
 
 /// A trait for validating transactions
 #[async_trait::async_trait]
@@ -22,7 +22,7 @@ pub trait TransactionValidator {
         &self,
         tx: &PendingTransaction,
         account: &AccountInfo,
-        env: &Env,
+        env: &EnvWithHandlerCfg,
     ) -> Result<(), InvalidTransactionError>;
 
     /// Validates the transaction against a specific account
@@ -32,6 +32,6 @@ pub trait TransactionValidator {
         &self,
         tx: &PendingTransaction,
         account: &AccountInfo,
-        env: &Env,
+        env: &EnvWithHandlerCfg,
     ) -> Result<(), InvalidTransactionError>;
 }

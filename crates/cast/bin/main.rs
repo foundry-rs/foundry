@@ -25,6 +25,7 @@ use std::time::Instant;
 
 pub mod cmd;
 pub mod opts;
+pub mod tx;
 
 use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
 
@@ -387,6 +388,7 @@ async fn main() -> Result<()> {
         // Calls & transactions
         CastSubcommand::Call(cmd) => cmd.run().await?,
         CastSubcommand::Estimate(cmd) => cmd.run().await?,
+        CastSubcommand::MakeTx(cmd) => cmd.run().await?,
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;

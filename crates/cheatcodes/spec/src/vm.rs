@@ -203,6 +203,8 @@ interface Vm {
         bool reverted;
         /// An ordered list of storage accesses made during an account access operation.
         StorageAccess[] storageAccesses;
+        /// Call depth traversed during the recording of state differences
+        uint64 depth;
     }
 
     /// The storage accessed during an `AccountAccess`.
@@ -1650,9 +1652,13 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-json to understand the
     // limitations and caveats of the JSON parsing cheats.
 
+    /// Checks if `key` exists in a JSON object
+    /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+    #[cheatcode(group = Json, status = Deprecated)]
+    function keyExists(string calldata json, string calldata key) external view returns (bool);
     /// Checks if `key` exists in a JSON object.
     #[cheatcode(group = Json)]
-    function keyExists(string calldata json, string calldata key) external view returns (bool);
+    function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
     /// ABI-encodes a JSON object.
     #[cheatcode(group = Json)]
@@ -1813,6 +1819,98 @@ interface Vm {
     /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
+
+    // ======== TOML Parsing and Manipulation ========
+
+    // -------- Reading --------
+
+    // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-toml to understand the
+    // limitations and caveats of the TOML parsing cheat.
+
+    /// Checks if `key` exists in a TOML table.
+    #[cheatcode(group = Toml)]
+    function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
+
+    /// ABI-encodes a TOML table.
+    #[cheatcode(group = Toml)]
+    function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
+
+    /// ABI-encodes a TOML table at `key`.
+    #[cheatcode(group = Toml)]
+    function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
+
+    // The following parseToml cheatcodes will do type coercion, for the type that they indicate.
+    // For example, parseTomlUint will coerce all values to a uint256. That includes stringified numbers '12.'
+    // and hex numbers '0xEF.'.
+    // Type coercion works ONLY for discrete values or arrays. That means that the key must return a value or array, not
+    // a TOML table.
+
+    /// Parses a string of TOML data at `key` and coerces it to `uint256`.
+    #[cheatcode(group = Toml)]
+    function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `int256`.
+    #[cheatcode(group = Toml)]
+    function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    /// Parses a string of TOML data at `key` and coerces it to `int256[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bool`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    /// Parses a string of TOML data at `key` and coerces it to `bool[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `address`.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    /// Parses a string of TOML data at `key` and coerces it to `address[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddressArray(string calldata toml, string calldata key)
+        external
+        pure
+        returns (address[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string`.
+    #[cheatcode(group = Toml)]
+    function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32Array(string calldata toml, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+
+    /// Returns an array of all the keys in a TOML table.
+    #[cheatcode(group = Toml)]
+    function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
+
+    // -------- Writing --------
+
+    // NOTE: Please read https://book.getfoundry.sh/cheatcodes/write-toml to understand how
+    // to use the TOML writing cheat.
+
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML to a file.
+    #[cheatcode(group = Toml)]
+    function writeToml(string calldata json, string calldata path) external;
+
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
+    #[cheatcode(group = Toml)]
+    function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 
     // -------- Key Management --------
 

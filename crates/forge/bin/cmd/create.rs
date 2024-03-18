@@ -1,4 +1,3 @@
-use super::{retry::RetryArgs, verify};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
@@ -11,9 +10,10 @@ use ethers_core::{
         TransactionReceipt, TransactionRequest,
     },
 };
-use ethers_middleware::MiddlewareBuilder;
+use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use eyre::{Context, Result};
+use forge_verify::RetryArgs;
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
@@ -35,7 +35,7 @@ pub struct CreateArgs {
     contract: ContractInfo,
 
     /// The constructor arguments.
-    #[clap(
+    #[arg(
         long,
         num_args(1..),
         conflicts_with = "constructor_args_path",
@@ -44,7 +44,7 @@ pub struct CreateArgs {
     constructor_args: Vec<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(
+    #[arg(
         long,
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
@@ -52,37 +52,37 @@ pub struct CreateArgs {
     constructor_args_path: Option<PathBuf>,
 
     /// Print the deployment information as JSON.
-    #[clap(long, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     json: bool,
 
     /// Verify contract after creation.
-    #[clap(long)]
+    #[arg(long)]
     verify: bool,
 
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
-    #[clap(long, requires = "from")]
+    #[arg(long, requires = "from")]
     unlocked: bool,
 
     /// Prints the standard json compiler input if `--verify` is provided.
     ///
     /// The standard json compiler input can be used to manually submit contract verification in
     /// the browser.
-    #[clap(long, requires = "verify")]
+    #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     eth: EthereumOpts,
 
-    #[clap(flatten)]
-    pub verifier: verify::VerifierArgs,
+    #[command(flatten)]
+    pub verifier: forge_verify::VerifierArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     retry: RetryArgs,
 }
 
@@ -145,8 +145,8 @@ impl CreateArgs {
             self.deploy(abi, bin, params, provider, chain_id).await
         } else {
             // Deploy with signer
-            let signer = self.eth.wallet.signer(chain_id).await?;
-            let provider = provider.with_signer(signer);
+            let signer = self.eth.wallet.signer().await?;
+            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
             self.deploy(abi, bin, params, provider, chain_id).await
         }
     }
@@ -169,14 +169,18 @@ impl CreateArgs {
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let mut verify = verify::VerifyArgs {
+        let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
             contract: self.contract.clone(),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
-            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            etherscan: EtherscanOpts {
+                key: self.eth.etherscan.key.clone(),
+                chain: Some(chain.into()),
+            },
+            rpc: Default::default(),
             flatten: false,
             force: false,
             skip_is_verified_check: true,
@@ -186,7 +190,9 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.opts.via_ir,
+            evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -317,7 +323,7 @@ impl CreateArgs {
 
         let num_of_optimizations =
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
-        let verify = verify::VerifyArgs {
+        let verify = forge_verify::VerifyArgs {
             address,
             contract: self.contract,
             compiler_version: None,
@@ -325,6 +331,7 @@ impl CreateArgs {
             constructor_args_path: None,
             num_of_optimizations,
             etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            rpc: Default::default(),
             flatten: false,
             force: false,
             skip_is_verified_check: false,
@@ -334,7 +341,9 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
             via_ir: self.opts.via_ir,
+            evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await

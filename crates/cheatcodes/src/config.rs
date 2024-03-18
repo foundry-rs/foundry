@@ -1,5 +1,5 @@
 use super::Result;
-use crate::Vm::Rpc;
+use crate::{script::ScriptWallets, Vm::Rpc};
 use alloy_primitives::Address;
 use foundry_common::fs::normalize_path;
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -20,6 +20,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
     /// All known endpoints and their aliases
@@ -36,11 +38,13 @@ pub struct CheatsConfig {
     pub evm_opts: EvmOpts,
     /// Address labels from config
     pub labels: HashMap<Address, String>,
+    /// Script wallets
+    pub script_wallets: Option<ScriptWallets>,
 }
 
 impl CheatsConfig {
     /// Extracts the necessary settings from the Config
-    pub fn new(config: &Config, evm_opts: EvmOpts) -> Self {
+    pub fn new(config: &Config, evm_opts: EvmOpts, script_wallets: Option<ScriptWallets>) -> Self {
         let mut allowed_paths = vec![config.__root.0.clone()];
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
@@ -50,6 +54,7 @@ impl CheatsConfig {
 
         Self {
             ffi: evm_opts.ffi,
+            always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             rpc_endpoints,
             paths: config.project_paths(),
@@ -58,6 +63,7 @@ impl CheatsConfig {
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
+            script_wallets,
         }
     }
 
@@ -164,6 +170,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            always_use_create_2_factory: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
             paths: ProjectPathsConfig::builder().build_with_root("./"),
@@ -172,6 +179,7 @@ impl Default for CheatsConfig {
             allowed_paths: vec![],
             evm_opts: Default::default(),
             labels: Default::default(),
+            script_wallets: None,
         }
     }
 }
@@ -185,6 +193,7 @@ mod tests {
         CheatsConfig::new(
             &Config { __root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             Default::default(),
+            None,
         )
     }
 

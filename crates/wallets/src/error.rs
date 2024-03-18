@@ -19,4 +19,10 @@ pub enum WalletSignerError {
     Trezor(#[from] TrezorError),
     #[error(transparent)]
     Aws(#[from] AwsSignerError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    InvalidHex(#[from] FromHexError),
+    #[error("{0} cannot sign raw hashes")]
+    CannotSignRawHash(&'static str),
 }

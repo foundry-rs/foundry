@@ -18,25 +18,25 @@ use yansi::Color;
 #[derive(Clone, Debug, Parser)]
 pub struct FmtArgs {
     /// Path to the file, directory or '-' to read from stdin.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
+    #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
 
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
     /// Run in 'check' mode.
     ///
     /// Exits with 0 if input is formatted correctly.
     /// Exits with 1 if formatting is required.
-    #[clap(long)]
+    #[arg(long)]
     check: bool,
 
     /// In 'check' and stdin modes, outputs raw formatted code instead of the diff.
-    #[clap(long, short)]
+    #[arg(long, short)]
     raw: bool,
 }
 
