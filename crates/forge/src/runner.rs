@@ -20,7 +20,7 @@ use foundry_evm::{
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
-        CallResult, EvmError, ExecutionErr, Executor,
+        EvmError, ExecutionErr, Executor, RawCallResult,
     },
     fuzz::{invariant::InvariantContract, CounterExample},
     traces::{load_contracts, TraceKind},
@@ -112,8 +112,8 @@ impl<'a> ContractRunner<'a> {
                 Some(self.revert_decoder),
             ) {
                 Ok(d) => {
-                    logs.extend(d.logs);
-                    traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
+                    logs.extend(d.raw.logs);
+                    traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
                 }
                 Err(e) => {
                     return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
@@ -135,8 +135,8 @@ impl<'a> ContractRunner<'a> {
             Some(self.revert_decoder),
         ) {
             Ok(d) => {
-                logs.extend(d.logs);
-                traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
+                logs.extend(d.raw.logs);
+                traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
                 d.address
             }
             Err(e) => {
@@ -153,18 +153,19 @@ impl<'a> ContractRunner<'a> {
         // Optionally call the `setUp` function
         let setup = if setup {
             trace!("setting up");
-            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match self
-                .executor
-                .setup(None, address)
-            {
-                Ok(CallResult { traces, labels, logs, coverage, .. }) => {
+            let res = self.executor.setup(None, address);
+            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match res {
+                Ok(RawCallResult { traces, labels, logs, coverage, .. }) => {
                     trace!(contract=%address, "successfully setUp test");
                     (logs, traces, labels, None, coverage)
                 }
                 Err(EvmError::Execution(err)) => {
-                    let ExecutionErr { traces, labels, logs, reason, .. } = *err;
-                    error!(reason=%reason, contract=%address, "setUp failed");
-                    (logs, traces, labels, Some(format!("setup failed: {reason}")), None)
+                    let ExecutionErr {
+                        raw: RawCallResult { traces, labels, logs, coverage, .. },
+                        reason,
+                    } = *err;
+                    error!(%reason, contract=%address, "setUp failed");
+                    (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
                 }
                 Err(err) => {
                     error!(reason=%err, contract=%address, "setUp failed");
@@ -342,27 +343,30 @@ impl<'a> ContractRunner<'a> {
         let start = Instant::now();
         let debug_arena;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
-            match executor.execute_test::<_, _>(
+            match executor.execute_test(
                 self.sender,
                 address,
-                func.clone(),
-                vec![],
+                func,
+                &[],
                 U256::ZERO,
                 Some(self.revert_decoder),
             ) {
-                Ok(CallResult {
-                    reverted,
-                    gas_used: gas,
-                    stipend,
-                    logs: execution_logs,
-                    traces: execution_trace,
-                    coverage: execution_coverage,
-                    labels: new_labels,
-                    state_changeset,
-                    debug,
-                    breakpoints,
-                    ..
-                }) => {
+                Ok(res) => {
+                    let RawCallResult {
+                        reverted,
+                        gas_used: gas,
+                        stipend,
+                        logs: execution_logs,
+                        traces: execution_trace,
+                        coverage: execution_coverage,
+                        labels: new_labels,
+                        state_changeset,
+                        debug,
+                        cheatcodes,
+                        ..
+                    } = res.raw;
+
+                    let breakpoints = cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
                     traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
                     labeled_addresses.extend(new_labels);
                     logs.extend(execution_logs);
@@ -372,17 +376,18 @@ impl<'a> ContractRunner<'a> {
                     (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
                 Err(EvmError::Execution(err)) => {
-                    traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses.extend(err.labels);
-                    logs.extend(err.logs);
-                    debug_arena = err.debug;
+                    let ExecutionErr { raw, reason } = *err;
+                    traces.extend(raw.traces.map(|traces| (TraceKind::Execution, traces)));
+                    labeled_addresses.extend(raw.labels);
+                    logs.extend(raw.logs);
+                    debug_arena = raw.debug;
                     (
-                        err.reverted,
-                        Some(err.reason),
-                        err.gas_used,
-                        err.stipend,
+                        raw.reverted,
+                        Some(reason),
+                        raw.gas_used,
+                        raw.stipend,
                         None,
-                        err.state_changeset,
+                        raw.state_changeset,
                         Default::default(),
                     )
                 }
@@ -460,11 +465,11 @@ impl<'a> ContractRunner<'a> {
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
-        if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
+        if let Err(EvmError::SkipError) = self.executor.clone().execute_test(
             self.sender,
             address,
-            func.clone(),
-            vec![],
+            func,
+            &[],
             U256::ZERO,
             Some(self.revert_decoder),
         ) {

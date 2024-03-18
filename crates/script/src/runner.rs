@@ -4,7 +4,7 @@ use eyre::Result;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
-    executors::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
+    executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
@@ -55,10 +55,11 @@ impl ScriptRunner {
         let mut traces: Traces = libraries
             .iter()
             .filter_map(|code| {
-                let DeployResult { traces, .. } = self
+                let RawCallResult { traces, .. } = self
                     .executor
                     .deploy(self.sender, code.clone(), U256::ZERO, None)
-                    .expect("couldn't deploy library");
+                    .expect("couldn't deploy library")
+                    .raw;
 
                 traces
             })
@@ -74,10 +75,8 @@ impl ScriptRunner {
         // Deploy an instance of the contract
         let DeployResult {
             address,
-            mut logs,
-            traces: constructor_traces,
-            debug: constructor_debug,
-            ..
+            raw:
+                RawCallResult { mut logs, traces: constructor_traces, debug: constructor_debug, .. },
         } = self
             .executor
             .deploy(CALLER, code, U256::ZERO, None)
@@ -91,7 +90,7 @@ impl ScriptRunner {
             (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
             match self.executor.setup(Some(self.sender), address) {
-                Ok(CallResult {
+                Ok(RawCallResult {
                     reverted,
                     traces: setup_traces,
                     labels,
@@ -115,7 +114,7 @@ impl ScriptRunner {
                     )
                 }
                 Err(EvmError::Execution(err)) => {
-                    let ExecutionErr {
+                    let RawCallResult {
                         reverted,
                         traces: setup_traces,
                         labels,
@@ -124,7 +123,7 @@ impl ScriptRunner {
                         gas_used,
                         transactions,
                         ..
-                    } = *err;
+                    } = err.raw;
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
@@ -193,20 +192,18 @@ impl ScriptRunner {
         if let Some(to) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::ZERO), true)
         } else if to.is_none() {
-            let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
+            let res = self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction"),
                 value.unwrap_or(U256::ZERO),
                 None,
-            ) {
-                Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
-                    (address, gas_used, logs, traces, debug)
-                }
+            );
+            let (address, RawCallResult { gas_used, logs, traces, debug, .. }) = match res {
+                Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
-                    let ExecutionErr { reason, traces, gas_used, logs, debug, .. } = *err;
+                    let ExecutionErr { raw, reason } = *err;
                     println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
-
-                    (Address::ZERO, gas_used, logs, traces, debug)
+                    (Address::ZERO, raw)
                 }
                 Err(e) => eyre::bail!("Failed deploying contract: {e:?}"),
             };
@@ -216,14 +213,11 @@ impl ScriptRunner {
                 success: address != Address::ZERO,
                 gas_used,
                 logs,
+                // Manually adjust gas for the trace to add back the stipend/real used gas
                 traces: traces
-                    .map(|traces| {
-                        // Manually adjust gas for the trace to add back the stipend/real used gas
-
-                        vec![(TraceKind::Execution, traces)]
-                    })
+                    .map(|traces| vec![(TraceKind::Execution, traces)])
                     .unwrap_or_default(),
-                debug: vec![debug].into_iter().collect(),
+                debug: debug.map(|debug| vec![debug]),
                 address: Some(address),
                 ..Default::default()
             })
