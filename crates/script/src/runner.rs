@@ -55,13 +55,11 @@ impl ScriptRunner {
         let mut traces: Traces = libraries
             .iter()
             .filter_map(|code| {
-                let RawCallResult { traces, .. } = self
-                    .executor
+                self.executor
                     .deploy(self.sender, code.clone(), U256::ZERO, None)
                     .expect("couldn't deploy library")
-                    .raw;
-
-                traces
+                    .raw
+                    .traces
             })
             .map(|traces| (TraceKind::Deployment, traces))
             .collect();

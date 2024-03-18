@@ -341,13 +341,14 @@ impl Executor {
     /// Commit the changeset to the database and adjust `self.inspector_config`
     /// values according to the executed call result
     fn commit(&mut self, result: &mut RawCallResult) {
-        // Persist changes to db
+        // Persist changes to db.
         if let Some(changes) = &result.state_changeset {
             self.backend.commit(changes.clone());
         }
 
-        // Persist cheatcode state
-        if let Some(cheats) = result.cheatcodes.as_mut() {
+        // Persist cheatcode state.
+        let mut cheatcodes = result.cheatcodes.take();
+        if let Some(cheats) = cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
             debug!(target: "evm::executors", "cleared broadcastable transactions");
@@ -355,8 +356,9 @@ impl Executor {
             // corrected_nonce value is needed outside of this context (setUp), so we don't
             // reset it.
         }
+        self.inspector.cheatcodes = cheatcodes;
 
-        // Persist the changed environment
+        // Persist the changed environment.
         self.inspector.set_env(&result.env);
     }
 
