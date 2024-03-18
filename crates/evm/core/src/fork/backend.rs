@@ -4,7 +4,7 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockId, Transaction};
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -97,9 +97,9 @@ pub struct BackendHandler<P> {
     block_id: Option<BlockId>,
 }
 
-impl<P> BackendHandler<P>
+impl<P, N> BackendHandler<P>
 where
-    P: TempProvider + Clone + 'static,
+    P: Provider<N> + Clone + 'static,
 {
     fn new(
         provider: P,
@@ -285,7 +285,7 @@ where
 
 impl<P> Future for BackendHandler<P>
 where
-    P: TempProvider + Clone + Unpin + 'static,
+    P: Provider<N> + Clone + Unpin + 'static,
 {
     type Output = ();
 
@@ -531,7 +531,7 @@ impl SharedBackend {
         pin_block: Option<BlockId>,
     ) -> Self
     where
-        P: TempProvider + Unpin + 'static + Clone,
+        P: Provider + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
 
@@ -560,7 +560,7 @@ impl SharedBackend {
         pin_block: Option<BlockId>,
     ) -> (Self, BackendHandler<P>)
     where
-        P: TempProvider + Clone + 'static,
+        P: Provider<N> + Clone + 'static,
     {
         let (backend, backend_rx) = channel(1);
         let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));

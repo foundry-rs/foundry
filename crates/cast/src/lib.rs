@@ -334,7 +334,11 @@ where
             }
         }
 
-        let block = self.alloy_provider.get_block(block, full).await?.ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+        let block = self
+            .alloy_provider
+            .get_block(block, full)
+            .await?
+            .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
         let block = if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
@@ -348,7 +352,11 @@ where
         Ok(block)
     }
 
-    async fn block_field_as_num<T: Into<AlloyBlockId>>(&self, block: T, field: String) -> Result<U256> {
+    async fn block_field_as_num<T: Into<AlloyBlockId>>(
+        &self,
+        block: T,
+        field: String,
+    ) -> Result<U256> {
         let block = block.into();
         let block_field = Cast::block(
             self,

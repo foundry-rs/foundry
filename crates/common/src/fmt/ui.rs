@@ -2,7 +2,9 @@
 
 use crate::TransactionReceiptWithRevertReason;
 use alloy_primitives::*;
-use alloy_rpc_types::{other::OtherFields, Block, BlockTransactions, Log, Transaction, TransactionReceipt};
+use alloy_rpc_types::{
+    other::OtherFields, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
+};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -229,6 +231,7 @@ impl UIfmt for BlockTransactions {
         match self {
             BlockTransactions::Hashes(hashes) => hashes.pretty(),
             BlockTransactions::Full(transactions) => transactions.pretty(),
+            BlockTransactions::Uncle => String::new(),
         }
     }
 }
@@ -277,8 +280,8 @@ value                {}{}",
             self.hash.pretty(),
             self.input.pretty(),
             self.nonce.pretty(),
-            self.signature.map(|s| s.r.to_be_bytes()).pretty(),
-            self.signature.map(|s| s.s.to_be_bytes()).pretty(),
+            self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+            self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
             self.to.pretty(),
             self.transaction_index.pretty(),
             self.signature.map(|s| s.v).pretty(),
@@ -409,7 +412,7 @@ pub fn get_pretty_tx_receipt_attr(
         "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
         "logs" => Some(receipt.receipt.logs.pretty()),
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
-        "root" | "stateRoot" | "state_root "=> Some(receipt.receipt.state_root.pretty()),
+        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
         "status" | "statusCode" | "status_code" => Some(receipt.receipt.status_code.pretty()),
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {

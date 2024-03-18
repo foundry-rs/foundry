@@ -1,7 +1,7 @@
 //! ENS Name resolving utilities.
 #![allow(missing_docs)]
 use alloy_primitives::{address, keccak256, Address, B256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::{Network, Provider};
 use alloy_sol_types::sol;
 use std::str::FromStr;
 
@@ -36,10 +36,7 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<P: TempProvider>(
-        &self,
-        provider: &P,
-    ) -> Result<Address, EnsResolutionError> {
+    pub async fn resolve<N: Network, P: Provider<N>>(&self, provider: &P) -> Result<Address, EnsResolutionError> {
         let name = match self {
             NameOrAddress::Name(name) => name.clone(),
             NameOrAddress::Address(addr) => return Ok(*addr),
