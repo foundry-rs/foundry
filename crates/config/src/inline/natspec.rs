@@ -192,12 +192,21 @@ impl SolangParser {
                     .flat_map(|doc| doc.into_comments())
                     .filter(|doc| doc.value.contains(INLINE_CONFIG_PREFIX));
                 for doc in docs {
-                    natspecs.push(NatSpec {
+                    let make = |value| NatSpec {
                         contract: contract.to_string(),
                         function: f.name.as_ref().map(|id| id.to_string()).unwrap_or_default(),
                         line: "0:0:0".to_string(),
-                        docs: doc.value,
-                    });
+                        docs: value,
+                    };
+                    if doc.value.contains('\n') {
+                        for line in
+                            doc.value.trim().lines().filter(|l| l.contains(INLINE_CONFIG_PREFIX))
+                        {
+                            natspecs.push(make(line.to_string()));
+                        }
+                    } else {
+                        natspecs.push(make(doc.value));
+                    };
                 }
                 prev_end = f.loc.end();
             }
@@ -215,6 +224,9 @@ mod tests {
     fn parse_solang() {
         let src = "
 contract C { /// forge-config: default.fuzz.runs = 600
+
+\t\t\t\t                                /// forge-config: default.fuzz.runs = 601
+
     function f1() {}
        /** forge-config: default.fuzz.runs = 700 */
 function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
@@ -232,6 +244,12 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
                     function: "f1".to_string(),
                     line: "0:0:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 600".to_string(),
+                },
+                NatSpec {
+                    contract: "C".to_string(),
+                    function: "f1".to_string(),
+                    line: "0:0:0".to_string(),
+                    docs: "forge-config: default.fuzz.runs = 601".to_string(),
                 },
                 NatSpec {
                     contract: "C".to_string(),
