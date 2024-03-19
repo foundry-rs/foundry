@@ -10,7 +10,7 @@ async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     let result = runner.test_collect(&filter);
-    let suite_result = result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
+    let suite_result = result.get("default/inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
     let test_result = suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
     match test_result.kind {
         TestKind::Fuzz { runs, .. } => assert_eq!(runs, 1024),
