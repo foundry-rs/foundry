@@ -18,7 +18,7 @@ use foundry_evm_fuzz::{
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{borrow::Cow, cell::RefCell};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -58,10 +58,10 @@ impl FuzzedExecutor {
     pub fn fuzz(
         &self,
         func: &Function,
+        fuzz_fixtures: FuzzFixtures,
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
-        fuzz_fixtures: FuzzFixtures,
     ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
@@ -83,19 +83,13 @@ impl FuzzedExecutor {
 
         let state = self.build_fuzz_state();
 
-        let mut weights = vec![];
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        if self.config.dictionary.dictionary_weight < 100 {
-            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone(), fuzz_fixtures)));
-        }
-        if dictionary_weight > 0 {
-            weights.push((
-                self.config.dictionary.dictionary_weight,
-                fuzz_calldata_from_state(func.clone(), state.clone()),
-            ));
-        }
 
-        let strat = proptest::strategy::Union::new_weighted(weights);
+        let strat = proptest::prop_oneof![
+            100 - dictionary_weight => fuzz_calldata(func.clone(), &fuzz_fixtures),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+        ];
+
         debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata)?;
@@ -209,22 +203,14 @@ impl FuzzedExecutor {
         should_fail: bool,
         calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
-        let call = self
+        let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
-        let state_changeset = call
-            .state_changeset
-            .as_ref()
-            .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
+        let state_changeset = call.state_changeset.take().unwrap();
 
         // Build fuzzer state
-        collect_state_from_call(
-            &call.logs,
-            state_changeset,
-            state.clone(),
-            &self.config.dictionary,
-        );
+        collect_state_from_call(&call.logs, &state_changeset, state, &self.config.dictionary);
 
         // When the `assume` cheatcode is called it returns a special string
         if call.result.as_ref() == MAGIC_ASSUME {
@@ -236,8 +222,12 @@ impl FuzzedExecutor {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success =
-            self.executor.is_raw_call_success(address, state_changeset.clone(), &call, should_fail);
+        let success = self.executor.is_raw_call_success(
+            address,
+            Cow::Owned(state_changeset),
+            &call,
+            should_fail,
+        );
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {

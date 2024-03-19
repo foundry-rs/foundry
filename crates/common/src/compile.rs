@@ -11,6 +11,7 @@ use foundry_compilers::{
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
+use rustc_hash::FxHashMap;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
@@ -244,7 +245,16 @@ impl ProjectCompiler {
             }
 
             let mut size_report = SizeReport { contracts: BTreeMap::new() };
-            let artifacts: BTreeMap<_, _> = output.artifacts().collect();
+
+            let artifacts: BTreeMap<_, _> = output
+                .artifact_ids()
+                .filter(|(id, _)| {
+                    // filter out forge-std specific contracts
+                    !id.source.to_string_lossy().contains("/forge-std/src/")
+                })
+                .map(|(id, artifact)| (id.name, artifact))
+                .collect();
+
             for (name, artifact) in artifacts {
                 let size = deployed_contract_size(artifact).unwrap_or_default();
 
@@ -278,7 +288,7 @@ pub struct ContractSources {
     /// Map over artifacts' contract names -> vector of file IDs
     pub ids_by_name: HashMap<String, Vec<u32>>,
     /// Map over file_id -> (source code, contract)
-    pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
+    pub sources_by_id: FxHashMap<u32, (String, ContractBytecodeSome)>,
 }
 
 impl ContractSources {
@@ -380,6 +390,7 @@ impl Display for SizeReport {
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
+        // filters out non dev contracts (Test or Script)
         let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
         for (name, contract) in contracts {
             let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;

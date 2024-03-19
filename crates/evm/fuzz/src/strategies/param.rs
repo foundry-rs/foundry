@@ -1,7 +1,6 @@
 use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Address, FixedBytes, I256, U256};
-use arbitrary::Unstructured;
+use alloy_primitives::{Address, B256, I256, U256};
 use proptest::prelude::*;
 
 /// The max length of arrays we fuzz for is 256.
@@ -24,60 +23,50 @@ const MAX_ARRAY_LEN: usize = 256;
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param(
     param: &DynSolType,
-    fixtures: Option<&[DynSolValue]>,
+    fuzz_fixtures: Option<&[DynSolValue]>,
 ) -> BoxedStrategy<DynSolValue> {
-    let param = param.to_owned();
-    match param {
-        DynSolType::Address => super::AddressStrategy::address_strategy(fixtures),
-        DynSolType::Int(n) => {
-            let strat = super::IntStrategy::new(n, fixtures);
-            let strat = strat.prop_map(move |x| DynSolValue::Int(x, n));
-            strat.boxed()
-        }
-        DynSolType::Uint(n) => {
-            let strat = super::UintStrategy::new(n, fixtures);
-            let strat = strat.prop_map(move |x| DynSolValue::Uint(x, n));
-            strat.boxed()
-        }
+    match *param {
+        DynSolType::Address => super::AddressStrategy::init(fuzz_fixtures),
+        DynSolType::Int(n @ 8..=256) => super::IntStrategy::new(n, fuzz_fixtures)
+            .prop_map(move |x| DynSolValue::Int(x, n))
+            .boxed(),
+        DynSolType::Uint(n @ 8..=256) => super::UintStrategy::new(n, fuzz_fixtures)
+            .prop_map(move |x| DynSolValue::Uint(x, n))
+            .boxed(),
         DynSolType::Function | DynSolType::Bool | DynSolType::Bytes => {
-            DynSolValue::type_strategy(&param).boxed()
+            DynSolValue::type_strategy(param).boxed()
         }
-        DynSolType::FixedBytes(size) => prop::collection::vec(any::<u8>(), size)
+        DynSolType::FixedBytes(size @ 1..=32) => any::<B256>()
             .prop_map(move |mut v| {
-                v.reverse();
-                while v.len() < 32 {
-                    v.push(0);
-                }
-                DynSolValue::FixedBytes(FixedBytes::from_slice(&v), size)
+                v[size..].fill(0);
+                DynSolValue::FixedBytes(v, size)
             })
             .boxed(),
-        DynSolType::String => DynSolValue::type_strategy(&param)
+        DynSolType::String => DynSolValue::type_strategy(param)
             .prop_map(move |value| {
                 DynSolValue::String(
-                    String::from_utf8_lossy(value.as_str().unwrap().as_bytes())
-                        .trim()
-                        .trim_end_matches('\0')
-                        .to_string(),
+                    value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
                 )
             })
             .boxed(),
-        DynSolType::Tuple(params) => params
+
+        DynSolType::Tuple(ref params) => params
             .iter()
             .map(|p| fuzz_param(p, None))
             .collect::<Vec<_>>()
             .prop_map(DynSolValue::Tuple)
             .boxed(),
-        DynSolType::FixedArray(param, size) => {
-            proptest::collection::vec(fuzz_param(&param, None), size)
+        DynSolType::FixedArray(ref param, size) => {
+            proptest::collection::vec(fuzz_param(param, None), size)
                 .prop_map(DynSolValue::FixedArray)
                 .boxed()
         }
-        DynSolType::Array(param) => {
-            proptest::collection::vec(fuzz_param(&param, None), 0..MAX_ARRAY_LEN)
+        DynSolType::Array(ref param) => {
+            proptest::collection::vec(fuzz_param(param, None), 0..MAX_ARRAY_LEN)
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
-        DynSolType::CustomStruct { .. } => panic!("unsupported type"),
+        _ => panic!("unsupported fuzz param type: {param}"),
     }
 }
 
@@ -87,99 +76,93 @@ pub fn fuzz_param(
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param_from_state(
     param: &DynSolType,
-    arc_state: EvmFuzzState,
+    state: &EvmFuzzState,
 ) -> BoxedStrategy<DynSolValue> {
-    // These are to comply with lifetime requirements
-    let state_len = arc_state.read().values().len();
-
-    // Select a value from the state
-    let st = arc_state.clone();
-    let value = any::<prop::sample::Index>()
-        .prop_map(move |index| index.index(state_len))
-        .prop_map(move |index| *st.read().values().iter().nth(index).unwrap());
-    let param = param.to_owned();
+    // Value strategy that uses the state.
+    let value = || {
+        let state = state.clone();
+        // Use `Index` instead of `Selector` to not iterate over the entire dictionary.
+        any::<prop::sample::Index>().prop_map(move |index| {
+            let state = state.read();
+            let values = state.values();
+            let index = index.index(values.len());
+            *values.iter().nth(index).unwrap()
+        })
+    };
 
     // Convert the value based on the parameter type
-    match param {
-        DynSolType::Address => value
+    match *param {
+        DynSolType::Address => value()
             .prop_map(move |value| DynSolValue::Address(Address::from_word(value.into())))
             .boxed(),
-        DynSolType::FixedBytes(size) => value
-            .prop_map(move |v| {
-                let mut buf: [u8; 32] = [0; 32];
-
-                for b in v[..size].iter().enumerate() {
-                    buf[b.0] = *b.1
-                }
-
-                let mut unstructured_v = Unstructured::new(v.as_slice());
-                DynSolValue::arbitrary_from_type(&param, &mut unstructured_v)
-                    .unwrap_or(DynSolValue::FixedBytes(FixedBytes::from_slice(&buf), size))
+        DynSolType::Function => value()
+            .prop_map(move |value| {
+                DynSolValue::Function(alloy_primitives::Function::from_word(value.into()))
             })
             .boxed(),
-        DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(&param).boxed(),
-        DynSolType::String => DynSolValue::type_strategy(&param)
+        DynSolType::FixedBytes(size @ 1..=32) => value()
+            .prop_map(move |mut v| {
+                v[size..].fill(0);
+                DynSolValue::FixedBytes(B256::from(v), size)
+            })
+            .boxed(),
+        DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::String => DynSolValue::type_strategy(param)
             .prop_map(move |value| {
                 DynSolValue::String(
-                    String::from_utf8_lossy(value.as_str().unwrap().as_bytes())
-                        .trim()
-                        .trim_end_matches('\0')
-                        .to_string(),
+                    value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
                 )
             })
             .boxed(),
-        DynSolType::Int(n) => match n / 8 {
-            32 => value
+        DynSolType::Bytes => {
+            value().prop_map(move |value| DynSolValue::Bytes(value.into())).boxed()
+        }
+        DynSolType::Int(n @ 8..=256) => match n / 8 {
+            32 => value()
                 .prop_map(move |value| {
                     DynSolValue::Int(I256::from_raw(U256::from_be_bytes(value)), 256)
                 })
                 .boxed(),
-            y @ 1..=31 => value
+            1..=31 => value()
                 .prop_map(move |value| {
                     // Generate a uintN in the correct range, then shift it to the range of intN
                     // by subtracting 2^(N-1)
-                    let uint =
-                        U256::from_be_bytes(value) % U256::from(2usize).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2usize).pow(U256::from(y * 8 - 1));
-                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                    DynSolValue::Int(num, y * 8)
+                    let uint = U256::from_be_bytes(value) % U256::from(1).wrapping_shl(n);
+                    let max_int_plus1 = U256::from(1).wrapping_shl(n - 1);
+                    let num = I256::from_raw(uint.wrapping_sub(max_int_plus1));
+                    DynSolValue::Int(num, n)
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type int{n}"),
+            _ => unreachable!(),
         },
-        DynSolType::Uint(n) => match n / 8 {
-            32 => value
+        DynSolType::Uint(n @ 8..=256) => match n / 8 {
+            32 => value()
                 .prop_map(move |value| DynSolValue::Uint(U256::from_be_bytes(value), 256))
                 .boxed(),
-            y @ 1..=31 => value
+            1..=31 => value()
                 .prop_map(move |value| {
-                    DynSolValue::Uint(
-                        U256::from_be_bytes(value) % U256::from(2).pow(U256::from(y * 8)),
-                        y * 8,
-                    )
+                    DynSolValue::Uint(U256::from_be_bytes(value) % U256::from(1).wrapping_shl(n), n)
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type uint{n}"),
+            _ => unreachable!(),
         },
-        DynSolType::Tuple(params) => params
+        DynSolType::Tuple(ref params) => params
             .iter()
-            .map(|p| fuzz_param_from_state(p, arc_state.clone()))
+            .map(|p| fuzz_param_from_state(p, state))
             .collect::<Vec<_>>()
             .prop_map(DynSolValue::Tuple)
             .boxed(),
-        DynSolType::Bytes => value.prop_map(move |value| DynSolValue::Bytes(value.into())).boxed(),
-        DynSolType::FixedArray(param, size) => {
-            let fixed_size = size;
-            proptest::collection::vec(fuzz_param_from_state(&param, arc_state), fixed_size)
+        DynSolType::FixedArray(ref param, size) => {
+            proptest::collection::vec(fuzz_param_from_state(param, state), size)
                 .prop_map(DynSolValue::FixedArray)
                 .boxed()
         }
-        DynSolType::Array(param) => {
-            proptest::collection::vec(fuzz_param_from_state(&param, arc_state), 0..MAX_ARRAY_LEN)
+        DynSolType::Array(ref param) => {
+            proptest::collection::vec(fuzz_param_from_state(param, state), 0..MAX_ARRAY_LEN)
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
-        DynSolType::CustomStruct { .. } => panic!("unsupported type"),
+        _ => panic!("unsupported fuzz param type: {param}"),
     }
 }
 
@@ -198,13 +181,11 @@ mod tests {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let config = &FuzzDictionaryConfig::default();
-        let state = build_initial_state(&db, config);
-        let fuzz_fixtures = FuzzFixtures::default();
-        let strat = proptest::strategy::Union::new_weighted(vec![
-            (60, fuzz_calldata(func.clone(), fuzz_fixtures)),
-            (40, fuzz_calldata_from_state(func, state)),
-        ]);
+        let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
+        let strat = proptest::prop_oneof![
+            60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
+            40 => fuzz_calldata_from_state(func, &state),
+        ];
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
         let _ = runner.run(&strat, |_| Ok(()));

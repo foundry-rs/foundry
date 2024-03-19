@@ -23,7 +23,7 @@ pub struct AddressStrategy {}
 
 impl AddressStrategy {
     /// Create a new address strategy.
-    pub fn address_strategy(fixtures: Option<&[DynSolValue]>) -> BoxedStrategy<DynSolValue> {
+    pub fn init(fixtures: Option<&[DynSolValue]>) -> BoxedStrategy<DynSolValue> {
         if let Some(fixtures) = fixtures {
             let address_fixtures: Vec<DynSolValue> =
                 fixtures.iter().enumerate().map(|(_, value)| value.to_owned()).collect();
@@ -46,10 +46,8 @@ impl AddressStrategy {
                 })
                 .boxed()
         } else {
-            // If no addresses configured in dictionary then create unbounded addresses strategy.
-            any::<[u8; 32]>()
-                .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
-                .boxed()
+            // If no config for addresses dictionary then create unbounded addresses strategy.
+            any::<Address>().prop_map(DynSolValue::Address).boxed()
         }
     }
 }

@@ -20,7 +20,7 @@ use foundry_evm::{
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
-        CallResult, EvmError, ExecutionErr, Executor,
+        CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
     fuzz::{invariant::InvariantContract, CounterExample, FuzzFixtures},
     traces::{load_contracts, TraceKind},
@@ -28,6 +28,7 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap},
     time::Instant,
 };
@@ -112,8 +113,8 @@ impl<'a> ContractRunner<'a> {
                 Some(self.revert_decoder),
             ) {
                 Ok(d) => {
-                    logs.extend(d.logs);
-                    traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
+                    logs.extend(d.raw.logs);
+                    traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
                 }
                 Err(e) => {
                     return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
@@ -135,8 +136,8 @@ impl<'a> ContractRunner<'a> {
             Some(self.revert_decoder),
         ) {
             Ok(d) => {
-                logs.extend(d.logs);
-                traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
+                logs.extend(d.raw.logs);
+                traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
                 d.address
             }
             Err(e) => {
@@ -153,21 +154,20 @@ impl<'a> ContractRunner<'a> {
         // Optionally call the `setUp` function
         let setup = if setup {
             trace!("setting up");
-            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match self
-                .executor
-                .setup(None, address)
-            {
-                Ok(CallResult { traces, labels, logs, coverage, .. }) => {
+            let res = self.executor.setup(None, address, Some(self.revert_decoder));
+            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match res {
+                Ok(RawCallResult { traces, labels, logs, coverage, .. }) => {
                     trace!(contract=%address, "successfully setUp test");
                     (logs, traces, labels, None, coverage)
                 }
                 Err(EvmError::Execution(err)) => {
-                    let ExecutionErr { traces, labels, logs, reason, .. } = *err;
-                    error!(reason=%reason, contract=%address, "setUp failed");
-                    (logs, traces, labels, Some(format!("setup failed: {reason}")), None)
+                    let ExecutionErr {
+                        raw: RawCallResult { traces, labels, logs, coverage, .. },
+                        reason,
+                    } = *err;
+                    (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
                 }
                 Err(err) => {
-                    error!(reason=%err, contract=%address, "setUp failed");
                     (Vec::new(), None, HashMap::new(), Some(format!("setup failed: {err}")), None)
                 }
             };
@@ -210,15 +210,13 @@ impl<'a> ContractRunner<'a> {
             self.contract.functions().filter(|func| func.name.is_fixtures()).collect();
         let mut fixtures = HashMap::new();
         fixtures_fns.iter().for_each(|func| {
-            if let Ok(CallResult { result, .. }) = self.executor.call(
-                CALLER,
-                address,
-                func.signature_with_outputs(),
-                vec![],
-                U256::ZERO,
-                None,
-            ) {
-                fixtures.insert(func.name.strip_prefix("fixtures_").unwrap().to_string(), result);
+            if let Ok(CallResult { raw: _, decoded_result }) =
+                self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+            {
+                fixtures.insert(
+                    func.name.strip_prefix("fixtures_").unwrap().to_string(),
+                    decoded_result,
+                );
             }
         });
         FuzzFixtures::new(fixtures)
@@ -384,27 +382,30 @@ impl<'a> ContractRunner<'a> {
         let start = Instant::now();
         let debug_arena;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
-            match executor.execute_test::<_, _>(
+            match executor.execute_test(
                 self.sender,
                 address,
-                func.clone(),
-                vec![],
+                func,
+                &[],
                 U256::ZERO,
                 Some(self.revert_decoder),
             ) {
-                Ok(CallResult {
-                    reverted,
-                    gas_used: gas,
-                    stipend,
-                    logs: execution_logs,
-                    traces: execution_trace,
-                    coverage: execution_coverage,
-                    labels: new_labels,
-                    state_changeset,
-                    debug,
-                    breakpoints,
-                    ..
-                }) => {
+                Ok(res) => {
+                    let RawCallResult {
+                        reverted,
+                        gas_used: gas,
+                        stipend,
+                        logs: execution_logs,
+                        traces: execution_trace,
+                        coverage: execution_coverage,
+                        labels: new_labels,
+                        state_changeset,
+                        debug,
+                        cheatcodes,
+                        ..
+                    } = res.raw;
+
+                    let breakpoints = cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
                     traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
                     labeled_addresses.extend(new_labels);
                     logs.extend(execution_logs);
@@ -414,18 +415,19 @@ impl<'a> ContractRunner<'a> {
                     (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
                 Err(EvmError::Execution(err)) => {
-                    traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses.extend(err.labels);
-                    logs.extend(err.logs);
-                    debug_arena = err.debug;
+                    let ExecutionErr { raw, reason } = *err;
+                    traces.extend(raw.traces.map(|traces| (TraceKind::Execution, traces)));
+                    labeled_addresses.extend(raw.labels);
+                    logs.extend(raw.logs);
+                    debug_arena = raw.debug;
                     (
-                        err.reverted,
-                        Some(err.reason),
-                        err.gas_used,
-                        err.stipend,
+                        raw.reverted,
+                        Some(reason),
+                        raw.gas_used,
+                        raw.stipend,
                         None,
-                        err.state_changeset,
-                        HashMap::new(),
+                        raw.state_changeset,
+                        Default::default(),
                     )
                 }
                 Err(EvmError::SkipError) => {
@@ -457,7 +459,7 @@ impl<'a> ContractRunner<'a> {
         let success = executor.is_success(
             setup.address,
             reverted,
-            state_changeset.expect("we should have a state changeset"),
+            Cow::Owned(state_changeset.unwrap()),
             should_fail,
         );
 
@@ -503,11 +505,11 @@ impl<'a> ContractRunner<'a> {
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
-        if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
+        if let Err(EvmError::SkipError) = self.executor.clone().execute_test(
             self.sender,
             address,
-            func.clone(),
-            vec![],
+            func,
+            &[],
             U256::ZERO,
             Some(self.revert_decoder),
         ) {
@@ -584,7 +586,7 @@ impl<'a> ContractRunner<'a> {
             // If invariants ran successfully, replay the last run to collect logs and
             // traces.
             _ => {
-                replay_run(
+                if let Err(err) = replay_run(
                     &invariant_contract,
                     self.executor.clone(),
                     known_contracts,
@@ -594,7 +596,9 @@ impl<'a> ContractRunner<'a> {
                     &mut coverage,
                     func.clone(),
                     last_run_inputs.clone(),
-                );
+                ) {
+                    error!(%err, "Failed to replay last invariant run");
+                }
             }
         }
 
@@ -661,7 +665,7 @@ impl<'a> ContractRunner<'a> {
         );
         let state = fuzzed_executor.build_fuzz_state();
         let result =
-            fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder, fuzz_fixtures);
+            fuzzed_executor.fuzz(func, fuzz_fixtures, address, should_fail, self.revert_decoder);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();

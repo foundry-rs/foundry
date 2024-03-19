@@ -536,9 +536,9 @@ impl TestSetup {
         match error {
             EvmError::Execution(err) => {
                 // force the tracekind to be setup so a trace is shown.
-                traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
-                logs.extend(err.logs);
-                labeled_addresses.extend(err.labels);
+                traces.extend(err.raw.traces.map(|traces| (TraceKind::Setup, traces)));
+                logs.extend(err.raw.logs);
+                labeled_addresses.extend(err.raw.labels);
                 Self::failed_with(logs, traces, labeled_addresses, err.reason)
             }
             e => Self::failed_with(
