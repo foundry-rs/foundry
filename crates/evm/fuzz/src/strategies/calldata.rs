@@ -3,31 +3,25 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::FuzzDictionaryConfig;
-use proptest::prelude::{BoxedStrategy, Strategy};
-use std::{collections::HashSet, fmt, sync::Arc};
+use proptest::prelude::Strategy;
+use std::{collections::HashSet, sync::Arc};
 
 /// Clonable wrapper around [CalldataFuzzDictionary].
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct CalldataFuzzDictionary {
     pub inner: Arc<CalldataFuzzDictionaryConfig>,
 }
 
 impl CalldataFuzzDictionary {
-    pub fn new(config: &FuzzDictionaryConfig, state: EvmFuzzState) -> Self {
+    pub fn new(config: &FuzzDictionaryConfig, state: &EvmFuzzState) -> Self {
         Self { inner: Arc::new(CalldataFuzzDictionaryConfig::new(config, state)) }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CalldataFuzzDictionaryConfig {
     /// Addresses that can be used for fuzzing calldata.
     pub addresses: Vec<Address>,
-}
-
-impl fmt::Debug for CalldataFuzzDictionaryConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CalldataFuzzDictionaryConfig").field("addresses", &self.addresses).finish()
-    }
 }
 
 /// Represents custom configuration for invariant fuzzed calldata strategies.
@@ -40,30 +34,23 @@ impl CalldataFuzzDictionaryConfig {
     /// The set of addresses contains a number of `max_calldata_fuzz_dictionary_addresses` random
     /// addresses plus all addresses that already had their PUSH bytes collected (retrieved from
     /// `EvmFuzzState`, if `include_push_bytes` config enabled).
-    pub fn new(config: &FuzzDictionaryConfig, state: EvmFuzzState) -> Self {
-        let mut addresses: HashSet<Address> = HashSet::new();
+    pub fn new(config: &FuzzDictionaryConfig, state: &EvmFuzzState) -> Self {
+        let mut addresses = HashSet::<Address>::new();
+
         let dict_size = config.max_calldata_fuzz_dictionary_addresses;
-
         if dict_size > 0 {
-            loop {
-                if addresses.len() == dict_size {
-                    break
-                }
-                addresses.insert(Address::random());
-            }
-
+            addresses.extend(std::iter::repeat_with(Address::random).take(dict_size));
             // Add all addresses that already had their PUSH bytes collected.
-            let mut state = state.write();
-            addresses.extend(state.addresses());
+            addresses.extend(state.read().addresses());
         }
 
-        Self { addresses: Vec::from_iter(addresses) }
+        Self { addresses: addresses.into_iter().collect() }
     }
 }
 
 /// Given a function, it returns a strategy which generates valid calldata
 /// for that function's input types.
-pub fn fuzz_calldata(func: Function) -> BoxedStrategy<Bytes> {
+pub fn fuzz_calldata(func: Function) -> impl Strategy<Value = Bytes> {
     fuzz_calldata_with_config(func, None)
 }
 
@@ -71,20 +58,23 @@ pub fn fuzz_calldata(func: Function) -> BoxedStrategy<Bytes> {
 /// for that function's input types, following custom configuration rules.
 pub fn fuzz_calldata_with_config(
     func: Function,
-    config: Option<CalldataFuzzDictionary>,
-) -> BoxedStrategy<Bytes> {
+    config: Option<&CalldataFuzzDictionary>,
+) -> impl Strategy<Value = Bytes> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
     let strats = func
         .inputs
         .iter()
-        .map(|input| fuzz_param(&input.selector_type().parse().unwrap(), config.clone()))
+        .map(|input| fuzz_param(&input.selector_type().parse().unwrap(), config))
         .collect::<Vec<_>>();
-
-    strats
-        .prop_map(move |tokens| {
-            trace!(input=?tokens);
-            func.abi_encode_input(&tokens).unwrap().into()
-        })
-        .boxed()
+    strats.prop_map(move |values| {
+        func.abi_encode_input(&values)
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Fuzzer generated invalid arguments for function `{}` with inputs {:?}: {:?}",
+                    func.name, func.inputs, values
+                )
+            })
+            .into()
+    })
 }

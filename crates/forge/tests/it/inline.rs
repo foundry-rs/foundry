@@ -4,10 +4,7 @@ use crate::{
     config::runner,
     test_helpers::{COMPILED, PROJECT},
 };
-use forge::{
-    result::{SuiteResult, TestKind, TestResult},
-    TestOptions, TestOptionsBuilder,
-};
+use forge::{result::TestKind, TestOptions, TestOptionsBuilder};
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_test_utils::Filter;
 
@@ -16,17 +13,11 @@ async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
     let mut runner = runner();
     let result = runner.test_collect(&filter);
-    let suite_result: &SuiteResult =
-        result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
-    let test_result: &TestResult =
-        suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
-    match &test_result.kind {
-        TestKind::Fuzz { runs, .. } => {
-            assert_eq!(runs, &1024);
-        }
-        _ => {
-            unreachable!()
-        }
+    let suite_result = result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
+    let test_result = suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
+    match test_result.kind {
+        TestKind::Fuzz { runs, .. } => assert_eq!(runs, 1024),
+        _ => unreachable!(),
     }
 }
 
@@ -44,24 +35,15 @@ async fn inline_config_run_invariant() {
         result.get(&format!("{ROOT}:InvariantInlineConf2")).expect("Result exists");
 
     let test_result_1 = suite_result_1.test_results.get("invariant_neverFalse()").unwrap();
-    let test_result_2 = suite_result_2.test_results.get("invariant_neverFalse()").unwrap();
-
-    match &test_result_1.kind {
-        TestKind::Invariant { runs, .. } => {
-            assert_eq!(runs, &333);
-        }
-        _ => {
-            unreachable!()
-        }
+    match test_result_1.kind {
+        TestKind::Invariant { runs, .. } => assert_eq!(runs, 333),
+        _ => unreachable!(),
     }
 
-    match &test_result_2.kind {
-        TestKind::Invariant { runs, .. } => {
-            assert_eq!(runs, &42);
-        }
-        _ => {
-            unreachable!()
-        }
+    let test_result_2 = suite_result_2.test_results.get("invariant_neverFalse()").unwrap();
+    match test_result_2.kind {
+        TestKind::Invariant { runs, .. } => assert_eq!(runs, 42),
+        _ => unreachable!(),
     }
 }
 

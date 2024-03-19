@@ -8,8 +8,6 @@ pub enum FuzzError {
     UnknownContract,
     #[error("Failed contract call")]
     FailedContractCall,
-    #[error("Empty state changeset")]
-    EmptyChangeset,
     #[error("`vm.assume` reject")]
     AssumeReject,
     #[error("The `vm.assume` cheatcode rejected too many inputs ({0} allowed)")]

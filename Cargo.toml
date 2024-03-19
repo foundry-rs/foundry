@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.75" # Remember to update clippy.toml as well
+rust-version = "1.76" # Remember to update clippy.toml as well
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -46,6 +46,7 @@ debug = 1
 # Solc and artifacts
 foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
+lalrpop-util.opt-level = 3
 serde_json.opt-level = 3
 
 # EVM
