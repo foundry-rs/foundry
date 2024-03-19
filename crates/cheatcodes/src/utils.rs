@@ -1,7 +1,7 @@
 //! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
@@ -10,7 +10,8 @@ use alloy_signer::{
     LocalWallet, MnemonicBuilder, Signer, SignerSync,
 };
 use alloy_sol_types::SolValue;
-use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, utils::RuntimeOrHandle};
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, Curve},
@@ -49,7 +50,7 @@ impl Cheatcode for getNonce_1Call {
     }
 }
 
-impl Cheatcode for sign_1Call {
+impl Cheatcode for sign_3Call {
     fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
         sign(&wallet.privateKey, digest)
@@ -170,6 +171,47 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     let s = B256::from(sig.s());
 
     Ok((v, r, s).abi_encode())
+}
+
+pub(super) fn sign_with_wallet<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    signer: Option<Address>,
+    digest: &B256,
+) -> Result {
+    if let Some(script_wallets) = &ccx.state.script_wallets {
+        let mut script_wallets = script_wallets.inner.lock();
+        let maybe_provided_sender = script_wallets.provided_sender;
+        let signers = script_wallets.multi_wallet.signers()?;
+
+        let signer = if let Some(signer) = signer {
+            signer
+        } else if let Some(provided_sender) = maybe_provided_sender {
+            provided_sender
+        } else if signers.len() == 1 {
+            *signers.keys().next().unwrap()
+        } else {
+            return Err("could not determine signer".into());
+        };
+
+        let wallet = signers
+            .get(&signer)
+            .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
+
+        let sig = RuntimeOrHandle::new()
+            .block_on(wallet.sign_hash(&digest))
+            .map_err(|err| fmt_err!("{err}"))?;
+
+        let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
+        assert_eq!(recovered.to_alloy(), signer);
+
+        let v = U256::from(sig.v);
+        let r = B256::from(sig.r.to_alloy());
+        let s = B256::from(sig.s.to_alloy());
+
+        Ok((v, r, s).abi_encode())
+    } else {
+        Err("no wallets are available".into())
+    }
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
