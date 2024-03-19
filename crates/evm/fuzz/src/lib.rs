@@ -14,7 +14,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -275,12 +275,12 @@ impl FuzzedCases {
 
 #[derive(Clone, Default, Debug)]
 pub struct FuzzFixtures {
-    inner: HashMap<String, DynSolValue>,
+    inner: Arc<HashMap<String, DynSolValue>>,
 }
 
 impl FuzzFixtures {
     pub fn new(fixtures: HashMap<String, DynSolValue>) -> FuzzFixtures {
-        Self { inner: fixtures }
+        Self { inner: Arc::new(fixtures) }
     }
 
     pub fn param_fixtures(&self, param_name: &String) -> Option<&[DynSolValue]> {

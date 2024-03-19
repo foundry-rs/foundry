@@ -174,14 +174,36 @@ impl<'a> ContractRunner<'a> {
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
 
-            TestSetup { address, logs, traces, labeled_addresses, reason, coverage }
+            TestSetup {
+                address,
+                logs,
+                traces,
+                labeled_addresses,
+                reason,
+                coverage,
+                fuzz_fixtures: self.fuzz_fixtures(address),
+            }
         } else {
-            TestSetup::success(address, logs, traces, Default::default(), None)
+            TestSetup::success(
+                address,
+                logs,
+                traces,
+                Default::default(),
+                None,
+                self.fuzz_fixtures(address),
+            )
         };
 
         Ok(setup)
     }
 
+    /// Collect fixtures from test contract. Fixtures are functions prefixed with `fixtures_` key
+    /// and followed by the name of the parameter.
+    ///
+    /// For example:
+    /// `fixtures_test() returns (address[] memory)` function
+    /// define an array of addresses to be used for fuzzed `test` named parameter in scope of the
+    /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
         // collect test fixtures param:array of values
         let fixtures_fns: Vec<_> =
@@ -274,12 +296,6 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        // Collect fixtures from test contract. Fixtures are functions prefixed with `fixture_` and
-        // followed by the name of the parameter. For example:
-        // `fixture_test() returns (address[] memory)` function define an array of addresses to be
-        // used for fuzzed `test` named parameter, in scope of the current test.
-        let fuzz_fixtures = self.fuzz_fixtures(setup.address);
-
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
@@ -315,20 +331,12 @@ impl<'a> ContractRunner<'a> {
                         func,
                         known_contracts,
                         identified_contracts.as_ref().unwrap(),
-                        fuzz_fixtures.clone(),
                     )
                 } else if func.is_fuzz_test() {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(
-                        func,
-                        should_fail,
-                        runner,
-                        setup,
-                        fuzz_config.clone(),
-                        fuzz_fixtures.clone(),
-                    )
+                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
                 } else {
                     debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
@@ -477,7 +485,6 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[instrument(name = "invariant_test", skip_all)]
     pub fn run_invariant_test(
         &self,
@@ -487,12 +494,12 @@ impl<'a> ContractRunner<'a> {
         func: &Function,
         known_contracts: Option<&ContractsByArtifact>,
         identified_contracts: &ContractsByAddress,
-        fuzz_fixtures: FuzzFixtures,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
-        let TestSetup { address, logs, traces, labeled_addresses, coverage, .. } = setup;
+        let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
+            setup;
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
@@ -622,7 +629,6 @@ impl<'a> ContractRunner<'a> {
         runner: TestRunner,
         setup: TestSetup,
         fuzz_config: FuzzConfig,
-        fuzz_fixtures: FuzzFixtures,
     ) -> TestResult {
         let span = info_span!("fuzz_test", %should_fail);
         if !span.is_disabled() {
@@ -636,7 +642,13 @@ impl<'a> ContractRunner<'a> {
         let _guard = span.enter();
 
         let TestSetup {
-            address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
+            address,
+            mut logs,
+            mut traces,
+            mut labeled_addresses,
+            mut coverage,
+            fuzz_fixtures,
+            ..
         } = setup;
 
         // Run fuzz test

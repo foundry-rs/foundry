@@ -139,7 +139,13 @@ async fn test_invariant() {
             ),
             (
                 "fuzz/invariant/common/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary",
-                vec![("invariant_owner_never_changes()", true, None, None, None)],
+                vec![(
+                    "invariant_owner_never_changes()",
+                    false,
+                    Some("<empty revert data>".into()),
+                    None,
+                    None,
+                )],
             ),
             (
                 "fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
