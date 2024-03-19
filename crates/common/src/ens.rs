@@ -3,6 +3,7 @@
 use alloy_primitives::{address, keccak256, Address, B256};
 use alloy_provider::{Network, Provider};
 use alloy_sol_types::sol;
+use alloy_transport::Transport;
 use std::str::FromStr;
 
 // ENS Registry and Resolver contracts.
@@ -36,7 +37,7 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<N: Network, P: Provider<N>>(
+    pub async fn resolve<N: Network, T: Transport + Clone, P: Provider<N, T>>(
         &self,
         provider: &P,
     ) -> Result<Address, EnsResolutionError> {

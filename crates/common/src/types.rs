@@ -1,10 +1,8 @@
 //! Temporary utility conversion traits between ethers-rs and alloy types.
 
-use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U128, U256, U64, U8};
+use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U256, U64};
 use alloy_rpc_types::{
-    other::OtherFields,
-    request::{TransactionInput, TransactionRequest as CallRequest},
-    AccessList, AccessListItem, BlockNumberOrTag, Signature, Transaction,
+    AccessList, AccessListItem, BlockNumberOrTag, 
 };
 use alloy_signer::Signer;
 use alloy_signer_wallet::LocalWallet;

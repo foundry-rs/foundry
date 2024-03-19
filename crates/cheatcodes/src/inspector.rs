@@ -1337,8 +1337,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 value: call.value,
                 data: call.init_code.clone(),
                 reverted: false,
-                deployedCode: Bytes::new(),    // updated on create_end
-                storageAccesses: vec![], // updated on create_end
+                deployedCode: Bytes::new(), // updated on create_end
+                storageAccesses: vec![],    // updated on create_end
                 depth,
             }]);
         }
@@ -1535,8 +1535,8 @@ fn apply_create2_deployer<DB: DatabaseExt>(
                     value: call.value,
                     data: calldata.into(),
                     reverted: false,
-                    deployedCode: Bytes::new(),    // updated on create_end
-                    storageAccesses: vec![],       // updated on create_end
+                    deployedCode: Bytes::new(), // updated on create_end
+                    storageAccesses: vec![],    // updated on create_end
                     depth: ecx.journaled_state.depth(),
                 }])
             }

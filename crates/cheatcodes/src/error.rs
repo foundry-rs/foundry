@@ -1,6 +1,6 @@
 use crate::Vm;
 use alloy_primitives::{Address, Bytes};
-use alloy_signer::{Error as SignerError};
+use alloy_signer::Error as SignerError;
 use alloy_signer_wallet::WalletError;
 use alloy_sol_types::SolError;
 use foundry_common::errors::FsPathError;

@@ -159,24 +159,24 @@ ethers-middleware = { version = "2.0.14", default-features = false }
 ethers-solc = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-contract = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-eips = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-genesis = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-json-rpc = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-network = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-node-bindings = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-provider = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-pubsub = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-rpc-client = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-rpc-trace-types = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-rpc-types = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-signer = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-signer-wallet = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-transport = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-transport-http = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-transport-ipc = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
-alloy-transport-ws = { git = "https://github.com/klkvr/alloy", rev = "47e349f" }
+alloy-consensus = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-contract = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-eips = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-genesis = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-json-rpc = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-network = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-node-bindings = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-provider = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-pubsub = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-rpc-client = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-rpc-trace-types = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-rpc-types = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-signer = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-signer-wallet = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-transport = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-transport-http = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-transport-ipc = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
+alloy-transport-ws = { git = "https://github.com/klkvr/alloy", rev = "de65254" }
 alloy-primitives = { version = "0.6.4", features = ["getrandom"] }
 alloy-dyn-abi = "0.6.4"
 alloy-json-abi = "0.6.4"

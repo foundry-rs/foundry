@@ -1,11 +1,14 @@
+use std::marker::PhantomData;
+
 use crate::errors::FunctionSignatureError;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256, U64};
-use alloy_providers::tmp::TempProvider;
-use alloy_rpc_types::request::{TransactionInput, TransactionRequest as AlloyTransactionRequest};
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, TransactionRequest,
+use alloy_provider::{
+    network::{Ethereum, TransactionBuilder},
+    Provider,
 };
+use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
+use alloy_transport::Transport;
 use eyre::Result;
 use foundry_common::{
     abi::{encode_function_args, get_func, get_func_etherscan},
@@ -15,9 +18,8 @@ use foundry_common::{
 use foundry_config::Chain;
 use futures::future::join_all;
 
-pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
-pub type TxBuilderAlloyOutput = (AlloyTransactionRequest, Option<Function>);
-pub type TxBuilderPeekOutput<'a> = (&'a AlloyTransactionRequest, &'a Option<Function>);
+pub type TxBuilderOutput = (TransactionRequest, Option<Function>);
+pub type TxBuilderPeekOutput<'a> = (&'a TransactionRequest, &'a Option<Function>);
 
 /// Transaction builder
 ///
@@ -39,17 +41,17 @@ pub type TxBuilderPeekOutput<'a> = (&'a AlloyTransactionRequest, &'a Option<Func
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct TxBuilder<'a, P: TempProvider> {
+pub struct TxBuilder<'a, P, T> {
     to: Option<Address>,
     chain: Chain,
-    tx: TypedTransaction,
-    alloy_tx: AlloyTransactionRequest,
+    tx: TransactionRequest,
     func: Option<Function>,
     etherscan_api_key: Option<String>,
     provider: &'a P,
+    transport: PhantomData<T>,
 }
 
-impl<'a, P: TempProvider> TxBuilder<'a, P> {
+impl<'a, T: Transport + Clone, P: Provider<Ethereum, T>> TxBuilder<'a, P, T> {
     /// Create a new TxBuilder
     /// `provider` - provider to use
     /// `from` - 'from' field. Could be an ENS name
@@ -62,40 +64,28 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
         to: Option<Address>,
         chain: impl Into<Chain>,
         legacy: bool,
-    ) -> Result<TxBuilder<'a, P>> {
+    ) -> Result<Self> {
         let chain = chain.into();
 
-        let (mut tx, mut alloy_tx): (TypedTransaction, AlloyTransactionRequest) = if chain
-            .is_legacy() ||
-            legacy
-        {
-            (
-                TransactionRequest::new().from(from.to_ethers()).chain_id(chain.id()).into(),
-                AlloyTransactionRequest::default().from(from).transaction_type(0),
-            )
-        } else {
-            (
-                Eip1559TransactionRequest::new().from(from.to_ethers()).chain_id(chain.id()).into(),
-                AlloyTransactionRequest::default().from(from).transaction_type(2),
-            )
-        };
+        let tx = TransactionRequest::default()
+            .from(from)
+            .transaction_type(if chain.is_legacy() || legacy { 0 } else { 2 })
+            .to(to);
 
-        let to_addr = if let Some(to) = to {
-            tx.set_to(to.to_ethers());
-            Some(to)
-        } else {
-            None
-        };
-
-        alloy_tx.to = to_addr;
-
-        Ok(Self { to: to_addr, chain, tx, alloy_tx, func: None, etherscan_api_key: None, provider })
+        Ok(Self {
+            to,
+            chain,
+            tx,
+            func: None,
+            etherscan_api_key: None,
+            provider,
+            transport: PhantomData,
+        })
     }
 
     /// Set gas for tx
     pub fn set_gas(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas(v.to_ethers());
-        self.alloy_tx.gas = Some(v);
+        self.tx.set_gas_limit(v);
         self
     }
 
@@ -109,8 +99,7 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
 
     /// Set gas price
     pub fn set_gas_price(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas_price(v.to_ethers());
-        self.alloy_tx.gas_price = Some(v);
+        self.tx.set_gas_price(v);
         self
     }
 
@@ -124,12 +113,8 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
 
     /// Set priority gas price
     pub fn set_priority_gas_price(&mut self, v: U256) -> &mut Self {
-        if let TypedTransaction::Eip1559(tx) = &mut self.tx {
-            tx.max_priority_fee_per_gas = Some(v.to_ethers())
-        }
-
-        if let Some(2) = self.alloy_tx.transaction_type.map(|v| v.to::<u8>()) {
-            self.alloy_tx.max_priority_fee_per_gas = Some(v);
+        if let Some(2) = self.tx.transaction_type.map(|v| v.to::<u8>()) {
+            self.tx.set_max_priority_fee_per_gas(v);
         }
 
         self
@@ -145,8 +130,7 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
 
     /// Set value
     pub fn set_value(&mut self, v: U256) -> &mut Self {
-        self.tx.set_value(v.to_ethers());
-        self.alloy_tx.value = Some(v);
+        self.tx.set_value(v);
         self
     }
 
@@ -159,14 +143,13 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
     }
 
     /// Set nonce
-    pub fn set_nonce(&mut self, v: U256) -> &mut Self {
-        self.tx.set_nonce(v.to_ethers());
-        self.alloy_tx.nonce = Some(v.to::<U64>());
+    pub fn set_nonce(&mut self, v: U64) -> &mut Self {
+        self.tx.set_nonce(v);
         self
     }
 
     /// Set nonce, if `v` is not None
-    pub fn nonce(&mut self, v: Option<U256>) -> &mut Self {
+    pub fn nonce(&mut self, v: Option<U64>) -> &mut Self {
         if let Some(value) = v {
             self.set_nonce(value);
         }
@@ -187,9 +170,8 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
         self
     }
 
-    pub fn set_data(&mut self, v: Vec<u8>) -> &mut Self {
-        self.tx.set_data(v.clone().into());
-        self.alloy_tx.input = TransactionInput::new(Bytes::from(v.clone()));
+    pub fn set_data(&mut self, v: Bytes) -> &mut Self {
+        self.tx.set_input(v);
         self
     }
 
@@ -237,23 +219,15 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
     ///    (`0xcdba2fd40000000000000000000000000000000000000000000000000000000000007a69`)
     ///  * only function name (`do`) - in this case, etherscan lookup is performed on `tx.to`'s
     ///    contract
-    pub async fn set_args(
-        &mut self,
-        sig: &str,
-        args: Vec<String>,
-    ) -> Result<&mut TxBuilder<'a, P>> {
+    pub async fn set_args(&mut self, sig: &str, args: Vec<String>) -> Result<&mut Self> {
         let (data, func) = self.create_args(sig, args).await?;
-        self.tx.set_data(data.clone().into());
-        self.alloy_tx.input = TransactionInput::new(Bytes::from(data));
+        self.tx.set_input(data.into());
         self.func = Some(func);
         Ok(self)
     }
 
     /// Set function arguments, if `value` is not None
-    pub async fn args(
-        &mut self,
-        value: Option<(&str, Vec<String>)>,
-    ) -> Result<&mut TxBuilder<'a, P>> {
+    pub async fn args(&mut self, value: Option<(&str, Vec<String>)>) -> Result<&mut Self> {
         if let Some((sig, args)) = value {
             return self.set_args(sig, args).await
         }
@@ -265,17 +239,15 @@ impl<'a, P: TempProvider> TxBuilder<'a, P> {
         (self.tx, self.func)
     }
 
-    /// Consuming build: returns alloy transaction and optional function call
-    pub fn build_alloy(self) -> TxBuilderAlloyOutput {
-        (self.alloy_tx, self.func)
-    }
-
     pub fn peek(&self) -> TxBuilderPeekOutput {
-        (&self.alloy_tx, &self.func)
+        (&self.tx, &self.func)
     }
 }
 
-async fn resolve_name_args<P: TempProvider>(args: &[String], provider: &P) -> Vec<String> {
+async fn resolve_name_args<T: Transport + Clone, P: Provider<Ethereum, T>>(
+    args: &[String],
+    provider: &P,
+) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
             let addr = NameOrAddress::Name(arg.to_string()).resolve(provider).await;

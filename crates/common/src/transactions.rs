@@ -1,6 +1,7 @@
 //! wrappers for transactions
-use alloy_provider::{network::Ethereum, Network, Provider};
+use alloy_provider::{network::Ethereum, Provider};
 use alloy_rpc_types::{BlockId, TransactionReceipt};
+use alloy_transport::Transport;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +25,7 @@ impl TransactionReceiptWithRevertReason {
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<P: Provider<Ethereum>>(
+    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<Ethereum, T>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -32,7 +33,7 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason<P: Provider<Ethereum>>(
+    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<Ethereum, T>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {

@@ -2,6 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, B256, U256};
+use alloy_signer::{Signer, SignerSync};
 use alloy_signer_wallet::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
@@ -9,7 +10,6 @@ use alloy_signer_wallet::{
     },
     LocalWallet, MnemonicBuilder,
 };
-use alloy_signer::{Signer, SignerSync};
 use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use k256::{
