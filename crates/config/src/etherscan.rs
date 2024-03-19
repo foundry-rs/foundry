@@ -306,32 +306,29 @@ impl ResolvedEtherscanConfig {
         let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
         let cache = chain
-            .or_else(|| {
-                if api_url == mainnet_api {
-                    // try to match against mainnet, which is usually the most common target
-                    Some(NamedChain::Mainnet.into())
-                } else {
-                    None
-                }
-            })
+            // try to match against mainnet, which is usually the most common target
+            .or_else(|| (api_url == mainnet_api).then(Chain::mainnet))
             .and_then(Config::foundry_etherscan_chain_cache_dir);
 
-        if let Some(ref cache_path) = cache {
+        if let Some(cache_path) = &cache {
             // we also create the `sources` sub dir here
             if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
                 warn!("could not create etherscan cache dir: {:?}", err);
             }
         }
 
+        let api_url = into_url(&api_url)?;
+        let client = reqwest::Client::builder()
+            .user_agent(ETHERSCAN_USER_AGENT)
+            .tls_built_in_root_certs(api_url.scheme() == "https")
+            .build()?;
         foundry_block_explorers::Client::builder()
-            .with_client(reqwest::Client::builder().user_agent(ETHERSCAN_USER_AGENT).build()?)
+            .with_client(client)
             .with_api_key(api_key)
-            .with_api_url(api_url.as_str())?
-            .with_url(
-                // the browser url is not used/required by the client so we can simply set the
-                // mainnet browser url here
-                browser_url.as_deref().unwrap_or(mainnet_url),
-            )?
+            .with_api_url(api_url)?
+            // the browser url is not used/required by the client so we can simply set the
+            // mainnet browser url here
+            .with_url(browser_url.as_deref().unwrap_or(mainnet_url))?
             .with_cache(cache, Duration::from_secs(24 * 60 * 60))
             .build()
     }
@@ -417,6 +414,13 @@ impl fmt::Display for EtherscanApiKey {
             EtherscanApiKey::Env(var) => var.fmt(f),
         }
     }
+}
+
+/// This is a hack to work around `IntoUrl`'s sealed private functions, which can't be called
+/// normally.
+#[inline]
+fn into_url(url: impl reqwest::IntoUrl) -> std::result::Result<reqwest::Url, reqwest::Error> {
+    url.into_url()
 }
 
 #[cfg(test)]
