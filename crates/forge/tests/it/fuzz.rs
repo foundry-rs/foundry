@@ -135,13 +135,13 @@ async fn test_persist_fuzz_failure() {
     };
 
     // run several times and compare counterexamples calldata
-    for _ in 0..10 {
+    for i in 0..10 {
         let new_calldata = match get_failure_result!() {
             Some(CounterExample::Single(counterexample)) => counterexample.calldata,
             _ => Bytes::new(),
         };
         // calldata should be the same with the initial one
-        assert_eq!(initial_calldata, new_calldata);
+        assert_eq!(initial_calldata, new_calldata, "run {i}");
     }
 
     // write new failure in different file

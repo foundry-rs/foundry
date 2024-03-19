@@ -2,9 +2,8 @@
 
 use alloy_primitives::{Address, Signature};
 use anvil_core::eth::transaction::impersonated_signature;
-use foundry_evm::hashbrown::HashSet;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 /// Manages user modifications that may affect the node's behavior
 ///

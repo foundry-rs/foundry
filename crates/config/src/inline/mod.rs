@@ -3,7 +3,7 @@ pub use conf_parser::{parse_config_bool, parse_config_u32, validate_profiles, In
 pub use error::{InlineConfigError, InlineConfigParserError};
 pub use natspec::NatSpec;
 use once_cell::sync::Lazy;
-use std::{borrow::Cow, collections::HashMap};
+use std::collections::HashMap;
 
 mod conf_parser;
 mod error;
@@ -25,22 +25,14 @@ static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: Lazy<String> = Lazy::new(|| {
 pub struct InlineConfig<T> {
     /// Maps a (test-contract, test-function) pair
     /// to a specific configuration provided by the user.
-    configs: HashMap<InlineConfigKey<'static>, T>,
+    configs: HashMap<(String, String), T>,
 }
 
 impl<T> InlineConfig<T> {
     /// Returns an inline configuration, if any, for a test function.
     /// Configuration is identified by the pair "contract", "function".
-    pub fn get<C, F>(&self, contract_id: C, fn_name: F) -> Option<&T>
-    where
-        C: Into<String>,
-        F: Into<String>,
-    {
-        // TODO use borrow
-        let key = InlineConfigKey {
-            contract: Cow::Owned(contract_id.into()),
-            function: Cow::Owned(fn_name.into()),
-        };
+    pub fn get(&self, contract_id: &str, fn_name: &str) -> Option<&T> {
+        let key = (contract_id.to_string(), fn_name.to_string());
         self.configs.get(&key)
     }
 
@@ -51,19 +43,9 @@ impl<T> InlineConfig<T> {
         C: Into<String>,
         F: Into<String>,
     {
-        let key = InlineConfigKey {
-            contract: Cow::Owned(contract_id.into()),
-            function: Cow::Owned(fn_name.into()),
-        };
+        let key = (contract_id.into(), fn_name.into());
         self.configs.insert(key, config);
     }
-}
-
-/// Represents a (test-contract, test-function) pair
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct InlineConfigKey<'a> {
-    contract: Cow<'a, str>,
-    function: Cow<'a, str>,
 }
 
 pub(crate) fn remove_whitespaces(s: &str) -> String {

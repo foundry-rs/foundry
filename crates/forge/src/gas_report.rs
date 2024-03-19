@@ -2,14 +2,16 @@
 
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-    hashbrown::HashSet,
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
 use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt::Display,
+};
 
 /// Represents the gas report for a set of contracts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
