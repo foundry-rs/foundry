@@ -13,7 +13,7 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{collections::HashSet, fmt, str::FromStr, sync::Arc};
+use std::{collections::BTreeSet, fmt, str::FromStr, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -23,9 +23,9 @@ pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
 #[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
-    state_values: HashSet<[u8; 32]>,
+    state_values: BTreeSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
-    addresses: HashSet<Address>,
+    addresses: BTreeSet<Address>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -39,22 +39,22 @@ impl fmt::Debug for FuzzDictionary {
 
 impl FuzzDictionary {
     #[inline]
-    pub fn values(&self) -> &HashSet<[u8; 32]> {
+    pub fn values(&self) -> &BTreeSet<[u8; 32]> {
         &self.state_values
     }
 
     #[inline]
-    pub fn values_mut(&mut self) -> &mut HashSet<[u8; 32]> {
+    pub fn values_mut(&mut self) -> &mut BTreeSet<[u8; 32]> {
         &mut self.state_values
     }
 
     #[inline]
-    pub fn addresses(&mut self) -> &HashSet<Address> {
+    pub fn addresses(&mut self) -> &BTreeSet<Address> {
         &self.addresses
     }
 
     #[inline]
-    pub fn addresses_mut(&mut self) -> &mut HashSet<Address> {
+    pub fn addresses_mut(&mut self) -> &mut BTreeSet<Address> {
         &mut self.addresses
     }
 }
