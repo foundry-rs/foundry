@@ -40,3 +40,5 @@ rand.workspace = true
 serde = "1"
 thiserror = "1"
 tracing = "0.1"
+rustc-hash.workspace = true
+indexmap.workspace = true
