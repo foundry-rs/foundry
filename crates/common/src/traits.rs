@@ -113,7 +113,7 @@ impl TestFunctionExt for str {
     }
 
     fn is_fixtures(&self) -> bool {
-        self.starts_with("fixtures")
+        self.starts_with("fixtures_")
     }
 }
 

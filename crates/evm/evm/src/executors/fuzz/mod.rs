@@ -58,7 +58,7 @@ impl FuzzedExecutor {
     pub fn fuzz(
         &self,
         func: &Function,
-        fuzz_fixtures: FuzzFixtures,
+        fuzz_fixtures: &FuzzFixtures,
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
@@ -86,7 +86,7 @@ impl FuzzedExecutor {
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
 
         let strat = proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_calldata(func.clone(), &fuzz_fixtures),
+            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
 

@@ -29,10 +29,10 @@ impl AddressStrategy {
                 fixtures.iter().enumerate().map(|(_, value)| value.to_owned()).collect();
             let address_fixtures_len = address_fixtures.len();
             any::<prop::sample::Index>()
-                .prop_map(move |index| index.index(address_fixtures_len))
                 .prop_map(move |index| {
                     // Generate value tree from fixture.
                     // If fixture is not a valid address, raise error and generate random value.
+                    let index = index.index(address_fixtures_len);
                     if let Some(addr_fixture) = address_fixtures.get(index) {
                         if let Some(addr_fixture) = addr_fixture.as_address() {
                             return DynSolValue::Address(addr_fixture);

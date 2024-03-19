@@ -101,13 +101,9 @@ impl UintStrategy {
     /// * `bits` - Size of uint in bits
     /// * `fixtures` - A set of fixed values to be generated (according to fixtures weight)
     pub fn new(bits: usize, fixtures: Option<&[DynSolValue]>) -> Self {
-        let uint_fixtures = match fixtures {
-            Some(values) => Vec::from(values),
-            None => vec![],
-        };
         Self {
             bits,
-            fixtures: uint_fixtures,
+            fixtures: Vec::from(fixtures.unwrap_or_default()),
             edge_weight: 10usize,
             fixtures_weight: 40usize,
             random_weight: 50usize,

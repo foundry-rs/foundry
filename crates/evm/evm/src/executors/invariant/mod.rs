@@ -148,7 +148,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
-        fuzz_fixtures: FuzzFixtures,
+        fuzz_fixtures: &FuzzFixtures,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -156,7 +156,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         let (fuzz_state, targeted_contracts, strat) =
-            self.prepare_fuzzing(&invariant_contract, fuzz_fixtures.clone())?;
+            self.prepare_fuzzing(&invariant_contract, fuzz_fixtures)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call.
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
@@ -346,7 +346,7 @@ impl<'a> InvariantExecutor<'a> {
     fn prepare_fuzzing(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
-        fuzz_fixtures: FuzzFixtures,
+        fuzz_fixtures: &FuzzFixtures,
     ) -> eyre::Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;

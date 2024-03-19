@@ -206,17 +206,17 @@ impl<'a> ContractRunner<'a> {
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
         // collect test fixtures param:array of values
-        let fixtures_fns: Vec<_> =
-            self.contract.functions().filter(|func| func.name.is_fixtures()).collect();
         let mut fixtures = HashMap::new();
-        fixtures_fns.iter().for_each(|func| {
-            if let Ok(CallResult { raw: _, decoded_result }) =
-                self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
-            {
-                fixtures.insert(
-                    func.name.strip_prefix("fixtures_").unwrap().to_string(),
-                    decoded_result,
-                );
+        self.contract.functions().for_each(|func| {
+            if func.name.is_fixtures() {
+                if let Ok(CallResult { raw: _, decoded_result }) =
+                    self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+                {
+                    fixtures.insert(
+                        func.name.strip_prefix("fixtures_").unwrap().to_string(),
+                        decoded_result,
+                    );
+                }
             }
         });
         FuzzFixtures::new(fixtures)
@@ -538,7 +538,7 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_function: func, abi: self.contract };
 
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
-            match evm.invariant_fuzz(invariant_contract.clone(), fuzz_fixtures) {
+            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures) {
                 Ok(x) => x,
                 Err(e) => {
                     return TestResult {
@@ -665,7 +665,7 @@ impl<'a> ContractRunner<'a> {
         );
         let state = fuzzed_executor.build_fuzz_state();
         let result =
-            fuzzed_executor.fuzz(func, fuzz_fixtures, address, should_fail, self.revert_decoder);
+            fuzzed_executor.fuzz(func, &fuzz_fixtures, address, should_fail, self.revert_decoder);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();
