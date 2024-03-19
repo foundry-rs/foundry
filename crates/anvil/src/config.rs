@@ -172,6 +172,8 @@ pub struct NodeConfig {
     pub enable_optimism: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
+    /// Disable tracing
+    pub disable_tracing: bool,
 }
 
 impl NodeConfig {
@@ -407,6 +409,7 @@ impl Default for NodeConfig {
             disable_default_create2_deployer: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
+            disable_tracing: false,
         }
     }
 }
@@ -810,6 +813,14 @@ impl NodeConfig {
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
         self.disable_default_create2_deployer = yes;
+        self
+    }
+
+    /// Sets whether to disable tracing
+    #[must_use]
+    pub fn with_disable_tracing(mut self, yes: bool) -> Self {
+        println!("Disabling tracing {:?}", yes);
+        self.disable_tracing = yes;
         self
     }
 

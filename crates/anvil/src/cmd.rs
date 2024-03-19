@@ -171,6 +171,9 @@ pub struct NodeArgs {
 
     #[command(flatten)]
     pub server_config: ServerConfig,
+
+    #[arg(long, default_value = "false")]
+    pub disable_tracing: bool,
 }
 
 #[cfg(windows)]
@@ -235,6 +238,7 @@ impl NodeArgs {
             .with_optimism(self.evm_opts.optimism)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
+            .with_disable_tracing(self.disable_tracing)
     }
 
     fn account_generator(&self) -> AccountGenerator {
