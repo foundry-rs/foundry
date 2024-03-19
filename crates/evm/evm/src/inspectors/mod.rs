@@ -16,8 +16,5 @@ pub use debugger::Debugger;
 mod logs;
 pub use logs::LogCollector;
 
-mod printer;
-pub use printer::TracePrinter;
-
 mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
