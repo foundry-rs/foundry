@@ -144,7 +144,9 @@ impl RuntimeTransport {
 
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
     async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(self.timeout)
+            .tls_built_in_root_certs(self.url.scheme() == "https");
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
