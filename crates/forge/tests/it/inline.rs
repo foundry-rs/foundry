@@ -1,6 +1,6 @@
 //! Inline configuration tests.
 
-use crate::{config::runner, test_helpers::TEST_DATA_DEFAULT};
+use crate::test_helpers::TEST_DATA_DEFAULT;
 use forge::{
     result::{SuiteResult, TestKind, TestResult},
     TestOptionsBuilder,
@@ -11,7 +11,7 @@ use foundry_test_utils::Filter;
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let result = runner.test_collect(&filter);
     let suite_result: &SuiteResult =
         result.get("default/inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
@@ -32,7 +32,7 @@ async fn inline_config_run_invariant() {
     const ROOT: &str = "default/inline/InvariantInlineConf.t.sol";
 
     let filter = Filter::new(".*", ".*", ".*inline/InvariantInlineConf.t.sol");
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let result = runner.test_collect(&filter);
 
     let suite_result_1 = result.get(&format!("{ROOT}:InvariantInlineConf")).expect("Result exists");

@@ -14,7 +14,7 @@ async fn test_fuzz() {
     let filter = Filter::new(".*", ".*", ".*fuzz/")
         .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)")
         .exclude_paths("invariant");
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
@@ -51,7 +51,7 @@ async fn test_successful_fuzz_cases() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzPositive")
         .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
         .exclude_paths("invariant");
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
@@ -81,7 +81,7 @@ async fn test_successful_fuzz_cases() {
 #[ignore]
 async fn test_fuzz_collection() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol");
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.invariant.depth = 100;
     runner.test_options.invariant.runs = 1000;
     runner.test_options.fuzz.runs = 1000;
@@ -110,7 +110,7 @@ async fn test_fuzz_collection() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_persist_fuzz_failure() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzFailurePersist.t.sol");
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.fuzz.runs = 1000;
 
     macro_rules! get_failure_result {

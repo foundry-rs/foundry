@@ -1,17 +1,23 @@
 //! Test helpers for Forge integration tests.
 
 use alloy_primitives::U256;
-use forge::{TestOptions, TestOptionsBuilder};
+use forge::{
+    inspectors::CheatsConfig, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
+    TestOptionsBuilder,
+};
 use foundry_compilers::{
     artifacts::{Libraries, Settings},
     EvmVersion, Project, ProjectCompileOutput, SolcConfig,
 };
-use foundry_config::{Config, FuzzConfig, FuzzDictionaryConfig, InvariantConfig};
+use foundry_config::{
+    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
+    InvariantConfig, RpcEndpoint, RpcEndpoints,
+};
 use foundry_evm::{
     constants::CALLER,
     opts::{Env, EvmOpts},
 };
-use foundry_test_utils::fd_lock;
+use foundry_test_utils::{fd_lock, init_tracing};
 use once_cell::sync::Lazy;
 use std::{
     env, fmt,
@@ -169,6 +175,64 @@ impl ForgeTestData {
 
         Self { project, output, test_opts, evm_opts, config }
     }
+
+    /// Builds a base runner
+    pub fn base_runner(&self) -> MultiContractRunnerBuilder {
+        init_tracing();
+        MultiContractRunnerBuilder::default()
+            .sender(self.evm_opts.sender)
+            .with_test_options(self.test_opts.clone())
+    }
+
+    /// Builds a non-tracing runner
+    pub fn runner(&self) -> MultiContractRunner {
+        let mut config = self.config.clone();
+        config.fs_permissions =
+            FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
+        self.runner_with_config(config)
+    }
+
+    /// Builds a non-tracing runner
+    pub fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
+        config.rpc_endpoints = rpc_endpoints();
+        config.allow_paths.push(manifest_root().to_path_buf());
+
+        let root = self.project.root();
+        let opts = self.evm_opts.clone();
+        let env = opts.local_evm_env();
+        let output = self.output.clone();
+        self.base_runner()
+            .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
+            .sender(config.sender)
+            .with_test_options(self.test_opts.clone())
+            .build(root, output, env, opts.clone())
+            .unwrap()
+    }
+
+    /// Builds a tracing runner
+    pub fn tracing_runner(&self) -> MultiContractRunner {
+        let mut opts = self.evm_opts.clone();
+        opts.verbosity = 5;
+        self.base_runner()
+            .build(self.project.root(), self.output.clone(), opts.local_evm_env(), opts)
+            .unwrap()
+    }
+
+    /// Builds a runner that runs against forked state
+    pub async fn forked_runner(&self, rpc: &str) -> MultiContractRunner {
+        let mut opts = self.evm_opts.clone();
+
+        opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
+        opts.fork_url = Some(rpc.to_string());
+
+        let env = opts.evm_env().await.expect("Could not instantiate fork environment");
+        let fork = opts.get_fork(&Default::default(), env.clone());
+
+        self.base_runner()
+            .with_fork(fork)
+            .build(self.project.root(), self.output.clone(), env, opts)
+            .unwrap()
+    }
 }
 
 pub fn get_compiled(project: &Project) -> ProjectCompileOutput {
@@ -205,3 +269,26 @@ pub static TEST_DATA_DEFAULT: Lazy<ForgeTestData> =
 /// Data for tests requiring Cancun support on Solc and EVM level.
 pub static TEST_DATA_CANCUN: Lazy<ForgeTestData> =
     Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Cancun));
+
+pub fn manifest_root() -> &'static Path {
+    let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // need to check here where we're executing the test from, if in `forge` we need to also allow
+    // `testdata`
+    if root.ends_with("forge") {
+        root = root.parent().unwrap();
+    }
+    root
+}
+
+/// the RPC endpoints used during tests
+pub fn rpc_endpoints() -> RpcEndpoints {
+    RpcEndpoints::new([
+        (
+            "rpcAlias",
+            RpcEndpoint::Url(
+                "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
+            ),
+        ),
+        ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
+    ])
+}

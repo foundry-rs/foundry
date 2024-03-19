@@ -16,7 +16,7 @@ async fn test_cheats_fork_revert() {
         ".*",
         &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
     );
-    let mut runner = runner(&TEST_DATA_DEFAULT);
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let suite_result = runner.test_collect(&filter);
     assert_eq!(suite_result.len(), 1);
 
@@ -35,7 +35,7 @@ async fn test_cheats_fork_revert() {
 async fn test_cheats_fork() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = runner_with_config(&TEST_DATA_DEFAULT, config);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -46,7 +46,7 @@ async fn test_cheats_fork() {
 async fn test_get_logs_fork() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = runner_with_config(&TEST_DATA_DEFAULT, config);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
     let filter = Filter::new("testEthGetLogs", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -57,7 +57,7 @@ async fn test_get_logs_fork() {
 async fn test_rpc_fork() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = runner_with_config(&TEST_DATA_DEFAULT, config);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
     let filter = Filter::new("testRpc", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -67,7 +67,7 @@ async fn test_rpc_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork() {
     let rpc_url = foundry_common::rpc::next_http_archive_rpc_endpoint();
-    let runner = forked_runner(&TEST_DATA_DEFAULT, &rpc_url).await;
+    let runner = TEST_DATA_DEFAULT.forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -76,7 +76,7 @@ async fn test_launch_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork_ws() {
     let rpc_url = foundry_common::rpc::next_ws_archive_rpc_endpoint();
-    let runner = forked_runner(&TEST_DATA_DEFAULT, &rpc_url).await;
+    let runner = TEST_DATA_DEFAULT.forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -84,7 +84,7 @@ async fn test_launch_fork_ws() {
 /// Tests that we can transact transactions in forking mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transact_fork() {
-    let runner = runner(&TEST_DATA_DEFAULT);
+    let runner = TEST_DATA_DEFAULT.runner();
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -92,7 +92,7 @@ async fn test_transact_fork() {
 /// Tests that we can create the same fork (provider,block) concurretnly in different tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_create_same_fork() {
-    let runner = runner(&TEST_DATA_DEFAULT);
+    let runner = TEST_DATA_DEFAULT.runner();
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}ForkSame"));
     TestConfig::with_filter(runner, filter).run().await;
 }
