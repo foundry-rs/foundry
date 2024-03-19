@@ -18,12 +18,13 @@ use foundry_compilers::{
     Artifact, Project, Solc,
 };
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, hashbrown::HashSet};
+use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::{
+    collections::HashSet,
     fmt::Debug,
     path::{Path, PathBuf},
 };

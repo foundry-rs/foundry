@@ -8,10 +8,9 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
     fork::BlockchainDb,
-    hashbrown::HashMap,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{BlockEnv, Bytecode, KECCAK_EMPTY},
+        primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
 };
@@ -225,6 +224,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
         Some(trie_hash_db(&self.accounts))
     }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.accounts);
         let mut accounts = HashMap::new();
