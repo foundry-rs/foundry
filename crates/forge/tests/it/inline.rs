@@ -1,7 +1,7 @@
 //! Inline configuration tests.
 
 use crate::test_helpers::TEST_DATA_DEFAULT;
-use forge::{result::TestKind, TestOptions, TestOptionsBuilder};
+use forge::{result::TestKind, TestOptionsBuilder};
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_test_utils::Filter;
 
