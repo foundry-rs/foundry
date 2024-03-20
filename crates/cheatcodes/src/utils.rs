@@ -157,6 +157,10 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
+fn encode_vrs(v: u8, r: U256, s: U256) -> Vec<u8> {
+    (U256::from(v), B256::from(r), B256::from(s)).abi_encode()
+}
+
 pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
@@ -166,11 +170,9 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
 
     assert_eq!(recovered, wallet.address());
 
-    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
-    let r = B256::from(sig.r());
-    let s = B256::from(sig.s());
+    let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
 
-    Ok((v, r, s).abi_encode())
+    Ok(encode_vrs(v, sig.r(), sig.s()))
 }
 
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
@@ -207,11 +209,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
     assert_eq!(recovered.to_alloy(), signer);
 
-    let v = U256::from(sig.v);
-    let r = B256::from(sig.r.to_alloy());
-    let s = B256::from(sig.s.to_alloy());
-
-    Ok((v, r, s).abi_encode())
+    Ok(encode_vrs(sig.v as u8, sig.r.to_alloy(), sig.s.to_alloy()))
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
