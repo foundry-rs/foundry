@@ -434,9 +434,14 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
     let expected_topic_0 = expected.topics().first();
     let log_topic_0 = log.topics().first();
 
+    // If the event is marked as anonymous, we don't expect topic 0 to be generated.
+    // We will still match the rest of the topics and data.
+    let is_anonymous_event = expected_topic_0.is_none() && log_topic_0.is_none();
+
     if expected_topic_0
         .zip(log_topic_0)
-        .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len())
+        .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len()) ||
+        is_anonymous_event
     {
         // Match topics
         event_to_fill_or_check.found = log
