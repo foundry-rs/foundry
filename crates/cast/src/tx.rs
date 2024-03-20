@@ -143,13 +143,13 @@ impl<'a, T: Transport + Clone, P: Provider<Ethereum, T>> TxBuilder<'a, P, T> {
     }
 
     /// Set nonce
-    pub fn set_nonce(&mut self, v: U64) -> &mut Self {
+    pub fn set_nonce(&mut self, v: u64) -> &mut Self {
         self.tx.set_nonce(v);
         self
     }
 
     /// Set nonce, if `v` is not None
-    pub fn nonce(&mut self, v: Option<U64>) -> &mut Self {
+    pub fn nonce(&mut self, v: Option<u64>) -> &mut Self {
         if let Some(value) = v {
             self.set_nonce(value);
         }

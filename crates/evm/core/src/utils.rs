@@ -71,7 +71,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
     env.tx.gas_limit = tx.gas.to();
     env.tx.gas_price = tx.gas_price.unwrap_or_default().to();
     env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(|g| g.to());
-    env.tx.nonce = Some(tx.nonce.to());
+    env.tx.nonce = Some(tx.nonce);
     env.tx.access_list = tx
         .access_list
         .clone()

@@ -6,10 +6,10 @@ use alloy_primitives::{
     Address, Bytes, Keccak256, TxHash, B256, I256, U256, U64,
 };
 use alloy_provider::{
-    network::{eip2718::Decodable2718, Ethereum},
+    network::{eip2718::Decodable2718, Ethereum, eip2718::Encodable2718},
     PendingTransaction, PendingTransactionBuilder, Provider,
 };
-use alloy_rlp::Decodable;
+use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter};
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
@@ -637,7 +637,7 @@ where
         let tx = self.provider.get_transaction_by_hash(tx_hash).await?;
 
         Ok(if raw {
-            format!("0x{}", hex::encode(tx.rlp()))
+            format!("0x{}", hex::encode(TxEnvelope::try_from(tx)?.encoded_2718()))
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?

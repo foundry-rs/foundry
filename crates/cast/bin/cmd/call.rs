@@ -1,6 +1,7 @@
 use alloy_primitives::U256;
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::{network::Ethereum, Provider};
 use alloy_rpc_types::BlockId;
+use alloy_transport::Transport;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -203,8 +204,8 @@ impl CallArgs {
 }
 
 /// fills the builder from create arg
-async fn fill_create<P: TempProvider>(
-    builder: &mut TxBuilder<'_, P>,
+async fn fill_create<P: Provider<Ethereum, T>, T: Transport + Clone>(
+    builder: &mut TxBuilder<'_, P, T>,
     value: Option<U256>,
     code: String,
     sig: Option<String>,
@@ -225,8 +226,8 @@ async fn fill_create<P: TempProvider>(
 }
 
 /// fills the builder from args
-async fn fill_tx<P: TempProvider>(
-    builder: &mut TxBuilder<'_, P>,
+async fn fill_tx<P: Provider<Ethereum, T>, T: Transport + Clone>(
+    builder: &mut TxBuilder<'_, P, T>,
     value: Option<U256>,
     sig: Option<String>,
     args: Vec<String>,

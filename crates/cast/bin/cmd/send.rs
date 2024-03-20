@@ -1,6 +1,6 @@
 use crate::tx;
 use alloy_primitives::Address;
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use cast::Cast;
 use clap::Parser;
 use ethers_middleware::SignerMiddleware;
@@ -112,7 +112,7 @@ impl SendTxArgs {
         tx::validate_to_address(&code, &to)?;
 
         let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
         let alloy_provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
@@ -132,15 +132,15 @@ impl SendTxArgs {
         if unlocked {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
-                let current_chain_id = provider.get_chainid().await?.as_u64();
+                let current_chain_id = provider.get_chain_id().await?.to();
                 let config_chain_id = config_chain.id();
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
                 if config_chain_id != current_chain_id {
                     cli_warn!("Switching to chain {}", config_chain);
                     provider
-                        .request(
-                            "wallet_switchEthereumChain",
+                        .raw_request(
+                            "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
                                 "chainId": format!("0x{:x}", config_chain_id),
                             })],
@@ -150,12 +150,7 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(
-                    provider
-                        .get_transaction_count(config.sender.to_ethers(), None)
-                        .await?
-                        .to_alloy(),
-                );
+                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
 
             cast_send(

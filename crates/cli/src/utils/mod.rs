@@ -1,5 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{utils::format_units, U256};
+use alloy_provider::{network::Ethereum, Provider};
+use alloy_transport::Transport;
 use ethers_core::types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
@@ -141,14 +143,14 @@ pub fn get_alloy_provider_builder(
     Ok(builder)
 }
 
-pub async fn get_chain<M>(chain: Option<Chain>, provider: M) -> Result<Chain>
+pub async fn get_chain<P, T>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    M: Middleware,
-    M::Error: 'static,
+    P: Provider<Ethereum, T>,
+    T: Transport + Clone,
 {
     match chain {
         Some(chain) => Ok(chain),
-        None => Ok(Chain::from_id(provider.get_chainid().await?.as_u64())),
+        None => Ok(Chain::from_id(provider.get_chain_id().await?.to())),
     }
 }
 

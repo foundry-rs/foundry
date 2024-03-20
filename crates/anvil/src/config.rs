@@ -17,7 +17,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{hex, utils::Unit, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::{
     coins_bip39::{English, Mnemonic},

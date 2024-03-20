@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use cast::{TxBuilder, TxBuilderOutput};
 use eyre::Result;
 use foundry_cli::opts::TransactionOpts;

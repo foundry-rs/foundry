@@ -38,8 +38,7 @@ impl RpcArgs {
         let RpcArgs { raw, method, params, rpc } = self;
 
         let config = Config::from(&rpc);
-        let provider = utils::get_provider(&config)?;
-        let alloy_provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
 
         let params = if raw {
             if params.is_empty() {
@@ -54,7 +53,7 @@ impl RpcArgs {
         } else {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
-        println!("{}", Cast::new(provider, alloy_provider).rpc(&method, params).await?);
+        println!("{}", Cast::new(provider).rpc(&method, params).await?);
         Ok(())
     }
 }

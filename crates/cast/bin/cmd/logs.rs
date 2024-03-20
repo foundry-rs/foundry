@@ -1,17 +1,19 @@
-use alloy_rpc_types::BlockId;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, FilterBlockOption};
 use cast::Cast;
 use clap::Parser;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Address, Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
+        Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
     },
-    types::{BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256, U256},
+    types::{ValueOrArray, H256, U256},
 };
+use alloy_rpc_types::Filter;
 use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
 use foundry_common::types::ToEthers;
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};
@@ -75,10 +77,9 @@ impl LogsArgs {
         } = self;
 
         let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
-        let alloy_provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
 
-        let cast = Cast::new(&provider, alloy_provider);
+        let cast = Cast::new(provider);
 
         let address = match address {
             Some(address) => {
@@ -115,8 +116,8 @@ impl LogsArgs {
 /// successful, `topics_or_args` is parsed as indexed inputs and converted to topics. Otherwise,
 /// `sig_or_topic` is prepended to `topics_or_args` and used as raw topics.
 fn build_filter(
-    from_block: Option<BlockNumber>,
-    to_block: Option<BlockNumber>,
+    from_block: Option<BlockNumberOrTag>,
+    to_block: Option<BlockNumberOrTag>,
     address: Option<Address>,
     sig_or_topic: Option<String>,
     topics_or_args: Vec<String>,
@@ -133,7 +134,6 @@ fn build_filter(
         },
         None => TopicFilter::default(),
     };
-
     // Convert from TopicFilter to Filter
     let topics =
         vec![topic_filter.topic0, topic_filter.topic1, topic_filter.topic2, topic_filter.topic3]

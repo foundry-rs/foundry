@@ -1,6 +1,6 @@
 use crate::opts::parse_slot;
 use alloy_primitives::{Address, B256, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use cast::Cast;
 use clap::Parser;
@@ -80,19 +80,18 @@ impl StorageArgs {
 
         let Self { address, slot, block, build, .. } = self;
         let provider = utils::get_alloy_provider(&config)?;
-        let ethers_provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
-            let cast = Cast::new(ethers_provider, provider);
+            let cast = Cast::new(provider);
             println!("{}", cast.storage(address, slot, block).await?);
             return Ok(());
         }
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code = provider.get_code_at(address, block).await?;
+        let address_code = provider.get_code_at(address, block.unwrap_or_default()).await?;
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }

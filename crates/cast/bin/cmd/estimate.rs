@@ -81,9 +81,7 @@ impl EstimateArgs {
 
         let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
         let config = Config::try_from(figment)?;
-        let alloy_provider = utils::get_alloy_provider(&config)?;
-
-        let provider = utils::get_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
@@ -110,7 +108,7 @@ impl EstimateArgs {
                     data.append(&mut sigdata);
                 }
 
-                builder.set_data(data);
+                builder.set_data(data.into());
             }
             _ => {
                 let sig = sig.ok_or_else(|| eyre::eyre!("Function signature must be provided."))?;
@@ -119,7 +117,7 @@ impl EstimateArgs {
         };
 
         let builder_output = builder.peek();
-        let gas = Cast::new(&provider, &alloy_provider).estimate(builder_output).await?;
+        let gas = Cast::new(&provider).estimate(builder_output).await?;
         println!("{gas}");
         Ok(())
     }
