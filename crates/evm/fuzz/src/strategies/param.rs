@@ -11,10 +11,10 @@ const MAX_ARRAY_LEN: usize = 256;
 /// are defined for named parameter.
 ///
 /// For example, fixtures for parameter `owner` of type `address` can be defined in a function with
-/// a `function fixtures_owner() public returns (address[] memory)` signature.
+/// a `function fixture_owner() public returns (address[] memory)` signature.
 ///
 /// Fixtures are matched on parameter name, hence fixtures defined in
-/// `fixtures_owner` function can be used in a fuzzed test function with a signature like
+/// `fixture_owner` function can be used in a fuzzed test function with a signature like
 /// `function testFuzz_ownerAddress(address owner, uint amount)`.
 ///
 /// If the type of fixtures is different than the parameter type then error is raised and a random

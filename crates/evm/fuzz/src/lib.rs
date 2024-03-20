@@ -273,6 +273,11 @@ impl FuzzedCases {
     }
 }
 
+/// Fixtures to be used for fuzz tests.
+/// The key represents name of the fuzzed parameter, value holds possible fuzzed values.
+/// For example, for a fixture function declared as
+/// `function fixture_sender() external returns (address[] memory senders)`
+/// the fuzz fixtures will contain `sender` key with `senders` array as value
 #[derive(Clone, Default, Debug)]
 pub struct FuzzFixtures {
     inner: Arc<HashMap<String, DynSolValue>>,

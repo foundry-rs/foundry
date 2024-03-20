@@ -197,23 +197,23 @@ impl<'a> ContractRunner<'a> {
         Ok(setup)
     }
 
-    /// Collect fixtures from test contract. Fixtures are functions prefixed with `fixtures_` key
+    /// Collect fixtures from test contract. Fixtures are functions prefixed with `fixture_` key
     /// and followed by the name of the parameter.
     ///
     /// For example:
-    /// `fixtures_test() returns (address[] memory)` function
+    /// `fixture_test() returns (address[] memory)` function
     /// define an array of addresses to be used for fuzzed `test` named parameter in scope of the
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
         // collect test fixtures param:array of values
         let mut fixtures = HashMap::new();
         self.contract.functions().for_each(|func| {
-            if func.name.is_fixtures() {
+            if func.name.is_fixture() {
                 if let Ok(CallResult { raw: _, decoded_result }) =
                     self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
                 {
                     fixtures.insert(
-                        func.name.strip_prefix("fixtures_").unwrap().to_string(),
+                        func.name.strip_prefix("fixture_").unwrap().to_string(),
                         decoded_result,
                     );
                 }

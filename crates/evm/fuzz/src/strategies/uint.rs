@@ -75,7 +75,7 @@ impl ValueTree for UintValueTree {
 ///
 /// To define uint fixtures:
 /// - return an array of possible values for a parameter named `amount` declare a function
-/// `function fixtures_amount() public returns (uint32[] memory)`.
+/// `function fixture_amount() public returns (uint32[] memory)`.
 /// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
 /// `function testFuzz_uint32(uint32 amount)`.
 ///

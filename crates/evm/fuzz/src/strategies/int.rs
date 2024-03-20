@@ -87,7 +87,7 @@ impl ValueTree for IntValueTree {
 ///
 /// To define int fixtures:
 /// - return an array of possible values for a parameter named `amount` declare a function
-/// `function fixtures_amount() public returns (int32[] memory)`.
+/// `function fixture_amount() public returns (int32[] memory)`.
 /// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
 /// `function testFuzz_int32(int32 amount)`.
 ///

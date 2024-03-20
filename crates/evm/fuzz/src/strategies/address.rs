@@ -14,8 +14,8 @@ use proptest::{
 ///
 ///
 /// For example:
-/// To define fixtures for `owner` fuzzed parameter, return an array of possible values from
-/// `function fixtures_owner() public returns (address[] memory)`.
+/// To define fixture for `owner` fuzzed parameter, return an array of possible values from
+/// `function fixture_owner() public returns (address[] memory)`.
 /// Use `owner` named parameter in fuzzed test in order to create a custom strategy
 /// `function testFuzz_ownerAddress(address owner, uint amount)`.
 #[derive(Debug)]
