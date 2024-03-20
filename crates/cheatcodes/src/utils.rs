@@ -198,7 +198,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
             .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
 
         let sig = RuntimeOrHandle::new()
-            .block_on(wallet.sign_hash(&digest))
+            .block_on(wallet.sign_hash(digest))
             .map_err(|err| fmt_err!("{err}"))?;
 
         let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
