@@ -22,6 +22,7 @@ use foundry_evm::{
             BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
             SpecId,
         },
+        Evm,
     },
     traces::CallTraceNode,
 };
@@ -293,9 +294,40 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             }
         }
 
-        let exec_result = {
+        let exec_result = if !self.disable_tracing {
             let mut evm =
                 foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
+
+            trace!(target: "backend", "[{:?}] executing", transaction.hash());
+            // transact and commit the transaction
+            match evm.transact_commit() {
+                Ok(exec_result) => exec_result,
+                Err(err) => {
+                    warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                    match err {
+                        EVMError::Database(err) => {
+                            return Some(TransactionExecutionOutcome::DatabaseError(
+                                transaction,
+                                err,
+                            ))
+                        }
+                        EVMError::Transaction(err) => {
+                            return Some(TransactionExecutionOutcome::Invalid(
+                                transaction,
+                                err.into(),
+                            ))
+                        }
+                        // This will correspond to prevrandao not set, and it should never happen.
+                        // If it does, it's a bug.
+                        e => {
+                            panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut evm =
+                Evm::builder().with_db(&mut *self.db).with_env_with_handler_cfg(env).build();
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
