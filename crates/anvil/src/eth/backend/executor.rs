@@ -123,6 +123,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
     pub enable_steps_tracing: bool,
+    pub disable_tracing: bool,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -284,9 +285,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let nonce = account.nonce;
 
         // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing();
-        if self.enable_steps_tracing {
-            inspector = inspector.with_steps_tracing();
+        let mut inspector = Inspector::default();
+        if !self.disable_tracing {
+            inspector = inspector.with_tracing();
+            if self.enable_steps_tracing {
+                inspector = inspector.with_steps_tracing();
+            }
         }
 
         let exec_result = {
@@ -321,7 +325,9 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
                 }
             }
         };
-        inspector.print_logs();
+        if !self.disable_tracing {
+            inspector.print_logs();
+        }
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {

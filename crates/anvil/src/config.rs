@@ -819,7 +819,6 @@ impl NodeConfig {
     /// Sets whether to disable tracing
     #[must_use]
     pub fn with_disable_tracing(mut self, yes: bool) -> Self {
-        println!("Disabling tracing {:?}", yes);
         self.disable_tracing = yes;
         self
     }
