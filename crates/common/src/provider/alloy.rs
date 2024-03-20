@@ -4,7 +4,9 @@ use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_primitives::U256;
-use alloy_providers::tmp::{Provider, TempProvider};
+use alloy_provider::{
+    network::Ethereum, Network, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
+};
 use alloy_rpc_client::ClientBuilder;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
@@ -25,7 +27,7 @@ use super::{
 };
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<RetryBackoffService<RuntimeTransport>>;
+pub type RetryProvider = RootProvider<Ethereum, RetryBackoffService<RuntimeTransport>>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -239,8 +241,10 @@ impl ProviderBuilder {
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
-        // todo: provider polling interval
-        Ok(Provider::new_with_client(client))
+        let provider =
+            AlloyProviderBuilder::<_, Ethereum>::new().provider(RootProvider::new(client));
+
+        Ok(provider)
     }
 }
 
@@ -250,7 +254,7 @@ impl ProviderBuilder {
 ///   - polygon
 ///
 /// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
-pub async fn estimate_eip1559_fees<P: TempProvider>(
+pub async fn estimate_eip1559_fees<P: Provider<Ethereum>>(
     provider: &P,
     chain: Option<u64>,
 ) -> Result<(U256, U256)> {

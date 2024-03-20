@@ -1,9 +1,9 @@
 use alloy_primitives::Address;
+use alloy_provider::Provider;
 use cast::{TxBuilder, TxBuilderOutput};
-use ethers_core::types::NameOrAddress;
-use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cli::opts::TransactionOpts;
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Chain;
 
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
@@ -34,8 +34,8 @@ pub fn validate_to_address(code: &Option<String>, to: &Option<NameOrAddress>) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn build_tx<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-    provider: &M,
+pub async fn build_tx<P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    provider: &P,
     from: F,
     to: Option<T>,
     code: Option<String>,
@@ -45,6 +45,9 @@ pub async fn build_tx<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddre
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
 ) -> Result<TxBuilderOutput> {
+    let from = from.into().resolve(provider).await?;
+    let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
+
     let mut builder = TxBuilder::new(provider, from, to, chain, tx.legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)

@@ -5,10 +5,12 @@ use crate::cmd::{
     wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::BlockId as AlloyBlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_common::ens::NameOrAddress as EnsNameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -524,12 +526,12 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
+        #[clap(long, short = 'B')]
+        block: Option<AlloyBlockId>,
 
         /// The address to get the nonce for.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -541,12 +543,12 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
+        #[clap(long, short = 'B')]
+        block: Option<AlloyBlockId>,
 
         /// The address to get the nonce for.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -621,12 +623,12 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
+        #[clap(long, short = 'B')]
+        block: Option<AlloyBlockId>,
 
         /// The account to query.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         /// Format the balance in ether.
         #[arg(long, short)]
@@ -659,12 +661,12 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
+        #[clap(long, short = 'B')]
+        block: Option<AlloyBlockId>,
 
         /// The contract address.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         /// Disassemble bytecodes into individual opcodes.
         #[arg(long, short)]
@@ -680,12 +682,12 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
+        #[clap(long, short = 'B')]
+        block: Option<AlloyBlockId>,
 
         /// The contract address.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -771,12 +773,12 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
+        #[clap(long, short = 'B')]
+        block: Option<AlloyBlockId>,
 
         /// The address to get the nonce for.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        who: NameOrAddress,
+        #[clap(value_parser = EnsNameOrAddress::from_str)]
+        who: EnsNameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,

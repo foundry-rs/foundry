@@ -1,7 +1,8 @@
 use crate::utils::apply_chain_and_block_specific_env_changes;
 use alloy_primitives::{Address, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::{Network, Provider};
 use alloy_rpc_types::{Block, BlockNumberOrTag};
+use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 
@@ -10,7 +11,7 @@ use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
 // todo(onbjerg): these bounds needed cus of the bounds in `Provider`, can simplify?
-pub async fn environment<P: TempProvider>(
+pub async fn environment<N: Network, T: Transport + Clone, P: Provider<N, T>>(
     provider: &P,
     memory_limit: u64,
     gas_price: Option<u64>,

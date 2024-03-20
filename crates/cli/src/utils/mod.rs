@@ -1,5 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{utils::format_units, U256};
+use alloy_provider::{network::Ethereum, Provider};
+use alloy_transport::Transport;
 use ethers_core::types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
@@ -76,7 +78,7 @@ pub fn subscriber() {
 }
 
 pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name);
+    let s = abi.to_sol(name, None);
     let s = forge_fmt::format(&s)?;
     Ok(s)
 }
@@ -87,6 +89,14 @@ pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider(config: &Config) -> Result<foundry_common::provider::ethers::RetryProvider> {
     get_provider_builder(config)?.build()
+}
+
+/// Returns a [RetryProvider](foundry_common::alloy::RetryProvider) instantiated using [Config]'s
+/// RPC
+pub fn get_alloy_provider(
+    config: &Config,
+) -> Result<foundry_common::provider::alloy::RetryProvider> {
+    get_alloy_provider_builder(config)?.build()
 }
 
 /// Returns a [ProviderBuilder](foundry_common::ProviderBuilder) instantiated using [Config]'s RPC
@@ -111,14 +121,36 @@ pub fn get_provider_builder(
     Ok(builder)
 }
 
-pub async fn get_chain<M>(chain: Option<Chain>, provider: M) -> Result<Chain>
+/// Returns a [ProviderBuilder](foundry_common::provider::alloy::ProviderBuilder) instantiated using
+/// [Config] values.
+///
+/// Defaults to `http://localhost:8545` and `Mainnet`.
+pub fn get_alloy_provider_builder(
+    config: &Config,
+) -> Result<foundry_common::provider::alloy::ProviderBuilder> {
+    let url = config.get_rpc_url_or_localhost_http()?;
+    let mut builder = foundry_common::provider::alloy::ProviderBuilder::new(url.as_ref());
+
+    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
+        builder = builder.chain(chain);
+    }
+
+    let jwt = config.get_rpc_jwt_secret()?;
+    if let Some(jwt) = jwt {
+        builder = builder.jwt(jwt.as_ref());
+    }
+
+    Ok(builder)
+}
+
+pub async fn get_chain<P, T>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    M: Middleware,
-    M::Error: 'static,
+    P: Provider<Ethereum, T>,
+    T: Transport + Clone,
 {
     match chain {
         Some(chain) => Ok(chain),
-        None => Ok(Chain::from_id(provider.get_chainid().await?.as_u64())),
+        None => Ok(Chain::from_id(provider.get_chain_id().await?.to())),
     }
 }
 

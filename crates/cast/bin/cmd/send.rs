@@ -1,7 +1,8 @@
 use crate::tx;
+use alloy_primitives::Address;
+use alloy_provider::Provider;
 use cast::Cast;
 use clap::Parser;
-use ethers_core::types::NameOrAddress;
 use ethers_middleware::SignerMiddleware;
 use ethers_providers::Middleware;
 use ethers_signers::Signer;
@@ -12,6 +13,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     cli_warn,
+    ens::NameOrAddress,
     types::{ToAlloy, ToEthers},
 };
 use foundry_config::{Chain, Config};
@@ -110,9 +112,18 @@ impl SendTxArgs {
         tx::validate_to_address(&code, &to)?;
 
         let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
+
+        let to = match to {
+            Some(NameOrAddress::Name(name)) => {
+                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+            }
+            Some(NameOrAddress::Address(addr)) => Some(addr),
+            None => None,
+        };
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
@@ -121,15 +132,15 @@ impl SendTxArgs {
         if unlocked {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
-                let current_chain_id = provider.get_chainid().await?.as_u64();
+                let current_chain_id = provider.get_chain_id().await?.to();
                 let config_chain_id = config_chain.id();
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
                 if config_chain_id != current_chain_id {
                     cli_warn!("Switching to chain {}", config_chain);
                     provider
-                        .request(
-                            "wallet_switchEthereumChain",
+                        .raw_request(
+                            "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
                                 "chainId": format!("0x{:x}", config_chain_id),
                             })],
@@ -139,17 +150,13 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(
-                    provider
-                        .get_transaction_count(config.sender.to_ethers(), None)
-                        .await?
-                        .to_alloy(),
-                );
+                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
 
             cast_send(
                 provider,
-                config.sender.to_ethers(),
+                alloy_provider,
+                config.sender,
                 to,
                 code,
                 sig,
@@ -181,7 +188,8 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                from,
+                alloy_provider,
+                from.to_alloy(),
                 to,
                 code,
                 sig,
@@ -199,10 +207,11 @@ impl SendTxArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn cast_send<M: Middleware, P: TempProvider>(
     provider: M,
-    from: F,
-    to: Option<T>,
+    alloy_provider: P,
+    from: Address,
+    to: Option<Address>,
     code: Option<String>,
     sig: Option<String>,
     args: Vec<String>,
@@ -217,9 +226,10 @@ where
     M::Error: 'static,
 {
     let builder_output =
-        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key).await?;
+        tx::build_tx(&alloy_provider, from, to, code, sig, args, tx, chain, etherscan_api_key)
+            .await?;
 
-    let cast = Cast::new(provider);
+    let cast = Cast::new(provider, alloy_provider);
 
     let pending_tx = cast.send(builder_output).await?;
     let tx_hash = *pending_tx;

@@ -243,10 +243,6 @@ pub fn initialize(target: &Path) {
         write.read_to_string(&mut data).unwrap();
 
         if data != "1" {
-            write.set_len(0).unwrap();
-            write.seek(std::io::SeekFrom::Start(0)).unwrap();
-            write.write_all(b"1").unwrap();
-
             // Initialize and build.
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             eprintln!("- initializing template dir in {}", prj.root().display());
@@ -259,6 +255,11 @@ pub fn initialize(target: &Path) {
 
             // Copy the template to the global template path.
             pretty_err(tpath, copy_dir(prj.root(), tpath));
+
+            // Update lockfile to mark that template is initialized.
+            write.set_len(0).unwrap();
+            write.seek(std::io::SeekFrom::Start(0)).unwrap();
+            write.write_all(b"1").unwrap();
         }
 
         // Release the write lock and acquire a new read lock.

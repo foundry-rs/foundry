@@ -43,12 +43,13 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
 alloy-rlp.workspace = true
-alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types.workspace = true
 alloy-rpc-trace-types.workspace = true
-alloy-providers.workspace = true
+alloy-provider.workspace = true
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true

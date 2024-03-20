@@ -433,9 +433,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     oldBalance: old_balance,
                     newBalance: old_balance + value,
                     value,
-                    data: vec![],
+                    data: Bytes::new(),
                     reverted: false,
-                    deployedCode: vec![],
+                    deployedCode: Bytes::new(),
                     storageAccesses: vec![],
                     depth: ecx.journaled_state.depth(),
                 };
@@ -540,9 +540,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         oldBalance: balance,
                         newBalance: balance,
                         value: U256::ZERO,
-                        data: vec![],
+                        data: Bytes::new(),
                         reverted: false,
-                        deployedCode: vec![],
+                        deployedCode: Bytes::new(),
                         storageAccesses: vec![],
                         depth: ecx.journaled_state.depth(),
                     };
@@ -696,7 +696,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs.push(Vm::Log {
                 topics: log.data.topics().to_vec(),
-                data: log.data.data.to_vec(),
+                data: log.data.data.clone(),
                 emitter: log.address,
             });
         }
@@ -856,7 +856,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             to: Some(call.contract),
                             value: Some(call.transfer.value),
                             input: TransactionInput::new(call.input.clone()),
-                            nonce: Some(U64::from(account.info.nonce)),
+                            nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
                                 Some(U256::from(call.gas_limit))
                             } else {
@@ -924,9 +924,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
                 value: call.transfer.value,
-                data: call.input.to_vec(),
+                data: call.input.clone(),
                 reverted: false,
-                deployedCode: vec![],
+                deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
                 depth: ecx.journaled_state.depth(),
             }]);
@@ -1265,7 +1265,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             to,
                             value: Some(call.value),
                             input: TransactionInput::new(bytecode),
-                            nonce: Some(U64::from(nonce)),
+                            nonce: Some(nonce),
                             gas: if is_fixed_gas_limit {
                                 Some(U256::from(call.gas_limit))
                             } else {
@@ -1335,10 +1335,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 oldBalance: U256::ZERO, // updated on create_end
                 newBalance: U256::ZERO, // updated on create_end
                 value: call.value,
-                data: call.init_code.to_vec(),
+                data: call.init_code.clone(),
                 reverted: false,
-                deployedCode: vec![],    // updated on create_end
-                storageAccesses: vec![], // updated on create_end
+                deployedCode: Bytes::new(), // updated on create_end
+                storageAccesses: vec![],    // updated on create_end
                 depth,
             }]);
         }
@@ -1533,10 +1533,10 @@ fn apply_create2_deployer<DB: DatabaseExt>(
                     oldBalance: U256::ZERO, // updated on create_end
                     newBalance: U256::ZERO, // updated on create_end
                     value: call.value,
-                    data: calldata,
+                    data: calldata.into(),
                     reverted: false,
-                    deployedCode: vec![],    // updated on create_end
-                    storageAccesses: vec![], // updated on create_end
+                    deployedCode: Bytes::new(), // updated on create_end
+                    storageAccesses: vec![],    // updated on create_end
                     depth: ecx.journaled_state.depth(),
                 }])
             }
@@ -1672,8 +1672,8 @@ fn append_storage_access(
                         oldBalance: U256::ZERO,
                         newBalance: U256::ZERO,
                         value: U256::ZERO,
-                        data: vec![],
-                        deployedCode: vec![],
+                        data: Bytes::new(),
+                        deployedCode: Bytes::new(),
                         depth: entry.depth,
                     };
                     last.push(resume_record);

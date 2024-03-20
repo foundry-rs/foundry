@@ -1,13 +1,15 @@
+use alloy_primitives::Address;
+use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_core::types::{BlockId, NameOrAddress};
 use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::types::ToEthers;
+use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
@@ -60,20 +62,42 @@ impl AccessListArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+        let alloy_provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
-            .await?;
+        let to = match to {
+            Some(NameOrAddress::Name(name)) => {
+                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+            }
+            Some(NameOrAddress::Address(addr)) => Some(addr),
+            None => None,
+        };
+
+        access_list(
+            &provider,
+            alloy_provider,
+            sender,
+            to,
+            sig,
+            args,
+            data,
+            tx,
+            chain,
+            block,
+            to_json,
+        )
+        .await?;
         Ok(())
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn access_list<M: Middleware, P: TempProvider>(
     provider: M,
-    from: F,
-    to: Option<T>,
+    alloy_provider: P,
+    from: Address,
+    to: Option<Address>,
     sig: Option<String>,
     args: Vec<String>,
     data: Option<String>,
@@ -85,7 +109,7 @@ async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddres
 where
     M::Error: 'static,
 {
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+    let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, tx.legacy).await?;
     builder
         .gas(tx.gas_limit)
         .gas_price(tx.gas_price)
@@ -104,7 +128,7 @@ where
 
     let builder_output = builder.peek();
 
-    let cast = Cast::new(&provider);
+    let cast = Cast::new(&provider, &alloy_provider);
 
     let access_list: String = cast.access_list(builder_output, block, to_json).await?;
 
