@@ -1,8 +1,8 @@
 use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
 use alloy_primitives::B256;
-use alloy_signer::LocalWallet;
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_trezor::TrezorHDPath;
+use alloy_signer_wallet::LocalWallet;
 use eyre::{Context, Result};
 use foundry_config::Config;
 use std::{

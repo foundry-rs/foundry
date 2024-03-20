@@ -361,13 +361,6 @@ mod temp_ethers {
     with_alloy!(Address, Bloom, H64, H256, I256, U256, U64);
 }
 
-/// Convert a U256 to bytes
-pub fn to_bytes(uint: ethers_core::types::U256) -> [u8; 32] {
-    let mut buffer: [u8; 32] = [0; 32];
-    uint.to_big_endian(&mut buffer);
-    buffer
-}
-
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
     match attr {

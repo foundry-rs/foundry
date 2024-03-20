@@ -6,7 +6,10 @@ use alloy_primitives::{
     Address, Bytes, Keccak256, TxHash, B256, I256, U256, U64,
 };
 use alloy_provider::{
-    network::{eip2718::Decodable2718, Ethereum, eip2718::Encodable2718},
+    network::{
+        eip2718::{Decodable2718, Encodable2718},
+        Ethereum,
+    },
     PendingTransaction, PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::{Decodable, Encodable};
@@ -39,12 +42,12 @@ pub use tx::{TxBuilder, TxBuilderOutput, TxBuilderPeekOutput};
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
-pub use tx::{TxBuilder, TxBuilderOutput};
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
     request::HttpClient as AwsHttpClient, Client as AwsClient,
 };
 pub use rusoto_kms::KmsClient;
+pub use tx::{TxBuilder, TxBuilderOutput};
 
 pub mod base;
 pub mod errors;

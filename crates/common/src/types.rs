@@ -1,17 +1,14 @@
 //! Temporary utility conversion traits between ethers-rs and alloy types.
 
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U256, U64};
-use alloy_rpc_types::{
-    AccessList, AccessListItem, BlockNumberOrTag, 
-};
-use alloy_signer::Signer;
+use alloy_rpc_types::{AccessList, AccessListItem, BlockNumberOrTag};
 use alloy_signer_wallet::LocalWallet;
 use ethers_core::types::{
     transaction::eip2930::{
         AccessList as EthersAccessList, AccessListItem as EthersAccessListItem,
     },
-    BlockNumber, Bloom as EthersBloom, Bytes as EthersBytes, TransactionRequest, H160, H256, H64,
-    I256 as EthersI256, U256 as EthersU256, U64 as EthersU64,
+    BlockNumber, Bloom as EthersBloom, Bytes as EthersBytes, H160, H256, H64, I256 as EthersI256,
+    U256 as EthersU256, U64 as EthersU64,
 };
 
 /// Conversion trait to easily convert from Ethers types to Alloy types.

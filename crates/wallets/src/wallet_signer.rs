@@ -1,11 +1,12 @@
 use crate::error::WalletSignerError;
+use alloy_consensus::SignableTransaction;
+use alloy_network::TxSigner;
 use alloy_primitives::{Address, ChainId, B256};
-use alloy_signer::{
-    coins_bip39::English, LocalWallet, MnemonicBuilder, SignableTx, Signature, Signer,
-};
+use alloy_signer::{Signature, Signer};
 use alloy_signer_aws::AwsSigner;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
 use alloy_signer_trezor::{TrezorHDPath, TrezorSigner};
+use alloy_signer_wallet::{coins_bip39::English, LocalWallet, MnemonicBuilder};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
@@ -131,16 +132,12 @@ macro_rules! delegate {
 #[async_trait]
 impl Signer for WalletSigner {
     /// Signs the given hash.
-    async fn sign_hash(&self, hash: B256) -> alloy_signer::Result<Signature> {
+    async fn sign_hash(&self, hash: &B256) -> alloy_signer::Result<Signature> {
         delegate!(self, inner => inner.sign_hash(hash)).await
     }
 
     async fn sign_message(&self, message: &[u8]) -> alloy_signer::Result<Signature> {
         delegate!(self, inner => inner.sign_message(message)).await
-    }
-
-    async fn sign_transaction(&self, tx: &mut SignableTx) -> alloy_signer::Result<Signature> {
-        delegate!(self, inner => inner.sign_transaction(tx)).await
     }
 
     fn address(&self) -> Address {
@@ -164,6 +161,16 @@ impl Signer for WalletSigner {
         Self: Sized,
     {
         delegate!(self, inner => inner.sign_typed_data(payload, domain)).await
+    }
+}
+
+#[async_trait]
+impl TxSigner<Signature> for WalletSigner {
+    async fn sign_transaction(
+        &self,
+        tx: &mut dyn SignableTransaction<Signature>,
+    ) -> alloy_signer::Result<Signature> {
+        delegate!(self, inner => inner.sign_transaction(tx)).await
     }
 }
 

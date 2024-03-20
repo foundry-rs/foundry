@@ -1,4 +1,4 @@
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, FilterBlockOption};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption};
 use cast::Cast;
 use clap::Parser;
 use ethers_core::{
@@ -8,12 +8,10 @@ use ethers_core::{
     },
     types::{ValueOrArray, H256, U256},
 };
-use alloy_rpc_types::Filter;
 use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
-use foundry_common::types::ToEthers;
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, types::ToEthers};
 use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};

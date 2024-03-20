@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::U256;
 use alloy_provider::{
-    network::Ethereum, Network, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
+    network::Ethereum, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};

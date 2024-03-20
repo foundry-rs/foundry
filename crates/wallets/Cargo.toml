@@ -12,9 +12,12 @@ repository.workspace = true
 [dependencies]
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer-aws.workspace = true
 alloy-signer-ledger.workspace = true
 alloy-signer-trezor.workspace = true
+alloy-network.workspace = true
+alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 
 aws-sdk-kms = { version = "1", default-features = false }

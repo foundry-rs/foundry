@@ -390,6 +390,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-signer-aws"
+version = "0.1.0"
+source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-signer",
+ "async-trait",
+ "aws-sdk-kms",
+ "k256",
+ "spki",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "alloy-signer-ledger"
+version = "0.1.0"
+source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-signer",
+ "async-trait",
+ "coins-ledger",
+ "futures-util",
+ "semver 1.0.22",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "alloy-signer-trezor"
+version = "0.1.0"
+source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-signer",
+ "async-trait",
+ "semver 1.0.22",
+ "thiserror",
+ "tracing",
+ "trezor-client",
+]
+
+[[package]]
 name = "alloy-signer-wallet"
 version = "0.1.0"
 source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
@@ -406,52 +456,6 @@ dependencies = [
  "k256",
  "rand 0.8.5",
  "thiserror",
-]
-
-[[package]]
-name = "alloy-signer-aws"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=9ac2c90#9ac2c90d58a9994d4b61c879e33c6af2739a2b4f"
-dependencies = [
- "alloy-primitives",
- "alloy-signer",
- "async-trait",
- "aws-sdk-kms",
- "k256",
- "spki",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "alloy-signer-ledger"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=9ac2c90#9ac2c90d58a9994d4b61c879e33c6af2739a2b4f"
-dependencies = [
- "alloy-primitives",
- "alloy-signer",
- "async-trait",
- "coins-ledger",
- "futures-util",
- "semver 1.0.22",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "alloy-signer-trezor"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=9ac2c90#9ac2c90d58a9994d4b61c879e33c6af2739a2b4f"
-dependencies = [
- "alloy-consensus",
- "alloy-network",
- "alloy-primitives",
- "alloy-signer",
- "async-trait",
- "semver 1.0.22",
- "thiserror",
- "tracing",
- "trezor-client",
 ]
 
 [[package]]
@@ -4001,11 +4005,14 @@ dependencies = [
 name = "foundry-wallets"
 version = "0.2.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-network",
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-aws",
  "alloy-signer-ledger",
  "alloy-signer-trezor",
+ "alloy-signer-wallet",
  "alloy-sol-types",
  "async-trait",
  "aws-config",
