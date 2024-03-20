@@ -178,40 +178,40 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result {
-    if let Some(script_wallets) = &ccx.state.script_wallets {
-        let mut script_wallets = script_wallets.inner.lock();
-        let maybe_provided_sender = script_wallets.provided_sender;
-        let signers = script_wallets.multi_wallet.signers()?;
+    let Some(script_wallets) = &ccx.state.script_wallets else {
+        return Err("no wallets are available".into());
+    };
 
-        let signer = if let Some(signer) = signer {
-            signer
-        } else if let Some(provided_sender) = maybe_provided_sender {
-            provided_sender
-        } else if signers.len() == 1 {
-            *signers.keys().next().unwrap()
-        } else {
-            return Err("could not determine signer".into());
-        };
+    let mut script_wallets = script_wallets.inner.lock();
+    let maybe_provided_sender = script_wallets.provided_sender;
+    let signers = script_wallets.multi_wallet.signers()?;
 
-        let wallet = signers
-            .get(&signer)
-            .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
-
-        let sig = RuntimeOrHandle::new()
-            .block_on(wallet.sign_hash(digest))
-            .map_err(|err| fmt_err!("{err}"))?;
-
-        let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
-        assert_eq!(recovered.to_alloy(), signer);
-
-        let v = U256::from(sig.v);
-        let r = B256::from(sig.r.to_alloy());
-        let s = B256::from(sig.s.to_alloy());
-
-        Ok((v, r, s).abi_encode())
+    let signer = if let Some(signer) = signer {
+        signer
+    } else if let Some(provided_sender) = maybe_provided_sender {
+        provided_sender
+    } else if signers.len() == 1 {
+        *signers.keys().next().unwrap()
     } else {
-        Err("no wallets are available".into())
-    }
+        return Err("could not determine signer".into());
+    };
+
+    let wallet = signers
+        .get(&signer)
+        .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
+
+    let sig = RuntimeOrHandle::new()
+        .block_on(wallet.sign_hash(digest))
+        .map_err(|err| fmt_err!("{err}"))?;
+
+    let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
+    assert_eq!(recovered.to_alloy(), signer);
+
+    let v = U256::from(sig.v);
+    let r = B256::from(sig.r.to_alloy());
+    let s = B256::from(sig.s.to_alloy());
+
+    Ok((v, r, s).abi_encode())
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
