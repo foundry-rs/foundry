@@ -5,65 +5,40 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 interface ITarget {
-    event Event0Empty();
-    event Event0WithData(uint256 a);
+    event AnonymousEventEmpty() anonymous;
+    event AnonymousEventWithData(uint256 a) anonymous;
 
-    event Event1(uint256 indexed a);
-    event Event2(uint256 indexed a, uint256 indexed b);
-    event Event3(uint256 indexed a, uint256 indexed b, uint256 indexed c);
-
-    event AnonymousEvent0Empty() anonymous;
-    event AnonymousEvent0WithData(uint256 a) anonymous;
-
-    event AnonymousEvent1(uint256 indexed a) anonymous;
-    event AnonymousEvent2(uint256 indexed a, uint256 indexed b) anonymous;
-    event AnonymousEvent3(uint256 indexed a, uint256 indexed b, uint256 indexed c) anonymous;
-    event AnonymousEvent4(uint256 indexed a, uint256 indexed b, uint256 indexed c, uint256 indexed d) anonymous;
+    event AnonymousEventWith1Topic(uint256 indexed a, uint256 b) anonymous;
+    event AnonymousEventWith2Topics(uint256 indexed a, uint256 indexed b, uint256 c) anonymous;
+    event AnonymousEventWith3Topics(uint256 indexed a, uint256 indexed b, uint256 indexed c, uint256 d) anonymous;
+    event AnonymousEventWith4Topics(
+        uint256 indexed a, uint256 indexed b, uint256 indexed c, uint256 indexed d, uint256 e
+    ) anonymous;
 }
 
 contract Target is ITarget {
-    function emitEvent0Empty() external {
-        emit Event0Empty();
+    function emitAnonymousEventEmpty() external {
+        emit AnonymousEventEmpty();
     }
 
-    function emitEvent0WithData(uint256 a) external {
-        emit Event0WithData(a);
+    function emitAnonymousEventWithData(uint256 a) external {
+        emit AnonymousEventWithData(a);
     }
 
-    function emitEvent1(uint256 a) external {
-        emit Event1(a);
+    function emitAnonymousEventWith1Topic(uint256 a, uint256 b) external {
+        emit AnonymousEventWith1Topic(a, b);
     }
 
-    function emitEvent2(uint256 a, uint256 b) external {
-        emit Event2(a, b);
+    function emitAnonymousEventWith2Topics(uint256 a, uint256 b, uint256 c) external {
+        emit AnonymousEventWith2Topics(a, b, c);
     }
 
-    function emitEvent3(uint256 a, uint256 b, uint256 c) external {
-        emit Event3(a, b, c);
+    function emitAnonymousEventWith3Topics(uint256 a, uint256 b, uint256 c, uint256 d) external {
+        emit AnonymousEventWith3Topics(a, b, c, d);
     }
 
-    function emitAnonymousEvent0Empty() external {
-        emit AnonymousEvent0Empty();
-    }
-
-    function emitAnonymousEvent0WithData(uint256 a) external {
-        emit AnonymousEvent0WithData(a);
-    }
-
-    function emitAnonymousEvent1(uint256 a) external {
-        emit AnonymousEvent1(a);
-    }
-
-    function emitAnonymousEvent2(uint256 a, uint256 b) external {
-        emit AnonymousEvent2(a, b);
-    }
-
-    function emitAnonymousEvent3(uint256 a, uint256 b, uint256 c) external {
-        emit AnonymousEvent3(a, b, c);
-    }
-
-    function emitAnonymousEvent4(uint256 a, uint256 b, uint256 c, uint256 d) external {
-        emit AnonymousEvent4(a, b, c, d);
+    function emitAnonymousEventWith4Topics(uint256 a, uint256 b, uint256 c, uint256 d, uint256 e) external {
+        emit AnonymousEventWith4Topics(a, b, c, d, e);
     }
 }
 
@@ -77,57 +52,39 @@ contract Issue7457Test is DSTest, ITarget {
         target = new Target();
     }
 
-    function testEmitEvent0() public {
+    function testEmitEvent() public {
         vm.expectEmit(false, false, false, true);
-        emit Event0Empty();
-        target.emitEvent0Empty();
-
-        vm.expectEmit(false, false, false, true);
-        emit AnonymousEvent0Empty();
-        target.emitAnonymousEvent0Empty();
-
-        vm.expectEmit(false, false, false, true);
-        emit Event0WithData(1);
-        target.emitEvent0WithData(1);
-
-        vm.expectEmit(false, false, false, true);
-        emit AnonymousEvent0WithData(1);
-        target.emitAnonymousEvent0WithData(1);
+        emit AnonymousEventEmpty();
+        target.emitAnonymousEventEmpty();
     }
 
-    function testEmitEvent1() public {
+    function testEmitEventWithData() public {
+        vm.expectEmit(false, false, false, true);
+        emit AnonymousEventWithData(1);
+        target.emitAnonymousEventWithData(1);
+    }
+
+    function testEmitEventWith1Topic() public {
         vm.expectEmit(true, false, false, true);
-        emit Event1(1);
-        target.emitEvent1(1);
-
-        vm.expectEmit(true, false, false, true);
-        emit AnonymousEvent1(1);
-        target.emitAnonymousEvent1(1);
+        emit AnonymousEventWith1Topic(1, 2);
+        target.emitAnonymousEventWith1Topic(1, 2);
     }
 
-    function testEmitEvent2() public {
+    function testEmitEventWith2Topics() public {
         vm.expectEmit(true, true, false, true);
-        emit Event2(1, 2);
-        target.emitEvent2(1, 2);
-
-        vm.expectEmit(true, true, false, true);
-        emit AnonymousEvent2(1, 2);
-        target.emitAnonymousEvent2(1, 2);
+        emit AnonymousEventWith2Topics(1, 2, 3);
+        target.emitAnonymousEventWith2Topics(1, 2, 3);
     }
 
-    function testEmitEvent3() public {
+    function testEmitEventWith3Topics() public {
         vm.expectEmit(true, true, true, true);
-        emit Event3(1, 2, 3);
-        target.emitEvent3(1, 2, 3);
-
-        vm.expectEmit(true, true, true, true);
-        emit AnonymousEvent3(1, 2, 3);
-        target.emitAnonymousEvent3(1, 2, 3);
+        emit AnonymousEventWith3Topics(1, 2, 3, 4);
+        target.emitAnonymousEventWith3Topics(1, 2, 3, 4);
     }
 
-    function testEmitEvent4() public {
+    function testEmitEventWith4Topics() public {
         vm.expectEmit(true, true, true, true);
-        emit AnonymousEvent4(1, 2, 3, 4);
-        target.emitAnonymousEvent4(1, 2, 3, 4);
+        emit AnonymousEventWith4Topics(1, 2, 3, 4, 5);
+        target.emitAnonymousEventWith4Topics(1, 2, 3, 4, 5);
     }
 }

@@ -437,11 +437,11 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
     if expected_topic_0
         .zip(log_topic_0)
         .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len()) ||
-        // If the event is anonymous and has no topics we will still attempt to match the source
-        // address and data if requested.
+        // Anonymous events are a special case where topic 0 is not generated.
+        // If the anonymous event has no other topics we will still attempt to match the source address and data if requested.
         (expected_topic_0.is_none() && log_topic_0.is_none())
     {
-        // Match topics
+        // Match topics, in case no topics are present true is returned.
         event_to_fill_or_check.found = log
             .topics()
             .iter()
@@ -450,12 +450,12 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
             .filter(|(i, _)| event_to_fill_or_check.checks[*i])
             .all(|(i, topic)| topic == &expected.topics()[i + 1]);
 
-        // Maybe match source address
+        // Maybe match source address.
         if let Some(addr) = event_to_fill_or_check.address {
             event_to_fill_or_check.found &= addr == log.address;
         }
 
-        // Maybe match data
+        // Maybe match data.
         if event_to_fill_or_check.checks[3] {
             event_to_fill_or_check.found &= expected.data.as_ref() == log.data.data.as_ref();
         }
