@@ -328,3 +328,6 @@ test_repro!(6634; |config| {
   cheats_config.always_use_create_2_factory = true;
   config.runner.cheats_config = std::sync::Arc::new(cheats_config);
 });
+
+// https://github.com/foundry-rs/foundry/issues/7457
+test_repro!(7457);
