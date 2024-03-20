@@ -108,7 +108,7 @@ rustls = [
     "reqwest/rustls-tls",
     "reqwest/rustls-tls-native-roots",
 ]
-openssl = ["foundry-cli/openssl", "reqwest/default-tls", "foundry-wallets/openssl"]
+openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 
 [[bench]]

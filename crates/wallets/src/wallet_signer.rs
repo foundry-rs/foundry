@@ -1,19 +1,15 @@
 use crate::error::WalletSignerError;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, ChainId, B256};
+use alloy_signer::{
+    coins_bip39::English, LocalWallet, MnemonicBuilder, SignableTx, Signature, Signer,
+};
+use alloy_signer_aws::AwsSigner;
+use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
+use alloy_signer_trezor::{TrezorHDPath, TrezorSigner};
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
-use ethers_core::types::{
-    transaction::{eip2718::TypedTransaction, eip712::Eip712},
-    Signature,
-};
-use ethers_signers::{
-    coins_bip39::English, AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder,
-    Signer, Trezor, TrezorHDPath,
-};
-use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-use rusoto_kms::KmsClient;
+use aws_config::BehaviorVersion;
+use aws_sdk_kms::Client as AwsClient;
 use std::path::PathBuf;
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
@@ -24,36 +20,34 @@ pub enum WalletSigner {
     /// Wrapper around local wallet. e.g. private key, mnemonic
     Local(LocalWallet),
     /// Wrapper around Ledger signer.
-    Ledger(Ledger),
+    Ledger(LedgerSigner),
     /// Wrapper around Trezor signer.
-    Trezor(Trezor),
+    Trezor(TrezorSigner),
     /// Wrapper around AWS KMS signer.
     Aws(AwsSigner),
 }
 
 impl WalletSigner {
     pub async fn from_ledger_path(path: LedgerHDPath) -> Result<Self> {
-        let ledger = Ledger::new(path, 1).await?;
+        let ledger = LedgerSigner::new(path, None).await?;
         Ok(Self::Ledger(ledger))
     }
 
     pub async fn from_trezor_path(path: TrezorHDPath) -> Result<Self> {
         // cached to ~/.ethers-rs/trezor/cache/trezor.session
-        let trezor = Trezor::new(path, 1, None).await?;
+        let trezor = TrezorSigner::new(path, None).await?;
         Ok(Self::Trezor(trezor))
     }
 
-    pub async fn from_aws(key_id: &str) -> Result<Self> {
-        let client =
-            AwsClient::new_with(AwsChainProvider::default(), AwsHttpClient::new().unwrap());
+    pub async fn from_aws(key_id: String) -> Result<Self> {
+        let config = aws_config::load_defaults(BehaviorVersion {}).await;
+        let client = AwsClient::new(&config);
 
-        let kms = KmsClient::new_with_client(client, AwsRegion::default());
-
-        Ok(Self::Aws(AwsSigner::new(kms, key_id, 1).await?))
+        Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))
     }
 
     pub fn from_private_key(private_key: impl AsRef<[u8]>) -> Result<Self> {
-        let wallet = LocalWallet::from_bytes(private_key.as_ref())?;
+        let wallet = LocalWallet::from_bytes(&B256::from_slice(private_key.as_ref()))?;
         Ok(Self::Local(wallet))
     }
 
@@ -63,7 +57,7 @@ impl WalletSigner {
     /// - the result for Ledger signers includes addresses available for both LedgerLive and Legacy
     ///   derivation paths
     /// - for Local and AWS signers the result contains a single address
-    pub async fn available_senders(&self, max: usize) -> Result<Vec<ethers_core::types::Address>> {
+    pub async fn available_senders(&self, max: usize) -> Result<Vec<Address>> {
         let mut senders = Vec::new();
         match self {
             WalletSigner::Local(local) => {
@@ -136,78 +130,40 @@ macro_rules! delegate {
 
 #[async_trait]
 impl Signer for WalletSigner {
-    type Error = WalletSignerError;
-
-    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(&self, message: S) -> Result<Signature> {
-        delegate!(self, inner => inner.sign_message(message).await.map_err(Into::into))
+    /// Signs the given hash.
+    async fn sign_hash(&self, hash: B256) -> alloy_signer::Result<Signature> {
+        delegate!(self, inner => inner.sign_hash(hash)).await
     }
 
-    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature> {
-        delegate!(self, inner => inner.sign_transaction(message).await.map_err(Into::into))
+    async fn sign_message(&self, message: &[u8]) -> alloy_signer::Result<Signature> {
+        delegate!(self, inner => inner.sign_message(message)).await
     }
 
-    async fn sign_typed_data<T: Eip712 + Send + Sync>(&self, payload: &T) -> Result<Signature> {
-        delegate!(self, inner => inner.sign_typed_data(payload).await.map_err(Into::into))
+    async fn sign_transaction(&self, tx: &mut SignableTx) -> alloy_signer::Result<Signature> {
+        delegate!(self, inner => inner.sign_transaction(tx)).await
     }
 
-    fn address(&self) -> ethers_core::types::Address {
+    fn address(&self) -> Address {
         delegate!(self, inner => inner.address())
     }
 
-    fn chain_id(&self) -> u64 {
+    fn chain_id(&self) -> Option<ChainId> {
         delegate!(self, inner => inner.chain_id())
     }
 
-    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
-        match self {
-            Self::Local(inner) => Self::Local(inner.with_chain_id(chain_id)),
-            Self::Ledger(inner) => Self::Ledger(inner.with_chain_id(chain_id)),
-            Self::Trezor(inner) => Self::Trezor(inner.with_chain_id(chain_id)),
-            Self::Aws(inner) => Self::Aws(inner.with_chain_id(chain_id)),
-        }
-    }
-}
-
-#[async_trait]
-impl Signer for &WalletSigner {
-    type Error = WalletSignerError;
-
-    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(&self, message: S) -> Result<Signature> {
-        (*self).sign_message(message).await
+    fn set_chain_id(&mut self, chain_id: Option<ChainId>) {
+        delegate!(self, inner => inner.set_chain_id(chain_id))
     }
 
-    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature> {
-        (*self).sign_transaction(message).await
-    }
-
-    async fn sign_typed_data<T: Eip712 + Send + Sync>(&self, payload: &T) -> Result<Signature> {
-        (*self).sign_typed_data(payload).await
-    }
-
-    fn address(&self) -> ethers_core::types::Address {
-        (*self).address()
-    }
-
-    fn chain_id(&self) -> u64 {
-        (*self).chain_id()
-    }
-
-    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
-        let _ = chain_id;
-        self
-    }
-}
-
-impl WalletSigner {
-    pub async fn sign_hash(&self, hash: &B256) -> Result<Signature> {
-        match self {
-            // TODO: AWS can sign hashes but utilities aren't exposed in ethers-signers.
-            // TODO: Implement with alloy-signer.
-            Self::Aws(_aws) => Err(WalletSignerError::CannotSignRawHash("AWS")),
-            Self::Ledger(_) => Err(WalletSignerError::CannotSignRawHash("Ledger")),
-            Self::Local(wallet) => wallet.sign_hash(hash.0.into()).map_err(Into::into),
-            Self::Trezor(_) => Err(WalletSignerError::CannotSignRawHash("Trezor")),
-        }
+    async fn sign_typed_data<T: SolStruct + Send + Sync>(
+        &self,
+        payload: &T,
+        domain: &Eip712Domain,
+    ) -> alloy_signer::Result<Signature>
+    where
+        Self: Sized,
+    {
+        delegate!(self, inner => inner.sign_typed_data(payload, domain)).await
     }
 }
 

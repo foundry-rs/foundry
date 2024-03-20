@@ -50,4 +50,4 @@ tempfile = "3.7"
 [features]
 default = ["rustls"]
 rustls = ["ethers-providers/rustls", "foundry-wallets/rustls"]
-openssl = ["ethers-providers/openssl", "foundry-compilers/openssl", "foundry-wallets/openssl"]
+openssl = ["ethers-providers/openssl", "foundry-compilers/openssl"]

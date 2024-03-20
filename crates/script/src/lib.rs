@@ -299,7 +299,7 @@ impl ScriptArgs {
             .wallets
             .private_keys()?
             .filter(|pks| pks.len() == 1)
-            .map(|pks| pks.first().unwrap().address().to_alloy());
+            .map(|pks| pks.first().unwrap().address());
         Ok(maybe_sender)
     }
 
