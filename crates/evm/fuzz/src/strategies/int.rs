@@ -68,7 +68,11 @@ impl ValueTree for IntValueTree {
             return false
         }
 
-        self.lo = self.curr + if self.hi.is_negative() { I256::MINUS_ONE } else { I256::ONE };
+        self.lo = if self.curr != I256::MIN && self.curr != I256::MAX {
+            self.curr + if self.hi.is_negative() { I256::MINUS_ONE } else { I256::ONE }
+        } else {
+            self.curr
+        };
 
         self.reposition()
     }
@@ -213,5 +217,27 @@ impl Strategy for IntStrategy {
             x if x < self.edge_weight + self.fixtures_weight => self.generate_fixtures_tree(runner),
             _ => self.generate_random_tree(runner),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::strategies::int::IntValueTree;
+    use alloy_primitives::I256;
+    use proptest::strategy::ValueTree;
+
+    #[test]
+    fn test_int_tree_complicate_should_not_overflow() {
+        let mut int_tree = IntValueTree::new(I256::MAX, false);
+        assert_eq!(int_tree.hi, I256::MAX);
+        assert_eq!(int_tree.curr, I256::MAX);
+        int_tree.complicate();
+        assert_eq!(int_tree.lo, I256::MAX);
+
+        let mut int_tree = IntValueTree::new(I256::MIN, false);
+        assert_eq!(int_tree.hi, I256::MIN);
+        assert_eq!(int_tree.curr, I256::MIN);
+        int_tree.complicate();
+        assert_eq!(int_tree.lo, I256::MIN);
     }
 }

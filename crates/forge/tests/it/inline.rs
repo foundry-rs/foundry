@@ -1,19 +1,16 @@
 //! Inline configuration tests.
 
-use crate::{
-    config::runner,
-    test_helpers::{COMPILED, PROJECT},
-};
-use forge::{result::TestKind, TestOptions, TestOptionsBuilder};
+use crate::test_helpers::TEST_DATA_DEFAULT;
+use forge::{result::TestKind, TestOptionsBuilder};
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_test_utils::Filter;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
-    let mut runner = runner();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let result = runner.test_collect(&filter);
-    let suite_result = result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
+    let suite_result = result.get("default/inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
     let test_result = suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
     match test_result.kind {
         TestKind::Fuzz { runs, .. } => assert_eq!(runs, 1024),
@@ -23,11 +20,10 @@ async fn inline_config_run_fuzz() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_invariant() {
-    const ROOT: &str = "inline/InvariantInlineConf.t.sol";
+    const ROOT: &str = "default/inline/InvariantInlineConf.t.sol";
 
     let filter = Filter::new(".*", ".*", ".*inline/InvariantInlineConf.t.sol");
-    let mut runner = runner();
-    runner.test_options = default_test_options();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let result = runner.test_collect(&filter);
 
     let suite_result_1 = result.get(&format!("{ROOT}:InvariantInlineConf")).expect("Result exists");
@@ -49,38 +45,28 @@ async fn inline_config_run_invariant() {
 
 #[test]
 fn build_test_options() {
-    let root = &PROJECT.paths.root;
+    let root = &TEST_DATA_DEFAULT.project.paths.root;
     let profiles = vec!["default".to_string(), "ci".to_string()];
     let build_result = TestOptionsBuilder::default()
         .fuzz(FuzzConfig::default())
         .invariant(InvariantConfig::default())
         .profiles(profiles)
-        .build(&COMPILED, root);
+        .build(&TEST_DATA_DEFAULT.output, root);
 
     assert!(build_result.is_ok());
 }
 
 #[test]
 fn build_test_options_just_one_valid_profile() {
-    let root = &PROJECT.paths.root;
+    let root = &TEST_DATA_DEFAULT.project.root();
     let valid_profiles = vec!["profile-sheldon-cooper".to_string()];
     let build_result = TestOptionsBuilder::default()
         .fuzz(FuzzConfig::default())
         .invariant(InvariantConfig::default())
         .profiles(valid_profiles)
-        .build(&COMPILED, root);
+        .build(&TEST_DATA_DEFAULT.output, root);
 
     // We expect an error, since COMPILED contains in-line
     // per-test configs for "default" and "ci" profiles
     assert!(build_result.is_err());
-}
-
-/// Returns the [TestOptions] for the testing [PROJECT].
-pub fn default_test_options() -> TestOptions {
-    let root = &PROJECT.paths.root;
-    TestOptionsBuilder::default()
-        .fuzz(FuzzConfig::default())
-        .invariant(InvariantConfig::default())
-        .build(&COMPILED, root)
-        .expect("Config loaded")
 }
