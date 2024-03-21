@@ -122,20 +122,23 @@ pub async fn render_trace_arena(
 
             // Display trace return data
             let color = trace_color(&node.trace);
-            write!(
-                s,
-                "{child}{EDGE}{}{}",
-                color.paint(RETURN),
-                color.paint(format!("[{:?}] ", node.trace.status))
-            )?;
-            match return_data {
-                Some(val) => writeln!(s, "{val}"),
-                None if node.trace.kind.is_any_create() => {
-                    writeln!(s, "{} bytes of code", node.trace.output.len())
+            write!(s, "{child}{EDGE}{}", color.paint(RETURN))?;
+            if node.trace.kind.is_any_create() {
+                match &return_data {
+                    None => {
+                        writeln!(s, "{} bytes of code", node.trace.output.len())?;
+                    }
+                    Some(val) => {
+                        writeln!(s, "{val}")?;
+                    }
                 }
-                None if node.trace.output.is_empty() => Ok(()),
-                None => writeln!(s, "{}", node.trace.output),
-            }?;
+            } else {
+                match &return_data {
+                    None if node.trace.output.is_empty() => writeln!(s, "()")?,
+                    None => writeln!(s, "{}", node.trace.output)?,
+                    Some(val) => writeln!(s, "{val}")?,
+                }
+            }
 
             Ok(())
         }
