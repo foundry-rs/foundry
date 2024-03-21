@@ -288,6 +288,7 @@ impl FuzzFixtures {
         Self { inner: Arc::new(fixtures) }
     }
 
+    /// Returns configured fixtures for `param_name` fuzzed parameter.
     pub fn param_fixtures(&self, param_name: &String) -> Option<&[DynSolValue]> {
         if let Some(param_fixtures) = self.inner.get(param_name) {
             param_fixtures.as_array()

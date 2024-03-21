@@ -18,7 +18,7 @@ use proptest::{
 /// `function fixture_owner() public returns (address[] memory)`.
 /// Use `owner` named parameter in fuzzed test in order to create a custom strategy
 /// `function testFuzz_ownerAddress(address owner, uint amount)`.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AddressStrategy {}
 
 impl AddressStrategy {
