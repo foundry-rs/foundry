@@ -10,7 +10,7 @@ Traces:
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
     │   └─ ← [Return] "Tether USD"
-    └─ ← [Stop]
+    └─ ← [Stop] 
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.43s
 
