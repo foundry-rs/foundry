@@ -3,9 +3,8 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::FuzzDictionaryConfig;
-use hashbrown::HashSet;
 use proptest::prelude::Strategy;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 /// Clonable wrapper around [CalldataFuzzDictionary].
 #[derive(Clone, Debug)]

@@ -166,7 +166,7 @@ jobs:
         # so running `forge fmt` with `--root testdata` won't actually check anything
         run: |
           shopt -s extglob
-          cargo run --bin forge -- fmt --check testdata/**/!(Vm).sol
+          cargo run --bin forge -- fmt --check $(find testdata -name '*.sol' ! -name Vm.sol)
 
   crate-checks:
     runs-on: ubuntu-latest
