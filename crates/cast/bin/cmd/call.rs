@@ -1,3 +1,5 @@
+use alloy_consensus::Transaction;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::{network::Ethereum, Provider};
 use alloy_rpc_types::BlockId;
@@ -9,7 +11,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{ens::NameOrAddress, types::ToAlloy};
+use foundry_common::ens::NameOrAddress;
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
@@ -112,27 +114,26 @@ impl CallArgs {
         } = self;
 
         let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
-        let alloy_provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
         let to = match to {
             Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+                Some(NameOrAddress::Name(name).resolve(&provider).await?)
             }
             Some(NameOrAddress::Address(addr)) => Some(addr),
             None => None,
         };
 
-        let mut builder = TxBuilder::new(&alloy_provider, sender, to, chain, tx.legacy).await?;
+        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
             .gas_price(tx.gas_price)
             .priority_gas_price(tx.priority_gas_price)
-            .nonce(tx.nonce);
+            .nonce(tx.nonce.map(|n| n.to()));
 
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
@@ -182,11 +183,13 @@ impl CallArgs {
 
                     let (tx, _) = builder.build();
 
+                    let tx = tx.build_unsigned()?;
+
                     let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
-                        tx.to_addr().copied().expect("an address to be here").to_alloy(),
-                        tx.data().cloned().unwrap_or_default().to_vec().into(),
-                        tx.value().copied().unwrap_or_default().to_alloy(),
+                        tx.to().to().expect("an address to be here"),
+                        tx.input().to_vec().into(),
+                        tx.value(),
                     )?);
 
                     handle_traces(trace, &config, chain, labels, debug).await?;
@@ -196,8 +199,8 @@ impl CallArgs {
             }
         };
 
-        let builder_output = builder.build_alloy();
-        println!("{}", Cast::new(provider, alloy_provider).call(builder_output, block).await?);
+        let builder_output = builder.build();
+        println!("{}", Cast::new(provider).call(builder_output, block).await?);
 
         Ok(())
     }
@@ -220,7 +223,7 @@ async fn fill_create<P: Provider<Ethereum, T>, T: Transport + Clone>(
         data.append(&mut sigdata);
     }
 
-    builder.set_data(data);
+    builder.set_data(data.into());
 
     Ok(())
 }
@@ -241,7 +244,7 @@ async fn fill_tx<P: Provider<Ethereum, T>, T: Transport + Clone>(
 
     if let Some(data) = data {
         // Note: `sig+args` and `data` are mutually exclusive
-        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
+        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?.into());
     }
 
     Ok(())

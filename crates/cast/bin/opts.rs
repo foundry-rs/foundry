@@ -5,12 +5,11 @@ use crate::cmd::{
     wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types::BlockId as AlloyBlockId;
+use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
-use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
-use foundry_common::ens::NameOrAddress as EnsNameOrAddress;
+use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -425,7 +424,7 @@ pub enum CastSubcommand {
 
         /// The number of confirmations until the receipt is fetched
         #[arg(long, default_value = "1")]
-        confirmations: usize,
+        confirmations: u64,
 
         /// Exit immediately if the transaction was not found.
         #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
@@ -527,11 +526,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<AlloyBlockId>,
+        block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = EnsNameOrAddress::from_str)]
-        who: EnsNameOrAddress,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -544,11 +543,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<AlloyBlockId>,
+        block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = EnsNameOrAddress::from_str)]
-        who: EnsNameOrAddress,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -624,11 +623,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<AlloyBlockId>,
+        block: Option<BlockId>,
 
         /// The account to query.
-        #[clap(value_parser = EnsNameOrAddress::from_str)]
-        who: EnsNameOrAddress,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         /// Format the balance in ether.
         #[arg(long, short)]
@@ -662,11 +661,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<AlloyBlockId>,
+        block: Option<BlockId>,
 
         /// The contract address.
-        #[clap(value_parser = EnsNameOrAddress::from_str)]
-        who: EnsNameOrAddress,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         /// Disassemble bytecodes into individual opcodes.
         #[arg(long, short)]
@@ -683,11 +682,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<AlloyBlockId>,
+        block: Option<BlockId>,
 
         /// The contract address.
-        #[clap(value_parser = EnsNameOrAddress::from_str)]
-        who: EnsNameOrAddress,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -774,11 +773,11 @@ pub enum CastSubcommand {
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
         #[clap(long, short = 'B')]
-        block: Option<AlloyBlockId>,
+        block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = EnsNameOrAddress::from_str)]
-        who: EnsNameOrAddress,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[command(flatten)]
         rpc: RpcOpts,

@@ -39,11 +39,12 @@ alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-rpc.workspace = true
 alloy-signer.workspace = true
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-contract.workspace = true
 alloy-consensus.workspace = true
+alloy-network.workspace = true
 
 ethers-core.workspace = true
-ethers-providers.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true
@@ -62,9 +63,6 @@ aws-sdk-kms = { version = "1", default-features = false }
 foundry-cli.workspace = true
 
 ethers-contract.workspace = true
-ethers-middleware.workspace = true
-ethers-signers.workspace = true
-eth-keystore = "0.5"
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"

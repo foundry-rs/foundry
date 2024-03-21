@@ -1,5 +1,6 @@
 use alloy_primitives::Address;
-use alloy_provider::Provider;
+use alloy_provider::{network::Ethereum, Provider};
+use alloy_transport::Transport;
 use cast::{TxBuilder, TxBuilderOutput};
 use eyre::Result;
 use foundry_cli::opts::TransactionOpts;
@@ -34,10 +35,15 @@ pub fn validate_to_address(code: &Option<String>, to: &Option<NameOrAddress>) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn build_tx<P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+pub async fn build_tx<
+    P: Provider<Ethereum, T>,
+    T: Transport + Clone,
+    F: Into<NameOrAddress>,
+    TO: Into<NameOrAddress>,
+>(
     provider: &P,
     from: F,
-    to: Option<T>,
+    to: Option<TO>,
     code: Option<String>,
     sig: Option<String>,
     args: Vec<String>,
@@ -55,7 +61,7 @@ pub async fn build_tx<P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAdd
         .gas_price(tx.gas_price)
         .priority_gas_price(tx.priority_gas_price)
         .value(tx.value)
-        .nonce(tx.nonce);
+        .nonce(tx.nonce.map(|n| n.to()));
 
     let params = sig.as_deref().map(|sig| (sig, args));
     if let Some(code) = code {
@@ -66,7 +72,7 @@ pub async fn build_tx<P: TempProvider, F: Into<NameOrAddress>, T: Into<NameOrAdd
             data.append(&mut sigdata);
         }
 
-        builder.set_data(data);
+        builder.set_data(data.into());
     } else {
         builder.args(params).await?;
     }

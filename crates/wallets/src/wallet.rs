@@ -175,7 +175,7 @@ mod tests {
         ]);
         let signer = wallet.signer().await.unwrap();
         assert_eq!(
-            signer.address().to_alloy(),
+            signer.address(),
             Address::from_str("ec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
         );
     }

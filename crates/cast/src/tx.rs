@@ -2,18 +2,17 @@ use std::marker::PhantomData;
 
 use crate::errors::FunctionSignatureError;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256, U64};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{
     network::{Ethereum, TransactionBuilder},
     Provider,
 };
-use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
+use alloy_rpc_types::request::TransactionRequest;
 use alloy_transport::Transport;
 use eyre::Result;
 use foundry_common::{
     abi::{encode_function_args, get_func, get_func_etherscan},
     ens::NameOrAddress,
-    types::ToEthers,
 };
 use foundry_config::Chain;
 use futures::future::join_all;
@@ -265,9 +264,9 @@ async fn resolve_name_args<T: Transport + Clone, P: Provider<Ethereum, T>>(
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
+    use alloy_consensus::TypedTransaction;
+    use alloy_network::TransactionBuilder;
     use alloy_primitives::{Address, U256};
-    use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
-    use foundry_common::types::ToEthers;
     use foundry_config::NamedChain;
 
     const ADDR_1: Address = Address::with_last_byte(1);
@@ -280,9 +279,11 @@ mod tests {
         let builder =
             TxBuilder::new(&provider, ADDR_1, Some(ADDR_2), NamedChain::Mainnet, false).await?;
         let (tx, args) = builder.build();
-        assert_eq!(*tx.from().unwrap(), ADDR_1.to_ethers());
-        assert_eq!(*tx.to().unwrap(), NameOrAddress::Address(ADDR_2.to_ethers()));
+        assert_eq!(tx.from.unwrap(), ADDR_1);
+        assert_eq!(tx.to.unwrap(), ADDR_2);
         assert_eq!(args, None);
+
+        let tx = tx.build_unsigned().unwrap();
 
         match tx {
             TypedTransaction::Eip1559(_) => {}
@@ -320,16 +321,16 @@ mod tests {
             .gas(Some(U256::from(12u32)))
             .gas_price(Some(U256::from(34u32)))
             .value(Some(U256::from(56u32)))
-            .nonce(Some(U256::from(78u32)));
+            .nonce(Some(78));
 
         builder.etherscan_api_key(Some(String::from("what a lovely day"))); // not testing for this :-/
         let (tx, _) = builder.build();
 
-        assert_eq!(tx.gas().unwrap().as_u32(), 12);
-        assert_eq!(tx.gas_price().unwrap().as_u32(), 34);
-        assert_eq!(tx.value().unwrap().as_u32(), 56);
-        assert_eq!(tx.nonce().unwrap().as_u32(), 78);
-        assert_eq!(tx.chain_id().unwrap().as_u32(), 1);
+        assert_eq!(tx.gas, Some(12));
+        assert_eq!(tx.gas_price, Some(34));
+        assert_eq!(tx.value, Some(56));
+        assert_eq!(tx.nonce, Some(78));
+        assert_eq!(tx.chain_id, Some(1));
         Ok(())
     }
 

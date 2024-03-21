@@ -1,4 +1,5 @@
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption};
+use alloy_primitives::Address;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet};
 use cast::Cast;
 use clap::Parser;
 use ethers_core::{
@@ -6,12 +7,11 @@ use ethers_core::{
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
         Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
     },
-    types::{ValueOrArray, H256, U256},
+    types::{H256, U256},
 };
-use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
-use foundry_common::{ens::NameOrAddress, types::ToEthers};
+use foundry_common::{ens::NameOrAddress, types::ToAlloy};
 use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};
@@ -77,21 +77,15 @@ impl LogsArgs {
         let config = Config::from(&eth);
         let provider = utils::get_alloy_provider(&config)?;
 
-        let cast = Cast::new(provider);
+        let cast = Cast::new(&provider);
 
         let address = match address {
-            Some(address) => {
-                let address = match address {
-                    NameOrAddress::Name(name) => provider.resolve_name(&name).await?,
-                    NameOrAddress::Address(address) => address,
-                };
-                Some(address)
-            }
+            Some(address) => Some(address.resolve(&provider).await?),
             None => None,
         };
 
-        let from_block = cast.convert_block_number(from_block).await?.map(ToEthers::to_ethers);
-        let to_block = cast.convert_block_number(to_block).await?.map(ToEthers::to_ethers);
+        let from_block = cast.convert_block_number(from_block).await?;
+        let to_block = cast.convert_block_number(to_block).await?;
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
@@ -137,15 +131,16 @@ fn build_filter(
         vec![topic_filter.topic0, topic_filter.topic1, topic_filter.topic2, topic_filter.topic3]
             .into_iter()
             .map(|topic| match topic {
-                Topic::Any => None,
-                Topic::This(topic) => Some(ValueOrArray::Value(Some(topic))),
+                Topic::Any => vec![],
+                Topic::This(topic) => vec![topic.to_alloy()],
                 _ => unreachable!(),
             })
+            .map(FilterSet::from)
             .collect::<Vec<_>>();
 
     let filter = Filter {
         block_option,
-        address: address.map(ValueOrArray::Value),
+        address: address.map(|a| vec![a]).unwrap_or_default().into(),
         topics: [topics[0].clone(), topics[1].clone(), topics[2].clone(), topics[3].clone()],
     };
 

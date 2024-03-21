@@ -15,7 +15,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256, U64};
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};

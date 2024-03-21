@@ -3,21 +3,20 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
-    Address, Bytes, Keccak256, TxHash, B256, I256, U256, U64,
+    Address, Keccak256, TxHash, B256, I256, U256, U64,
 };
 use alloy_provider::{
     network::{
         eip2718::{Decodable2718, Encodable2718},
         Ethereum,
     },
-    PendingTransaction, PendingTransactionBuilder, Provider,
+    PendingTransactionBuilder, Provider,
 };
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter};
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use ethers_core::types::transaction::eip2718::TypedTransaction;
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
@@ -42,12 +41,6 @@ pub use tx::{TxBuilder, TxBuilderOutput, TxBuilderPeekOutput};
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
-pub use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-pub use rusoto_kms::KmsClient;
-pub use tx::{TxBuilder, TxBuilderOutput};
 
 pub mod base;
 pub mod errors;
@@ -244,11 +237,14 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn send<'a>(&self, builder_output: TxBuilderOutput) -> Result<PendingTransaction> {
+    pub async fn send(
+        &self,
+        builder_output: TxBuilderOutput,
+    ) -> Result<PendingTransactionBuilder<'_, Ethereum, T>> {
         let (tx, _) = builder_output;
-        let res = self.provider.send_transaction(tx).await?.register().await?;
+        let res = self.provider.send_transaction(tx).await?;
 
-        Ok::<_, eyre::Error>(res)
+        Ok(res)
     }
 
     /// Publishes a raw transaction to the network
@@ -267,15 +263,18 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, mut raw_tx: String) -> Result<PendingTransaction> {
+    pub async fn publish(
+        &self,
+        mut raw_tx: String,
+    ) -> Result<PendingTransactionBuilder<Ethereum, T>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
         };
         let tx = hex::decode(raw_tx)?;
-        let res = self.provider.send_raw_transaction(&tx).await?.register().await?;
+        let res = self.provider.send_raw_transaction(&tx).await?;
 
-        Ok::<_, eyre::Error>(res)
+        Ok(res)
     }
 
     /// Estimates the gas cost of a transaction

@@ -19,6 +19,7 @@ alloy-signer-trezor.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
+alloy-dyn-abi.workspace = true
 
 aws-sdk-kms = { version = "1", default-features = false }
 aws-config = "1"

@@ -85,16 +85,16 @@ impl EstimateArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
-        let from = from.resolve(&alloy_provider).await?;
+        let from = from.resolve(&provider).await?;
         let to = match to {
             Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+                Some(NameOrAddress::Name(name).resolve(&provider).await?)
             }
             Some(NameOrAddress::Address(addr)) => Some(addr),
             None => None,
         };
 
-        let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, false).await?;
+        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
         builder.etherscan_api_key(api_key);
 
         match command {

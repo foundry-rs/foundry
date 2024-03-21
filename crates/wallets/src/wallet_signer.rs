@@ -1,5 +1,6 @@
 use crate::error::WalletSignerError;
 use alloy_consensus::SignableTransaction;
+use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, ChainId, B256};
 use alloy_signer::{Signature, Signer};
@@ -161,6 +162,13 @@ impl Signer for WalletSigner {
         Self: Sized,
     {
         delegate!(self, inner => inner.sign_typed_data(payload, domain)).await
+    }
+
+    async fn sign_dynamic_typed_data(
+        &self,
+        payload: &TypedData,
+    ) -> alloy_signer::Result<Signature> {
+        delegate!(self, inner => inner.sign_dynamic_typed_data(payload)).await
     }
 }
 

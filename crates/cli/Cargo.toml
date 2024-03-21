@@ -26,7 +26,6 @@ alloy-provider.workspace = true
 alloy-transport.workspace = true
 
 ethers-core.workspace = true
-ethers-providers.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre.workspace = true
@@ -49,5 +48,5 @@ tempfile = "3.7"
 
 [features]
 default = ["rustls"]
-rustls = ["ethers-providers/rustls", "foundry-wallets/rustls"]
-openssl = ["ethers-providers/openssl", "foundry-compilers/openssl"]
+rustls = ["foundry-wallets/rustls"]
+openssl = ["foundry-compilers/openssl"]

@@ -1,9 +1,10 @@
+use alloy_network::Ethereum;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
+use alloy_transport::Transport;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
@@ -61,41 +62,26 @@ impl AccessListArgs {
         let AccessListArgs { to, sig, args, data, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
-        let alloy_provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
         let to = match to {
             Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&alloy_provider).await?)
+                Some(NameOrAddress::Name(name).resolve(&provider).await?)
             }
             Some(NameOrAddress::Address(addr)) => Some(addr),
             None => None,
         };
 
-        access_list(
-            &provider,
-            alloy_provider,
-            sender,
-            to,
-            sig,
-            args,
-            data,
-            tx,
-            chain,
-            block,
-            to_json,
-        )
-        .await?;
+        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
         Ok(())
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<M: Middleware, P: TempProvider>(
-    provider: M,
-    alloy_provider: P,
+async fn access_list<P: Provider<Ethereum, T>, T: Transport + Clone>(
+    provider: P,
     from: Address,
     to: Option<Address>,
     sig: Option<String>,
@@ -105,16 +91,13 @@ async fn access_list<M: Middleware, P: TempProvider>(
     chain: Chain,
     block: Option<BlockId>,
     to_json: bool,
-) -> Result<()>
-where
-    M::Error: 'static,
-{
-    let mut builder = TxBuilder::new(&alloy_provider, from, to, chain, tx.legacy).await?;
+) -> Result<()> {
+    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
         .gas(tx.gas_limit)
         .gas_price(tx.gas_price)
         .priority_gas_price(tx.priority_gas_price)
-        .nonce(tx.nonce);
+        .nonce(tx.nonce.map(|n| n.to()));
 
     builder.value(tx.value);
 
@@ -123,12 +106,12 @@ where
     }
     if let Some(data) = data {
         // Note: `sig+args` and `data` are mutually exclusive
-        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
+        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?.into());
     }
 
     let builder_output = builder.peek();
 
-    let cast = Cast::new(&provider, &alloy_provider);
+    let cast = Cast::new(&provider);
 
     let access_list: String = cast.access_list(builder_output, block, to_json).await?;
 

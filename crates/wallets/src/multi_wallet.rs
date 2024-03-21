@@ -397,7 +397,7 @@ impl MultiWalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::{path::Path, str::FromStr};
 
     #[test]
     fn parse_keystore_args() {
@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(unlocked.len(), 1);
         assert_eq!(
             unlocked[0].address(),
-            "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
+            Address::from_str("0xec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
         );
     }
 
