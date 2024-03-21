@@ -129,13 +129,14 @@ pub async fn render_trace_arena(
                 color.paint(format!("[{:?}] ", node.trace.status))
             )?;
             match return_data {
-                Some(val) => writeln!(s, "{val}"),
+                Some(val) => write!(s, "{val}"),
                 None if node.trace.kind.is_any_create() => {
-                    writeln!(s, "{} bytes of code", node.trace.output.len())
+                    write!(s, "{} bytes of code", node.trace.output.len())
                 }
                 None if node.trace.output.is_empty() => Ok(()),
-                None => writeln!(s, "{}", node.trace.output),
+                None => write!(s, "{}", node.trace.output),
             }?;
+            writeln!(s)?;
 
             Ok(())
         }
