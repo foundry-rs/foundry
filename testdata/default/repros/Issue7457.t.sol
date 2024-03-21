@@ -6,7 +6,10 @@ import "cheats/Vm.sol";
 
 interface ITarget {
     event AnonymousEventEmpty() anonymous;
-    event AnonymousEventWithData(uint256 a) anonymous;
+    event AnonymousEventNonIndexed(uint256 a) anonymous;
+
+    event DifferentAnonymousEventEmpty() anonymous;
+    event DifferentAnonymousEventNonIndexed(string a) anonymous;
 
     event AnonymousEventWith1Topic(uint256 indexed a, uint256 b) anonymous;
     event AnonymousEventWith2Topics(uint256 indexed a, uint256 indexed b, uint256 c) anonymous;
@@ -21,8 +24,8 @@ contract Target is ITarget {
         emit AnonymousEventEmpty();
     }
 
-    function emitAnonymousEventWithData(uint256 a) external {
-        emit AnonymousEventWithData(a);
+    function emitAnonymousEventNonIndexed(uint256 a) external {
+        emit AnonymousEventNonIndexed(a);
     }
 
     function emitAnonymousEventWith1Topic(uint256 a, uint256 b) external {
@@ -58,10 +61,22 @@ contract Issue7457Test is DSTest, ITarget {
         target.emitAnonymousEventEmpty();
     }
 
-    function testEmitEventWithData() public {
+    function testEmitEventNonIndexed() public {
         vm.expectEmit(false, false, false, true);
-        emit AnonymousEventWithData(1);
-        target.emitAnonymousEventWithData(1);
+        emit AnonymousEventNonIndexed(1);
+        target.emitAnonymousEventNonIndexed(1);
+    }
+
+    // function testFailEmitDifferentEvent() public {
+    //     vm.expectEmit(false, false, false, true);
+    //     emit DifferentAnonymousEventEmpty();
+    //     target.emitAnonymousEventEmpty();
+    // }
+
+    function testFailEmitDifferentEventNonIndexed() public {
+        vm.expectEmit(false, false, false, true);
+        emit DifferentAnonymousEventNonIndexed("1");
+        target.emitAnonymousEventNonIndexed(1);
     }
 
     function testEmitEventWith1Topic() public {
