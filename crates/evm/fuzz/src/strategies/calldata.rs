@@ -1,8 +1,11 @@
-use crate::{strategies::fuzz_param, FuzzFixtures};
+use crate::{
+    strategies::{fuzz_param, fuzz_param_from_state, EvmFuzzState},
+    FuzzFixtures,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::Bytes;
-use proptest::prelude::Strategy;
+use proptest::prelude::{BoxedStrategy, Strategy};
 
 /// Given a function, it returns a strategy which generates valid calldata
 /// for that function's input types, following declared test fixtures.
@@ -29,6 +32,29 @@ pub fn fuzz_calldata(func: Function, fuzz_fixtures: &FuzzFixtures) -> impl Strat
             })
             .into()
     })
+}
+
+/// Given a function and some state, it returns a strategy which generated valid calldata for the
+/// given function's input types, based on state taken from the EVM.
+pub fn fuzz_calldata_from_state(func: Function, state: &EvmFuzzState) -> BoxedStrategy<Bytes> {
+    let strats = func
+        .inputs
+        .iter()
+        .map(|input| fuzz_param_from_state(&input.selector_type().parse().unwrap(), state))
+        .collect::<Vec<_>>();
+    strats
+        .prop_map(move |values| {
+            func.abi_encode_input(&values)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Fuzzer generated invalid arguments for function `{}` with inputs {:?}: {:?}",
+                        func.name, func.inputs, values
+                    )
+                })
+                .into()
+        })
+        .no_shrink()
+        .boxed()
 }
 
 #[cfg(test)]
