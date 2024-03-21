@@ -180,8 +180,8 @@ impl TestArgs {
         let profiles = get_available_profiles(toml)?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.clone().fuzz)
-            .invariant(config.clone().invariant)
+            .fuzz(config.fuzz.clone())
+            .invariant(config.invariant)
             .profiles(profiles)
             .build(&output, project_root)?;
 
@@ -221,7 +221,7 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let outcome = self.run_tests(runner, config.clone(), verbosity, &filter).await?;
+        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
             // There is only one test.

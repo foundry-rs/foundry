@@ -207,18 +207,16 @@ impl<'a> ContractRunner<'a> {
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
         // collect test fixtures param:array of values
         let mut fixtures = HashMap::new();
-        self.contract.functions().for_each(|func| {
-            if func.name.is_fixture() {
-                if let Ok(CallResult { raw: _, decoded_result }) =
-                    self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
-                {
-                    fixtures.insert(
-                        func.name.strip_prefix("fixture_").unwrap().to_string(),
-                        decoded_result,
-                    );
-                }
+        for func in self.contract.functions().filter(|f| f.name.is_fixture()) {
+            if let Ok(CallResult { raw: _, decoded_result }) =
+                self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+            {
+                fixtures.insert(
+                    func.name.strip_prefix("fixture_").unwrap().to_string(),
+                    decoded_result,
+                );
             }
-        });
+        }
         FuzzFixtures::new(fixtures)
     }
 
