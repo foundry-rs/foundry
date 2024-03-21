@@ -6,7 +6,7 @@ use alloy_primitives::{Address, ChainId, B256};
 use alloy_signer::{Signature, Signer};
 use alloy_signer_aws::AwsSigner;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
-use alloy_signer_trezor::{TrezorHDPath, TrezorSigner};
+use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_signer_wallet::{coins_bip39::English, LocalWallet, MnemonicBuilder};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;

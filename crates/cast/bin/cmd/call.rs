@@ -187,7 +187,7 @@ impl CallArgs {
 
                     let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
-                        tx.to().to().expect("an address to be here"),
+                        *tx.to().to().expect("an address to be here"),
                         tx.input().to_vec().into(),
                         tx.value(),
                     )?);

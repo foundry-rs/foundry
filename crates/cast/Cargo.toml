@@ -41,7 +41,7 @@ alloy-json-rpc.workspace = true
 alloy-signer.workspace = true
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-contract.workspace = true
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-network.workspace = true
 
 ethers-core.workspace = true

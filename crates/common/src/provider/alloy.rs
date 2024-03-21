@@ -3,9 +3,8 @@
 use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
-use alloy_primitives::U256;
 use alloy_provider::{
-    network::Ethereum, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
+    network::Ethereum, utils::Eip1559Estimation, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider
 };
 use alloy_rpc_client::ClientBuilder;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
@@ -257,7 +256,7 @@ impl ProviderBuilder {
 pub async fn estimate_eip1559_fees<P: Provider<Ethereum>>(
     provider: &P,
     chain: Option<u64>,
-) -> Result<(U256, U256)> {
+) -> Result<Eip1559Estimation> {
     let chain = if let Some(chain) = chain {
         chain
     } else {
@@ -276,7 +275,12 @@ pub async fn estimate_eip1559_fees<P: Provider<Ethereum>>(
                 };
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
                 let (a, b) = estimator.estimate_eip1559_fees().await?;
-                return Ok((a.to_alloy(), b.to_alloy()));
+
+                let estimation = Eip1559Estimation {
+                    max_fee_per_gas: a.to_alloy(),
+                    max_priority_fee_per_gas: b.to_alloy(),
+                };
+                return Ok(estimation)
             }
             _ => {}
         }

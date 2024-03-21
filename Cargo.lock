@@ -90,12 +90,14 @@ dependencies = [
 [[package]]
 name = "alloy-consensus"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-serde",
  "c-kzg",
+ "serde",
  "sha2",
  "thiserror",
 ]
@@ -103,14 +105,14 @@ dependencies = [
 [[package]]
 name = "alloy-contract"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-sol-types",
  "alloy-transport",
  "futures",
@@ -142,7 +144,7 @@ dependencies = [
 [[package]]
 name = "alloy-eips"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -152,7 +154,7 @@ dependencies = [
 [[package]]
 name = "alloy-genesis"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-primitives",
  "alloy-serde",
@@ -162,10 +164,10 @@ dependencies = [
 [[package]]
 name = "alloy-json-abi"
 version = "0.6.4"
-source = "git+https://github.com/alloy-rs/core?rev=6ace151#6ace1519942ac3053a000eaa6792ed6fa0a45a88"
+source = "git+https://github.com/klkvr/core?rev=0473659#04736599a54c240ae1708746f45749d95907a192"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-type-parser 0.6.4 (git+https://github.com/alloy-rs/core?rev=6ace151)",
+ "alloy-sol-type-parser 0.6.4 (git+https://github.com/klkvr/core?rev=0473659)",
  "serde",
  "serde_json",
 ]
@@ -173,7 +175,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -184,13 +186,13 @@ dependencies = [
 [[package]]
 name = "alloy-network"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-json-rpc",
  "alloy-primitives",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-signer",
  "async-trait",
  "futures-utils-wasm",
@@ -201,7 +203,7 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "0.6.4"
-source = "git+https://github.com/alloy-rs/core?rev=6ace151#6ace1519942ac3053a000eaa6792ed6fa0a45a88"
+source = "git+https://github.com/klkvr/core?rev=0473659#04736599a54c240ae1708746f45749d95907a192"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -227,15 +229,15 @@ dependencies = [
 [[package]]
 name = "alloy-provider"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-json-rpc",
  "alloy-network",
  "alloy-primitives",
  "alloy-pubsub",
  "alloy-rpc-client",
- "alloy-rpc-trace-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-transport",
  "alloy-transport-http",
  "async-stream",
@@ -253,7 +255,7 @@ dependencies = [
 [[package]]
 name = "alloy-pubsub"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -293,7 +295,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -315,10 +317,10 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-trace-types"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-serde",
  "serde",
  "serde_json",
@@ -338,7 +340,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -367,7 +369,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -377,7 +379,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -392,7 +394,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-aws"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -409,7 +411,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-ledger"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -426,7 +428,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-trezor"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -442,7 +444,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-wallet"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -461,7 +463,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-macro"
 version = "0.6.4"
-source = "git+https://github.com/alloy-rs/core?rev=6ace151#6ace1519942ac3053a000eaa6792ed6fa0a45a88"
+source = "git+https://github.com/klkvr/core?rev=0473659#04736599a54c240ae1708746f45749d95907a192"
 dependencies = [
  "alloy-json-abi",
  "const-hex",
@@ -489,7 +491,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-type-parser"
 version = "0.6.4"
-source = "git+https://github.com/alloy-rs/core?rev=6ace151#6ace1519942ac3053a000eaa6792ed6fa0a45a88"
+source = "git+https://github.com/klkvr/core?rev=0473659#04736599a54c240ae1708746f45749d95907a192"
 dependencies = [
  "winnow 0.6.5",
 ]
@@ -497,7 +499,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-types"
 version = "0.6.4"
-source = "git+https://github.com/alloy-rs/core?rev=6ace151#6ace1519942ac3053a000eaa6792ed6fa0a45a88"
+source = "git+https://github.com/klkvr/core?rev=0473659#04736599a54c240ae1708746f45749d95907a192"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -509,7 +511,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-json-rpc",
  "base64 0.22.0",
@@ -527,7 +529,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -540,7 +542,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ipc"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -558,7 +560,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ws"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=376583d#376583dc4eb88e4cce0c5f84fe0db46866e678ed"
+source = "git+https://github.com/klkvr/alloy?rev=6ac0827#6ac082746a253fc4516a97ad8638439c0823a66f"
 dependencies = [
  "alloy-pubsub",
  "alloy-transport",
@@ -665,8 +667,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
- "alloy-rpc-trace-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-signer",
  "alloy-signer-wallet",
  "alloy-sol-types",
@@ -728,8 +730,8 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-trace-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-trace-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "anvil-core",
  "bytes",
  "c-kzg",
@@ -1758,7 +1760,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-signer",
  "alloy-signer-wallet",
  "alloy-transport",
@@ -1837,7 +1839,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "clap",
  "criterion",
  "dirs 5.0.1",
@@ -3391,7 +3393,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "anvil",
  "async-trait",
  "axum",
@@ -3507,7 +3509,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "async-recursion",
  "clap",
  "const-hex",
@@ -3606,7 +3608,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-signer",
  "alloy-signer-wallet",
  "alloy-sol-types",
@@ -3691,7 +3693,7 @@ dependencies = [
  "alloy-provider",
  "alloy-pubsub",
  "alloy-rpc-client",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-signer-wallet",
  "alloy-sol-types",
  "alloy-transport",
@@ -3859,7 +3861,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=376583d)",
+ "alloy-rpc-types 0.1.0 (git+https://github.com/klkvr/alloy?rev=6ac0827)",
  "alloy-sol-types",
  "alloy-transport",
  "arrayvec",
@@ -7799,7 +7801,7 @@ dependencies = [
 [[package]]
 name = "syn-solidity"
 version = "0.6.4"
-source = "git+https://github.com/alloy-rs/core?rev=6ace151#6ace1519942ac3053a000eaa6792ed6fa0a45a88"
+source = "git+https://github.com/klkvr/core?rev=0473659#04736599a54c240ae1708746f45749d95907a192"
 dependencies = [
  "paste",
  "proc-macro2",
