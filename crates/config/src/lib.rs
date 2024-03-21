@@ -244,7 +244,7 @@ pub struct Config {
     pub ffi: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
-    /// Sets a timeout for vm.prompt cheatcodes
+    /// Sets a timeout in seconds for vm.prompt cheatcodes
     pub prompt_timeout: u64,
     /// The address which will be executing all tests
     pub sender: Address,

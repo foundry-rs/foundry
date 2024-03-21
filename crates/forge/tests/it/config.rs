@@ -138,6 +138,9 @@ pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
     config.allow_paths.push(manifest_root().to_path_buf());
 
+    // no prompt testing
+    config.prompt_timeout = 0;
+
     let root = &PROJECT.paths.root;
     let opts = &*EVM_OPTS;
     let env = opts.local_evm_env();
