@@ -1,10 +1,9 @@
 use alloy_primitives::Address;
 use arrayvec::ArrayVec;
-use foundry_common::{ErrorExt, SELECTOR_LEN};
+use foundry_common::ErrorExt;
 use foundry_evm_core::{
     backend::DatabaseExt,
-    constants::CHEATCODE_ADDRESS,
-    debug::{DebugArena, DebugNode, DebugStep, Instruction},
+    debug::{DebugArena, DebugNode, DebugStep},
     utils::gas_used,
 };
 use revm::{
@@ -47,7 +46,6 @@ impl Debugger {
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for Debugger {
-    #[inline]
     fn step(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         let pc = interp.program_counter();
         let op = interp.current_opcode();
@@ -88,13 +86,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             memory,
             calldata: interp.contract().input.clone(),
             returndata: interp.return_data_buffer.clone(),
-            instruction: Instruction::OpCode(op),
+            instruction: op,
             push_bytes: push_bytes.unwrap_or_default(),
             total_gas_used,
         });
     }
 
-    #[inline]
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.enter(
             ecx.journaled_state.depth() as usize,
@@ -102,19 +99,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             inputs.context.scheme.into(),
         );
 
-        if inputs.contract == CHEATCODE_ADDRESS {
-            if let Some(selector) = inputs.input.get(..SELECTOR_LEN) {
-                self.arena.arena[self.head].steps.push(DebugStep {
-                    instruction: Instruction::Cheatcode(selector.try_into().unwrap()),
-                    ..Default::default()
-                });
-            }
-        }
-
         None
     }
 
-    #[inline]
     fn call_end(
         &mut self,
         _context: &mut EvmContext<DB>,
@@ -126,7 +113,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         outcome
     }
 
-    #[inline]
     fn create(
         &mut self,
         ecx: &mut EvmContext<DB>,
@@ -154,7 +140,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         None
     }
 
-    #[inline]
     fn create_end(
         &mut self,
         _context: &mut EvmContext<DB>,
