@@ -4,7 +4,6 @@ use arrayvec::ArrayVec;
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
 
 /// An arena of [DebugNode]s
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -176,7 +175,7 @@ pub struct DebugStep {
     /// Returndata *prior* to running the associated opcode
     pub returndata: Bytes,
     /// Opcode to be executed
-    pub instruction: Instruction,
+    pub instruction: u8,
     /// Optional bytes that are being pushed onto the stack.
     /// Empty if the opcode is not a push or PUSH0.
     #[serde(serialize_with = "hex::serialize", deserialize_with = "deserialize_arrayvec_hex")]
@@ -197,7 +196,7 @@ impl Default for DebugStep {
             memory: Default::default(),
             calldata: Default::default(),
             returndata: Default::default(),
-            instruction: Instruction::OpCode(revm::interpreter::opcode::INVALID),
+            instruction: revm::interpreter::opcode::INVALID,
             push_bytes: Default::default(),
             pc: 0,
             total_gas_used: 0,
@@ -208,65 +207,17 @@ impl Default for DebugStep {
 impl DebugStep {
     /// Pretty print the step's opcode
     pub fn pretty_opcode(&self) -> String {
+        let instruction = OpCode::new(self.instruction).map_or("INVALID", |op| op.as_str());
         if !self.push_bytes.is_empty() {
-            format!("{}(0x{})", self.instruction, hex::encode(&self.push_bytes))
+            format!("{instruction}(0x{})", hex::encode(&self.push_bytes))
         } else {
-            self.instruction.to_string()
+            instruction.to_string()
         }
     }
 
     /// Returns `true` if the opcode modifies memory.
     pub fn opcode_modifies_memory(&self) -> bool {
-        self.instruction.opcode().and_then(OpCode::new).map_or(false, opcodes::modifies_memory)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Instruction {
-    OpCode(u8),
-    Cheatcode([u8; 4]),
-}
-
-impl From<u8> for Instruction {
-    fn from(op: u8) -> Instruction {
-        Instruction::OpCode(op)
-    }
-}
-
-impl Display for Instruction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Instruction::OpCode(op) => write!(
-                f,
-                "{}",
-                OpCode::new(*op).map_or_else(
-                    || format!("UNDEFINED(0x{op:02x})"),
-                    |opcode| opcode.as_str().to_string(),
-                )
-            ),
-            Instruction::Cheatcode(cheat) => write!(
-                f,
-                "VM_{}",
-                crate::abi::Vm::CHEATCODES
-                    .iter()
-                    .map(|c| &c.func)
-                    .find(|c| c.selector_bytes == *cheat)
-                    .expect("unknown cheatcode found in debugger")
-                    .id
-                    .to_uppercase()
-            ),
-        }
-    }
-}
-
-impl Instruction {
-    /// Returns the opcode of the instruction, if it is an opcode.
-    #[inline]
-    pub fn opcode(&self) -> Option<u8> {
-        match self {
-            Instruction::OpCode(op) => Some(*op),
-            _ => None,
-        }
+        OpCode::new(self.instruction).map_or(false, opcodes::modifies_memory)
     }
 }
 

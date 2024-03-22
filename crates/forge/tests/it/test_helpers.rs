@@ -195,6 +195,9 @@ impl ForgeTestData {
         config.rpc_endpoints = rpc_endpoints();
         config.allow_paths.push(manifest_root().to_path_buf());
 
+        // no prompt testing
+        config.prompt_timeout = 0;
+
         let root = self.project.root();
         let opts = self.evm_opts.clone();
         let env = opts.local_evm_env();

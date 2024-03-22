@@ -5,7 +5,9 @@ import "ds-test/test.sol";
 
 contract Malicious {
     function world() public {
-        // Does not matter, since it will get overridden.
+        // add code so contract is accounted as valid sender
+        // see https://github.com/foundry-rs/foundry/issues/4245
+        payable(msg.sender).transfer(1);
     }
 }
 
@@ -37,6 +39,14 @@ contract InvariantReentrancy is DSTest {
     function setUp() public {
         mal = new Malicious();
         vuln = new Vulnerable(address(mal));
+    }
+
+    // do not include `mal` in identified contracts
+    // see https://github.com/foundry-rs/foundry/issues/4245
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(vuln);
+        return targets;
     }
 
     function invariantNotStolen() public {
