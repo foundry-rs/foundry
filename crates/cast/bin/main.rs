@@ -26,6 +26,7 @@ use std::time::Instant;
 
 pub mod cmd;
 pub mod opts;
+pub mod tx;
 
 use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
 
@@ -160,8 +161,12 @@ async fn main() -> Result<()> {
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
-        CastSubcommand::AbiEncode { sig, args } => {
-            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        CastSubcommand::AbiEncode { sig, packed, args } => {
+            if !packed {
+                println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+            } else {
+                println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?);
+            }
         }
         CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
@@ -362,6 +367,7 @@ async fn main() -> Result<()> {
         // Calls & transactions
         CastSubcommand::Call(cmd) => cmd.run().await?,
         CastSubcommand::Estimate(cmd) => cmd.run().await?,
+        CastSubcommand::MakeTx(cmd) => cmd.run().await?,
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;

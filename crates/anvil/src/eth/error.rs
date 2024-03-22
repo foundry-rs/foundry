@@ -81,10 +81,14 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
+    #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
+    EIP4844TransactionUnsupportedAtHardfork,
     #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
     DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
+    #[error("{0}")]
+    Message(String),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -105,6 +109,7 @@ where
                 InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => BlockchainError::Message(err),
         }
     }
 }
@@ -233,7 +238,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::NonceOverflowInTransaction => {
                 InvalidTransactionError::NonceMaxValue
             }
-            InvalidTransaction::CreateInitcodeSizeLimit => {
+            InvalidTransaction::CreateInitCodeSizeLimit => {
                 InvalidTransactionError::MaxInitCodeSizeExceeded
             }
             InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
@@ -359,8 +364,15 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
                 BlockchainError::AlloyForkProvider(err) => {
-                    error!(%err, "alloy fork provider error");
-                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
+                    error!(target: "backend", %err, "fork provider error");
+                    match err {
+                        TransportError::ErrorResp(err) => RpcError {
+                            code: ErrorCode::from(err.code),
+                            message: err.message.into(),
+                            data: err.data.and_then(|data| serde_json::to_value(data).ok()),
+                        },
+                        err => RpcError::internal_error_with(format!("Fork Error: {err:?}")),
+                    }
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())
@@ -398,12 +410,16 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::EIP4844TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 err @ BlockchainError::DepositTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::ExcessBlobGasNotSet => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
             }
             .into(),
         }

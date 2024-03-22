@@ -8,7 +8,9 @@ mod param;
 pub use param::{fuzz_param, fuzz_param_from_state};
 
 mod calldata;
-pub use calldata::fuzz_calldata;
+pub use calldata::{
+    fuzz_calldata, fuzz_calldata_with_config, CalldataFuzzDictionary, CalldataFuzzDictionaryConfig,
+};
 
 mod state;
 pub use state::{

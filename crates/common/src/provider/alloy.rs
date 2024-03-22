@@ -4,24 +4,28 @@ use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_primitives::U256;
-use alloy_providers::provider::{Provider, TempProvider};
+use alloy_providers::tmp::{Provider, TempProvider};
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::BoxTransport;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
 use foundry_common::types::ToAlloy;
 use foundry_config::NamedChain;
 use reqwest::Url;
 use std::{
+    net::SocketAddr,
     path::{Path, PathBuf},
+    str::FromStr,
     time::Duration,
 };
 use url::ParseError;
 
-use super::tower::RetryBackoffLayer;
+use super::{
+    runtime_transport::RuntimeTransport,
+    tower::{RetryBackoffLayer, RetryBackoffService},
+};
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<BoxTransport>;
+pub type RetryProvider = Provider<RetryBackoffService<RuntimeTransport>>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -91,12 +95,16 @@ impl ProviderBuilder {
         let url = Url::parse(url_str)
             .or_else(|err| match err {
                 ParseError::RelativeUrlWithoutBase => {
-                    let path = Path::new(url_str);
-
-                    if let Ok(path) = resolve_path(path) {
-                        Url::parse(&format!("file://{}", path.display()))
+                    if SocketAddr::from_str(url_str).is_ok() {
+                        Url::parse(&format!("http://{}", url_str))
                     } else {
-                        Err(err)
+                        let path = Path::new(url_str);
+
+                        if let Ok(path) = resolve_path(path) {
+                            Url::parse(&format!("file://{}", path.display()))
+                        } else {
+                            Err(err)
+                        }
                     }
                 }
                 _ => Err(err),
@@ -203,18 +211,6 @@ impl ProviderBuilder {
         self
     }
 
-    /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
-    /// interval.
-    pub async fn connect(self) -> Result<RetryProvider> {
-        let provider = self.build()?;
-        // todo: port poll interval hint
-        /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-        }) {
-            provider = provider.interval(blocktime / 2);
-            }*/
-        Ok(provider)
-    }
-
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let ProviderBuilder {
@@ -244,7 +240,7 @@ impl ProviderBuilder {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
         // todo: provider polling interval
-        Ok(Provider::new_with_client(client.boxed()))
+        Ok(Provider::new_with_client(client))
     }
 }
 

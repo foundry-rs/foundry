@@ -1,12 +1,11 @@
 use super::fuzz_param_from_state;
 use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
-use alloy_dyn_abi::{DynSolType, JsonAbiExt};
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -14,7 +13,12 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{fmt, io::Write, str::FromStr, sync::Arc};
+use std::{fmt, sync::Arc};
+
+// We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
+// for performance when iterating over the sets.
+type FxIndexSet<T> =
+    indexmap::set::IndexSet<T, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -24,9 +28,9 @@ pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
 #[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
-    state_values: HashSet<[u8; 32]>,
+    state_values: FxIndexSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
-    addresses: HashSet<Address>,
+    addresses: FxIndexSet<Address>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -40,47 +44,41 @@ impl fmt::Debug for FuzzDictionary {
 
 impl FuzzDictionary {
     #[inline]
-    pub fn values(&self) -> &HashSet<[u8; 32]> {
+    pub fn values(&self) -> &FxIndexSet<[u8; 32]> {
         &self.state_values
     }
 
     #[inline]
-    pub fn values_mut(&mut self) -> &mut HashSet<[u8; 32]> {
+    pub fn values_mut(&mut self) -> &mut FxIndexSet<[u8; 32]> {
         &mut self.state_values
     }
 
     #[inline]
-    pub fn addresses(&mut self) -> &HashSet<Address> {
+    pub fn addresses(&self) -> &FxIndexSet<Address> {
         &self.addresses
     }
 
     #[inline]
-    pub fn addresses_mut(&mut self) -> &mut HashSet<Address> {
+    pub fn addresses_mut(&mut self) -> &mut FxIndexSet<Address> {
         &mut self.addresses
     }
 }
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
-pub fn fuzz_calldata_from_state(func: Function, state: EvmFuzzState) -> BoxedStrategy<Bytes> {
+pub fn fuzz_calldata_from_state(func: Function, state: &EvmFuzzState) -> BoxedStrategy<Bytes> {
     let strats = func
         .inputs
         .iter()
-        .map(|input| {
-            fuzz_param_from_state(
-                &DynSolType::from_str(&input.selector_type()).unwrap(),
-                state.clone(),
-            )
-        })
+        .map(|input| fuzz_param_from_state(&input.selector_type().parse().unwrap(), state))
         .collect::<Vec<_>>();
-
     strats
-        .prop_map(move |tokens| {
-            func.abi_encode_input(&tokens)
+        .prop_map(move |values| {
+            func.abi_encode_input(&values)
                 .unwrap_or_else(|_| {
                     panic!(
-                        "Fuzzer generated invalid tokens for function `{}` with inputs {:?}: {:?}",
-                        func.name, func.inputs, tokens
+                        "Fuzzer generated invalid arguments for function `{}` with inputs {:?}: {:?}",
+                        func.name, func.inputs, values
                     )
                 })
                 .into()
@@ -145,10 +143,25 @@ pub fn build_initial_state<DB: DatabaseRef>(
 pub fn collect_state_from_call(
     logs: &[Log],
     state_changeset: &StateChangeset,
-    state: EvmFuzzState,
+    state: &EvmFuzzState,
     config: &FuzzDictionaryConfig,
 ) {
     let mut state = state.write();
+
+    // Insert log topics and data.
+    for log in logs {
+        for topic in log.topics() {
+            state.values_mut().insert(topic.0);
+        }
+        let chunks = log.data.data.chunks_exact(32);
+        let rem = chunks.remainder();
+        for chunk in chunks {
+            state.values_mut().insert(chunk.try_into().unwrap());
+        }
+        if !rem.is_empty() {
+            state.values_mut().insert(B256::right_padding_from(rem).0);
+        }
+    }
 
     for (address, account) in state_changeset {
         // Insert basic account information
@@ -182,22 +195,6 @@ pub fn collect_state_from_call(
                     state.values_mut().insert(B256::from(above_value).0);
                 }
             }
-        } else {
-            return;
-        }
-
-        // Insert log topics and data
-        for log in logs {
-            log.data.topics().iter().for_each(|topic| {
-                state.values_mut().insert(topic.0);
-            });
-            log.data.data.chunks(32).for_each(|chunk| {
-                let mut buffer: [u8; 32] = [0; 32];
-                let _ = (&mut buffer[..])
-                    .write(chunk)
-                    .expect("log data chunk was larger than 32 bytes");
-                state.values_mut().insert(buffer);
-            });
         }
     }
 }

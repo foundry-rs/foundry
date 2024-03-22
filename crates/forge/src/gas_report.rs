@@ -2,16 +2,19 @@
 
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-    hashbrown::HashSet,
-    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData, TraceKind},
+    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
+use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt::Display,
+};
 
 /// Represents the gas report for a set of contracts.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
@@ -21,7 +24,7 @@ pub struct GasReport {
     ignore: HashSet<String>,
     /// All contracts that were analyzed grouped by their identifier
     /// ``test/Counter.t.sol:CounterTest
-    contracts: BTreeMap<String, ContractInfo>,
+    pub contracts: BTreeMap<String, ContractInfo>,
 }
 
 impl GasReport {
@@ -60,10 +63,10 @@ impl GasReport {
     /// Analyzes the given traces and generates a gas report.
     pub async fn analyze(
         &mut self,
-        traces: &[(TraceKind, CallTraceArena)],
+        arenas: impl IntoIterator<Item = &CallTraceArena>,
         decoder: &CallTraceDecoder,
     ) {
-        for node in traces.iter().flat_map(|(_, arena)| arena.nodes()) {
+        for node in arenas.into_iter().flat_map(|arena| arena.nodes()) {
             self.analyze_node(node, decoder).await;
         }
     }
@@ -72,6 +75,16 @@ impl GasReport {
         let trace = &node.trace;
 
         if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
+            return;
+        }
+
+        // Only include top-level calls which accout for calldata and base (21.000) cost.
+        // Only include Calls and Creates as only these calls are isolated in inspector.
+        if trace.depth > 1 &&
+            (trace.kind == CallKind::Call ||
+                trace.kind == CallKind::Create ||
+                trace.kind == CallKind::Create2)
+        {
             return;
         }
 
@@ -109,25 +122,27 @@ impl GasReport {
     /// Finalizes the gas report by calculating the min, max, mean, and median for each function.
     #[must_use]
     pub fn finalize(mut self) -> Self {
-        self.contracts.iter_mut().for_each(|(_, contract)| {
-            contract.functions.iter_mut().for_each(|(_, sigs)| {
-                sigs.iter_mut().for_each(|(_, func)| {
+        trace!("finalizing gas report");
+        for contract in self.contracts.values_mut() {
+            for sigs in contract.functions.values_mut() {
+                for func in sigs.values_mut() {
                     func.calls.sort_unstable();
                     func.min = func.calls.first().copied().unwrap_or_default();
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
-                    func.median = calc::median_sorted(func.calls.as_slice());
-                });
-            });
-        });
+                    func.median = calc::median_sorted(&func.calls);
+                }
+            }
+        }
         self
     }
 }
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for (name, contract) in self.contracts.iter() {
+        for (name, contract) in &self.contracts {
             if contract.functions.is_empty() {
+                trace!(name, "gas report contract without functions");
                 continue
             }
 
@@ -173,7 +188,7 @@ impl Display for GasReport {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ContractInfo {
     pub gas: u64,
     pub size: usize,
@@ -181,7 +196,7 @@ pub struct ContractInfo {
     pub functions: BTreeMap<String, BTreeMap<String, GasInfo>>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GasInfo {
     pub calls: Vec<u64>,
     pub min: u64,

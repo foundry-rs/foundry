@@ -6,15 +6,15 @@ Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL. Reason: PoolNotInitialized()] testErr() (gas: 231)
 Traces:
   [231] CustomTypesTest::testErr()
-    └─ ← PoolNotInitialized()
+    └─ ← [Revert] PoolNotInitialized()
 
 [PASS] testEvent() (gas: 1312)
 Traces:
   [1312] CustomTypesTest::testEvent()
     ├─ emit MyEvent(a: 100)
-    └─ ← ()
+    └─ ← [Stop] 
 
-Test result: FAILED. 1 passed; 1 failed; 0 skipped; finished in 3.88ms
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; finished in 3.88ms
 
 Ran 1 test suite: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 

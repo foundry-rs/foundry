@@ -7,7 +7,9 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
-use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
+use foundry_common::{
+    abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
+};
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
     constants::{
@@ -50,15 +52,20 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Add known contracts to the decoder from a `LocalTraceIdentifier`.
+    /// Add known contracts to the decoder.
     #[inline]
-    pub fn with_local_identifier_abis(mut self, identifier: &LocalTraceIdentifier<'_>) -> Self {
-        let contracts = identifier.contracts();
-        trace!(target: "evm::traces", len=contracts.len(), "collecting local identifier ABIs");
+    pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
+        trace!(target: "evm::traces", len=contracts.len(), "collecting known contract ABIs");
         for (abi, _) in contracts.values() {
             self.decoder.collect_abi(abi, None);
         }
         self
+    }
+
+    /// Add known contracts to the decoder from a `LocalTraceIdentifier`.
+    #[inline]
+    pub fn with_local_identifier_abis(self, identifier: &LocalTraceIdentifier<'_>) -> Self {
+        self.with_known_contracts(identifier.contracts())
     }
 
     /// Sets the verbosity level of the decoder.
@@ -182,7 +189,7 @@ impl CallTraceDecoder {
 
         let default_labels = &Self::new().labels;
         if self.labels.len() > default_labels.len() {
-            self.labels = default_labels.clone();
+            self.labels.clone_from(default_labels);
         }
 
         self.receive_contracts.clear();
@@ -225,7 +232,7 @@ impl CallTraceDecoder {
     fn addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
-    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + 'a {
+    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
         arena
             .nodes()
             .iter()
@@ -429,7 +436,9 @@ impl CallTraceDecoder {
             "parseJsonBytes32" |
             "parseJsonBytes32Array" |
             "writeJson" |
-            "keyExists" |
+            // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+            "keyExists" | 
+            "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
             "serializeInt" |
@@ -441,12 +450,31 @@ impl CallTraceDecoder {
                     None
                 } else {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                    let token =
-                        if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
-                            "<JSON file>"
-                        } else {
-                            "<stringified JSON>"
-                        };
+                    let token = if func.name.as_str() == "parseJson" ||
+                        // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExistsJson"
+                    {
+                        "<JSON file>"
+                    } else {
+                        "<stringified JSON>"
+                    };
+                    decoded[0] = DynSolValue::String(token.to_string());
+                    Some(decoded.iter().map(format_token).collect())
+                }
+            }
+            s if s.contains("Toml") => {
+                if self.verbosity >= 5 {
+                    None
+                } else {
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let token = if func.name.as_str() == "parseToml" ||
+                        func.name.as_str() == "keyExistsToml"
+                    {
+                        "<TOML file>"
+                    } else {
+                        "<stringified TOML>"
+                    };
                     decoded[0] = DynSolValue::String(token.to_string());
                     Some(decoded.iter().map(format_token).collect())
                 }
@@ -492,6 +520,7 @@ impl CallTraceDecoder {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
             "createWallet" | "deriveKey" => Some("<pk>"),
+            "promptSecret" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,

@@ -1,6 +1,9 @@
 //! tests against local ganache for local debug purposes
 #![allow(unused)]
-use crate::init_tracing;
+use crate::{
+    init_tracing,
+    utils::{ContractInstanceCompat, DeploymentTxFactoryCompat},
+};
 use ethers::{
     abi::Address,
     contract::{Contract, ContractFactory, ContractInstance},
@@ -11,7 +14,7 @@ use ethers::{
     types::{BlockNumber, U256},
     utils::hex,
 };
-use ethers_solc::{project_util::TempProject, Artifact};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use std::sync::Arc;
 
 // the mnemonic used to start the local ganache instance
@@ -115,7 +118,7 @@ contract Contract {
 
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), Arc::clone(&client));
+    let factory = ContractFactory::new_compat(abi.unwrap(), bytecode.unwrap(), Arc::clone(&client));
     let contract = factory.deploy(()).unwrap().legacy().send().await;
     contract.unwrap_err();
 }
@@ -153,13 +156,13 @@ contract Contract {
     let client = Arc::new(http_client());
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().legacy().send().await.unwrap();
     let provider = SignerMiddleware::new(
         Provider::<Http>::try_from("http://127.0.0.1:8545").unwrap(),
         ganache_wallet2(),
     );
-    let contract = ContractInstance::new(contract.address(), abi.unwrap(), provider);
+    let contract = ContractInstance::new_compat(contract.address(), abi.unwrap(), provider);
     let resp = contract.method::<_, U256>("getSecret", ()).unwrap().legacy().call().await;
     resp.unwrap_err();
 

@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use futures::channel::mpsc::{SendError, TrySendError};
+use revm::primitives::EVMError;
 use std::{
     convert::Infallible,
     sync::{mpsc::RecvError, Arc},
@@ -15,11 +16,11 @@ pub type DatabaseResult<T> = Result<T, DatabaseError>;
 pub enum DatabaseError {
     #[error("{0}")]
     Message(String),
-    #[error("no cheats available for {0}")]
+    #[error("cheatcodes are not enabled for {0}; see `vm.allowCheatcodes(address)`")]
     NoCheats(Address),
-    #[error("failed to fetch AccountInfo {0}")]
+    #[error("failed to fetch account info for {0}")]
     MissingAccount(Address),
-    #[error("code should already be loaded: {0}")]
+    #[error("missing bytecode for code hash {0}")]
     MissingCode(B256),
     #[error(transparent)]
     Recv(#[from] RecvError),
@@ -46,6 +47,8 @@ pub enum DatabaseError {
          For a test environment, you can use `etch` to place the required bytecode at that address."
     )]
     MissingCreate2Deployer,
+    #[error("{0}")]
+    Other(String),
 }
 
 impl DatabaseError {
@@ -76,6 +79,7 @@ impl DatabaseError {
             Self::BlockNotFound(_) |
             Self::TransactionNotFound(_) |
             Self::MissingCreate2Deployer => None,
+            DatabaseError::Other(_) => None,
         }
     }
 
@@ -105,5 +109,15 @@ impl<T> From<TrySendError<T>> for DatabaseError {
 impl From<Infallible> for DatabaseError {
     fn from(value: Infallible) -> Self {
         match value {}
+    }
+}
+
+// Note: this is mostly necessary to use some revm internals that return an [EVMError]
+impl From<EVMError<DatabaseError>> for DatabaseError {
+    fn from(err: EVMError<DatabaseError>) -> Self {
+        match err {
+            EVMError::Database(err) => err,
+            err => DatabaseError::Other(err.to_string()),
+        }
     }
 }

@@ -4,7 +4,6 @@ use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::sourcemap::SourceElement;
-use foundry_evm_core::debug::Instruction;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -456,8 +455,7 @@ impl DebuggerContext<'_> {
 
         let min_len = decimal_digits(stack.len()).max(2);
 
-        let params =
-            if let Instruction::OpCode(op) = step.instruction { OpcodeParam::of(op) } else { &[] };
+        let params = OpcodeParam::of(step.instruction);
 
         let text: Vec<Line> = stack
             .iter()
@@ -503,9 +501,9 @@ impl DebuggerContext<'_> {
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
         let buf = match self.active_buffer {
-            BufferKind::Memory => &step.memory,
-            BufferKind::Calldata => &step.calldata,
-            BufferKind::Returndata => &step.returndata,
+            BufferKind::Memory => step.memory.as_ref(),
+            BufferKind::Calldata => step.calldata.as_ref(),
+            BufferKind::Returndata => step.returndata.as_ref(),
         };
 
         let min_len = hex_digits(buf.len());
@@ -516,20 +514,18 @@ impl DebuggerContext<'_> {
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
-        if let Instruction::OpCode(op) = step.instruction {
-            let stack_len = step.stack.len();
-            if stack_len > 0 {
-                if let Some(accesses) = get_buffer_accesses(op, &step.stack) {
-                    if let Some(read_access) = accesses.read {
-                        offset = Some(read_access.1.offset);
-                        size = Some(read_access.1.size);
-                        color = Some(Color::Cyan);
-                    }
-                    if let Some(write_access) = accesses.write {
-                        if self.active_buffer == BufferKind::Memory {
-                            write_offset = Some(write_access.offset);
-                            write_size = Some(write_access.size);
-                        }
+        let stack_len = step.stack.len();
+        if stack_len > 0 {
+            if let Some(accesses) = get_buffer_accesses(step.instruction, &step.stack) {
+                if let Some(read_access) = accesses.read {
+                    offset = Some(read_access.1.offset);
+                    size = Some(read_access.1.size);
+                    color = Some(Color::Cyan);
+                }
+                if let Some(write_access) = accesses.write {
+                    if self.active_buffer == BufferKind::Memory {
+                        write_offset = Some(write_access.offset);
+                        write_size = Some(write_access.size);
                     }
                 }
             }
@@ -542,15 +538,13 @@ impl DebuggerContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Instruction::OpCode(op) = prev_step.instruction {
-                if let Some(write_access) =
-                    get_buffer_accesses(op, &prev_step.stack).and_then(|a| a.write)
-                {
-                    if self.active_buffer == BufferKind::Memory {
-                        offset = Some(write_access.offset);
-                        size = Some(write_access.size);
-                        color = Some(Color::Green);
-                    }
+            if let Some(write_access) =
+                get_buffer_accesses(prev_step.instruction, &prev_step.stack).and_then(|a| a.write)
+            {
+                if self.active_buffer == BufferKind::Memory {
+                    offset = Some(write_access.offset);
+                    size = Some(write_access.size);
+                    color = Some(Color::Green);
                 }
             }
         }

@@ -1,8 +1,9 @@
-use alloy_primitives::{Address, U256};
+use crate::opcodes;
+use alloy_primitives::{Address, Bytes, U256};
+use arrayvec::ArrayVec;
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
 
 /// An arena of [DebugNode]s
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -168,15 +169,17 @@ pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
-    pub memory: Vec<u8>,
+    pub memory: Bytes,
     /// Calldata *prior* to running the associated opcode
-    pub calldata: Vec<u8>,
+    pub calldata: Bytes,
     /// Returndata *prior* to running the associated opcode
-    pub returndata: Vec<u8>,
+    pub returndata: Bytes,
     /// Opcode to be executed
-    pub instruction: Instruction,
-    /// Optional bytes that are being pushed onto the stack
-    pub push_bytes: Option<Vec<u8>>,
+    pub instruction: u8,
+    /// Optional bytes that are being pushed onto the stack.
+    /// Empty if the opcode is not a push or PUSH0.
+    #[serde(serialize_with = "hex::serialize", deserialize_with = "deserialize_arrayvec_hex")]
+    pub push_bytes: ArrayVec<u8, 32>,
     /// The program counter at this step.
     ///
     /// Note: To map this step onto source code using a source map, you must convert the program
@@ -193,8 +196,8 @@ impl Default for DebugStep {
             memory: Default::default(),
             calldata: Default::default(),
             returndata: Default::default(),
-            instruction: Instruction::OpCode(revm::interpreter::opcode::INVALID),
-            push_bytes: None,
+            instruction: revm::interpreter::opcode::INVALID,
+            push_bytes: Default::default(),
             pc: 0,
             total_gas_used: 0,
         }
@@ -204,48 +207,25 @@ impl Default for DebugStep {
 impl DebugStep {
     /// Pretty print the step's opcode
     pub fn pretty_opcode(&self) -> String {
-        if let Some(push_bytes) = &self.push_bytes {
-            format!("{}(0x{})", self.instruction, hex::encode(push_bytes))
+        let instruction = OpCode::new(self.instruction).map_or("INVALID", |op| op.as_str());
+        if !self.push_bytes.is_empty() {
+            format!("{instruction}(0x{})", hex::encode(&self.push_bytes))
         } else {
-            self.instruction.to_string()
+            instruction.to_string()
         }
     }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Instruction {
-    OpCode(u8),
-    Cheatcode([u8; 4]),
-}
-
-impl From<u8> for Instruction {
-    fn from(op: u8) -> Instruction {
-        Instruction::OpCode(op)
+    /// Returns `true` if the opcode modifies memory.
+    pub fn opcode_modifies_memory(&self) -> bool {
+        OpCode::new(self.instruction).map_or(false, opcodes::modifies_memory)
     }
 }
 
-impl Display for Instruction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Instruction::OpCode(op) => write!(
-                f,
-                "{}",
-                OpCode::new(*op).map_or_else(
-                    || format!("UNDEFINED(0x{op:02x})"),
-                    |opcode| opcode.as_str().to_string(),
-                )
-            ),
-            Instruction::Cheatcode(cheat) => write!(
-                f,
-                "VM_{}",
-                crate::abi::Vm::CHEATCODES
-                    .iter()
-                    .map(|c| &c.func)
-                    .find(|c| c.selector_bytes == *cheat)
-                    .expect("unknown cheatcode found in debugger")
-                    .id
-                    .to_uppercase()
-            ),
-        }
-    }
+fn deserialize_arrayvec_hex<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ArrayVec<u8, 32>, D::Error> {
+    let bytes: Vec<u8> = hex::deserialize(deserializer)?;
+    let mut array = ArrayVec::new();
+    array.try_extend_from_slice(&bytes).map_err(serde::de::Error::custom)?;
+    Ok(array)
 }

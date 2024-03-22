@@ -13,7 +13,7 @@ use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config,
 use foundry_debugger::Debugger;
 use foundry_evm::{
     debug::DebugArena,
-    executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
@@ -339,8 +339,7 @@ impl From<RawCallResult> for TraceResult {
 
 impl From<DeployResult> for TraceResult {
     fn from(result: DeployResult) -> Self {
-        let DeployResult { gas_used, traces, debug, .. } = result;
-
+        let RawCallResult { gas_used, traces, debug, .. } = result.raw;
         Self {
             success: true,
             traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
@@ -356,7 +355,7 @@ impl TryFrom<EvmError> for TraceResult {
     fn try_from(err: EvmError) -> Result<Self, Self::Error> {
         match err {
             EvmError::Execution(err) => {
-                let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } = *err;
+                let RawCallResult { reverted, gas_used, traces, debug: run_debug, .. } = err.raw;
                 Ok(TraceResult {
                     success: !reverted,
                     traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
@@ -397,12 +396,18 @@ pub async fn handle_traces(
         .build();
 
     let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    for (_, trace) in &mut result.traces {
-        decoder.identify(trace, &mut etherscan_identifier);
+    if let Some(etherscan_identifier) = &mut etherscan_identifier {
+        for (_, trace) in &mut result.traces {
+            decoder.identify(trace, etherscan_identifier);
+        }
     }
 
     if debug {
-        let sources = etherscan_identifier.get_compiled_contracts().await?;
+        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
+            etherscan_identifier.get_compiled_contracts().await?
+        } else {
+            Default::default()
+        };
         let mut debugger = Debugger::builder()
             .debug_arena(&result.debug)
             .decoder(&decoder)

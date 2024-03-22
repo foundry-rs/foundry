@@ -7,10 +7,7 @@ use forge::{
     gas_report::GasReport,
     inspectors::CheatsConfig,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoderBuilder, TraceKind,
-    },
+    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
@@ -18,7 +15,6 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    compact_to_contract,
     compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
     shell,
@@ -32,8 +28,9 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_debugger::Debugger;
+use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel};
+use std::{sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -49,7 +46,7 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
-#[clap(next_help_heading = "Test options")]
+#[command(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Run a test in the debugger.
     ///
@@ -66,58 +63,62 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "TEST_FUNCTION")]
+    #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
     /// Print a gas report.
-    #[clap(long, env = "FORGE_GAS_REPORT")]
+    #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
     /// Exit with code 0 even if a test fails.
-    #[clap(long, env = "FORGE_ALLOW_FAILURE")]
+    #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
     /// Stop running tests after the first failure.
-    #[clap(long)]
+    #[arg(long)]
     pub fail_fast: bool,
 
     /// The Etherscan (or equivalent) API key.
-    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
     /// List tests instead of running them.
-    #[clap(long, short, help_heading = "Display options")]
+    #[arg(long, short, help_heading = "Display options")]
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long)]
+    #[arg(long)]
     pub fuzz_seed: Option<U256>,
 
-    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
-    #[clap(flatten)]
+    /// File to rerun fuzz failures from.
+    #[arg(long)]
+    pub fuzz_input_file: Option<String>,
+
+    #[command(flatten)]
     filter: FilterArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub watch: WatchArgs,
 
     /// Print test summary table.
-    #[clap(long, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     pub summary: bool,
 
     /// Print detailed test summary table.
-    #[clap(long, help_heading = "Display options", requires = "summary")]
+    #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 }
 
@@ -142,6 +143,15 @@ impl TestArgs {
     pub async fn execute_tests(self) -> Result<TestOutcome> {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // Explicitly enable isolation for gas reports for more correct gas accounting
+        if self.gas_report {
+            evm_opts.isolate = true;
+        } else {
+            // Do not collect gas report traces if gas report is not enabled.
+            config.fuzz.gas_report_samples = 0;
+            config.invariant.gas_report_samples = 0;
+        }
 
         // Set up the project.
         let mut project = config.project()?;
@@ -170,7 +180,7 @@ impl TestArgs {
         let profiles = get_available_profiles(toml)?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz)
+            .fuzz(config.clone().fuzz)
             .invariant(config.invariant)
             .profiles(profiles)
             .build(&output, project_root)?;
@@ -195,8 +205,9 @@ impl TestArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
-            .with_test_options(test_options.clone())
+            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
+            .with_test_options(test_options)
+            .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
 
         if let Some(debug_test_pattern) = &self.debug {
@@ -210,36 +221,24 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let outcome = self.run_tests(runner, config, verbosity, &filter, test_options).await?;
+        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
-            let mut sources = ContractSources::default();
-            for (id, artifact) in output_clone.unwrap().into_artifacts() {
-                // Sources are only required for the debugger, but it *might* mean that there's
-                // something wrong with the build and/or artifacts.
-                if let Some(source) = artifact.source_file() {
-                    let path = source
-                        .ast
-                        .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
-                        .absolute_path;
-                    let abs_path = project.root().join(&path);
-                    let source_code = fs::read_to_string(abs_path)?;
-                    let contract = artifact.clone().into_contract_bytecode();
-                    let source_contract = compact_to_contract(contract)?;
-                    sources.insert(&id, source.id, source_code, source_contract);
-                }
-            }
-
             // There is only one test.
-            let Some(test) = outcome.into_tests_cloned().next() else {
+            let Some((_, test_result)) = outcome.tests().next() else {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
+            let sources = ContractSources::from_project_output(
+                output_clone.as_ref().unwrap(),
+                project.root(),
+            )?;
+
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .debug_arenas(test.result.debug.as_slice())
+                .debug_arenas(test_result.debug.as_slice())
                 .sources(sources)
-                .breakpoints(test.result.breakpoints);
+                .breakpoints(test_result.breakpoints.clone());
             if let Some(decoder) = &outcome.decoder {
                 builder = builder.decoder(decoder);
             }
@@ -257,7 +256,6 @@ impl TestArgs {
         config: Config,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
-        test_options: TestOptions,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -265,7 +263,7 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let num_filtered = runner.matching_test_function_count(filter);
+        let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered == 0 {
             println!();
             if filter.is_empty() {
@@ -280,7 +278,8 @@ impl TestArgs {
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
-                    let candidates = runner.get_tests(filter);
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                         println!("\nDid you mean `{suggestion}`?");
                     }
@@ -296,22 +295,27 @@ impl TestArgs {
         }
 
         if self.json {
-            let results = runner.test_collect(filter, test_options).await;
+            let results = runner.test_collect(filter);
             println!("{}", serde_json::to_string(&results)?);
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
         // Set up trace identifiers.
         let known_contracts = runner.known_contracts.clone();
-        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+        // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
+        if !self.gas_report {
+            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+        }
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle = tokio::task::spawn({
+        let timer = Instant::now();
+        let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            async move { runner.test(&filter, tx, test_options).await }
+            move || runner.test(&filter, tx)
         });
 
         let mut gas_report =
@@ -319,7 +323,7 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
-            .with_local_identifier_abis(&local_identifier)
+            .with_known_contracts(&known_contracts)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
@@ -385,8 +389,7 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
-                        decoder.identify(arena, &mut local_identifier);
-                        decoder.identify(arena, &mut etherscan_identifier);
+                        decoder.identify(arena, &mut identifier);
                     }
 
                     // verbosity:
@@ -417,7 +420,26 @@ impl TestArgs {
                 }
 
                 if let Some(gas_report) = &mut gas_report {
-                    gas_report.analyze(&result.traces, &decoder).await;
+                    gas_report
+                        .analyze(result.traces.iter().map(|(_, arena)| arena), &decoder)
+                        .await;
+
+                    for trace in result.gas_report_traces.iter() {
+                        decoder.clear_addresses();
+
+                        // Re-execute setup and deployment traces to collect identities created in
+                        // setUp and constructor.
+                        for (kind, arena) in &result.traces {
+                            if !matches!(kind, TraceKind::Execution) {
+                                decoder.identify(arena, &mut identifier);
+                            }
+                        }
+
+                        for arena in trace {
+                            decoder.identify(arena, &mut identifier);
+                            gas_report.analyze([arena], &decoder).await;
+                        }
+                    }
                 }
             }
 
@@ -432,17 +454,20 @@ impl TestArgs {
                 break;
             }
         }
+        let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
 
         outcome.decoder = Some(decoder);
 
         if let Some(gas_report) = gas_report {
-            shell::println(gas_report.finalize())?;
+            let finalized = gas_report.finalize();
+            shell::println(&finalized)?;
+            outcome.gas_report = Some(finalized);
         }
 
         if !outcome.results.is_empty() {
-            shell::println(outcome.summary())?;
+            shell::println(outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
@@ -497,6 +522,9 @@ impl Provider for TestArgs {
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
+        if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
+            fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
+        }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         if let Some(etherscan_api_key) =
@@ -528,13 +556,14 @@ fn list(
             }
         }
     }
-    Ok(TestOutcome::new(BTreeMap::new(), false))
+    Ok(TestOutcome::empty(false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use foundry_config::Chain;
+    use foundry_test_utils::forgetest_async;
 
     #[test]
     fn watch_parse() {
@@ -568,4 +597,62 @@ mod tests {
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
     }
+
+    forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
+        prj.insert_ds_test();
+        prj.add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+
+import "./test.sol";
+
+contract Foo {
+    function foo() public {}
+}
+
+contract Bar {
+    function bar() public {}
+}
+
+
+contract FooBarTest is DSTest {
+    Foo public targetContract;
+
+    function setUp() public {
+        targetContract = new Foo();
+    }
+
+    function invariant_dummy() public {
+        assertTrue(true);
+    }
+
+    function testFuzz_bar(uint256 _val) public {
+        (new Bar()).bar();
+    }
+}
+        "#,
+        )
+        .unwrap();
+
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--gas-report",
+            "--root",
+            &prj.root().to_string_lossy(),
+            "--silent",
+        ]);
+
+        let outcome = args.run().await.unwrap();
+        let gas_report = outcome.gas_report.unwrap();
+
+        assert_eq!(gas_report.contracts.len(), 3);
+        let call_cnts = gas_report
+            .contracts
+            .values()
+            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.calls.len())))
+            .collect::<Vec<_>>();
+        // assert that all functions were called at least 100 times
+        assert!(call_cnts.iter().all(|c| *c > 100));
+    });
 }

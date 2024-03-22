@@ -676,7 +676,7 @@ pub enum EthRequest {
     OtsGetBlockDetails(
         #[cfg_attr(
             feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number", default)
+            serde(deserialize_with = "lenient_block_number::lenient_block_number_seq", default)
         )]
         BlockNumber,
     ),

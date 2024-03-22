@@ -438,7 +438,7 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::Address;
     use foundry_evm::{
         backend::MemDb,
         revm::{
@@ -471,7 +471,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         assert_eq!(storage.on_disk_states.len(), 1);
-        assert!(storage.on_disk_states.get(&one).is_some());
+        assert!(storage.on_disk_states.contains_key(&one));
 
         let loaded = storage.get(&one).unwrap();
 

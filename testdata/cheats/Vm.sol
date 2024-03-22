@@ -16,7 +16,7 @@ interface Vm {
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
     struct ChainInfo { uint256 forkId; uint256 chainId; }
-    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; }
+    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
@@ -241,6 +241,8 @@ interface Vm {
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
+    function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
+    function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
@@ -274,12 +276,31 @@ interface Vm {
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
+    function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    function parseTomlAddressArray(string calldata toml, string calldata key) external pure returns (address[] memory);
+    function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    function parseTomlBytes32Array(string calldata toml, string calldata key) external pure returns (bytes32[] memory);
+    function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
+    function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
+    function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
     function projectRoot() external view returns (string memory path);
+    function prompt(string calldata promptText) external returns (string memory input);
+    function promptSecret(string calldata promptText) external returns (string memory input);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);
@@ -372,4 +393,6 @@ interface Vm {
     function writeJson(string calldata json, string calldata path) external;
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
     function writeLine(string calldata path, string calldata data) external;
+    function writeToml(string calldata json, string calldata path) external;
+    function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 }

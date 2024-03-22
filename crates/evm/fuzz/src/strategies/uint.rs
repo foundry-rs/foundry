@@ -167,3 +167,19 @@ impl Strategy for UintStrategy {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::strategies::uint::UintValueTree;
+    use alloy_primitives::U256;
+    use proptest::strategy::ValueTree;
+
+    #[test]
+    fn test_uint_tree_complicate_max() {
+        let mut uint_tree = UintValueTree::new(U256::MAX, false);
+        assert_eq!(uint_tree.hi, U256::MAX);
+        assert_eq!(uint_tree.curr, U256::MAX);
+        uint_tree.complicate();
+        assert_eq!(uint_tree.lo, U256::MIN);
+    }
+}
