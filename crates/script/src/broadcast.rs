@@ -1,15 +1,12 @@
+use super::receipts;
 use crate::{
     build::LinkedBuildData, sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs,
     ScriptConfig,
 };
-
-use super::receipts;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_network::TxSigner;
-use std::sync::Arc;
 use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
@@ -26,11 +23,11 @@ use foundry_common::{
     shell,
 };
 use foundry_config::Config;
-use foundry_wallets::WalletSigner;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
 };
 
 pub async fn estimate_gas<P, T>(
@@ -47,10 +44,7 @@ where
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider
-            .estimate_gas(tx, None)
-            .await
-            .wrap_err("Failed to estimate gas for tx")? *
+        provider.estimate_gas(tx, None).await.wrap_err("Failed to estimate gas for tx")? *
             U256::from(estimate_multiplier) /
             U256::from(100),
     );
@@ -67,7 +61,7 @@ pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64
 pub async fn send_transaction(
     provider: Arc<RetryProvider>,
     mut tx: TransactionRequest,
-    kind: SendTransactionKind,
+    kind: SendTransactionKind<'_>,
     sequential_broadcast: bool,
     is_fixed_gas_limit: bool,
     estimate_via_rpc: bool,
@@ -100,8 +94,7 @@ pub async fn send_transaction(
         SendTransactionKind::Raw(signer) => {
             debug!("sending transaction: {:?}", tx);
 
-            let signer = EthereumSigner::new(signer);
-            let signed = tx.build(&signer).await?;
+            let signed = tx.build(signer).await?;
 
             // Submit the raw transaction
             provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
@@ -113,9 +106,9 @@ pub async fn send_transaction(
 
 /// How to send a single transaction
 #[derive(Clone)]
-pub enum SendTransactionKind {
+pub enum SendTransactionKind<'a> {
     Unlocked(Address),
-    Raw(Arc<WalletSigner>),
+    Raw(&'a EthereumSigner),
 }
 
 /// Represents how to send _all_ transactions
@@ -123,14 +116,14 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, Arc<WalletSigner>>),
+    Raw(HashMap<Address, EthereumSigner>),
 }
 
 impl SendTransactionsKind {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked
-    pub fn for_sender(&self, addr: &Address) -> Result<SendTransactionKind> {
+    pub fn for_sender(&self, addr: &Address) -> Result<SendTransactionKind<'_>> {
         match self {
             SendTransactionsKind::Unlocked(unlocked) => {
                 if !unlocked.contains(addr) {
@@ -140,7 +133,7 @@ impl SendTransactionsKind {
             }
             SendTransactionsKind::Raw(wallets) => {
                 if let Some(wallet) = wallets.get(addr) {
-                    Ok(SendTransactionKind::Raw(wallet.clone()))
+                    Ok(SendTransactionKind::Raw(wallet))
                 } else {
                     bail!("No matching signer for {:?} found", addr)
                 }
@@ -230,7 +223,10 @@ impl BundledState {
                 );
             }
 
-            let signers = signers.into_iter().map(|(addr, signer)| (addr, Arc::new(signer))).collect();
+            let signers = signers
+                .into_iter()
+                .map(|(addr, signer)| (addr, EthereumSigner::new(signer)))
+                .collect();
 
             SendTransactionsKind::Raw(signers)
         };
