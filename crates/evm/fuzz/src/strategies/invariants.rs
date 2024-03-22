@@ -26,17 +26,19 @@ pub fn override_call_strat(
         let fuzz_state = fuzz_state.clone();
         let calldata_fuzz_config = calldata_fuzz_config.clone();
 
-        let contracts = &contracts.lock();
-        let (_, abi, functions) = contracts.get(&target_address).unwrap_or({
-            // Choose a random contract if target selected by lazy strategy is not in fuzz run
-            // identified contracts. This can happen when contract is created in `setUp` call
-            // but is not included in targetContracts.
-            let rand_index = rand::thread_rng().gen_range(0..contracts.iter().len());
-            let (_, contract_specs) = contracts.iter().nth(rand_index).unwrap();
-            contract_specs
-        });
+        let func = {
+            let contracts = contracts.lock();
+            let (_, abi, functions) = contracts.get(&target_address).unwrap_or_else(|| {
+                // Choose a random contract if target selected by lazy strategy is not in fuzz run
+                // identified contracts. This can happen when contract is created in `setUp` call
+                // but is not included in targetContracts.
+                let rand_index = rand::thread_rng().gen_range(0..contracts.len());
+                let (_, contract_specs) = contracts.iter().nth(rand_index).unwrap();
+                contract_specs
+            });
+            select_random_function(abi, functions)
+        };
 
-        let func = select_random_function(abi, functions);
         func.prop_flat_map(move |func| {
             fuzz_contract_with_calldata(&fuzz_state, &calldata_fuzz_config, target_address, func)
         })
