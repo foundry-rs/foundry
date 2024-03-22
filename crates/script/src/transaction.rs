@@ -1,6 +1,6 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::request::TransactionRequest;
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress,
@@ -70,7 +70,7 @@ impl TransactionWithMetadata {
                 to: transaction.to.map(ToEthers::to_ethers).map(Into::into),
                 value: transaction.value.map(ToEthers::to_ethers),
                 data: transaction.input.into_input().map(ToEthers::to_ethers),
-                nonce: transaction.nonce.map(|n| n.to::<u64>().into()),
+                nonce: transaction.nonce.map(U256::from),
                 gas: transaction.gas.map(ToEthers::to_ethers),
                 ..Default::default()
             }),
