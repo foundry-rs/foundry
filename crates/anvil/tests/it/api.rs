@@ -10,7 +10,6 @@ use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
     state::{AccountOverride, StateOverride},
 };
-use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,

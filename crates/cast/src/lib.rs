@@ -687,7 +687,7 @@ where
                         eyre::bail!("tx not found: {:?}", tx_hash)
                     } else {
                         PendingTransactionBuilder::new(self.provider.root(), tx_hash.into())
-                            .with_confirmations(confs)
+                            .with_required_confirmations(confs)
                             .get_receipt()
                             .await?
                     }

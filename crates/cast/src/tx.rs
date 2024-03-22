@@ -301,7 +301,7 @@ mod tests {
             TxBuilder::new(&provider, ADDR_1, Some(ADDR_2), NamedChain::Mainnet, true).await?;
         // don't check anything other than the tx type - the rest is covered in the non-legacy case
         let (tx, _) = builder.build();
-        match tx {
+        match tx.build_unsigned().unwrap() {
             TypedTransaction::Legacy(_) => {}
             _ => {
                 panic!("Wrong tx type");
@@ -326,9 +326,9 @@ mod tests {
         builder.etherscan_api_key(Some(String::from("what a lovely day"))); // not testing for this :-/
         let (tx, _) = builder.build();
 
-        assert_eq!(tx.gas, Some(12));
-        assert_eq!(tx.gas_price, Some(34));
-        assert_eq!(tx.value, Some(56));
+        assert_eq!(tx.gas, Some(U256::from(12)));
+        assert_eq!(tx.gas_price, Some(U256::from(34)));
+        assert_eq!(tx.value, Some(U256::from(56)));
         assert_eq!(tx.nonce, Some(78));
         assert_eq!(tx.chain_id, Some(1));
         Ok(())

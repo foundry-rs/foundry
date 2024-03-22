@@ -5,7 +5,6 @@ use crate::{
 };
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
-use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
@@ -485,7 +484,7 @@ async fn can_call_ots_get_block_transactions() {
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
-            assert_eq!(expected, receipt.transaction_hash.map(|h| h.to_ethers()));
+            assert_eq!(expected, Some(receipt.transaction_hash.to_ethers()));
             assert_eq!(
                 expected.map(|h| h.to_alloy()),
                 result.fullblock.block.transactions.hashes().nth(i).copied(),

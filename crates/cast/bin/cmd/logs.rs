@@ -279,7 +279,8 @@ pub fn sanitize_token(token: Token) -> Token {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::H160;
+    use alloy_primitives::{B256, U160, U256 as rU256};
+    use alloy_rpc_types::ValueOrArray;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
@@ -288,13 +289,13 @@ mod tests {
 
     #[test]
     fn test_build_filter_basic() {
-        let from_block = Some(BlockNumber::from(1337));
-        let to_block = Some(BlockNumber::Latest);
+        let from_block = Some(BlockNumberOrTag::from(1337));
+        let to_block = Some(BlockNumberOrTag::Latest);
         let address = Address::from_str(ADDRESS).ok();
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block, to_block },
-            address: Some(ValueOrArray::Value(address.unwrap())),
-            topics: [None, None, None, None],
+            address: ValueOrArray::Value(address.unwrap()).into(),
+            topics: [vec![].into(), vec![].into(), vec![].into(), vec![].into()],
         };
         let filter = build_filter(from_block, to_block, address, None, vec![]).unwrap();
         assert_eq!(filter, expected)
@@ -304,8 +305,13 @@ mod tests {
     fn test_build_filter_sig() {
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: None,
-            topics: [Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()), None, None, None],
+            address: vec![].into(),
+            topics: [
+                B256::from_str(TRANSFER_TOPIC).unwrap().into(),
+                vec![].into(),
+                vec![].into(),
+                vec![].into(),
+            ],
         };
         let filter =
             build_filter(None, None, None, Some(TRANSFER_SIG.to_string()), vec![]).unwrap();
@@ -316,8 +322,13 @@ mod tests {
     fn test_build_filter_mismatch() {
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: None,
-            topics: [Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()), None, None, None],
+            address: vec![].into(),
+            topics: [
+                B256::from_str(TRANSFER_TOPIC).unwrap().into(),
+                vec![].into(),
+                vec![].into(),
+                vec![].into(),
+            ],
         };
         let filter = build_filter(
             None,
@@ -332,14 +343,16 @@ mod tests {
 
     #[test]
     fn test_build_filter_sig_with_arguments() {
+        let addr = Address::from_str(ADDRESS).unwrap();
+        let addr = rU256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: None,
+            address: vec![].into(),
             topics: [
-                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
-                Some(H160::from_str(ADDRESS).unwrap().into()),
-                None,
-                None,
+                B256::from_str(TRANSFER_TOPIC).unwrap().into(),
+                addr.into(),
+                vec![].into(),
+                vec![].into(),
             ],
         };
         let filter = build_filter(
@@ -355,14 +368,16 @@ mod tests {
 
     #[test]
     fn test_build_filter_sig_with_skipped_arguments() {
+        let addr = Address::from_str(ADDRESS).unwrap();
+        let addr = rU256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: None,
+            address: vec![].into(),
             topics: [
-                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
-                None,
-                Some(H160::from_str(ADDRESS).unwrap().into()),
-                None,
+                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
+                vec![].into(),
+                addr.into(),
+                vec![].into(),
             ],
         };
         let filter = build_filter(
@@ -380,12 +395,12 @@ mod tests {
     fn test_build_filter_with_topics() {
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: None,
+            address: vec![].into(),
             topics: [
-                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
-                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
-                None,
-                None,
+                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
+                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
+                vec![].into(),
+                vec![].into(),
             ],
         };
         let filter = build_filter(
@@ -404,12 +419,12 @@ mod tests {
     fn test_build_filter_with_skipped_topic() {
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: None,
+            address: vec![].into(),
             topics: [
-                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
-                None,
-                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
-                None,
+                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
+                vec![].into(),
+                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
+                vec![].into(),
             ],
         };
         let filter = build_filter(

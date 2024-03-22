@@ -102,6 +102,9 @@ svm = { package = "svm-rs", version = "0.3", default-features = false, features 
 tempfile = "3"
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
+ethers-core.workspace = true
+alloy-signer-wallet.workspace = true
+
 [features]
 default = ["rustls"]
 rustls = [

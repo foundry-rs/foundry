@@ -186,7 +186,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 transaction_hash: transaction.hash(),
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
-                to: transaction.pending_transaction.transaction.to().copied(),
+                to: transaction.pending_transaction.transaction.to(),
                 contract_address,
                 logs,
                 logs_bloom: *receipt.logs_bloom(),

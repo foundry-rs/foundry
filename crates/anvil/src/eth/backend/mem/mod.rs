@@ -2452,7 +2452,7 @@ pub fn transaction_build(
         transaction.hash = tx_hash;
     }
 
-    transaction.to = info.as_ref().map_or(eth_transaction.to().copied(), |status| status.to);
+    transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
     transaction
 }
 

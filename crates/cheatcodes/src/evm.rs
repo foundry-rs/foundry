@@ -13,7 +13,7 @@ use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
-use std::{collections::HashMap, path::Path};
+use std::{collections::{BTreeMap, HashMap}, path::Path};
 
 mod fork;
 pub(crate) mod mapping;
@@ -73,7 +73,7 @@ impl Cheatcode for loadAllocsCall {
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
 
         // Let's first assume we're reading a file with only the allocs.
-        let allocs: HashMap<Address, GenesisAccount> = match read_json_file(path) {
+        let allocs: BTreeMap<Address, GenesisAccount> = match read_json_file(path) {
             Ok(allocs) => allocs,
             Err(_) => {
                 // Let's try and read from a genesis file, and extract allocs.

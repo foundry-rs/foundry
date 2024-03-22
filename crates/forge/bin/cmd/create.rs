@@ -443,7 +443,7 @@ where
             .borrow()
             .send_transaction(self.tx)
             .await?
-            .with_confirmations(self.confs as u64)
+            .with_required_confirmations(self.confs as u64)
             .get_receipt()
             .await?;
 

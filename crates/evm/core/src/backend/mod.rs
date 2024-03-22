@@ -22,7 +22,7 @@ use revm::{
     Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     time::Instant,
 };
 
@@ -262,7 +262,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), DatabaseError>;
 
@@ -1332,7 +1332,7 @@ impl DatabaseExt for Backend {
     /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), DatabaseError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.

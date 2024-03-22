@@ -916,6 +916,9 @@ impl EthApi {
         }
         let transaction = TypedTransaction::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        
+        self.ensure_typed_transaction_supported(&transaction)?;
+
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
@@ -2003,7 +2006,7 @@ impl EthApi {
             let gas_price = tx.gas_price();
             let value = tx.value();
             let gas = tx.gas_limit();
-            TxpoolInspectSummary { to: to.copied(), value, gas, gas_price }
+            TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
         // Note: naming differs geth vs anvil:
@@ -2655,10 +2658,7 @@ fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP4844(req) => match req.tx().to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
+            TypedTransactionRequest::EIP4844(_) => MIN_TRANSACTION_GAS,
             TypedTransactionRequest::Deposit(req) => match req.kind {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,

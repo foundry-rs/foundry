@@ -79,10 +79,11 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         max_fee_per_blob_gas,
         blob_versioned_hashes.take(),
         sidecar,
+        to,
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None, None, None, None) |
-        (None, Some(_), None, None, None, None, None, None) => {
+        (Some(0), _, None, None, None, None, None, None, _) |
+        (None, Some(_), None, None, None, None, None, None, _) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default().to::<u128>(),
@@ -97,8 +98,8 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _, None, None, None) |
-        (None, _, None, None, Some(_), None, None, None) => {
+        (Some(1), _, None, None, _, None, None, None, _) |
+        (None, _, None, None, Some(_), None, None, None, _) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default().to(),
@@ -114,10 +115,10 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _, _, None, None) |
-        (None, None, Some(_), _, _, _, None, None) |
-        (None, None, _, Some(_), _, _, None, None) |
-        (None, None, None, None, None, _, None, None) => {
+        (Some(2), None, _, _, _, _, None, None, _) |
+        (None, None, Some(_), _, _, _, None, None, _) |
+        (None, None, _, Some(_), _, _, None, None, _) |
+        (None, None, None, None, None, _, None, None, _) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default(),
@@ -135,7 +136,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar)) => {
+        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), Some(to)) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default().to::<u128>(),
@@ -144,10 +145,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 gas_limit: gas.unwrap_or_default().to::<u64>(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to,
                 chain_id: 0,
                 access_list: to_eip_access_list(access_list.unwrap_or_default()),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
@@ -558,7 +556,7 @@ impl PendingTransaction {
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    transact_to: TransactTo::call(*to),
                     data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),
@@ -732,7 +730,7 @@ impl TypedTransaction {
                 access_list: to_alloy_access_list(t.tx().access_list.clone()),
             },
             TypedTransaction::EIP4844(t) => TransactionEssentials {
-                kind: t.tx().tx().to,
+                kind: TxKind::Call(t.tx().tx().to),
                 input: t.tx().tx().input.clone(),
                 nonce: t.tx().tx().nonce,
                 gas_limit: U256::from(t.tx().tx().gas_limit),
@@ -852,19 +850,19 @@ impl TypedTransaction {
     }
 
     /// Returns what kind of transaction this is
-    pub fn kind(&self) -> &TxKind {
+    pub fn kind(&self) -> TxKind {
         match self {
-            TypedTransaction::Legacy(tx) => &tx.tx().to,
-            TypedTransaction::EIP2930(tx) => &tx.tx().to,
-            TypedTransaction::EIP1559(tx) => &tx.tx().to,
-            TypedTransaction::EIP4844(tx) => &tx.tx().tx().to,
-            TypedTransaction::Deposit(tx) => &tx.kind,
+            TypedTransaction::Legacy(tx) => tx.tx().to,
+            TypedTransaction::EIP2930(tx) => tx.tx().to,
+            TypedTransaction::EIP1559(tx) => tx.tx().to,
+            TypedTransaction::EIP4844(tx) => TxKind::Call(tx.tx().tx().to),
+            TypedTransaction::Deposit(tx) => tx.kind,
         }
     }
 
     /// Returns the callee if this transaction is a call
-    pub fn to(&self) -> Option<&Address> {
-        self.kind().to()
+    pub fn to(&self) -> Option<Address> {
+        self.kind().to().copied()
     }
 
     /// Returns the Signature of the transaction
@@ -1233,7 +1231,7 @@ mod tests {
 
         assert_eq!(
             tx.tx().tx().to,
-            TxKind::Call(address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064"))
+            address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064")
         );
 
         assert_eq!(
@@ -1259,11 +1257,11 @@ mod tests {
             panic!("decoding TypedTransaction failed");
         };
 
-        assert_eq!(tx.input, Bytes::from(b""));
-        assert_eq!(tx.gas_price, 1);
-        assert_eq!(tx.gas_limit, 21000);
-        assert_eq!(tx.nonce, 0);
-        if let TxKind::Call(to) = tx.to {
+        assert_eq!(tx.tx().input, Bytes::from(b""));
+        assert_eq!(tx.tx().gas_price, 1);
+        assert_eq!(tx.tx().gas_limit, 21000);
+        assert_eq!(tx.tx().nonce, 0);
+        if let TxKind::Call(to) = tx.tx().to {
             assert_eq!(
                 to,
                 "0x095e7baea6a6c7c4c2dfeb977efac326af552d87".parse::<Address>().unwrap()
@@ -1271,7 +1269,7 @@ mod tests {
         } else {
             panic!("expected a call transaction");
         }
-        assert_eq!(tx.value, U256::from(0x0au64));
+        assert_eq!(tx.tx().value, U256::from(0x0au64));
         assert_eq!(
             tx.recover_signer().unwrap(),
             "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse::<Address>().unwrap()

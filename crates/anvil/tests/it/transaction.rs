@@ -2,13 +2,12 @@ use crate::{
     abi::*,
     utils::{ethers_http_provider, ethers_ws_provider},
 };
-use alloy_primitives::U256 as rU256;
+use alloy_primitives::{Bytes, U256 as rU256};
 use alloy_rpc_types::{
     request::TransactionRequest as AlloyTransactionRequest,
     state::{AccountOverride, StateOverride},
     BlockNumberOrTag,
 };
-use alloy_signer::Signer as AlloySigner;
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
@@ -21,7 +20,7 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
-use foundry_common::types::{to_call_request_from_tx_request, ToAlloy, ToEthers};
+use foundry_common::types::{ToAlloy, ToEthers};
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -962,9 +961,12 @@ async fn estimates_gas_on_pending_by_default() {
     let tx = TransactionRequest::new().from(sender).to(recipient).value(1e18 as u64);
     client.send_transaction(tx, None).await.unwrap();
 
-    let tx =
-        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
-    api.estimate_gas(to_call_request_from_tx_request(tx), None, None).await.unwrap();
+    let tx = AlloyTransactionRequest::default()
+        .from(recipient.to_alloy())
+        .to(Some(sender.to_alloy()))
+        .value(rU256::from(1e10))
+        .input(Bytes::from(vec![0x42]).into());
+    api.estimate_gas(tx, None, None).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -975,11 +977,14 @@ async fn test_estimate_gas() {
     let sender = wallet.address();
     let recipient = Address::random();
 
-    let tx =
-        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
+    let tx = AlloyTransactionRequest::default()
+        .from(recipient.to_alloy())
+        .to(Some(sender.to_alloy()))
+        .value(rU256::from(1e10))
+        .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.
     let error_result =
-        api.estimate_gas(to_call_request_from_tx_request(tx.clone()), None, None).await;
+        api.estimate_gas(tx.clone(), None, None).await;
 
     assert!(error_result.is_err(), "Expected an error due to insufficient funds");
     let error_message = error_result.unwrap_err().to_string();
@@ -998,7 +1003,7 @@ async fn test_estimate_gas() {
 
     // Estimate gas with state override implying sufficient funds.
     let gas_estimate = api
-        .estimate_gas(to_call_request_from_tx_request(tx), None, Some(state_override))
+        .estimate_gas(tx, None, Some(state_override))
         .await
         .expect("Failed to estimate gas with state override");
 
