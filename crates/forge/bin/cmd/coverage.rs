@@ -28,9 +28,12 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use rustc_hash::FxHashMap;
 use semver::Version;
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
-use std::ops::Deref;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    ops::Deref,
+    path::PathBuf,
+    sync::{mpsc::channel, Arc},
+};
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
@@ -258,7 +261,7 @@ impl CoverageArgs {
                     )
                 })?,
             )?
-                .analyze()?;
+            .analyze()?;
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_analysis
                 .contract_items
                 .iter()
