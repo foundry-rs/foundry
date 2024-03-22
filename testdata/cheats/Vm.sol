@@ -301,6 +301,8 @@ interface Vm {
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
     function projectRoot() external view returns (string memory path);
+    function prompt(string calldata promptText) external returns (string memory input);
+    function promptSecret(string calldata promptText) external returns (string memory input);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);

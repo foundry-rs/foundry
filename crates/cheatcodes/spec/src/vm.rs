@@ -1421,6 +1421,16 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
 
+    // -------- User Interaction --------
+
+    /// Prompts the user for a string value in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function prompt(string calldata promptText) external returns (string memory input);
+
+    /// Prompts the user for a hidden string value in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function promptSecret(string calldata promptText) external returns (string memory input);
+
     // ======== Environment Variables ========
 
     /// Sets environment variables.
