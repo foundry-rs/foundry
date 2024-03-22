@@ -7102,9 +7102,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "260795430673078320e951437a655cd68d23aaba42ad589305eeb67f3a8c81a8"
+checksum = "77c02437b4d0bf85ed2ecf1efb303a6b79a0ecd83a20856ad81668baea196cef"
 dependencies = [
  "chrono",
  "clap",

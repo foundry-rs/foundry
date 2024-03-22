@@ -84,7 +84,7 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
 
 # soldeer
-soldeer = "0.2.4"
+soldeer = "0.2.6"
 
 [dev-dependencies]
 anvil.workspace = true
