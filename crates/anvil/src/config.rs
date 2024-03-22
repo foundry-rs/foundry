@@ -16,14 +16,16 @@ use crate::{
     FeeManager, Hardfork,
 };
 use alloy_genesis::Genesis;
+use alloy_network::Ethereum;
 use alloy_primitives::{hex, utils::Unit, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
-use alloy_signer::{
+use alloy_signer::Signer;
+use alloy_signer_wallet::{
     coins_bip39::{English, Mnemonic},
-    LocalWallet, MnemonicBuilder, Signer as AlloySigner,
+    LocalWallet, MnemonicBuilder,
 };
-use alloy_transport::TransportError;
+use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
 use foundry_common::{
     provider::alloy::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,

@@ -5,10 +5,11 @@ use crate::eth::{
     utils::eip_to_revm_access_list,
 };
 use alloy_consensus::{
-    BlobTransactionSidecar, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy
+    BlobTransactionSidecar, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEip4844,
+    TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy,
 };
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U128, U256, U64, U8};
+use alloy_eips::eip2718::Decodable2718;
+use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U8};
 use alloy_rlp::{Decodable, Encodable, Header};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessList, Signature as RpcSignature,
@@ -893,10 +894,11 @@ impl Encodable for TypedTransaction {
             TypedTransaction::Deposit(tx) => {
                 let tx_payload_len = tx.fields_len();
                 let tx_header_len = Header { list: false, payload_length: tx_payload_len }.length();
-                Header { list: false, payload_length: 1 + tx_payload_len + tx_header_len }.encode(out);
+                Header { list: false, payload_length: 1 + tx_payload_len + tx_header_len }
+                    .encode(out);
                 out.put_u8(0x7E);
                 tx.encode(out);
-            },
+            }
         }
     }
 }
@@ -918,6 +920,27 @@ impl Decodable for TypedTransaction {
             Ok(TxEnvelope::decode(buf)?.into())
         } else {
             Ok(Self::Deposit(DepositTransaction::decode(&mut h_decode_copy)?))
+        }
+    }
+}
+
+impl Decodable2718 for TypedTransaction {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        if ty == 0x7E {
+            return Ok(Self::Deposit(DepositTransaction::decode(buf)?))
+        }
+        match TxEnvelope::typed_decode(ty, buf)? {
+            TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
+            TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
+            TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+            TxEnvelope::Legacy(_) => unreachable!(),
+        }
+    }
+
+    fn fallback_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        match TxEnvelope::fallback_decode(buf)? {
+            TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
+            _ => unreachable!(),
         }
     }
 }
@@ -1010,8 +1033,6 @@ impl From<TypedReceipt> for ReceiptWithBloom {
 
 impl Encodable for TypedReceipt {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
-        use alloy_rlp::Header;
-
         match self {
             TypedReceipt::Legacy(r) => r.encode(out),
             receipt => {
@@ -1053,7 +1074,6 @@ impl Encodable for TypedReceipt {
 
 impl Decodable for TypedReceipt {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        use alloy_rlp::Header;
         use bytes::Buf;
         use std::cmp::Ordering;
 

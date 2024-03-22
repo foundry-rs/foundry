@@ -3,7 +3,6 @@ use crate::{
     StorageInfo,
 };
 use alloy_consensus::ReceiptWithBloom;
-use alloy_network::Sealable;
 use alloy_primitives::{Log, TxHash, B256, U256};
 use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
@@ -165,7 +164,7 @@ pub fn filter_logs(
         true
     }
 
-    let block_hash = block.header.hash();
+    let block_hash = block.header.hash_slow();
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {

@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, U256};
-use alloy_signer::coins_bip39::{English, Mnemonic};
+use alloy_signer_wallet::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;

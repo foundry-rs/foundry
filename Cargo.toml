@@ -139,11 +139,9 @@ foundry-compilers = { version = "0.3.9", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "7.1", default-features = false }
+revm = { version = "7.2", default-features = false }
 revm-primitives = { version = "3", default-features = false }
-revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "ba0b6ab", features = [
-    "serde",
-] }
+revm-inspectors = { path = "../evm-inspectors", features = ["serde"] }
 
 ## ethers
 ethers = { version = "2.0.14", default-features = false }
@@ -220,10 +218,6 @@ tower = "0.4"
 tower-http = "0.4"
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm", rev = "5aff229a" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm", rev = "5aff229a" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "5aff229a" }
-revm-precompile = { git = "https://github.com/bluealloy/revm", rev = "5aff229a" }
 alloy-primitives = { git = "https://github.com/klkvr/core", rev = "0473659" }
 alloy-json-abi = { git = "https://github.com/klkvr/core", rev = "0473659" }
 alloy-sol-types = { git = "https://github.com/klkvr/core", rev = "0473659" }

@@ -8,7 +8,6 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
     fork::BlockchainDb,
-    hashbrown::HashMap,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
         primitives::{BlockEnv, Bytecode, KECCAK_EMPTY},
@@ -17,7 +16,11 @@ use foundry_evm::{
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    path::Path,
+};
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;

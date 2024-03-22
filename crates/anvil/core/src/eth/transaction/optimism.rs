@@ -1,5 +1,5 @@
-use alloy_consensus::{Transaction, TxType};
-use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, B256, U256};
+use alloy_consensus::{SignableTransaction, Signed, Transaction, TxType};
+use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
     length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
@@ -133,12 +133,74 @@ impl DepositTransactionRequest {
         1 + length_of_length(payload_length) + payload_length
     }
 
-    /// Outputs the signature hash of the transaction by first encoding without a signature, then
-    /// hashing.
-    pub(crate) fn signature_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.payload_len_for_signature());
-        self.encode_for_signing(&mut buf);
-        alloy_primitives::utils::keccak256(&buf)
+    fn encoded_len_with_signature(&self, signature: &Signature) -> usize {
+        // this counts the tx fields and signature fields
+        let payload_length = self.fields_len() + signature.rlp_vrs_len();
+
+        // this counts:
+        // * tx type byte
+        // * inner header length
+        // * inner payload length
+        1 + alloy_rlp::Header { list: true, payload_length }.length() + payload_length
+    }
+}
+
+impl Transaction for DepositTransactionRequest {
+    fn input(&self) -> &[u8] {
+        &self.input
+    }
+
+    /// Get `to`.
+    fn to(&self) -> TxKind {
+        self.kind
+    }
+
+    /// Get `value`.
+    fn value(&self) -> U256 {
+        self.value
+    }
+
+    /// Get `chain_id`.
+    fn chain_id(&self) -> Option<ChainId> {
+        None
+    }
+
+    /// Get `nonce`.
+    fn nonce(&self) -> u64 {
+        u64::MAX
+    }
+
+    /// Get `gas_limit`.
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit.to()
+    }
+
+    /// Get `gas_price`.
+    fn gas_price(&self) -> Option<U256> {
+        None
+    }
+}
+
+impl SignableTransaction<Signature> for DepositTransactionRequest {
+    fn set_chain_id(&mut self, _chain_id: ChainId) {}
+
+    fn payload_len_for_signature(&self) -> usize {
+        self.payload_len_for_signature()
+    }
+
+    fn into_signed(self, signature: Signature) -> Signed<Self> {
+        let mut buf = Vec::with_capacity(self.encoded_len_with_signature(&signature));
+        self.encode_with_signature(&signature, &mut buf);
+        let hash = keccak256(&buf);
+
+        // Drop any v chain id value to ensure the signature format is correct at the time of
+        // combination for an EIP-4844 transaction. V should indicate the y-parity of the
+        // signature.
+        Signed::new_unchecked(self, signature.with_parity_bool(), hash)
+    }
+
+    fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
+        self.encode_for_signing(out);
     }
 }
 

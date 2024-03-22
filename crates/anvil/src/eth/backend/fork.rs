@@ -171,7 +171,7 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().call((*request).clone(), Some(block.into())).await?;
+        let res = self.provider().call(request, Some(block.into())).await?;
 
         Ok(res)
     }
@@ -183,7 +183,7 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<U256, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().estimate_gas(request.clone(), Some(block.into())).await?;
+        let res = self.provider().estimate_gas(&request, Some(block.into())).await?;
 
         Ok(res)
     }
@@ -194,7 +194,7 @@ impl ClientFork {
         request: &TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
-        self.provider().create_access_list(request.clone(), block.map(|b| b.into())).await
+        self.provider().create_access_list(&request, block.map(|b| b.into())).await
     }
 
     pub async fn storage_at(
@@ -211,7 +211,7 @@ impl ClientFork {
             return Ok(logs);
         }
 
-        let logs = self.provider().get_logs(filter.clone()).await?;
+        let logs = self.provider().get_logs(&filter).await?;
 
         let mut storage = self.storage_write();
         storage.logs.insert(filter.clone(), logs.clone());
@@ -230,7 +230,7 @@ impl ClientFork {
 
         let block_id = BlockId::Number(blocknumber.into());
 
-        let code = self.provider().get_code_at(address, Some(block_id)).await?;
+        let code = self.provider().get_code_at(address, block_id).await?;
 
         let mut storage = self.storage_write();
         storage.code_at.insert((address, blocknumber), code.clone().0.into());
@@ -251,7 +251,7 @@ impl ClientFork {
         &self,
         address: Address,
         blocknumber: u64,
-    ) -> Result<U256, TransportError> {
+    ) -> Result<U64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
         self.provider().get_transaction_count(address, Some(blocknumber.into())).await
     }

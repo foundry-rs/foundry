@@ -4,7 +4,8 @@ use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_provider::{
-    network::Ethereum, utils::Eip1559Estimation, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider
+    network::Ethereum, utils::Eip1559Estimation, Provider, ProviderBuilder as AlloyProviderBuilder,
+    RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};

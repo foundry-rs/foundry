@@ -7,17 +7,17 @@ use alloy_rpc_types::state::StateOverride;
 use anvil_core::eth::trie::RefSecTrieDBMut;
 use foundry_evm::{
     backend::DatabaseError,
-    hashbrown::HashMap as Map,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
         primitives::{AccountInfo, Bytecode},
     },
 };
 use memory_db::HashKey;
+use std::collections::HashMap;
 use trie_db::TrieMut;
 
 /// Returns storage trie of an account as `HashDB`
-pub fn storage_trie_db(storage: &Map<U256, U256>) -> (AsHashDB, B256) {
+pub fn storage_trie_db(storage: &HashMap<U256, U256>) -> (AsHashDB, B256) {
     // Populate DB with full trie from entries.
     let (db, root) = {
         let mut db = <memory_db::MemoryDB<_, HashKey<_>, _>>::default();
@@ -38,7 +38,7 @@ pub fn storage_trie_db(storage: &Map<U256, U256>) -> (AsHashDB, B256) {
 }
 
 /// Returns the account data as `HashDB`
-pub fn trie_hash_db(accounts: &Map<Address, DbAccount>) -> (AsHashDB, B256) {
+pub fn trie_hash_db(accounts: &HashMap<Address, DbAccount>) -> (AsHashDB, B256) {
     let accounts = trie_accounts(accounts);
 
     // Populate DB with full trie from entries.
@@ -58,7 +58,7 @@ pub fn trie_hash_db(accounts: &Map<Address, DbAccount>) -> (AsHashDB, B256) {
 }
 
 /// Returns all RLP-encoded Accounts
-pub fn trie_accounts(accounts: &Map<Address, DbAccount>) -> Vec<(Address, Bytes)> {
+pub fn trie_accounts(accounts: &HashMap<Address, DbAccount>) -> Vec<(Address, Bytes)> {
     accounts
         .iter()
         .map(|(address, account)| {
@@ -68,12 +68,12 @@ pub fn trie_accounts(accounts: &Map<Address, DbAccount>) -> Vec<(Address, Bytes)
         .collect()
 }
 
-pub fn state_merkle_trie_root(accounts: &Map<Address, DbAccount>) -> B256 {
+pub fn state_merkle_trie_root(accounts: &HashMap<Address, DbAccount>) -> B256 {
     trie_hash_db(accounts).1
 }
 
 /// Returns the RLP for this account.
-pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<U256, U256>) -> Bytes {
+pub fn trie_account_rlp(info: &AccountInfo, storage: &HashMap<U256, U256>) -> Bytes {
     let mut out: Vec<u8> = Vec::new();
     let list: [&dyn Encodable; 4] =
         [&info.nonce, &info.balance, &storage_trie_db(storage).1, &info.code_hash];
