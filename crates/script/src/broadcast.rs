@@ -4,10 +4,14 @@ use crate::{
 };
 
 use super::receipts;
+use alloy_eips::eip2718::Encodable2718;
+use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
-use ethers_core::types::{transaction::eip2718::TypedTransaction, BlockId};
-use ethers_providers::{JsonRpcClient, Middleware, Provider};
-use ethers_signers::Signer;
+use alloy_provider::Provider;
+use alloy_network::TxSigner;
+use std::sync::Arc;
+use alloy_rpc_types::TransactionRequest;
+use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::ScriptWallets;
@@ -16,11 +20,10 @@ use foundry_cli::{
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
-    provider::ethers::{
+    provider::alloy::{
         estimate_eip1559_fees, get_http_provider, try_get_http_provider, RetryProvider,
     },
     shell,
-    types::{ToAlloy, ToEthers},
 };
 use foundry_config::Config;
 use foundry_wallets::WalletSigner;
@@ -28,59 +31,55 @@ use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
 };
 
-pub async fn estimate_gas<T>(
-    tx: &mut TypedTransaction,
-    provider: &Provider<T>,
+pub async fn estimate_gas<P, T>(
+    tx: &mut TransactionRequest,
+    provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()>
 where
-    T: JsonRpcClient,
+    P: Provider<Ethereum, T>,
+    T: Transport + Clone,
 {
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
-    let _ = tx.gas_mut().take();
+    tx.gas = None;
 
-    tx.set_gas(
+    tx.set_gas_limit(
         provider
             .estimate_gas(tx, None)
             .await
-            .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
-            estimate_multiplier /
-            100,
+            .wrap_err("Failed to estimate gas for tx")? *
+            U256::from(estimate_multiplier) /
+            U256::from(100),
     );
     Ok(())
 }
 
-pub async fn next_nonce(
-    caller: Address,
-    provider_url: &str,
-    block: Option<BlockId>,
-) -> eyre::Result<u64> {
-    let provider = Provider::try_from(provider_url)
+pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
+    let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
+    let res = provider.get_transaction_count(caller, None).await?;
     res.try_into().map_err(Into::into)
 }
 
 pub async fn send_transaction(
     provider: Arc<RetryProvider>,
-    mut tx: TypedTransaction,
-    kind: SendTransactionKind<'_>,
+    mut tx: TransactionRequest,
+    kind: SendTransactionKind,
     sequential_broadcast: bool,
     is_fixed_gas_limit: bool,
     estimate_via_rpc: bool,
     estimate_multiplier: u64,
 ) -> Result<TxHash> {
-    let from = tx.from().expect("no sender");
+    let from = tx.from.expect("no sender");
 
     if sequential_broadcast {
-        let nonce = provider.get_transaction_count(*from, None).await?;
+        let nonce = provider.get_transaction_count(from, None).await?;
 
-        let tx_nonce = tx.nonce().expect("no nonce");
-        if nonce != *tx_nonce {
+        let tx_nonce = tx.nonce.expect("no nonce");
+        if nonce.to::<u64>() != tx_nonce {
             bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
         }
     }
@@ -96,29 +95,27 @@ pub async fn send_transaction(
             debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
             // Submit the transaction
-            provider.send_transaction(tx, None).await?
+            provider.send_transaction(tx).await?
         }
         SendTransactionKind::Raw(signer) => {
             debug!("sending transaction: {:?}", tx);
 
-            // Signing manually so we skip `fill_transaction` and its `eth_createAccessList`
-            // request.
-            let signature =
-                signer.sign_transaction(&tx).await.wrap_err("Failed to sign transaction")?;
+            let signer = EthereumSigner::new(signer);
+            let signed = tx.build(&signer).await?;
 
             // Submit the raw transaction
-            provider.send_raw_transaction(tx.rlp_signed(&signature)).await?
+            provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
         }
     };
 
-    Ok(pending.tx_hash().to_alloy())
+    Ok(*pending.tx_hash())
 }
 
 /// How to send a single transaction
 #[derive(Clone)]
-pub enum SendTransactionKind<'a> {
+pub enum SendTransactionKind {
     Unlocked(Address),
-    Raw(&'a WalletSigner),
+    Raw(Arc<WalletSigner>),
 }
 
 /// Represents how to send _all_ transactions
@@ -126,14 +123,14 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, WalletSigner>),
+    Raw(HashMap<Address, Arc<WalletSigner>>),
 }
 
 impl SendTransactionsKind {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked
-    pub fn for_sender(&self, addr: &Address) -> Result<SendTransactionKind<'_>> {
+    pub fn for_sender(&self, addr: &Address) -> Result<SendTransactionKind> {
         match self {
             SendTransactionsKind::Unlocked(unlocked) => {
                 if !unlocked.contains(addr) {
@@ -143,7 +140,7 @@ impl SendTransactionsKind {
             }
             SendTransactionsKind::Raw(wallets) => {
                 if let Some(wallet) = wallets.get(addr) {
-                    Ok(SendTransactionKind::Raw(wallet))
+                    Ok(SendTransactionKind::Raw(wallet.clone()))
                 } else {
                     bail!("No matching signer for {:?} found", addr)
                 }
@@ -202,8 +199,8 @@ impl BundledState {
             .iter()
             .flat_map(|sequence| {
                 sequence
-                    .typed_transactions()
-                    .map(|tx| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
+                    .transactions()
+                    .map(|tx| (tx.from().expect("No sender for onchain transaction!")))
             })
             .collect::<HashSet<_>>();
 
@@ -233,6 +230,8 @@ impl BundledState {
                 );
             }
 
+            let signers = signers.into_iter().map(|(addr, signer)| (addr, Arc::new(signer))).collect();
+
             SendTransactionsKind::Raw(signers)
         };
 
@@ -244,22 +243,20 @@ impl BundledState {
 
             if already_broadcasted < sequence.transactions.len() {
                 // Make a one-time gas price estimation
-                let (gas_price, eip1559_fees) = match self.args.with_gas_price {
-                    None => match sequence.transactions.front().unwrap().typed_tx() {
-                        TypedTransaction::Eip1559(_) => {
-                            let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
+                let (gas_price, eip1559_fees) = match (self.args.legacy, self.args.with_gas_price) {
+                    (_, Some(gas_price)) => (Some(gas_price), None),
+                    (true, None) => (Some(provider.get_gas_price().await?), None),
+                    (false, None) => {
+                        let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
                                 .await
-                                .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                            .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
-                            if let Some(priority_gas_price) = self.args.priority_gas_price {
-                                fees.1 = priority_gas_price.to_ethers();
-                            }
-
-                            (None, Some(fees))
+                        if let Some(priority_gas_price) = self.args.priority_gas_price {
+                            fees.max_priority_fee_per_gas = priority_gas_price;
                         }
-                        _ => (provider.get_gas_price().await.ok(), None),
-                    },
-                    Some(gas_price) => (Some(gas_price.to_ethers()), None),
+
+                        (None, Some(fees))
+                    }
                 };
 
                 // Iterate through transactions, matching the `from` field with the associated
@@ -269,35 +266,21 @@ impl BundledState {
                     .iter()
                     .skip(already_broadcasted)
                     .map(|tx_with_metadata| {
-                        let tx = tx_with_metadata.typed_tx();
-                        let from =
-                            (*tx.from().expect("No sender for onchain transaction!")).to_alloy();
+                        let tx = tx_with_metadata.tx();
+                        let from = tx.from().expect("No sender for onchain transaction!");
 
                         let kind = send_kind.for_sender(&from)?;
                         let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
                         let mut tx = tx.clone();
-
                         tx.set_chain_id(sequence.chain);
 
                         if let Some(gas_price) = gas_price {
                             tx.set_gas_price(gas_price);
                         } else {
                             let eip1559_fees = eip1559_fees.expect("was set above");
-                            // fill gas price
-                            match tx {
-                                TypedTransaction::Eip1559(ref mut inner) => {
-                                    inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
-                                    inner.max_fee_per_gas = Some(eip1559_fees.0);
-                                }
-                                _ => {
-                                    // If we're here, it means that first transaction of the
-                                    // sequence was EIP1559 transaction (see match statement above),
-                                    // however, we can only have transactions of the same type in
-                                    // the sequence.
-                                    unreachable!()
-                                }
-                            }
+                            tx.set_max_priority_fee_per_gas(eip1559_fees.max_priority_fee_per_gas);
+                            tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                         }
 
                         Ok((tx, kind, is_fixed_gas_limit))
@@ -381,9 +364,13 @@ impl BundledState {
             let (total_gas, total_gas_price, total_paid) = sequence.receipts.iter().fold(
                 (U256::ZERO, U256::ZERO, U256::ZERO),
                 |acc, receipt| {
-                    let gas_used = receipt.gas_used.unwrap_or_default().to_alloy();
-                    let gas_price = receipt.effective_gas_price.unwrap_or_default().to_alloy();
-                    (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
+                    let gas_used = receipt.gas_used.unwrap_or_default();
+                    let gas_price = receipt.effective_gas_price;
+                    (
+                        acc.0 + gas_used,
+                        acc.1 + U256::from(gas_price),
+                        acc.2 + gas_used * U256::from(gas_price),
+                    )
                 },
             );
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());

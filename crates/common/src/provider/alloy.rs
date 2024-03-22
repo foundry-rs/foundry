@@ -8,6 +8,7 @@ use alloy_provider::{
     RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
+use alloy_transport::Transport;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
 use foundry_common::types::ToAlloy;
@@ -254,7 +255,7 @@ impl ProviderBuilder {
 ///   - polygon
 ///
 /// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
-pub async fn estimate_eip1559_fees<P: Provider<Ethereum>>(
+pub async fn estimate_eip1559_fees<P: Provider<Ethereum, T>, T: Transport + Clone>(
     provider: &P,
     chain: Option<u64>,
 ) -> Result<Eip1559Estimation> {

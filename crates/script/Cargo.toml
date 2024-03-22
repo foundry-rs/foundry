@@ -32,19 +32,25 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver = "1"
 futures = "0.3"
 async-recursion = "1.0.5"
-alloy-primitives.workspace = true
-alloy-dyn-abi.workspace = true
+
 itertools.workspace = true
 parking_lot = "0.12"
 yansi = "0.5"
-ethers-core.workspace = true
-ethers-providers.workspace = true
-ethers-signers.workspace = true
 revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true
 dialoguer = { version = "0.11", default-features = false }
 indicatif = "0.17"
+
+alloy-signer.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-chains.workspace = true
+alloy-dyn-abi.workspace = true
+alloy-primitives.workspace = true
+alloy-eips.workspace = true
+alloy-transport.workspace = true
+alloy-consensus.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

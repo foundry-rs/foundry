@@ -1,15 +1,12 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{utils::format_units, U256};
+use alloy_primitives::U256;
 use alloy_provider::{network::Ethereum, Provider};
 use alloy_transport::Transport;
-use ethers_core::types::TransactionReceipt;
 use eyre::{ContextCompat, Result};
-use foundry_common::types::ToAlloy;
 use foundry_config::{Chain, Config};
 use std::{
     ffi::OsStr,
     future::Future,
-    ops::Mul,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -250,40 +247,6 @@ pub fn enable_paint() {
     if is_windows || env_colour_disabled {
         Paint::disable();
     }
-}
-
-/// Prints parts of the receipt to stdout
-pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
-    let gas_used = receipt.gas_used.unwrap_or_default();
-    let gas_price = receipt.effective_gas_price.unwrap_or_default();
-    foundry_common::shell::println(format!(
-        "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
-        status = if receipt.status.map_or(true, |s| s.is_zero()) {
-            "❌  [Failed]"
-        } else {
-            "✅  [Success]"
-        },
-        tx_hash = receipt.transaction_hash,
-        caddr = if let Some(addr) = &receipt.contract_address {
-            format!("\nContract Address: {}", addr.to_alloy().to_checksum(None))
-        } else {
-            String::new()
-        },
-        bn = receipt.block_number.unwrap_or_default(),
-        gas = if gas_price.is_zero() {
-            format!("Gas Used: {gas_used}")
-        } else {
-            let paid = format_units(gas_used.mul(gas_price).to_alloy(), 18)
-                .unwrap_or_else(|_| "N/A".into());
-            let gas_price = format_units(gas_price.to_alloy(), 9).unwrap_or_else(|_| "N/A".into());
-            format!(
-                "Paid: {} ETH ({gas_used} gas * {} gwei)",
-                paid.trim_end_matches('0'),
-                gas_price.trim_end_matches('0').trim_end_matches('.')
-            )
-        },
-    ))
-    .expect("could not print receipt");
 }
 
 /// Useful extensions to [`std::process::Command`].

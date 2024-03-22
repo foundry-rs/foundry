@@ -1,18 +1,14 @@
 use super::{multi_sequence::MultiChainSequence, NestedValue};
 use crate::{
-    transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
+    transaction::{AdditionalContract, TransactionWithMetadata},
     verify::VerifyBundle,
 };
 use alloy_primitives::{Address, TxHash};
-use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
+use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{
-    fs, shell,
-    types::{ToAlloy, ToEthers},
-    SELECTOR_LEN,
-};
+use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -91,7 +87,6 @@ pub const DRY_RUN_DIR: &str = "dry-run";
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
-    #[serde(serialize_with = "wrapper::serialize_receipts")]
     pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
@@ -207,7 +202,7 @@ impl ScriptSequence {
 
     /// Sorts all receipts with ascending transaction index
     pub fn sort_receipts(&mut self) {
-        self.receipts.sort_unstable()
+        self.receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
     }
 
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
@@ -284,13 +279,13 @@ impl ScriptSequence {
                 let mut offset = 0;
 
                 if tx.is_create2() {
-                    receipt.contract_address = tx.contract_address.map(|a| a.to_ethers());
+                    receipt.contract_address = tx.contract_address;
                     offset = 32;
                 }
 
                 // Verify contract created directly from the transaction
                 if let (Some(address), Some(data)) =
-                    (receipt.contract_address.map(|h| h.to_alloy()), tx.typed_tx().data())
+                    (receipt.contract_address, tx.tx().input.input())
                 {
                     match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
@@ -300,7 +295,7 @@ impl ScriptSequence {
 
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                    match verify.get_verify_args(*address, 0, init_code, &self.libraries) {
+                    match verify.get_verify_args(*address, 0, init_code.as_ref(), &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(*address),
                     };
@@ -357,8 +352,8 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn typed_transactions(&self) -> impl Iterator<Item = &TypedTransaction> {
-        self.transactions.iter().map(|tx| tx.typed_tx())
+    pub fn transactions(&self) -> impl Iterator<Item = &TransactionRequest> {
+        self.transactions.iter().map(|tx| tx.tx())
     }
 
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {

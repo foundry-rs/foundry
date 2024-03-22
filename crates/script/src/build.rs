@@ -7,14 +7,13 @@ use crate::{
 };
 
 use alloy_primitives::{Address, Bytes};
-use ethers_providers::Middleware;
+use alloy_provider::Provider;
 use eyre::{Context, OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
-    provider::ethers::try_get_http_provider,
-    types::ToAlloy,
+    provider::alloy::try_get_http_provider,
     ContractsByArtifact,
 };
 use foundry_compilers::{
@@ -262,7 +261,7 @@ impl CompiledState {
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
             let provider = Arc::new(try_get_http_provider(fork_url)?);
-            Some(provider.get_chainid().await?.as_u64())
+            Some(provider.get_chain_id().await?.to::<u64>())
         };
 
         let sequence = match self.try_load_sequence(chain, false) {
@@ -290,7 +289,7 @@ impl CompiledState {
                 s.transactions
                     .iter()
                     .skip(s.receipts.len())
-                    .map(|t| t.transaction.from().expect("from is missing in script artifact"))
+                    .map(|t| t.transaction.from.expect("from is missing in script artifact"))
             });
 
             let available_signers = self
@@ -298,7 +297,7 @@ impl CompiledState {
                 .signers()
                 .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
 
-            if !froms.all(|from| available_signers.contains(&from.to_alloy())) {
+            if !froms.all(|from| available_signers.contains(&from)) {
                 // IF we are missing required signers, execute script as we might need to collect
                 // private keys from the execution.
                 let executed = self.link()?.prepare_execution().await?.execute().await?;

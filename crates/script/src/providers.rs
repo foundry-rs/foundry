@@ -1,11 +1,7 @@
 use alloy_primitives::U256;
-use ethers_providers::{Middleware, Provider};
+use alloy_provider::{utils::Eip1559Estimation, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::{
-    provider::ethers::{get_http_provider, RpcUrl},
-    runtime_client::RuntimeClient,
-    types::ToAlloy,
-};
+use foundry_common::provider::alloy::{get_http_provider, RetryProvider, RpcUrl};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -47,7 +43,7 @@ impl Deref for ProvidersManager {
 /// Holds related metadata to each provider RPC.
 #[derive(Debug)]
 pub struct ProviderInfo {
-    pub provider: Arc<Provider<RuntimeClient>>,
+    pub provider: Arc<RetryProvider>,
     pub chain: u64,
     pub gas_price: GasPrice,
     pub is_legacy: bool,
@@ -57,13 +53,13 @@ pub struct ProviderInfo {
 #[derive(Debug)]
 pub enum GasPrice {
     Legacy(Result<U256>),
-    EIP1559(Result<(U256, U256)>),
+    EIP1559(Result<Eip1559Estimation>),
 }
 
 impl ProviderInfo {
     pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<ProviderInfo> {
         let provider = Arc::new(get_http_provider(rpc));
-        let chain = provider.get_chainid().await?.as_u64();
+        let chain = provider.get_chain_id().await?.to::<u64>();
 
         if let Some(chain) = Chain::from(chain).named() {
             is_legacy |= chain.is_legacy();
@@ -71,19 +67,11 @@ impl ProviderInfo {
 
         let gas_price = if is_legacy {
             GasPrice::Legacy(
-                provider
-                    .get_gas_price()
-                    .await
-                    .wrap_err("Failed to get legacy gas price")
-                    .map(|p| p.to_alloy()),
+                provider.get_gas_price().await.wrap_err("Failed to get legacy gas price"),
             )
         } else {
             GasPrice::EIP1559(
-                provider
-                    .estimate_eip1559_fees(None)
-                    .await
-                    .wrap_err("Failed to get EIP-1559 fees")
-                    .map(|p| (p.0.to_alloy(), p.1.to_alloy())),
+                provider.estimate_eip1559_fees(None).await.wrap_err("Failed to get EIP-1559 fees"),
             )
         };
 
@@ -94,7 +82,7 @@ impl ProviderInfo {
     pub fn gas_price(&self) -> Result<U256> {
         let res = match &self.gas_price {
             GasPrice::Legacy(res) => res.as_ref(),
-            GasPrice::EIP1559(res) => res.as_ref().map(|res| &res.0),
+            GasPrice::EIP1559(res) => res.as_ref().map(|res| &res.max_fee_per_gas),
         };
         match res {
             Ok(val) => Ok(*val),
