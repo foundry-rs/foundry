@@ -3366,10 +3366,16 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.2.0"
 dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-json-abi",
+ "alloy-network",
  "alloy-primitives",
+ "alloy-provider",
  "alloy-rpc-types",
+ "alloy-signer",
+ "alloy-transport",
  "anvil",
  "async-trait",
  "axum",
@@ -3382,10 +3388,6 @@ dependencies = [
  "dialoguer",
  "dunce",
  "ethers-contract",
- "ethers-core",
- "ethers-middleware",
- "ethers-providers",
- "ethers-signers",
  "evm-disassembler",
  "eyre",
  "forge-doc",
