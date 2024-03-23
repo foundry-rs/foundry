@@ -90,7 +90,7 @@ dependencies = [
 [[package]]
 name = "alloy-consensus"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -105,7 +105,7 @@ dependencies = [
 [[package]]
 name = "alloy-contract"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -143,18 +143,21 @@ dependencies = [
 [[package]]
 name = "alloy-eips"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
+ "c-kzg",
+ "derive_more",
+ "once_cell",
  "serde",
 ]
 
 [[package]]
 name = "alloy-genesis"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-primitives",
  "alloy-serde",
@@ -175,7 +178,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -186,7 +189,7 @@ dependencies = [
 [[package]]
 name = "alloy-network"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -229,7 +232,7 @@ dependencies = [
 [[package]]
 name = "alloy-provider"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-json-rpc",
  "alloy-network",
@@ -246,7 +249,7 @@ dependencies = [
  "dashmap",
  "futures",
  "lru",
- "reqwest",
+ "reqwest 0.12.1",
  "serde_json",
  "tokio",
  "tracing",
@@ -255,7 +258,7 @@ dependencies = [
 [[package]]
 name = "alloy-pubsub"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -295,7 +298,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -304,7 +307,7 @@ dependencies = [
  "alloy-transport-http",
  "futures",
  "pin-project",
- "reqwest",
+ "reqwest 0.12.1",
  "serde",
  "serde_json",
  "tokio",
@@ -317,7 +320,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-trace-types"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
@@ -329,7 +332,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -345,7 +348,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -355,7 +358,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -370,7 +373,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-aws"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -387,7 +390,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-ledger"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -404,7 +407,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-trezor"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -420,7 +423,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-wallet"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -493,7 +496,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-json-rpc",
  "base64 0.22.0",
@@ -511,11 +514,11 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
- "reqwest",
+ "reqwest 0.12.1",
  "serde_json",
  "tower",
  "url",
@@ -524,7 +527,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ipc"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -542,7 +545,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ws"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy?rev=cf5d733#cf5d73388e077e16600b9cde2a4c6121e37db0e4"
+source = "git+https://github.com/klkvr/alloy?rev=067bf1b#067bf1b8c416342e9a9fdb959ae174a28b371aae"
 dependencies = [
  "alloy-pubsub",
  "alloy-transport",
@@ -681,7 +684,7 @@ dependencies = [
  "foundry-evm",
  "futures",
  "hash-db",
- "hyper",
+ "hyper 0.14.28",
  "itertools 0.12.1",
  "k256",
  "memory-db",
@@ -749,7 +752,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
- "hyper",
+ "hyper 0.14.28",
  "parity-tokio-ipc",
  "parking_lot",
  "pin-project",
@@ -1086,7 +1089,7 @@ dependencies = [
  "fastrand",
  "hex",
  "http 0.2.12",
- "hyper",
+ "hyper 0.14.28",
  "ring 0.17.8",
  "time",
  "tokio",
@@ -1122,7 +1125,7 @@ dependencies = [
  "bytes",
  "fastrand",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "percent-encoding",
  "pin-project-lite",
  "tracing",
@@ -1264,7 +1267,7 @@ dependencies = [
  "bytes-utils",
  "futures-core",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
@@ -1305,8 +1308,8 @@ dependencies = [
  "fastrand",
  "h2",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.28",
  "hyper-rustls",
  "once_cell",
  "pin-project-lite",
@@ -1343,7 +1346,7 @@ dependencies = [
  "bytes",
  "bytes-utils",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "itoa",
  "num-integer",
  "pin-project-lite",
@@ -1390,8 +1393,8 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.28",
  "itoa",
  "matchit",
  "memchr",
@@ -1422,7 +1425,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "mime",
  "rustversion",
  "tower-layer",
@@ -1835,7 +1838,7 @@ dependencies = [
  "foundry-evm",
  "once_cell",
  "regex",
- "reqwest",
+ "reqwest 0.11.26",
  "revm",
  "rustyline",
  "semver 1.0.22",
@@ -2949,7 +2952,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "reqwest",
+ "reqwest 0.11.26",
  "serde",
  "serde_json",
  "syn 2.0.53",
@@ -3011,7 +3014,7 @@ checksum = "e79e5973c26d4baf0ce55520bd732314328cabe53193286671b47144145b9649"
 dependencies = [
  "chrono",
  "ethers-core",
- "reqwest",
+ "reqwest 0.11.26",
  "semver 1.0.22",
  "serde",
  "serde_json",
@@ -3035,7 +3038,7 @@ dependencies = [
  "futures-locks",
  "futures-util",
  "instant",
- "reqwest",
+ "reqwest 0.11.26",
  "serde",
  "serde_json",
  "thiserror",
@@ -3068,7 +3071,7 @@ dependencies = [
  "jsonwebtoken",
  "once_cell",
  "pin-project",
- "reqwest",
+ "reqwest 0.11.26",
  "serde",
  "serde_json",
  "thiserror",
@@ -3414,7 +3417,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "globset",
- "hyper",
+ "hyper 0.14.28",
  "indicatif",
  "itertools 0.12.1",
  "once_cell",
@@ -3426,7 +3429,7 @@ dependencies = [
  "proptest",
  "rayon",
  "regex",
- "reqwest",
+ "reqwest 0.11.26",
  "revm-inspectors",
  "rustc-hash",
  "semver 1.0.22",
@@ -3552,7 +3555,7 @@ dependencies = [
  "futures",
  "once_cell",
  "regex",
- "reqwest",
+ "reqwest 0.11.26",
  "semver 1.0.22",
  "serde",
  "serde_json",
@@ -3580,7 +3583,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers",
- "reqwest",
+ "reqwest 0.11.26",
  "semver 1.0.22",
  "serde",
  "serde_json",
@@ -3707,7 +3710,8 @@ dependencies = [
  "once_cell",
  "pretty_assertions",
  "rand 0.8.5",
- "reqwest",
+ "reqwest 0.11.26",
+ "reqwest 0.12.1",
  "rustc-hash",
  "semver 1.0.22",
  "serde",
@@ -3778,7 +3782,7 @@ dependencies = [
  "path-slash",
  "pretty_assertions",
  "regex",
- "reqwest",
+ "reqwest 0.11.26",
  "revm-primitives",
  "semver 1.0.22",
  "serde",
@@ -4692,6 +4696,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-body"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cac85db508abc24a2e48553ba12a996e87244a0395ce011e62b37158745d643"
+dependencies = [
+ "bytes",
+ "http 1.1.0",
+]
+
+[[package]]
+name = "http-body-util"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0475f8b2ac86659c21b64320d5d653f9efe42acd2a4e560073ec61a155a34f1d"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "http-range-header"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4727,7 +4754,7 @@ dependencies = [
  "futures-util",
  "h2",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "httparse",
  "httpdate",
  "itoa",
@@ -4740,6 +4767,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "186548d73ac615b32a73aafe38fb4f56c0d340e110e5a200bcadbaf2e199263a"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "httparse",
+ "itoa",
+ "pin-project-lite",
+ "smallvec",
+ "tokio",
+ "want",
+]
+
+[[package]]
 name = "hyper-rustls"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4747,7 +4793,7 @@ checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
 dependencies = [
  "futures-util",
  "http 0.2.12",
- "hyper",
+ "hyper 0.14.28",
  "log",
  "rustls",
  "rustls-native-certs",
@@ -4762,10 +4808,46 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
 dependencies = [
  "bytes",
- "hyper",
+ "hyper 0.14.28",
  "native-tls",
  "tokio",
  "tokio-native-tls",
+]
+
+[[package]]
+name = "hyper-tls"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper 1.2.0",
+ "hyper-util",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+ "tower-service",
+]
+
+[[package]]
+name = "hyper-util"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca38ef113da30126bbff9cd1705f9273e15d45498615d138b0c20279ac7a76aa"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "hyper 1.2.0",
+ "pin-project-lite",
+ "socket2",
+ "tokio",
+ "tower",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -6707,10 +6789,10 @@ dependencies = [
  "futures-util",
  "h2",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.28",
  "hyper-rustls",
- "hyper-tls",
+ "hyper-tls 0.5.0",
  "ipnet",
  "js-sys",
  "log",
@@ -6736,6 +6818,45 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "webpki-roots",
+ "winreg",
+]
+
+[[package]]
+name = "reqwest"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e333b1eb9fe677f6893a9efcb0d277a2d3edd83f358a236b657c32301dc6e5f6"
+dependencies = [
+ "base64 0.21.7",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "http-body-util",
+ "hyper 1.2.0",
+ "hyper-tls 0.6.0",
+ "hyper-util",
+ "ipnet",
+ "js-sys",
+ "log",
+ "mime",
+ "native-tls",
+ "once_cell",
+ "percent-encoding",
+ "pin-project-lite",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sync_wrapper",
+ "tokio",
+ "tokio-native-tls",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "winreg",
 ]
 
@@ -7732,7 +7853,7 @@ dependencies = [
  "fs2",
  "hex",
  "once_cell",
- "reqwest",
+ "reqwest 0.11.26",
  "semver 1.0.22",
  "serde",
  "serde_json",
@@ -8217,7 +8338,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "http-range-header",
  "httpdate",
  "mime",

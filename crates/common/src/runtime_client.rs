@@ -5,9 +5,9 @@ use ethers_core::types::U256;
 use ethers_providers::{
     Authorization, ConnectionDetails, Http, HttpRateLimitRetryPolicy, Ipc, JsonRpcClient,
     JsonRpcError, JwtAuth, JwtKey, ProviderError, PubsubClient, RetryClient, RetryClientBuilder,
-    RpcError, Ws,
+    RpcError, Ws
 };
-use reqwest::{
+use reqwest_ethers::{
     header::{HeaderName, HeaderValue},
     Url,
 };
@@ -128,10 +128,10 @@ impl RuntimeClient {
     async fn connect(&self) -> Result<InnerClient, RuntimeClientError> {
         match self.url.scheme() {
             "http" | "https" => {
-                let mut client_builder = reqwest::Client::builder()
+                let mut client_builder = reqwest_ethers::Client::builder()
                     .timeout(self.timeout)
                     .tls_built_in_root_certs(self.url.scheme() == "https");
-                let mut headers = reqwest::header::HeaderMap::new();
+                let mut headers = reqwest_ethers::header::HeaderMap::new();
 
                 if let Some(jwt) = self.jwt.as_ref() {
                     let auth = build_auth(jwt.clone()).map_err(|err| {
@@ -144,7 +144,7 @@ impl RuntimeClient {
                         .expect("Header should be valid string");
                     auth_value.set_sensitive(true);
 
-                    headers.insert(reqwest::header::AUTHORIZATION, auth_value);
+                    headers.insert(reqwest_ethers::header::AUTHORIZATION, auth_value);
                 };
 
                 for header in self.headers.iter() {

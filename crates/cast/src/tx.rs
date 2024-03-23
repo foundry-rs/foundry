@@ -47,6 +47,7 @@ pub struct TxBuilder<'a, P, T> {
     func: Option<Function>,
     etherscan_api_key: Option<String>,
     provider: &'a P,
+    legacy: bool,
     transport: PhantomData<T>,
 }
 
@@ -67,9 +68,9 @@ impl<'a, T: Transport + Clone, P: Provider<Ethereum, T>> TxBuilder<'a, P, T> {
         let chain = chain.into();
 
         let tx = TransactionRequest::default()
-            .from(from)
-            .transaction_type(if chain.is_legacy() || legacy { 0 } else { 2 })
-            .to(to);
+            .with_from(from)
+            .with_chain_id(chain.id())
+            .with_to(to.into());
 
         Ok(Self {
             to,
@@ -79,6 +80,7 @@ impl<'a, T: Transport + Clone, P: Provider<Ethereum, T>> TxBuilder<'a, P, T> {
             etherscan_api_key: None,
             provider,
             transport: PhantomData,
+            legacy: legacy || chain.is_legacy(),
         })
     }
 
