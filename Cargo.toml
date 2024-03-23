@@ -180,7 +180,6 @@ alloy-dyn-abi = "0.6.4"
 alloy-json-abi = "0.6.4"
 alloy-sol-types = "0.6.4"
 syn-solidity = "0.6.4"
-alloy-sol-macro-input = "0.6.4"
 
 alloy-chains = "0.1"
 
@@ -219,6 +218,8 @@ tower = "0.4"
 tower-http = "0.4"
 
 [patch.crates-io]
-alloy-primitives = { path = "../core/crates/primitives" }
-alloy-json-abi = { path = "../core/crates/json-abi" }
-alloy-sol-types = { path = "../core/crates/sol-types" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "ff339696fa9b490698cb3edec3d4647fae0bd332" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "ff339696fa9b490698cb3edec3d4647fae0bd332" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "ff339696fa9b490698cb3edec3d4647fae0bd332" }
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "ff339696fa9b490698cb3edec3d4647fae0bd332" }
+syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "ff339696fa9b490698cb3edec3d4647fae0bd332" }

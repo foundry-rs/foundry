@@ -13,7 +13,10 @@ use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
-use std::{collections::{BTreeMap, HashMap}, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 mod fork;
 pub(crate) mod mapping;

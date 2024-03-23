@@ -983,8 +983,7 @@ async fn test_estimate_gas() {
         .value(rU256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.
-    let error_result =
-        api.estimate_gas(tx.clone(), None, None).await;
+    let error_result = api.estimate_gas(tx.clone(), None, None).await;
 
     assert!(error_result.is_err(), "Expected an error due to insufficient funds");
     let error_message = error_result.unwrap_err().to_string();

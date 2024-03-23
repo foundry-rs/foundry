@@ -1,5 +1,5 @@
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};

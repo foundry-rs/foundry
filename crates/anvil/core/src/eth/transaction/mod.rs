@@ -1229,10 +1229,7 @@ mod tests {
             _ => unreachable!(),
         };
 
-        assert_eq!(
-            tx.tx().tx().to,
-            address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064")
-        );
+        assert_eq!(tx.tx().tx().to, address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064"));
 
         assert_eq!(
             tx.tx().tx().blob_versioned_hashes,

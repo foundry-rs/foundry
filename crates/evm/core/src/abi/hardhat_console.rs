@@ -4,7 +4,6 @@ use foundry_macros::ConsoleFmt;
 use once_cell::sync::Lazy;
 use revm::primitives::HashMap;
 
-
 sol!(
     #[sol(abi, all_derives)]
     #[derive(ConsoleFmt)]

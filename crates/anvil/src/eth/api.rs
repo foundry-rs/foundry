@@ -916,7 +916,7 @@ impl EthApi {
         }
         let transaction = TypedTransaction::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
-        
+
         self.ensure_typed_transaction_supported(&transaction)?;
 
         let pending_transaction = PendingTransaction::new(transaction)?;
