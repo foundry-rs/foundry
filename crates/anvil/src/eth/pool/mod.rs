@@ -36,7 +36,7 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use alloy_primitives::{TxHash, U64};
+use alloy_primitives::{Address, TxHash, U64};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{channel, Receiver, Sender};
@@ -139,6 +139,11 @@ impl Pool {
     /// Remove the given transactions from the pool
     pub fn remove_invalid(&self, tx_hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
         self.inner.write().remove_invalid(tx_hashes)
+    }
+
+    /// Remove transactions by sender
+    pub fn remove_transactions_by_address(&self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        self.inner.write().remove_transactions_by_address(sender)
     }
 
     /// Removes a single transaction from the pool
@@ -339,6 +344,31 @@ impl PoolInner {
         removed.extend(self.pending_transactions.remove(tx_hashes));
 
         trace!(target: "txpool", "Removed invalid transactions: {:?}", removed);
+
+        removed
+    }
+
+    /// Remove transactions by sender address
+    pub fn remove_transactions_by_address(&mut self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        let mut tx_hashes: Vec<TxHash> =
+            self.pending_transactions.transactions_by_sender(sender).map(|tx| tx.hash()).collect();
+        tx_hashes.extend(
+            self.ready_transactions
+                .transactions_by_sender(sender)
+                .map(|tx| tx.hash())
+                .collect::<Vec<TxHash>>(),
+        );
+
+        if tx_hashes.is_empty() {
+            return vec![]
+        }
+
+        trace!(target: "txpool", "Removing transactions: {:?}", tx_hashes);
+
+        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
+        removed.extend(self.pending_transactions.remove(tx_hashes));
+
+        trace!(target: "txpool", "Removed transactions: {:?}", removed);
 
         removed
     }
