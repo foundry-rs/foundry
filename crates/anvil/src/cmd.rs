@@ -26,6 +26,7 @@ use std::{
     time::Duration,
 };
 use tokio::time::{Instant, Interval};
+use serde::Serialize;
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
@@ -234,6 +235,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_optimism(self.evm_opts.optimism)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
+            .with_memory_limit(self.evm_opts.memory_limit)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
     }
 
@@ -349,7 +351,7 @@ impl NodeArgs {
 }
 
 /// Anvil's EVM related arguments.
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Serialize, Parser)]
 #[command(next_help_heading = "EVM options")]
 pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
@@ -362,6 +364,7 @@ pub struct AnvilEvmArgs {
         value_name = "URL",
         help_heading = "Fork config"
     )]
+    #[serde(skip)]
     pub fork_url: Option<ForkUrl>,
 
     /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
@@ -379,24 +382,28 @@ pub struct AnvilEvmArgs {
     ///
     /// Default value 45000
     #[arg(id = "timeout", long = "timeout", help_heading = "Fork config", requires = "fork_url")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_request_timeout: Option<u64>,
 
     /// Number of retry requests for spurious networks (timed out requests)
     ///
     /// Default value 5
     #[arg(id = "retries", long = "retries", help_heading = "Fork config", requires = "fork_url")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
     #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
     #[arg(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
     /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
@@ -410,6 +417,7 @@ pub struct AnvilEvmArgs {
         value_name = "CHAIN",
         requires = "fork_block_number"
     )]
+    #[serde(skip)]
     pub fork_chain_id: Option<Chain>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -425,6 +433,7 @@ pub struct AnvilEvmArgs {
         value_name = "CUPS",
         help_heading = "Fork config"
     )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting for this node's provider.
@@ -454,6 +463,7 @@ pub struct AnvilEvmArgs {
 
     /// The block gas limit.
     #[arg(long, alias = "block-gas-limit", help_heading = "Environment config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
@@ -469,10 +479,12 @@ pub struct AnvilEvmArgs {
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
     #[arg(long, value_name = "CODE_SIZE", help_heading = "Environment config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
 
     /// The gas price.
     #[arg(long, help_heading = "Environment config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
@@ -482,10 +494,12 @@ pub struct AnvilEvmArgs {
         value_name = "FEE",
         help_heading = "Environment config"
     )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
     #[arg(long, alias = "chain", help_heading = "Environment config")]
+    #[serde(skip)]
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
@@ -503,6 +517,14 @@ pub struct AnvilEvmArgs {
     /// Disable the default create2 deployer
     #[arg(long, visible_alias = "no-create2")]
     pub disable_default_create2_deployer: bool,
+
+    /// The memory limit per EVM execution in bytes.
+    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
+    ///
+    /// The default is 128MiB.
+    #[arg(long, value_name = "MEMORY_LIMIT", help_heading = "Environment config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<u64>,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
@@ -791,5 +813,11 @@ mod tests {
             args.host,
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
+    }
+
+    #[test]
+    fn can_parse_memory_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--memory-limit", "100"]);
+        assert_eq!(args.evm_opts.memory_limit, Some(100));
     }
 }

@@ -168,6 +168,8 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// The memory limit for the EVM
+    pub memory_limit: u64,
     /// Enable Optimism deposit transaction
     pub enable_optimism: bool,
     /// Slots in an epoch
@@ -405,6 +407,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             enable_optimism: false,
             slots_in_an_epoch: 32,
         }
@@ -813,6 +816,14 @@ impl NodeConfig {
         self
     }
 
+    /// Sets custom memory limit for the EVM
+    pub fn with_memory_limit(mut self, memory_limit: Option<u64>) -> Self {
+        if let Some(memory_limit) = memory_limit {
+            self.memory_limit = memory_limit;
+        }
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -824,6 +835,7 @@ impl NodeConfig {
             CfgEnvWithHandlerCfg::new_with_spec_id(CfgEnv::default(), self.get_hardfork().into());
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
+        cfg.memory_limit = self.memory_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
         // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
         // caller is a contract. So we disable the check by default.
