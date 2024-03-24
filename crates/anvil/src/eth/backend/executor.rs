@@ -22,6 +22,7 @@ use foundry_evm::{
             BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
             SpecId,
         },
+        Evm,
     },
     traces::CallTraceNode,
 };
@@ -123,6 +124,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
     pub enable_steps_tracing: bool,
+    pub disable_tracing: bool,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -284,12 +286,15 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let nonce = account.nonce;
 
         // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing();
-        if self.enable_steps_tracing {
-            inspector = inspector.with_steps_tracing();
+        let mut inspector = Inspector::default();
+        if !self.disable_tracing {
+            inspector = inspector.with_tracing();
+            if self.enable_steps_tracing {
+                inspector = inspector.with_steps_tracing();
+            }
         }
 
-        let exec_result = {
+        let exec_result = if !self.disable_tracing {
             let mut evm =
                 foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
 
@@ -320,8 +325,41 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
                     }
                 }
             }
+        } else {
+            let mut evm =
+                Evm::builder().with_db(&mut *self.db).with_env_with_handler_cfg(env).build();
+
+            trace!(target: "backend", "[{:?}] executing", transaction.hash());
+            // transact and commit the transaction
+            match evm.transact_commit() {
+                Ok(exec_result) => exec_result,
+                Err(err) => {
+                    warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                    match err {
+                        EVMError::Database(err) => {
+                            return Some(TransactionExecutionOutcome::DatabaseError(
+                                transaction,
+                                err,
+                            ))
+                        }
+                        EVMError::Transaction(err) => {
+                            return Some(TransactionExecutionOutcome::Invalid(
+                                transaction,
+                                err.into(),
+                            ))
+                        }
+                        // This will correspond to prevrandao not set, and it should never happen.
+                        // If it does, it's a bug.
+                        e => {
+                            panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
+                        }
+                    }
+                }
+            }
         };
-        inspector.print_logs();
+        if !self.disable_tracing {
+            inspector.print_logs();
+        }
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {

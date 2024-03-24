@@ -170,6 +170,8 @@ pub struct Backend {
     node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
+    /// Disable tracing
+    disable_tracing: bool,
 }
 
 impl Backend {
@@ -216,7 +218,11 @@ impl Backend {
             Default::default()
         };
 
-        let slots_in_an_epoch = node_config.read().await.slots_in_an_epoch;
+        let read_node_config = node_config.read().await;
+        let slots_in_an_epoch = read_node_config.slots_in_an_epoch;
+        let disable_tracing = read_node_config.disable_tracing;
+
+        drop(read_node_config);
 
         let backend = Self {
             db,
@@ -235,6 +241,7 @@ impl Backend {
             transaction_block_keeper,
             node_config,
             slots_in_an_epoch,
+            disable_tracing,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -867,6 +874,7 @@ impl Backend {
             parent_hash: storage.best_hash,
             gas_used: U256::ZERO,
             enable_steps_tracing: self.enable_steps_tracing,
+            disable_tracing: self.disable_tracing,
         };
 
         // create a new pending block
@@ -926,6 +934,7 @@ impl Backend {
                     parent_hash: best_hash,
                     gas_used: U256::ZERO,
                     enable_steps_tracing: self.enable_steps_tracing,
+                    disable_tracing: self.disable_tracing,
                 };
                 let executed_tx = executor.execute();
 
