@@ -96,7 +96,7 @@ impl MakeTxArgs {
         let (tx, _) =
             tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key).await?;
 
-        let tx = tx.build::<EthereumSigner>(&signer.into()).await?;
+        let tx = tx.build(&EthereumSigner::new(signer)).await?;
 
         let signed_tx = hex::encode(tx.encoded_2718());
         println!("0x{signed_tx}");

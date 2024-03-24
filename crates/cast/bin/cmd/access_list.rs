@@ -1,14 +1,14 @@
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_transport::Transport;
-use cast::{Cast, TxBuilder};
+use cast::Cast;
 use clap::Parser;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils,
+    utils::{self, parse_function_args},
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
@@ -65,16 +65,27 @@ impl AccessListArgs {
         let provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
+        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
 
         let to = match to {
-            Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&provider).await?)
-            }
-            Some(NameOrAddress::Address(addr)) => Some(addr),
+            Some(to) => Some(to.resolve(&provider).await?),
             None => None,
         };
 
-        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
+        access_list(
+            &provider,
+            etherscan_api_key.as_deref(),
+            sender,
+            to,
+            sig,
+            args,
+            data,
+            tx,
+            chain,
+            block,
+            to_json,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -82,6 +93,7 @@ impl AccessListArgs {
 #[allow(clippy::too_many_arguments)]
 async fn access_list<P: Provider<Ethereum, T>, T: Transport + Clone>(
     provider: P,
+    etherscan_api_key: Option<&str>,
     from: Address,
     to: Option<Address>,
     sig: Option<String>,
@@ -92,28 +104,34 @@ async fn access_list<P: Provider<Ethereum, T>, T: Transport + Clone>(
     block: Option<BlockId>,
     to_json: bool,
 ) -> Result<()> {
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
-    builder
-        .gas(tx.gas_limit)
-        .gas_price(tx.gas_price)
-        .priority_gas_price(tx.priority_gas_price)
-        .nonce(tx.nonce.map(|n| n.to()));
+    let mut req = TransactionRequest::default()
+        .with_to(to.into())
+        .with_from(from)
+        .with_value(tx.value.unwrap_or_default())
+        .with_chain_id(chain.id());
 
-    builder.value(tx.value);
-
-    if let Some(sig) = sig {
-        builder.set_args(sig.as_str(), args).await?;
+    if let Some(gas_limit) = tx.gas_limit {
+        req.set_gas_limit(gas_limit);
     }
-    if let Some(data) = data {
+
+    if let Some(nonce) = tx.nonce {
+        req.set_nonce(nonce.to());
+    }
+
+    let data = if let Some(sig) = sig {
+        parse_function_args(&sig, args, to, chain, &provider, etherscan_api_key).await?.0
+    } else if let Some(data) = data {
         // Note: `sig+args` and `data` are mutually exclusive
-        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?.into());
-    }
+        hex::decode(data)?
+    } else {
+        Vec::new()
+    };
 
-    let builder_output = builder.peek();
+    req.set_input(data.into());
 
     let cast = Cast::new(&provider);
 
-    let access_list: String = cast.access_list(builder_output, block, to_json).await?;
+    let access_list: String = cast.access_list(&req, block, to_json).await?;
 
     println!("{}", access_list);
 

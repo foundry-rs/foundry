@@ -1,6 +1,6 @@
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::ContractObject;
+use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
     Address, Keccak256, TxHash, B256, I256, U256, U64,
@@ -13,7 +13,8 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
@@ -37,7 +38,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-pub use tx::{TxBuilder, TxBuilderOutput, TxBuilderPeekOutput};
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -45,11 +45,18 @@ pub use foundry_evm::*;
 pub mod base;
 pub mod errors;
 mod rlp_converter;
-mod tx;
 
 use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
+
+sol! {
+    #[sol(rpc)]
+    interface IERC20 {
+        #[derive(Debug)]
+        function balanceOf(address owner) external view returns (uint256);
+    }
+}
 
 pub struct Cast<P, T> {
     provider: P,
@@ -110,11 +117,11 @@ where
     /// ```
     pub async fn call<'a>(
         &self,
-        builder_output: TxBuilderOutput,
+        req: &TransactionRequest,
+        func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let (tx, func) = builder_output;
-        let res = self.provider.call(&tx, block).await?;
+        let res = self.provider.call(req, block).await?;
 
         let mut decoded = vec![];
 
@@ -126,7 +133,7 @@ where
                     // ensure the address is a contract
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
-                        if let Some(addr) = tx.to {
+                        if let Some(addr) = req.to {
                             if let Ok(code) =
                                 self.provider.get_code_at(addr, block.unwrap_or_default()).await
                             {
@@ -179,12 +186,11 @@ where
     /// ```
     pub async fn access_list(
         &self,
-        builder_output: TxBuilderPeekOutput<'_>,
+        req: &TransactionRequest,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let (tx, _) = builder_output;
-        let access_list = self.provider.create_access_list(&tx, block).await?;
+        let access_list = self.provider.create_access_list(req, block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -239,9 +245,8 @@ where
     /// ```
     pub async fn send(
         &self,
-        builder_output: TxBuilderOutput,
+        tx: TransactionRequest,
     ) -> Result<PendingTransactionBuilder<'_, Ethereum, T>> {
-        let (tx, _) = builder_output;
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -275,41 +280,6 @@ where
         let res = self.provider.send_raw_transaction(&tx).await?;
 
         Ok(res)
-    }
-
-    /// Estimates the gas cost of a transaction
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use alloy_primitives::U256;
-    /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::Address;
-    /// use ethers_providers::{Http, Provider};
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "greet(string)()";
-    /// let args = vec!["5".to_owned()];
-    /// let value = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
-    /// builder.set_value(value).set_args(sig, args).await?;
-    /// let builder_output = builder.peek();
-    /// let cast = Cast::new(&provider);
-    /// let data = cast.estimate(builder_output).await?;
-    /// println!("{}", data);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
-        let (tx, _) = builder_output;
-
-        let res = self.provider.estimate_gas(&tx, None).await?;
-
-        Ok::<_, eyre::Error>(res)
     }
 
     /// # Example
@@ -928,6 +898,20 @@ where
         }
 
         Ok(())
+    }
+
+    pub async fn erc20_balance(
+        &self,
+        token: Address,
+        owner: Address,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
+        Ok(IERC20::new(token, &self.provider)
+            .balanceOf(owner)
+            .block(block.unwrap_or_default())
+            .call()
+            .await?
+            ._0)
     }
 }
 

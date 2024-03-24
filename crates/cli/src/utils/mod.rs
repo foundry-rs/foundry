@@ -21,6 +21,9 @@ pub use cmd::*;
 mod suggestions;
 pub use suggestions::*;
 
+mod abi;
+pub use abi::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;

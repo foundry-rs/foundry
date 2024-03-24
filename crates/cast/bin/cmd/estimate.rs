@@ -1,10 +1,12 @@
+use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
-use cast::{Cast, TxBuilder};
+use alloy_provider::Provider;
+use alloy_rpc_types::TransactionRequest;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, parse_ether_value},
+    utils::{self, parse_ether_value, parse_function_args},
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{figment::Figment, Config};
@@ -87,37 +89,41 @@ impl EstimateArgs {
 
         let from = from.resolve(&provider).await?;
         let to = match to {
-            Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&provider).await?)
-            }
-            Some(NameOrAddress::Address(addr)) => Some(addr),
+            Some(to) => Some(to.resolve(&provider).await?),
             None => None,
         };
 
-        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
-        builder.etherscan_api_key(api_key);
+        let mut req = TransactionRequest::default()
+            .with_to(to.into())
+            .with_from(from)
+            .with_value(value.unwrap_or_default());
 
-        match command {
+        let data = match command {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {
-                builder.value(value);
+                if let Some(value) = value {
+                    req.set_value(value);
+                }
 
                 let mut data = hex::decode(code)?;
 
                 if let Some(s) = sig {
-                    let (mut sigdata, _func) = builder.create_args(&s, args).await?;
-                    data.append(&mut sigdata);
+                    let (mut constructor_args, _) =
+                        parse_function_args(&s, args, to, chain, &provider, api_key.as_deref())
+                            .await?;
+                    data.append(&mut constructor_args);
                 }
 
-                builder.set_data(data.into());
+                data
             }
             _ => {
                 let sig = sig.ok_or_else(|| eyre::eyre!("Function signature must be provided."))?;
-                builder.value(value).set_args(sig.as_str(), args).await?;
+                parse_function_args(&sig, args, to, chain, &provider, api_key.as_deref()).await?.0
             }
         };
 
-        let builder_output = builder.peek();
-        let gas = Cast::new(&provider).estimate(builder_output).await?;
+        req.set_input(data.into());
+
+        let gas = provider.estimate_gas(&req, None).await?;
         println!("{gas}");
         Ok(())
     }

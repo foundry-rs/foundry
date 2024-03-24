@@ -4,7 +4,7 @@ extern crate tracing;
 use alloy_primitives::{keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
-use cast::{Cast, SimpleCast, TxBuilder};
+use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -12,7 +12,7 @@ use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     ens::{lookup_address, resolve_name},
-    fmt::format_tokens,
+    fmt::{format_tokens, format_uint_exp},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
@@ -213,18 +213,9 @@ async fn main() -> Result<()> {
 
             match erc20 {
                 Some(token) => {
-                    let chain = utils::get_chain(config.chain, &provider).await?;
-                    let mut builder =
-                        TxBuilder::new(&provider, Address::ZERO, Some(token), chain, true).await?;
-
-                    builder
-                        .set_args(
-                            "balanceOf(address) returns (uint256)",
-                            vec![format!("{account_addr:#x}")],
-                        )
-                        .await?;
-                    let builder_output = builder.build();
-                    println!("{}", Cast::new(&provider).call(builder_output, block).await?);
+                    let balance =
+                        Cast::new(&provider).erc20_balance(token, account_addr, block).await?;
+                    println!("{}", format_uint_exp(balance));
                 }
                 None => {
                     let value = Cast::new(&provider).balance(account_addr, block).await?;

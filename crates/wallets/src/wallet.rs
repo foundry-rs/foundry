@@ -206,7 +206,7 @@ mod tests {
             }
             Err(x) => {
                 assert!(
-                    x.to_string().contains("Failed to create wallet"),
+                    x.to_string().contains("Failed to decode private key"),
                     "Error message is not user-friendly"
                 );
             }

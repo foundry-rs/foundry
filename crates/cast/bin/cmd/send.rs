@@ -113,10 +113,7 @@ impl SendTxArgs {
         let api_key = config.get_etherscan_api_key(Some(chain));
 
         let to = match to {
-            Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&provider).await?)
-            }
-            Some(NameOrAddress::Address(addr)) => Some(addr),
+            Some(to) => Some(to.resolve(&provider).await?),
             None => None,
         };
 
@@ -215,12 +212,12 @@ async fn cast_send<P: Provider<Ethereum, T>, T: Transport + Clone>(
     confs: u64,
     to_json: bool,
 ) -> Result<()> {
-    let builder_output =
+    let (tx, _) =
         tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key).await?;
 
     let cast = Cast::new(provider);
 
-    let pending_tx = cast.send(builder_output).await?;
+    let pending_tx = cast.send(tx).await?;
     let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {

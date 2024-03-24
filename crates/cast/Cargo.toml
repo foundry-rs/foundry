@@ -43,6 +43,8 @@ alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-contract.workspace = true
 alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-network.workspace = true
+alloy-sol-types.workspace = true
+alloy-chains.workspace = true
 
 ethers-core.workspace = true
 

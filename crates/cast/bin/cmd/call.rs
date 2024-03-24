@@ -1,15 +1,12 @@
-use alloy_consensus::Transaction;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
-use alloy_provider::{network::Ethereum, Provider};
-use alloy_rpc_types::BlockId;
-use alloy_transport::Transport;
-use cast::{Cast, TxBuilder};
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use cast::Cast;
 use clap::Parser;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, handle_traces, parse_ether_value, TraceResult},
+    utils::{self, handle_traces, parse_ether_value, parse_function_args, TraceResult},
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_compilers::EvmVersion;
@@ -117,26 +114,43 @@ impl CallArgs {
         let provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
+        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
 
         let to = match to {
-            Some(NameOrAddress::Name(name)) => {
-                Some(NameOrAddress::Name(name).resolve(&provider).await?)
-            }
-            Some(NameOrAddress::Address(addr)) => Some(addr),
+            Some(to) => Some(to.resolve(&provider).await?),
             None => None,
         };
 
-        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
+        let mut req = TransactionRequest::default()
+            .with_to(to.into())
+            .with_from(sender)
+            .with_value(tx.value.unwrap_or_default());
 
-        builder
-            .gas(tx.gas_limit)
-            .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
-            .gas_price(tx.gas_price)
-            .priority_gas_price(tx.priority_gas_price)
-            .nonce(tx.nonce.map(|n| n.to()));
+        if let Some(nonce) = tx.nonce {
+            req.set_nonce(nonce.to());
+        }
 
-        match command {
+        let (data, func) = match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
+                if let Some(value) = value {
+                    req.set_value(value);
+                }
+
+                let mut data = hex::decode(code)?;
+
+                if let Some(s) = sig {
+                    let (mut constructor_args, _) = parse_function_args(
+                        &s,
+                        args,
+                        None,
+                        chain,
+                        &provider,
+                        etherscan_api_key.as_deref(),
+                    )
+                    .await?;
+                    data.append(&mut constructor_args);
+                }
+
                 if trace {
                     let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
                         .merge(eth.rpc);
@@ -150,8 +164,8 @@ impl CallArgs {
 
                     let trace = match executor.deploy(
                         sender,
-                        code.into_bytes().into(),
-                        value.unwrap_or(U256::ZERO),
+                        data.into(),
+                        req.value.unwrap_or_default(),
                         None,
                     ) {
                         Ok(deploy_result) => TraceResult::from(deploy_result),
@@ -163,12 +177,26 @@ impl CallArgs {
                     return Ok(());
                 }
 
-                // fill the builder after the conditional so we dont move values
-                fill_create(&mut builder, value, code, sig, args).await?;
+                (data, None)
             }
             _ => {
                 // fill first here because we need to use the builder in the conditional
-                fill_tx(&mut builder, tx.value, sig, args, data).await?;
+                let (data, func) = if let Some(sig) = sig {
+                    parse_function_args(
+                        &sig,
+                        args,
+                        to,
+                        chain,
+                        &provider,
+                        etherscan_api_key.as_deref(),
+                    )
+                    .await?
+                } else if let Some(data) = data {
+                    // Note: `sig+args` and `data` are mutually exclusive
+                    (hex::decode(data)?, None)
+                } else {
+                    (Vec::new(), None)
+                };
 
                 if trace {
                     let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
@@ -181,73 +209,28 @@ impl CallArgs {
 
                     let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
-                    let (tx, _) = builder.build();
-
-                    let tx = tx.build_unsigned()?;
-
                     let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
-                        *tx.to().to().expect("an address to be here"),
-                        tx.input().to_vec().into(),
-                        tx.value(),
+                        req.to.expect("an address to be here"),
+                        data.into(),
+                        req.value.unwrap_or_default(),
                     )?);
 
                     handle_traces(trace, &config, chain, labels, debug).await?;
 
                     return Ok(());
                 }
+
+                (data, func)
             }
         };
 
-        let builder_output = builder.build();
-        println!("{}", Cast::new(provider).call(builder_output, block).await?);
+        req.set_input(data.into());
+
+        println!("{}", Cast::new(provider).call(&req, func.as_ref(), block).await?);
 
         Ok(())
     }
-}
-
-/// fills the builder from create arg
-async fn fill_create<P: Provider<Ethereum, T>, T: Transport + Clone>(
-    builder: &mut TxBuilder<'_, P, T>,
-    value: Option<U256>,
-    code: String,
-    sig: Option<String>,
-    args: Vec<String>,
-) -> Result<()> {
-    builder.value(value);
-
-    let mut data = hex::decode(code)?;
-
-    if let Some(s) = sig {
-        let (mut sigdata, _func) = builder.create_args(&s, args).await?;
-        data.append(&mut sigdata);
-    }
-
-    builder.set_data(data.into());
-
-    Ok(())
-}
-
-/// fills the builder from args
-async fn fill_tx<P: Provider<Ethereum, T>, T: Transport + Clone>(
-    builder: &mut TxBuilder<'_, P, T>,
-    value: Option<U256>,
-    sig: Option<String>,
-    args: Vec<String>,
-    data: Option<String>,
-) -> Result<()> {
-    builder.value(value);
-
-    if let Some(sig) = sig {
-        builder.set_args(sig.as_str(), args).await?;
-    }
-
-    if let Some(data) = data {
-        // Note: `sig+args` and `data` are mutually exclusive
-        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?.into());
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

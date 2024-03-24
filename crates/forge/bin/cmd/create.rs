@@ -227,15 +227,18 @@ impl CreateArgs {
             })?;
         let is_legacy =
             self.tx.legacy || Chain::try_from(chain).map(|x| x.is_legacy()).unwrap_or_default();
-        
+
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);
-        
-        deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
-            Ok(nonce)
-        } else {
-            provider.get_transaction_count(deployer_address, None).await
-        }?.to());
+
+        deployer.tx.set_nonce(
+            if let Some(nonce) = self.tx.nonce {
+                Ok(nonce)
+            } else {
+                provider.get_transaction_count(deployer_address, None).await
+            }?
+            .to(),
+        );
 
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit)
@@ -273,7 +276,7 @@ impl CreateArgs {
             deployer.tx.set_max_fee_per_gas(max_fee);
             deployer.tx.set_max_priority_fee_per_gas(priority_fee);
         }
-        
+
         // Before we actually deploy the contract we try check if the verify settings are valid
         let mut constructor_args = None;
         if self.verify {

@@ -5,7 +5,7 @@ use ethers_core::types::U256;
 use ethers_providers::{
     Authorization, ConnectionDetails, Http, HttpRateLimitRetryPolicy, Ipc, JsonRpcClient,
     JsonRpcError, JwtAuth, JwtKey, ProviderError, PubsubClient, RetryClient, RetryClientBuilder,
-    RpcError, Ws
+    RpcError, Ws,
 };
 use reqwest_ethers::{
     header::{HeaderName, HeaderValue},

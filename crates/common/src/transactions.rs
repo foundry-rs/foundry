@@ -69,22 +69,11 @@ impl From<TransactionReceiptWithRevertReason> for TransactionReceipt {
 }
 
 fn extract_revert_reason<S: AsRef<str>>(error_string: S) -> Option<String> {
-    let message_substr = "message: execution reverted: ";
-
-    let mut temp = "";
-
+    let message_substr = "execution reverted: ";
     error_string
         .as_ref()
-        .find(message_substr)
-        .and_then(|index| {
-            let (_, rest) = error_string.as_ref().split_at(index + message_substr.len());
-            temp = rest;
-            rest.rfind(", ")
-        })
-        .map(|index| {
-            let (reason, _) = temp.split_at(index);
-            reason.to_string()
-        })
+        .find(&message_substr)
+        .map(|index| error_string.as_ref().split_at(index + message_substr.len()).1.to_string())
 }
 
 #[cfg(test)]

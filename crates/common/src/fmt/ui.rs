@@ -219,7 +219,7 @@ impl UIfmt for Block {
         format!(
             "
 {}
-transactions         {}",
+transactions:        {}",
             pretty_block_basics(self),
             self.transactions.pretty()
         )
@@ -372,8 +372,8 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "hash" => Some(transaction.hash.pretty()),
         "input" => Some(transaction.input.pretty()),
         "nonce" => Some(transaction.nonce.to_string()),
-        "s" => transaction.signature.map(|s| s.s.pretty()),
-        "r" => transaction.signature.map(|s| s.r.pretty()),
+        "s" => transaction.signature.map(|s| B256::from(s.s).pretty()),
+        "r" => transaction.signature.map(|s| B256::from(s.r).pretty()),
         "to" => Some(transaction.to.pretty()),
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
         "v" => transaction.signature.map(|s| s.v.pretty()),

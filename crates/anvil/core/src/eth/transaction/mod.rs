@@ -308,7 +308,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             access_list: None,
             transaction_type: None,
             max_fee_per_blob_gas: None,
-            blob_versioned_hashes: vec![],
+            blob_versioned_hashes: None,
             other: Default::default(),
         },
         TypedTransaction::EIP2930(t) => RpcTransaction {
@@ -335,7 +335,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             access_list: Some(from_eip_to_alloy_access_list(t.tx().access_list.clone())),
             transaction_type: Some(U8::from(1)),
             max_fee_per_blob_gas: None,
-            blob_versioned_hashes: vec![],
+            blob_versioned_hashes: None,
             other: Default::default(),
         },
         TypedTransaction::EIP1559(t) => RpcTransaction {
@@ -362,7 +362,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             access_list: Some(from_eip_to_alloy_access_list(t.tx().access_list.clone())),
             transaction_type: Some(U8::from(2)),
             max_fee_per_blob_gas: None,
-            blob_versioned_hashes: vec![],
+            blob_versioned_hashes: None,
             other: Default::default(),
         },
         TypedTransaction::EIP4844(t) => RpcTransaction {
@@ -389,7 +389,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             access_list: Some(from_eip_to_alloy_access_list(t.tx().tx().access_list.clone())),
             transaction_type: Some(U8::from(3)),
             max_fee_per_blob_gas: Some(U256::from(t.tx().tx().max_fee_per_blob_gas)),
-            blob_versioned_hashes: t.tx().tx().blob_versioned_hashes.clone(),
+            blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
             other: Default::default(),
         },
         TypedTransaction::Deposit(t) => RpcTransaction {
@@ -411,7 +411,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             access_list: None,
             transaction_type: None,
             max_fee_per_blob_gas: None,
-            blob_versioned_hashes: vec![],
+            blob_versioned_hashes: None,
             other: Default::default(),
         },
     }
