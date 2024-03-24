@@ -413,6 +413,9 @@ impl EthApi {
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
             }
+            EthRequest::RemovePoolTransactions(address) => {
+                self.anvil_remove_pool_transactions(address).await.to_rpc_result()
+            }
         }
     }
 
@@ -1779,6 +1782,12 @@ impl EthApi {
             }),
             snapshots,
         })
+    }
+
+    pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
+        node_info!("anvil_removePoolTransactions");
+        self.pool.remove_transactions_by_address(address);
+        Ok(())
     }
 
     /// Snapshot the state of the blockchain at the current block.
