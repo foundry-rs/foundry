@@ -1,3 +1,4 @@
+use crate::strategies::fixture_strategy;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::Address;
 use proptest::{
@@ -24,30 +25,19 @@ pub struct AddressStrategy {}
 impl AddressStrategy {
     /// Create a new address strategy.
     pub fn init(fixtures: Option<&[DynSolValue]>) -> BoxedStrategy<DynSolValue> {
-        if let Some(fixtures) = fixtures {
-            let address_fixtures: Vec<DynSolValue> =
-                fixtures.iter().enumerate().map(|(_, value)| value.to_owned()).collect();
-            let address_fixtures_len = address_fixtures.len();
-            any::<prop::sample::Index>()
-                .prop_map(move |index| {
-                    // Generate value tree from fixture.
-                    // If fixture is not a valid address, raise error and generate random value.
-                    let index = index.index(address_fixtures_len);
-                    if let Some(addr_fixture) = address_fixtures.get(index) {
-                        if let Some(addr_fixture) = addr_fixture.as_address() {
-                            return DynSolValue::Address(addr_fixture);
-                        }
-                    }
-                    error!(
-                        "{:?} is not a valid address fixture, generate random value",
-                        address_fixtures.get(index)
-                    );
-                    DynSolValue::Address(Address::random())
-                })
-                .boxed()
-        } else {
-            // If no config for addresses dictionary then create unbounded addresses strategy.
+        let value_from_fixture = |fixture: Option<&DynSolValue>| {
+            if let Some(fixture) = fixture {
+                if let Some(fixture) = fixture.as_address() {
+                    return DynSolValue::Address(fixture);
+                }
+            }
+            error!("{:?} is not a valid address fixture, generate random value", fixture);
+            DynSolValue::Address(Address::random())
+        };
+        fixture_strategy!(
+            fixtures,
+            value_from_fixture,
             any::<Address>().prop_map(DynSolValue::Address).boxed()
-        }
+        )
     }
 }

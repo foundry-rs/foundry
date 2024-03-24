@@ -33,23 +33,12 @@ pub fn fuzz_param(
         DynSolType::Uint(n @ 8..=256) => super::UintStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Uint(x, n))
             .boxed(),
-        DynSolType::Function | DynSolType::Bool | DynSolType::Bytes => {
-            DynSolValue::type_strategy(param).boxed()
+        DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::Bytes => super::BytesStrategy::init(fuzz_fixtures),
+        DynSolType::FixedBytes(size @ 1..=32) => {
+            super::FixedBytesStrategy::init(size, fuzz_fixtures)
         }
-        DynSolType::FixedBytes(size @ 1..=32) => any::<B256>()
-            .prop_map(move |mut v| {
-                v[size..].fill(0);
-                DynSolValue::FixedBytes(v, size)
-            })
-            .boxed(),
-        DynSolType::String => DynSolValue::type_strategy(param)
-            .prop_map(move |value| {
-                DynSolValue::String(
-                    value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
-                )
-            })
-            .boxed(),
-
+        DynSolType::String => super::StringStrategy::init(fuzz_fixtures),
         DynSolType::Tuple(ref params) => params
             .iter()
             .map(|p| fuzz_param(p, None))

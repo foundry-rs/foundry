@@ -151,6 +151,16 @@ async fn test_invariant() {
                 "default/fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
                 vec![("invariant_dummy()", true, None, None, None)],
             ),
+            (
+                "default/fuzz/invariant/common/InvariantFixtures.t.sol:InvariantFixtures",
+                vec![(
+                    "invariant_target_not_compromised()",
+                    false,
+                    Some("<empty revert data>".into()),
+                    None,
+                    None,
+                )],
+            ),
         ]),
     );
 }
@@ -394,6 +404,26 @@ async fn test_invariant_assume_respects_restrictions() {
                 "invariant_dummy()",
                 false,
                 Some("The `vm.assume` cheatcode rejected too many inputs (1 allowed)".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_fixtures() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantFixtures.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantFixtures.t.sol:InvariantFixtures",
+            vec![(
+                "invariant_target_not_compromised()",
+                false,
+                Some("<empty revert data>".into()),
                 None,
                 None,
             )],
