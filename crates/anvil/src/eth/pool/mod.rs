@@ -223,6 +223,24 @@ impl PoolInner {
         )
     }
 
+    /// Returns an iterator over all transactions in the pool filtered by the sender
+    pub fn transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
+        let pending_txs = self
+            .pending_transactions
+            .transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        let ready_txs = self
+            .ready_transactions
+            .get_transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        pending_txs.chain(ready_txs)
+    }
+
     /// Returns true if this pool already contains the transaction
     fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
@@ -350,14 +368,8 @@ impl PoolInner {
 
     /// Remove transactions by sender address
     pub fn remove_transactions_by_address(&mut self, sender: Address) -> Vec<Arc<PoolTransaction>> {
-        let mut tx_hashes: Vec<TxHash> =
-            self.pending_transactions.transactions_by_sender(sender).map(|tx| tx.hash()).collect();
-        tx_hashes.extend(
-            self.ready_transactions
-                .transactions_by_sender(sender)
-                .map(|tx| tx.hash())
-                .collect::<Vec<TxHash>>(),
-        );
+        let tx_hashes =
+            self.transactions_by_sender(sender).map(move |tx| tx.hash()).collect::<Vec<TxHash>>();
 
         if tx_hashes.is_empty() {
             return vec![]

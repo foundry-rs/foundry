@@ -139,14 +139,6 @@ impl PendingTransactions {
         self.waiting_queue.values().map(|tx| tx.transaction.clone())
     }
 
-    /// Returns an iterator over all transactions in the waiting pool filtered by the sender
-    pub fn transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
-        self.transactions().filter(move |tx| tx.pending_transaction.sender().eq(&sender))
-    }
-
     /// Adds a transaction to Pending queue of transactions
     pub fn add_transaction(&mut self, tx: PendingPoolTransaction) -> Result<(), PoolError> {
         assert!(!tx.is_ready(), "transaction must not be ready");
@@ -383,14 +375,6 @@ impl ReadyTransactions {
             awaiting: Default::default(),
             _invalid: Default::default(),
         }
-    }
-
-    /// Returns an iterator over all transactions by the sender
-    pub fn transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
-        self.get_transactions().filter(move |tx| tx.pending_transaction.sender().eq(&sender))
     }
 
     /// Returns true if the transaction is part of the queue.
