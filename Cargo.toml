@@ -46,6 +46,7 @@ debug = 1
 # Solc and artifacts
 foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
+lalrpop-util.opt-level = 3
 serde_json.opt-level = 3
 
 # EVM
@@ -135,7 +136,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.9", default-features = false }
+foundry-compilers = { version = "0.3.13", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -151,7 +152,6 @@ ethers-contract-abigen = { version = "2.0.14", default-features = false }
 ethers-providers = { version = "2.0.14", default-features = false }
 ethers-signers = { version = "2.0.14", default-features = false }
 ethers-middleware = { version = "2.0.14", default-features = false }
-ethers-solc = { version = "2.0.14", default-features = false }
 
 ## alloy
 alloy-consensus = { git = "https://github.com/klkvr/alloy", rev = "05ca151", default-features = false }
@@ -209,6 +209,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 vergen = { version = "8", default-features = false }
+indexmap = "2.2"
 
 axum = "0.6"
 hyper = "0.14"

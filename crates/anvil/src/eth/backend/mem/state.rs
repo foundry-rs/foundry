@@ -9,11 +9,10 @@ use foundry_evm::{
     backend::DatabaseError,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{AccountInfo, Bytecode},
+        primitives::{AccountInfo, Bytecode, HashMap},
     },
 };
 use memory_db::HashKey;
-use std::collections::HashMap;
 use trie_db::TrieMut;
 
 /// Returns storage trie of an account as `HashDB`

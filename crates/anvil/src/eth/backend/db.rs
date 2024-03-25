@@ -10,17 +10,13 @@ use foundry_evm::{
     fork::BlockchainDb,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{BlockEnv, Bytecode, KECCAK_EMPTY},
+        primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-    path::Path,
-};
+use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
@@ -228,6 +224,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
         Some(trie_hash_db(&self.accounts))
     }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.accounts);
         let mut accounts = HashMap::new();

@@ -1,7 +1,9 @@
 //! tests for otterscan endpoints
 use crate::{
     abi::MulticallContract,
-    utils::{ethers_http_provider, ethers_ws_provider},
+    utils::{
+        ethers_http_provider, ethers_ws_provider, ContractInstanceCompat, DeploymentTxFactoryCompat,
+    },
 };
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
@@ -18,8 +20,8 @@ use ethers::{
     types::{Bytes, TransactionRequest},
     utils::get_contract_address,
 };
-use ethers_solc::{project_util::TempProject, Artifact};
 use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -135,10 +137,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -193,10 +195,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -306,10 +308,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -396,7 +398,7 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
     let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);

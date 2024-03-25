@@ -96,9 +96,11 @@ clap_complete_fig = "4"
 ethereum-forkid = "0.12"
 
 [dev-dependencies]
+alloy-json-abi.workspace = true
 ethers = { workspace = true, features = ["abigen"] }
 ethers-core = { workspace = true, features = ["optimism"] }
-ethers-solc = { workspace = true, features = ["project-util", "full"] }
+foundry-compilers = { workspace = true, features = ["project-util", "full"] }
+
 pretty_assertions = "1.3.0"
 tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
