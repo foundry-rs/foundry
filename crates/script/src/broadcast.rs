@@ -3,10 +3,11 @@ use crate::{
     build::LinkedBuildData, sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs,
     ScriptConfig,
 };
+use alloy_chains::Chain;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
-use alloy_provider::Provider;
+use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
@@ -238,14 +239,27 @@ impl BundledState {
             let already_broadcasted = sequence.receipts.len();
 
             if already_broadcasted < sequence.transactions.len() {
+                let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
                 // Make a one-time gas price estimation
-                let (gas_price, eip1559_fees) = match (self.args.legacy, self.args.with_gas_price) {
-                    (_, Some(gas_price)) => (Some(gas_price), None),
-                    (true, None) => (Some(provider.get_gas_price().await?), None),
-                    (false, None) => {
+                let (gas_price, eip1559_fees) = match (
+                    is_legacy,
+                    self.args.with_gas_price,
+                    self.args.priority_gas_price,
+                ) {
+                    (true, Some(gas_price), _) => (Some(gas_price), None),
+                    (true, None, _) => (Some(provider.get_gas_price().await?), None),
+                    (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => (
+                        None,
+                        Some(Eip1559Estimation { max_fee_per_gas, max_priority_fee_per_gas }),
+                    ),
+                    (false, _, _) => {
                         let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
                                 .await
                             .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+
+                        if let Some(gas_price) = self.args.with_gas_price {
+                            fees.max_fee_per_gas = gas_price;
+                        }
 
                         if let Some(priority_gas_price) = self.args.priority_gas_price {
                             fees.max_priority_fee_per_gas = priority_gas_price;
