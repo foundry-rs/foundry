@@ -409,7 +409,7 @@ impl Default for NodeConfig {
             disable_default_create2_deployer: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
-            memory_limit: Some(10000),
+            memory_limit: None,
         }
     }
 }
@@ -839,7 +839,11 @@ impl NodeConfig {
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
         cfg.handler_cfg.is_optimism = self.enable_optimism;
-        cfg.memory_limit = self.memory_limit.unwrap_or_default();
+
+        if let Some(value) = self.memory_limit {
+            cfg.memory_limit = value;
+        }
+        // cfg.memory_limit = self.memory_limit.unwrap_or_default();
 
         let env = revm::primitives::Env {
             cfg: cfg.cfg_env,
