@@ -172,6 +172,7 @@ pub struct NodeArgs {
     #[command(flatten)]
     pub server_config: ServerConfig,
     /// customize the memory limit layer of the anvil  node
+    #[arg(long, visible_alias = "memory-limit")]
     pub memory_limit: Option<u64>,
 }
 
