@@ -409,7 +409,7 @@ impl Default for NodeConfig {
             disable_default_create2_deployer: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
-            memory_limit: None,
+            memory_limit: Some(100),
         }
     }
 }
