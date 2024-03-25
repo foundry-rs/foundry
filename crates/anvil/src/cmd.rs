@@ -12,6 +12,7 @@ use core::fmt;
 use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
+use serde::Serialize;
 use std::{
     future::Future,
     net::IpAddr,
@@ -26,7 +27,6 @@ use std::{
     time::Duration,
 };
 use tokio::time::{Instant, Interval};
-use serde::Serialize;
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
