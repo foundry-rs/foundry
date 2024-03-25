@@ -16,8 +16,7 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
-        ResultAndState, SpecId, StorageSlot, TransactTo, KECCAK_EMPTY,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log, ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY
     },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
@@ -1892,6 +1891,16 @@ fn commit_transaction<I: Inspector<Backend>>(
     Ok(())
 }
 
+/// Helper method which updates data in the state with the data from the database.
+pub fn update_state<DB: Database>(state: &mut State, db: &mut DB) where DB::Error: core::fmt::Debug {
+    for (addr, acc) in state.iter_mut() {
+        acc.info = db.basic(*addr).unwrap().unwrap_or_default();
+        for (key, val) in acc.storage.iter_mut() {
+            val.present_value = db.storage(*addr, *key).unwrap();
+        }
+    }
+}
+
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the
 /// forked db
 fn apply_state_changeset(
@@ -1899,18 +1908,9 @@ fn apply_state_changeset(
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
 ) {
-    let changed_accounts = state.keys().copied().collect::<Vec<_>>();
     // commit the state and update the loaded accounts
     fork.db.commit(state);
 
-    for addr in changed_accounts {
-        // reload all changed accounts by removing them from the journaled state and reloading them
-        // from the now updated database
-        if journaled_state.state.remove(&addr).is_some() {
-            let _ = journaled_state.load_account(addr, &mut fork.db);
-        }
-        if fork.journaled_state.state.remove(&addr).is_some() {
-            let _ = fork.journaled_state.load_account(addr, &mut fork.db);
-        }
-    }
+    update_state(&mut journaled_state.state, &mut fork.db);
+    update_state(&mut fork.journaled_state.state, &mut fork.db);
 }
