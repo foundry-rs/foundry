@@ -839,7 +839,7 @@ impl NodeConfig {
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
         cfg.handler_cfg.is_optimism = self.enable_optimism;
-        cfg.memory_limit = self.memory_limit.unwrap();
+        cfg.memory_limit = self.memory_limit.unwrap_or_default();
 
         let env = revm::primitives::Env {
             cfg: cfg.cfg_env,
