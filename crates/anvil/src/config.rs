@@ -843,7 +843,7 @@ impl NodeConfig {
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
         }
-        
+        // cfg.memory_limit = self.memory_limit.unwrap_or_default();
 
         let env = revm::primitives::Env {
             cfg: cfg.cfg_env,
