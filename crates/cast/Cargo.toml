@@ -47,6 +47,7 @@ alloy-sol-types.workspace = true
 alloy-chains.workspace = true
 
 ethers-core.workspace = true
+ethers-contract.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true
@@ -63,8 +64,6 @@ aws-sdk-kms = { version = "1", default-features = false }
 
 # bin
 foundry-cli.workspace = true
-
-ethers-contract.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"

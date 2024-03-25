@@ -35,7 +35,6 @@ foundry-evm.workspace = true
 # evm support
 bytes = "1.4.0"
 k256.workspace = true
-ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 trie-db = "0.23"
 hash-db = "0.15"
 memory-db = "0.29"
@@ -97,7 +96,7 @@ ethereum-forkid = "0.12"
 
 [dev-dependencies]
 alloy-json-abi.workspace = true
-ethers = { workspace = true, features = ["abigen"] }
+ethers = { workspace = true, features = ["abigen", "optimism"] }
 ethers-core = { workspace = true, features = ["optimism"] }
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
 

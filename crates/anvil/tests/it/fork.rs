@@ -22,7 +22,7 @@ use ethers::{
     },
 };
 use foundry_common::{
-    provider::ethers::get_http_provider,
+    provider::alloy::get_http_provider,
     rpc,
     rpc::next_http_rpc_endpoint,
     types::{ToAlloy, ToEthers},
@@ -762,13 +762,19 @@ async fn test_reset_fork_on_new_blocks() {
     let anvil_provider = ethers_http_provider(&handle.http_endpoint());
 
     let endpoint = next_http_rpc_endpoint();
-    let provider = Arc::new(get_http_provider(&endpoint).interval(Duration::from_secs(2)));
+    let provider = Arc::new(get_http_provider(&endpoint));
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 
     handle.task_manager().spawn_reset_on_new_polled_blocks(provider.clone(), api);
 
-    let mut stream = provider.watch_blocks().await.unwrap();
+    let mut stream = provider
+        .watch_blocks()
+        .await
+        .unwrap()
+        .with_poll_interval(Duration::from_secs(2))
+        .into_stream()
+        .flat_map(futures::stream::iter);
     // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge
     // cases where the stream immediately returns a block
     tokio::time::sleep(Chain::Mainnet.average_blocktime_hint().unwrap()).await;

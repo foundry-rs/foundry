@@ -2903,11 +2903,9 @@ dependencies = [
  "ethers-addressbook",
  "ethers-contract",
  "ethers-core",
- "ethers-etherscan",
  "ethers-middleware",
  "ethers-providers",
  "ethers-signers",
- "ethers-solc",
 ]
 
 [[package]]
@@ -2951,13 +2949,11 @@ dependencies = [
  "const-hex",
  "dunce",
  "ethers-core",
- "ethers-etherscan",
  "eyre",
  "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
- "reqwest 0.11.27",
  "serde",
  "serde_json",
  "syn 2.0.53",
@@ -3009,22 +3005,6 @@ dependencies = [
  "thiserror",
  "tiny-keccak",
  "unicode-xid",
-]
-
-[[package]]
-name = "ethers-etherscan"
-version = "2.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e79e5973c26d4baf0ce55520bd732314328cabe53193286671b47144145b9649"
-dependencies = [
- "chrono",
- "ethers-core",
- "reqwest 0.11.27",
- "semver 1.0.22",
- "serde",
- "serde_json",
- "thiserror",
- "tracing",
 ]
 
 [[package]]
@@ -3109,38 +3089,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "tracing",
-]
-
-[[package]]
-name = "ethers-solc"
-version = "2.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66244a771d9163282646dbeffe0e6eca4dda4146b6498644e678ac6089b11edd"
-dependencies = [
- "cfg-if",
- "const-hex",
- "dirs 5.0.1",
- "dunce",
- "ethers-core",
- "glob",
- "home",
- "md-5",
- "num_cpus",
- "once_cell",
- "path-slash",
- "rayon",
- "regex",
- "semver 1.0.22",
- "serde",
- "serde_json",
- "solang-parser",
- "svm-rs 0.3.5",
- "thiserror",
- "tiny-keccak",
- "tokio",
- "tracing",
- "walkdir",
- "yansi 0.5.1",
 ]
 
 [[package]]
@@ -3437,7 +3385,7 @@ dependencies = [
  "similar",
  "solang-parser",
  "strum 0.26.2",
- "svm-rs 0.4.1",
+ "svm-rs",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3756,7 +3704,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "solang-parser",
- "svm-rs 0.4.1",
+ "svm-rs",
  "svm-rs-builds",
  "tempfile",
  "thiserror",
@@ -4022,16 +3970,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "fs2"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]
@@ -7857,26 +7795,6 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11297baafe5fa0c99d5722458eac6a5e25c01eb1b8e5cd137f54079093daa7a4"
-dependencies = [
- "dirs 5.0.1",
- "fs2",
- "hex",
- "once_cell",
- "reqwest 0.11.27",
- "semver 1.0.22",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "url",
- "zip",
-]
-
-[[package]]
-name = "svm-rs"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9bd5e919f01c9280dce59ab66296449d0e9144b8472b8892fbacf9612998b653"
@@ -7905,7 +7823,7 @@ dependencies = [
  "const-hex",
  "semver 1.0.22",
  "serde_json",
- "svm-rs 0.4.1",
+ "svm-rs",
 ]
 
 [[package]]
