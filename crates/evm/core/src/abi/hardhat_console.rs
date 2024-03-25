@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use revm::primitives::HashMap;
 
 sol!(
-    #[sol(abi, all_derives)]
+    #[sol(abi)]
     #[derive(ConsoleFmt)]
     HardhatConsole,
     "src/abi/HardhatConsole.json"
