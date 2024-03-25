@@ -171,6 +171,8 @@ pub struct NodeArgs {
 
     #[command(flatten)]
     pub server_config: ServerConfig,
+    /// customize the memory limit layer of the anvil  node
+    pub memory_limit: Option<u64>,
 }
 
 #[cfg(windows)]
@@ -235,6 +237,7 @@ impl NodeArgs {
             .with_optimism(self.evm_opts.optimism)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
+            .with_memory_limit(self.memory_limit)
     }
 
     fn account_generator(&self) -> AccountGenerator {
