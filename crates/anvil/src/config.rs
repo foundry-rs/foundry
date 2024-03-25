@@ -172,7 +172,7 @@ pub struct NodeConfig {
     pub enable_optimism: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
-    /// Memory configuration layer
+    /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
 }
 
