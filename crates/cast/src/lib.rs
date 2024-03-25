@@ -648,7 +648,7 @@ where
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
         let mut receipt: TransactionReceiptWithRevertReason =
-            match self.provider.get_transaction_receipt(tx_hash.into()).await? {
+            match self.provider.get_transaction_receipt(tx_hash).await? {
                 Some(r) => r,
                 None => {
                     // if the async flag is provided, immediately exit if no tx is found, otherwise
@@ -656,7 +656,7 @@ where
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
                     } else {
-                        PendingTransactionBuilder::new(self.provider.root(), tx_hash.into())
+                        PendingTransactionBuilder::new(self.provider.root(), tx_hash)
                             .with_required_confirmations(confs)
                             .get_receipt()
                             .await?

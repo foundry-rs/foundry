@@ -114,7 +114,7 @@ impl Cheatcode for dumpStateCall {
             .ecx
             .journaled_state
             .state()
-            .into_iter()
+            .iter_mut()
             .filter(|(key, val)| !skip(key, val))
             .map(|(key, val)| {
                 (

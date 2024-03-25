@@ -72,7 +72,7 @@ fn extract_revert_reason<S: AsRef<str>>(error_string: S) -> Option<String> {
     let message_substr = "execution reverted: ";
     error_string
         .as_ref()
-        .find(&message_substr)
+        .find(message_substr)
         .map(|index| error_string.as_ref().split_at(index + message_substr.len()).1.to_string())
 }
 

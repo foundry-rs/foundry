@@ -226,7 +226,7 @@ impl CreateArgs {
                 }
             })?;
         let is_legacy =
-            self.tx.legacy || Chain::try_from(chain).map(|x| x.is_legacy()).unwrap_or_default();
+            self.tx.legacy || Chain::from(chain).is_legacy();
 
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);
@@ -549,7 +549,7 @@ where
             (Some(constructor), _) => {
                 let input: Bytes = constructor
                     .abi_encode_input(&params)
-                    .map_err(|f| ContractDeploymentError::DetokenizationError(f))?
+                    .map_err(ContractDeploymentError::DetokenizationError)?
                     .into();
                 // Concatenate the bytecode and abi-encoded constructor call.
                 self.bytecode.iter().copied().chain(input).collect()

@@ -1453,8 +1453,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 .code
                                 .clone()
                                 .unwrap_or_default()
-                                .original_bytes()
-                                .into();
+                                .original_bytes();
                         }
                     }
                 }

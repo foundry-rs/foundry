@@ -508,9 +508,7 @@ impl InspectorStack {
             if let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) {
                 acc_mut.status |= acc.status;
                 for (key, val) in acc.storage {
-                    if !acc_mut.storage.contains_key(&key) {
-                        acc_mut.storage.insert(key, val);
-                    }
+                    acc_mut.storage.entry(key).or_insert(val);
                 }
             } else {
                 ecx.journaled_state.state.insert(addr, acc);

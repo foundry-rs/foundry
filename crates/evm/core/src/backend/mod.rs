@@ -976,7 +976,7 @@ impl DatabaseExt for Backend {
                     // another caller, so we need to ensure the caller account is present in the
                     // journaled state and database
                     let caller = current.tx.caller;
-                    if !journaled_state.state.contains_key(&caller) {
+                    journaled_state.state.entry(caller).or_insert_with(|| {
                         let caller_account = current_state
                             .state
                             .get(&caller)
@@ -987,8 +987,8 @@ impl DatabaseExt for Backend {
                             // update the caller account which is required by the evm
                             fork.db.insert_account_info(caller, caller_account.clone());
                         }
-                        journaled_state.state.insert(caller, caller_account.into());
-                    }
+                        caller_account.into()
+                    });
                     self.inner.revert_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
@@ -1115,7 +1115,7 @@ impl DatabaseExt for Backend {
             // necessarily the same caller as for the test, however we must always
             // ensure that fork's state contains the current sender
             let caller = env.tx.caller;
-            if !fork.journaled_state.state.contains_key(&caller) {
+            fork.journaled_state.state.entry(caller).or_insert_with(|| {
                 let caller_account = active_journaled_state
                     .state
                     .get(&env.tx.caller)
@@ -1126,8 +1126,8 @@ impl DatabaseExt for Backend {
                     // update the caller account which is required by the evm
                     fork.db.insert_account_info(caller, caller_account.clone());
                 }
-                fork.journaled_state.state.insert(caller, caller_account.into());
-            }
+                caller_account.into()
+            });
 
             self.update_fork_db(active_journaled_state, &mut fork);
 
