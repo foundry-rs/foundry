@@ -224,15 +224,19 @@ impl TestArgs {
         let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
-            // There is only one test.
-            let Some((_, test_result)) = outcome.tests().next() else {
-                return Err(eyre::eyre!("no tests were executed"));
+            let Some((suite_result, test_result)) = outcome.results.iter().filter(|(_, r)| {
+                !r.test_results.is_empty()
+            }).next().map(|(_, r)| (r, r.test_results.values().next().unwrap())) else {
+                eyre::bail!("No tests found to debug");
             };
 
             let sources = ContractSources::from_project_output(
                 output_clone.as_ref().unwrap(),
                 project.root(),
+                &suite_result.libraries,
             )?;
+
+            println!("{:?}", sources);
 
             // Run the debugger.
             let mut builder = Debugger::builder()

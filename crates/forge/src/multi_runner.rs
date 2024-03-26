@@ -5,7 +5,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_evm::{
     backend::Backend,
     decode::RevertDecoder,
@@ -31,6 +31,7 @@ pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
     pub libs_to_deploy: Vec<Bytes>,
+    pub libraries: Libraries,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
@@ -311,22 +312,22 @@ impl MultiContractRunnerBuilder {
             .map(|(i, _)| (i.identifier(), root.join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
-        let linker = Linker::new(root, contracts);
+        let linker = Linker::new(root, contracts.iter().map(|(id, artifact)| (id.clone(), artifact)).collect());
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         let mut known_contracts = ContractsByArtifact::default();
 
-        for (id, contract) in &linker.contracts.0 {
+        for (id, contract) in contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else {
                 continue;
             };
 
             let LinkOutput { libs_to_deploy, libraries } =
-                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, id)?;
+                linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, &id)?;
 
-            let linked_contract = linker.link(id, &libraries)?;
+            let linked_contract = linker.link(&id, &libraries)?;
 
             // get bytes if deployable, else add to known contracts and continue.
             // interfaces and abstract contracts should be known to enable fuzzing of their ABI
@@ -347,7 +348,7 @@ impl MultiContractRunnerBuilder {
             {
                 deployable_contracts.insert(
                     id.clone(),
-                    TestContract { abi: abi.clone(), bytecode, libs_to_deploy },
+                    TestContract { abi: abi.clone(), bytecode, libs_to_deploy, libraries },
                 );
             }
 

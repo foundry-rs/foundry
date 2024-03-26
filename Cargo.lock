@@ -3267,6 +3267,7 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-compilers",
  "foundry-config",
+ "foundry-linking",
  "foundry-macros",
  "glob",
  "globset",

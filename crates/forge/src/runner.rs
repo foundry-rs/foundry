@@ -52,7 +52,6 @@ pub struct ContractRunner<'a> {
 }
 
 impl<'a> ContractRunner<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: &'a str,
         executor: Executor,
@@ -207,6 +206,7 @@ impl<'a> ContractRunner<'a> {
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
+                self.contract.libraries.clone()
             )
         }
 
@@ -243,6 +243,7 @@ impl<'a> ContractRunner<'a> {
                 )]
                 .into(),
                 warnings,
+                self.contract.libraries.clone()
             )
         }
 
@@ -298,7 +299,7 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let suite_result = SuiteResult::new(duration, test_results, warnings);
+        let suite_result = SuiteResult::new(duration, test_results, warnings, self.contract.libraries.clone());
         info!(
             duration=?suite_result.duration,
             "done. {}/{} successful",
