@@ -394,6 +394,8 @@ async fn test_invariant_assume_does_not_revert() {
 async fn test_invariant_assume_respects_restrictions() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAssume.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 10;
     runner.test_options.invariant.max_assume_rejects = 1;
     let results = runner.test_collect(&filter);
     assert_multiple(
