@@ -225,7 +225,7 @@ impl TestArgs {
 
         if should_debug {
             // There is only one test.
-            let Some(test) = outcome.into_tests_cloned().next() else {
+            let Some((_, test_result)) = outcome.tests().next() else {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
@@ -236,9 +236,9 @@ impl TestArgs {
 
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .debug_arenas(test.result.debug.as_slice())
+                .debug_arenas(test_result.debug.as_slice())
                 .sources(sources)
-                .breakpoints(test.result.breakpoints);
+                .breakpoints(test_result.breakpoints.clone());
             if let Some(decoder) = &outcome.decoder {
                 builder = builder.decoder(decoder);
             }

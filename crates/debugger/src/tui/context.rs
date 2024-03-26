@@ -115,11 +115,9 @@ impl<'a> DebuggerContext<'a> {
     }
 
     fn gen_opcode_list(&mut self) {
-        self.opcode_list = self.opcode_list();
-    }
-
-    fn opcode_list(&self) -> Vec<String> {
-        self.debug_steps().iter().map(DebugStep::pretty_opcode).collect()
+        self.opcode_list.clear();
+        let debug_steps = &self.debugger.debug_arena[self.draw_memory.inner_call_index].steps;
+        self.opcode_list.extend(debug_steps.iter().map(DebugStep::pretty_opcode));
     }
 
     fn active_buffer(&self) -> &[u8] {

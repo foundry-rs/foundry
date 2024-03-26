@@ -2009,8 +2009,9 @@ impl Backend {
                 let mut pre_receipts_log_index = None;
                 if !cumulative_receipts.is_empty() {
                     cumulative_receipts.truncate(cumulative_receipts.len() - 1);
-                    pre_receipts_log_index =
-                        Some(cumulative_receipts.iter().map(|_r| logs.len() as u32).sum::<u32>());
+                    pre_receipts_log_index = Some(
+                        cumulative_receipts.iter().map(|r| r.logs().len() as u32).sum::<u32>(),
+                    );
                 }
                 logs.iter()
                     .enumerate()
