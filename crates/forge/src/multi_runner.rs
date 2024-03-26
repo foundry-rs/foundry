@@ -26,6 +26,7 @@ use std::{
     time::Instant,
 };
 
+#[derive(Debug, Clone)]
 pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
@@ -74,7 +75,9 @@ impl MultiContractRunner {
         &'a self,
         filter: &'a dyn TestFilter,
     ) -> impl Iterator<Item = (&ArtifactId, &TestContract)> {
-        self.contracts.iter().filter(|&(id, TestContract { abi, ..})| matches_contract(id, abi, filter))
+        self.contracts
+            .iter()
+            .filter(|&(id, TestContract { abi, .. })| matches_contract(id, abi, filter))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -83,7 +86,7 @@ impl MultiContractRunner {
         filter: &'a dyn TestFilter,
     ) -> impl Iterator<Item = &Function> {
         self.matching_contracts(filter)
-            .flat_map(|(_, TestContract { abi, ..})| abi.functions())
+            .flat_map(|(_, TestContract { abi, .. })| abi.functions())
             .filter(|func| is_matching_test(func, filter))
     }
 
@@ -95,14 +98,14 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, TestContract { abi, ..})| abi.functions())
+            .flat_map(|(_, TestContract { abi, .. })| abi.functions())
             .filter(|func| func.is_test() || func.is_invariant_test())
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.matching_contracts(filter)
-            .map(|(id, TestContract { abi, ..})| {
+            .map(|(id, TestContract { abi, .. })| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let tests = abi
@@ -175,22 +178,19 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, TestContract { abi, bytecode, libs_to_deploy })| {
+        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
             let identifier = id.identifier();
             let executor = executor.clone();
-            let result = self.run_tests(&identifier, abi, executor, bytecode, libs_to_deploy, filter);
+            let result = self.run_tests(&identifier, contract, executor, filter);
             let _ = tx.send((identifier, result));
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_tests(
         &self,
         name: &str,
-        contract: &JsonAbi,
+        contract: &TestContract,
         executor: Executor,
-        deploy_code: &Bytes,
-        libs: &[Bytes],
         filter: &dyn TestFilter,
     ) -> SuiteResult {
         let mut span_name = name;
@@ -205,11 +205,9 @@ impl MultiContractRunner {
             name,
             executor,
             contract,
-            deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
             &self.revert_decoder,
-            libs,
             self.debug,
         );
         let r = runner.run_tests(filter, &self.test_options, Some(&self.known_contracts));
@@ -347,7 +345,10 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                 abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
             {
-                deployable_contracts.insert(id.clone(), TestContract { abi: abi.clone(), bytecode, libs_to_deploy });
+                deployable_contracts.insert(
+                    id.clone(),
+                    TestContract { abi: abi.clone(), bytecode, libs_to_deploy },
+                );
             }
 
             if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
