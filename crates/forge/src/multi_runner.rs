@@ -26,7 +26,13 @@ use std::{
     time::Instant,
 };
 
-pub type DeployableContracts = BTreeMap<ArtifactId, (JsonAbi, Bytes, Vec<Bytes>)>;
+pub struct TestContract {
+    pub abi: JsonAbi,
+    pub bytecode: Bytes,
+    pub libs_to_deploy: Vec<Bytes>,
+}
+
+pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
@@ -67,8 +73,8 @@ impl MultiContractRunner {
     pub fn matching_contracts<'a>(
         &'a self,
         filter: &'a dyn TestFilter,
-    ) -> impl Iterator<Item = (&ArtifactId, &(JsonAbi, Bytes, Vec<Bytes>))> {
-        self.contracts.iter().filter(|&(id, (abi, _, _))| matches_contract(id, abi, filter))
+    ) -> impl Iterator<Item = (&ArtifactId, &TestContract)> {
+        self.contracts.iter().filter(|&(id, TestContract { abi, ..})| matches_contract(id, abi, filter))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -77,7 +83,7 @@ impl MultiContractRunner {
         filter: &'a dyn TestFilter,
     ) -> impl Iterator<Item = &Function> {
         self.matching_contracts(filter)
-            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .flat_map(|(_, TestContract { abi, ..})| abi.functions())
             .filter(|func| is_matching_test(func, filter))
     }
 
@@ -89,14 +95,14 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .flat_map(|(_, TestContract { abi, ..})| abi.functions())
             .filter(|func| func.is_test() || func.is_invariant_test())
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.matching_contracts(filter)
-            .map(|(id, (abi, _, _))| {
+            .map(|(id, TestContract { abi, ..})| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let tests = abi
@@ -169,10 +175,10 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, (abi, deploy_code, libs))| {
+        contracts.par_iter().for_each_with(tx, |tx, &(id, TestContract { abi, bytecode, libs_to_deploy })| {
             let identifier = id.identifier();
             let executor = executor.clone();
-            let result = self.run_tests(&identifier, abi, executor, deploy_code, libs, filter);
+            let result = self.run_tests(&identifier, abi, executor, bytecode, libs_to_deploy, filter);
             let _ = tx.send((identifier, result));
         })
     }
@@ -341,7 +347,7 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                 abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
             {
-                deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
+                deployable_contracts.insert(id.clone(), TestContract { abi: abi.clone(), bytecode, libs_to_deploy });
             }
 
             if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
