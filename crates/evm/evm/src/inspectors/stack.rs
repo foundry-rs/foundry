@@ -3,7 +3,10 @@ use super::{
     StackSnapshotType, TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
-use foundry_evm_core::{backend::{update_state, DatabaseExt}, debug::DebugArena};
+use foundry_evm_core::{
+    backend::{update_state, DatabaseExt},
+    debug::DebugArena,
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{

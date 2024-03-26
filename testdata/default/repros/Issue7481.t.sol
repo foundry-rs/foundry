@@ -8,7 +8,7 @@ import "cheats/Vm.sol";
 // This test ensures that we don't panic
 contract Issue7481Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    
+
     function testFailTransact() public {
         vm.createSelectFork("rpcAlias", 19514903);
 

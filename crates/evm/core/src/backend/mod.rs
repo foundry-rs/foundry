@@ -16,7 +16,8 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log, ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY
+        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
+        ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
@@ -1892,7 +1893,10 @@ fn commit_transaction<I: Inspector<Backend>>(
 }
 
 /// Helper method which updates data in the state with the data from the database.
-pub fn update_state<DB: Database>(state: &mut State, db: &mut DB) where DB::Error: core::fmt::Debug {
+pub fn update_state<DB: Database>(state: &mut State, db: &mut DB)
+where
+    DB::Error: core::fmt::Debug,
+{
     for (addr, acc) in state.iter_mut() {
         acc.info = db.basic(*addr).unwrap().unwrap_or_default();
         for (key, val) in acc.storage.iter_mut() {
