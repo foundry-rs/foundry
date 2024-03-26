@@ -63,6 +63,28 @@ interface Vm {
         Extcodecopy,
     }
 
+    /// Forge execution contexts.
+    enum ForgeContext {
+        /// Test group execution context (test, coverage or snapshot).
+        TestGroup,
+        /// `forge test` execution context.
+        Test,
+        /// `forge coverage` execution context.
+        Coverage,
+        /// `forge snapshot` execution context.
+        Snapshot,
+        /// Script group execution context (dry run, broadcast or resume).
+        ScriptGroup,
+        /// `forge script` execution context.
+        ScriptDryRun,
+        /// `forge script --broadcast` execution context.
+        ScriptBroadcast,
+        /// `forge script --resume` execution context.
+        ScriptResume,
+        /// Unknown `forge` execution context.
+        Unknown,
+    }
+
     /// An Ethereum log. Returned by `getRecordedLogs`.
     struct Log {
         /// The topics of the log, including the signature, if any.
@@ -1558,6 +1580,10 @@ interface Vm {
     function envOr(string calldata name, string calldata delim, bytes[] calldata defaultValue)
         external view
         returns (bytes[] memory value);
+
+    /// Returns true if `forge` command was executed in given context.
+    #[cheatcode(group = Environment)]
+    function isContext(ForgeContext context) external view returns (bool isContext);
 
     // ======== Scripts ========
 
