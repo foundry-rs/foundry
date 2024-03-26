@@ -27,7 +27,7 @@ contract Issue3221Test is DSTest {
         new Counter();
 
         vm.selectFork(fork1);
-        assertEq(vm.getNonce(user), 3);
+        assertEq(vm.getNonce(user), 1);
         vm.prank(user);
         new Counter();
     }
