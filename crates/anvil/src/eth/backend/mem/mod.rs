@@ -14,7 +14,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager},
+        fees::{FeeDetails, FeeManager, INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         util::get_precompiles_for,
@@ -58,7 +58,7 @@ use anvil_core::{
 };
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::types::ToAlloy;
+use foundry_common::{types::ToAlloy, DEV_CHAIN_ID};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -468,6 +468,45 @@ impl Backend {
         }
     }
 
+    /// Reset to fresh state
+    pub async fn reset_to_non_fork(&self) -> Result<(), BlockchainError> {
+        // Reset fork
+        *self.fork.write() = None;
+
+        // Clear env
+        {
+            let mut env = self.env.write();
+            env.clear();
+
+            // Set default anvil chain_id
+            env.cfg.chain_id = DEV_CHAIN_ID;
+
+            // Reset time
+            self.time.reset(env.block.timestamp.to::<u64>());
+        }
+
+        // reset fees
+        self.fees.set_base_fee(U256::from(INITIAL_BASE_FEE));
+        self.fees.set_gas_price(U256::from(INITIAL_GAS_PRICE));
+        // Clear the state
+        *self.blockchain.storage.write() = BlockchainStorage::empty();
+        self.states.write().clear();
+
+        let mut db = self.db.write().await;
+
+        // clear database
+        db.clear();
+
+        // genesis accounts
+        for (account, info) in self.genesis.account_infos() {
+            db.insert_account(account, info);
+        }
+
+        // Reset genensis alloc
+        self.genesis.apply_genesis_json_alloc(db)?;
+
+        Ok(())
+    }
     /// Returns the `TimeManager` responsible for timestamps
     pub fn time(&self) -> &TimeManager {
         &self.time
