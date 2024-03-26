@@ -786,7 +786,7 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["et", "src"])]
     EtherscanSource {
         /// The contract's address.
-        address: String,
+        address: Address,
 
         /// The output directory to expand source tree into.
         #[arg(short, value_hint = ValueHint::DirPath)]
@@ -794,6 +794,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         etherscan: EtherscanOpts,
+
+        /// If provided the source code of the target contract will be flattened.
+        #[arg(alias = "flattened")]
+        flatten: Option<String>,
     },
 
     /// Wallet management utilities.
