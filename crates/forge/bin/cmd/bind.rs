@@ -8,7 +8,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-
 impl_figment_convert!(BindArgs, build_args);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
@@ -83,6 +82,14 @@ pub struct BindArgs {
 
     #[command(flatten)]
     build_args: CoreBuildArgs,
+
+    /// The description of the Rust crate to generate.
+    #[clap(long, value_name = "DESCRIPTION")]
+    crate_description: Option<String>,
+
+    /// The license of the Rust crate to generate.
+    #[clap(long, value_name = "LICENSE")]
+    crate_license: Option<String>,
 }
 
 impl BindArgs {
@@ -97,7 +104,7 @@ impl BindArgs {
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
             println!("Bindings found. Checking for consistency.");
-            return self.check_existing_bindings(&artifacts)
+            return self.check_existing_bindings(&artifacts);
         }
 
         if self.overwrite && self.bindings_exist(&artifacts) {
@@ -127,13 +134,13 @@ impl BindArgs {
     /// Returns the filter to use for `MultiAbigen`
     fn get_filter(&self) -> ContractFilter {
         if self.select_all {
-            return ContractFilter::All
+            return ContractFilter::All;
         }
         if !self.select.is_empty() {
-            return SelectContracts::default().extend_regex(self.select.clone()).into()
+            return SelectContracts::default().extend_regex(self.select.clone()).into();
         }
         if !self.skip.is_empty() {
-            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+            return ExcludeContracts::default().extend_regex(self.skip.clone()).into();
         }
         // This excludes all Test/Script and forge-std contracts
         ExcludeContracts::default()
@@ -220,6 +227,9 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let mut bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
+
+        let bindings_root_path = self.bindings_root(&artifacts);
+
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");
             if !self.skip_extra_derives {
@@ -228,12 +238,56 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
             bindings.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
-                self.bindings_root(&artifacts),
+                &bindings_root_path,
                 self.single_file,
-            )
+            )?;
+
+            self.update_cargo_toml(bindings_root_path.as_path())?;
         } else {
             trace!(single_file = self.single_file, "generating module");
-            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)
+            bindings.write_to_module(&bindings_root_path, self.single_file)?;
         }
+
+        Ok(())
+    }
+
+    fn update_cargo_toml(&self, bindings_root_path: &Path) -> Result<()> {
+        let cargo_toml_path = bindings_root_path.join("Cargo.toml");
+        let mut cargo_toml_content =
+            std::fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
+
+        // First try finding 'rust-version', if not found, then look for 'rust-version.workspace'
+        let rust_version_pos = cargo_toml_content
+            .find(r#"rust-version"#)
+            .or_else(|| cargo_toml_content.find("rust-version.workspace"));
+
+        if let Some(pos) = rust_version_pos {
+            // Find the end of the line
+            let insert_point =
+                cargo_toml_content[pos..].find('\n').unwrap_or(cargo_toml_content.len()) + pos;
+            let mut insert_content = String::new();
+
+            // Check and append description
+            if let Some(description) = &self.crate_description {
+                insert_content.push_str(&format!("\ndescription = {:?}", description));
+            }
+
+            // Check and append license
+            if let Some(license) = &self.crate_license {
+                insert_content.push_str(&format!("\nlicense = {:?}", license));
+            }
+
+            cargo_toml_content.insert_str(insert_point, &insert_content);
+        } else {
+            // Handle the case where neither 'rust-version' nor 'rust-version.workspace' is found
+            return Err(eyre::eyre!(
+                "Neither 'rust-version' nor 'rust-version.workspace' found in Cargo.toml"
+            ));
+        }
+
+        std::fs::write(&cargo_toml_path, cargo_toml_content)
+            .wrap_err("Failed to write updated Cargo.toml")?;
+
+        Ok(())
     }
 }
