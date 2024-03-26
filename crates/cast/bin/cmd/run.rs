@@ -8,9 +8,9 @@ use foundry_cli::{
     init_progress,
     opts::RpcOpts,
     update_progress,
-    utils::{handle_traces, TraceResult},
+    utils::{generate_local_signatures, handle_traces, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{compile::ProjectCompiler, is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
@@ -74,6 +74,13 @@ pub struct RunArgs {
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
+
+    /// If generate a file with the signatures of the functions and events of the project.
+    /// The file will be saved in the foundry cache directory.
+    ///
+    /// default value: false
+    #[arg(long, short = 'G', visible_alias = "gs")]
+    pub generate_local_signatures: bool,
 }
 
 impl RunArgs {
@@ -232,6 +239,19 @@ impl RunArgs {
                 }
             }
         };
+
+        if self.generate_local_signatures {
+            let project = config.project()?;
+            let compiler = ProjectCompiler::new().quiet(true);
+            let output = compiler.compile(&project)?;
+            if let Err(err) =
+                generate_local_signatures(&output, Config::foundry_cache_dir().unwrap())
+            {
+                warn!(target: "cast::run", ?err, "failed to flush signature cache");
+            } else {
+                trace!(target: "cast::run", "flushed signature cache")
+            }
+        }
 
         handle_traces(result, &config, chain, self.label, self.debug).await?;
 
