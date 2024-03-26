@@ -1,8 +1,9 @@
 use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers_core::types::{BlockId, NameOrAddress};
-use eyre::{Result, WrapErr};
+use ethers_core::types::{BlockId, BlockNumber, NameOrAddress};
+use ethers_providers::Middleware;
+use eyre::{eyre, Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
@@ -10,6 +11,7 @@ use foundry_cli::{
 use foundry_common::{
     runtime_client::RuntimeClient,
     types::{ToAlloy, ToEthers},
+    RetryProvider,
 };
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
@@ -114,7 +116,7 @@ impl CallArgs {
             labels,
         } = self;
 
-        let config = Config::from(&eth);
+        let mut config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
@@ -136,6 +138,8 @@ impl CallArgs {
                         .merge(eth.rpc);
 
                     let evm_opts = figment.extract::<EvmOpts>()?;
+
+                    config.fork_block_number = derive_fork_block_number(&provider, block).await?;
 
                     let (env, fork, chain) =
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
@@ -169,6 +173,8 @@ impl CallArgs {
                         .merge(eth.rpc);
 
                     let evm_opts = figment.extract::<EvmOpts>()?;
+
+                    config.fork_block_number = derive_fork_block_number(&provider, block).await?;
 
                     let (env, fork, chain) =
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
@@ -240,6 +246,43 @@ async fn fill_tx(
     }
 
     Ok(())
+}
+
+async fn derive_fork_block_number(
+    provider: &RetryProvider,
+    block: Option<BlockId>,
+) -> Result<Option<u64>> {
+    let fork_block_number = match block {
+        Some(BlockId::Number(BlockNumber::Latest)) |
+        Some(BlockId::Number(BlockNumber::Pending)) |
+        None => None,
+
+        Some(BlockId::Number(BlockNumber::Number(number))) => Some(number.as_u64()),
+
+        Some(BlockId::Number(block_tag)) => {
+            let block = provider.get_block(block_tag).await?;
+            Some(
+                block
+                    .ok_or(eyre!("block not found"))?
+                    .number
+                    .ok_or(eyre!("block is not mined yet"))?
+                    .as_u64(),
+            )
+        }
+
+        Some(BlockId::Hash(hash)) => {
+            let block = provider.get_block(BlockId::Hash(hash)).await?;
+            Some(
+                block
+                    .ok_or(eyre!("block not found"))?
+                    .number
+                    .ok_or(eyre!("block is not mined yet"))?
+                    .as_u64(),
+            )
+        }
+    };
+
+    Ok(fork_block_number)
 }
 
 #[cfg(test)]
