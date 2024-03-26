@@ -8,10 +8,11 @@ contract Emitter {
     uint256 public thing;
 
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
+
     event A(uint256 indexed topic1);
-    event B(uint256 indexed topic1);
+    event B(uint256 indexed topic1) anonymous;
     event C(uint256 indexed topic1);
-    event D(uint256 indexed topic1);
+    event D(uint256 indexed topic1) anonymous;
     event E(uint256 indexed topic1);
 
     /// This event has 0 indexed topics, but the one in our tests
@@ -19,8 +20,9 @@ contract Emitter {
     /// events have the same topic 0, they are different and should
     /// be non-comparable.
     ///
-    /// Ref: issue #760
+    /// Ref: issue #760 + #7461
     event SomethingElse(uint256 data);
+    event SomethingElseAnonymous(uint256 data) anonymous;
 
     event SomethingNonIndexed(uint256 data);
 
@@ -98,6 +100,11 @@ contract Emitter {
     function emitSomethingElse(uint256 data) public {
         emit SomethingElse(data);
     }
+
+    /// Ref: issue #760 + #7461
+    function emitSomethingElseAnonymous(uint256 data) public {
+        emit SomethingElseAnonymous(data);
+    }
 }
 
 /// Emulates `Emitter` in #760
@@ -111,18 +118,23 @@ contract LowLevelCaller {
 
 contract ExpectEmitTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+
     Emitter emitter;
 
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     event SomethingElse(uint256 indexed topic1);
+    event SomethingElseAnonymous(uint256 indexed topic0) anonymous;
+
+    event SomethingEmpty();
+    event SomethingEmptyAnonymous() anonymous;
 
     event SomethingNonIndexed(uint256 data);
 
     event A(uint256 indexed topic1);
-    event B(uint256 indexed topic1);
+    event B(uint256 indexed topic1) anonymous;
     event C(uint256 indexed topic1);
-    event D(uint256 indexed topic1);
+    event D(uint256 indexed topic1) anonymous;
     event E(uint256 indexed topic1);
 
     function setUp() public {
@@ -363,6 +375,17 @@ contract ExpectEmitTest is DSTest {
         // and in the `Emitter` contract have differing
         // amounts of indexed topics.
         emitter.emitSomethingElse(1);
+    }
+
+    /// Ref: issue #760 + #7461
+    function testFailDifferentIndexedParametersAnonymous() public {
+        vm.expectEmit(true, false, false, false);
+        emit SomethingElseAnonymous(1);
+
+        // This should fail since `SomethingElseAnonymous` in the test
+        // and in the `Emitter` contract have differing
+        // amounts of indexed topics.
+        emitter.emitSomethingElseAnonymous(1);
     }
 
     function testCanDoStaticCall() public {
