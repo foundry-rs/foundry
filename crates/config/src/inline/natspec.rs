@@ -189,13 +189,14 @@ impl SolangParser {
         }
 
         let Ok((pt, comments)) = solang_parser::parse(src, 0) else { return };
-        let mut prev_end = 0;
+
         for item in &pt.0 {
             let pt::SourceUnitPart::ContractDefinition(c) = item else { continue };
             let Some(id) = c.name.as_ref() else { continue };
             if id.name != contract_name {
                 continue
             };
+            let mut prev_end = c.loc.start();
             for part in &c.parts {
                 let pt::ContractPart::FunctionDefinition(f) = part else { continue };
                 let start = f.loc.start();
@@ -215,7 +216,6 @@ impl SolangParser {
                 }
                 prev_end = f.loc.end();
             }
-            prev_end = c.loc.end();
         }
     }
 }

@@ -12,7 +12,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
 };
-use foundry_config::{FuzzConfig, InvariantConfig};
+use foundry_config::{FuzzConfig, InlineFixturesConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     coverage::HitMaps,
@@ -85,14 +85,14 @@ impl<'a> ContractRunner<'a> {
 impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
-    pub fn setup(&mut self, setup: bool) -> TestSetup {
-        match self._setup(setup) {
+    pub fn setup(&mut self, setup: bool, fixtures: &InlineFixturesConfig) -> TestSetup {
+        match self._setup(setup, fixtures) {
             Ok(setup) => setup,
             Err(err) => TestSetup::failed(err.to_string()),
         }
     }
 
-    fn _setup(&mut self, setup: bool) -> Result<TestSetup> {
+    fn _setup(&mut self, setup: bool, fixtures: &InlineFixturesConfig) -> Result<TestSetup> {
         trace!(?setup, "Setting test contract");
 
         // We max out their balance so that they can deploy and make calls.
@@ -181,7 +181,7 @@ impl<'a> ContractRunner<'a> {
                 labeled_addresses,
                 reason,
                 coverage,
-                fuzz_fixtures: self.fuzz_fixtures(address),
+                fuzz_fixtures: self.fuzz_fixtures(address, fixtures),
             }
         } else {
             TestSetup::success(
@@ -190,7 +190,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 Default::default(),
                 None,
-                self.fuzz_fixtures(address),
+                self.fuzz_fixtures(address, fixtures),
             )
         };
 
@@ -204,20 +204,21 @@ impl<'a> ContractRunner<'a> {
     /// `fixture_test() returns (address[] memory)` function
     /// define an array of addresses to be used for fuzzed `test` named parameter in scope of the
     /// current test.
-    fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
-        // collect test fixtures param:array of values
-        let mut fixtures = HashMap::new();
-        for func in self.contract.functions().filter(|f| f.name.is_fixture()) {
-            if let Ok(CallResult { raw: _, decoded_result }) =
-                self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
-            {
-                fixtures.insert(
-                    func.name.strip_prefix("fixture_").unwrap().to_string(),
-                    decoded_result,
-                );
+    fn fuzz_fixtures(&mut self, address: Address, fixtures: &InlineFixturesConfig) -> FuzzFixtures {
+        match fixtures.to_owned().get_fixtures(self.name.to_string()) {
+            Some(functions) => {
+                let mut fixtures = HashMap::with_capacity(functions.len());
+                for func in self.contract.functions().filter(|f| functions.contains(&f.name)) {
+                    if let Ok(CallResult { raw: _, decoded_result }) =
+                        self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+                    {
+                        fixtures.insert(func.name.clone(), decoded_result);
+                    }
+                }
+                FuzzFixtures::new(fixtures)
             }
+            None => FuzzFixtures::default(),
         }
-        FuzzFixtures::new(fixtures)
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -263,7 +264,7 @@ impl<'a> ContractRunner<'a> {
         if tmp_tracing {
             self.executor.set_tracing(true);
         }
-        let setup = self.setup(needs_setup);
+        let setup = self.setup(needs_setup, &test_options.inline_fixtures);
         if tmp_tracing {
             self.executor.set_tracing(false);
         }

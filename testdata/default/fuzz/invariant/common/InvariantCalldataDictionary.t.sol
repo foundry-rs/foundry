@@ -81,11 +81,13 @@ contract InvariantCalldataDictionary is DSTest {
         return targets;
     }
 
-    function fixture_sender() external returns (address[] memory) {
+    /// forge-config: fixture
+    function sender() external returns (address[] memory) {
         return actors;
     }
 
-    function fixture_candidate() external returns (address[] memory) {
+    /// forge-config: fixture
+    function candidate() external returns (address[] memory) {
         return actors;
     }
 
