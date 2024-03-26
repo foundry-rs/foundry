@@ -1,4 +1,4 @@
-// We don't document function parameters individually so we can't enable `missing_docs` for this
+// We don't document function parameters individually so we can't enable `missing_docs` for this.
 // module. Instead, we emit custom diagnostics in `#[derive(Cheatcode)]`.
 #![allow(missing_docs)]
 
@@ -348,6 +348,12 @@ interface Vm {
     /// See https://github.com/foundry-rs/foundry/issues/6180
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
+
+    /// Sets `block.blobbasefee`.
+    /// This field is specific to EVM versions from Cancun onwards.
+    /// Reverts if used on unsupported EVM versions.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function blobBaseFee(uint256 newBlobBaseFee) external;
 
     // -------- Account State --------
 
