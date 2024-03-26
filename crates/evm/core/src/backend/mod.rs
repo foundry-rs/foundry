@@ -1888,21 +1888,20 @@ fn commit_transaction<I: Inspector<Backend>>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(res.state, journaled_state, fork);
+    apply_state_changeset(res.state, journaled_state, fork)?;
     Ok(())
 }
 
 /// Helper method which updates data in the state with the data from the database.
-pub fn update_state<DB: Database>(state: &mut State, db: &mut DB)
-where
-    DB::Error: core::fmt::Debug,
-{
+pub fn update_state<DB: Database>(state: &mut State, db: &mut DB) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        acc.info = db.basic(*addr).unwrap().unwrap_or_default();
+        acc.info = db.basic(*addr)?.unwrap_or_default();
         for (key, val) in acc.storage.iter_mut() {
-            val.present_value = db.storage(*addr, *key).unwrap();
+            val.present_value = db.storage(*addr, *key)?;
         }
     }
+
+    Ok(())
 }
 
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the
@@ -1911,10 +1910,12 @@ fn apply_state_changeset(
     state: Map<revm::primitives::Address, Account>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
-) {
+) -> Result<(), DatabaseError> {
     // commit the state and update the loaded accounts
     fork.db.commit(state);
 
-    update_state(&mut journaled_state.state, &mut fork.db);
-    update_state(&mut fork.journaled_state.state, &mut fork.db);
+    update_state(&mut journaled_state.state, &mut fork.db)?;
+    update_state(&mut fork.journaled_state.state, &mut fork.db)?;
+
+    Ok(())
 }

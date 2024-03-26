@@ -493,8 +493,22 @@ impl InspectorStack {
         ecx.db.commit(res.state.clone());
 
         // Update both states with new DB data after commit.
-        update_state(&mut ecx.journaled_state.state, &mut ecx.db);
-        update_state(&mut res.state, &mut ecx.db);
+        if let Err(e) = update_state(&mut ecx.journaled_state.state, &mut ecx.db) {
+            let res = InterpreterResult {
+                result: InstructionResult::Revert,
+                output: Bytes::from(e.to_string()),
+                gas,
+            };
+            return (res, None)
+        }
+        if let Err(e) = update_state(&mut res.state, &mut ecx.db) {
+            let res = InterpreterResult {
+                result: InstructionResult::Revert,
+                output: Bytes::from(e.to_string()),
+                gas,
+            };
+            return (res, None)
+        }
 
         // Merge transaction journal into the active journal.
         for (addr, acc) in res.state {
