@@ -231,7 +231,7 @@ impl TestArgs {
                 .find(|(_, r)| !r.test_results.is_empty())
                 .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
             else {
-                eyre::bail!("No tests found to debug");
+                return Err(eyre::eyre!("no tests were executed"));
             };
 
             let sources = ContractSources::from_project_output(
