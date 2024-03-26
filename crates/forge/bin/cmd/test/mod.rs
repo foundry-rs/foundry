@@ -225,9 +225,12 @@ impl TestArgs {
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
-            let Some((suite_result, test_result)) = outcome.results.iter().filter(|(_, r)| {
-                !r.test_results.is_empty()
-            }).next().map(|(_, r)| (r, r.test_results.values().next().unwrap())) else {
+            let Some((suite_result, test_result)) = outcome
+                .results
+                .iter()
+                .find(|(_, r)| !r.test_results.is_empty())
+                .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
+            else {
                 eyre::bail!("No tests found to debug");
             };
 
@@ -236,7 +239,7 @@ impl TestArgs {
                 project.root(),
                 &suite_result.libraries,
             )?;
-            
+
             // Run the debugger.
             let mut builder = Debugger::builder()
                 .debug_arenas(test_result.debug.as_slice())

@@ -93,10 +93,7 @@ impl<'a> Linker<'a> {
         target: &'a ArtifactId,
         deps: &mut BTreeSet<&'a ArtifactId>,
     ) -> Result<(), LinkerError> {
-        let contract = self
-            .contracts
-            .get(target)
-            .ok_or(LinkerError::MissingTargetArtifact)?;
+        let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
         let mut references = BTreeMap::new();
         if let Some(bytecode) = &contract.bytecode {
@@ -181,7 +178,8 @@ impl<'a> Linker<'a> {
         target: &ArtifactId,
         libraries: &Libraries,
     ) -> Result<CompactContractBytecode, LinkerError> {
-        let mut contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
+        let mut contract =
+            self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
         for (file, libs) in &libraries.libs {
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
@@ -214,12 +212,12 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{Project, ProjectPathsConfig};
+    use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
     use std::collections::HashMap;
 
     struct LinkerTest {
         project: Project,
-        linker: Linker,
+        output: ProjectCompileOutput,
         dependency_assertions: HashMap<String, Vec<(String, Address)>>,
     }
 
@@ -237,20 +235,13 @@ mod tests {
             let project =
                 Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
 
-            let mut contracts = project.compile().unwrap();
+            let mut output = project.compile().unwrap();
 
             if strip_prefixes {
-                contracts = contracts.with_stripped_file_prefixes(project.root());
+                output = output.with_stripped_file_prefixes(project.root());
             }
 
-            let contracts = contracts
-                .into_artifacts()
-                .map(|(id, c)| (id, c.into_contract_bytecode()))
-                .collect::<ArtifactContracts>();
-
-            let linker = Linker::new(project.root(), contracts);
-
-            Self { project, linker, dependency_assertions: HashMap::new() }
+            Self { project, output, dependency_assertions: HashMap::new() }
         }
 
         fn assert_dependencies(
@@ -263,7 +254,8 @@ mod tests {
         }
 
         fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: u64) {
-            for id in self.linker.contracts.keys() {
+            let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
+            for id in linker.contracts.keys() {
                 // If we didn't strip paths, artifacts will have absolute paths.
                 // That's expected and we want to ensure that only `libraries` object has relative
                 // paths, artifacts should be kept as is.
@@ -280,8 +272,7 @@ mod tests {
                     continue;
                 }
 
-                let LinkOutput { libs_to_deploy, libraries, .. } = self
-                    .linker
+                let LinkOutput { libs_to_deploy, libraries, .. } = linker
                     .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
                     .expect("Linking failed");
 

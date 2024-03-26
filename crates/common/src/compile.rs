@@ -5,7 +5,11 @@ use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, ContractBytecodeSome, Libraries}, remappings::Remapping, report::{BasicStdoutReporter, NoReporter, Report}, Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig, Solc, SolcConfig
+    artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
+    remappings::Remapping,
+    report::{BasicStdoutReporter, NoReporter, Report},
+    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
+    Solc, SolcConfig,
 };
 use foundry_linking::Linker;
 use rustc_hash::FxHashMap;

@@ -50,8 +50,12 @@ impl BuildData {
         sender: Address,
         nonce: u64,
     ) -> Result<LinkedBuildData> {
-        let link_output =
-            self.get_linker().link_with_nonce_or_address(known_libraries, sender, nonce, &self.target)?;
+        let link_output = self.get_linker().link_with_nonce_or_address(
+            known_libraries,
+            sender,
+            nonce,
+            &self.target,
+        )?;
 
         LinkedBuildData::new(link_output, self)
     }
@@ -59,7 +63,12 @@ impl BuildData {
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
     /// to fully link target contract.
     pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        let link_output = self.get_linker().link_with_nonce_or_address(libraries, Address::ZERO, 0, &self.target)?;
+        let link_output = self.get_linker().link_with_nonce_or_address(
+            libraries,
+            Address::ZERO,
+            0,
+            &self.target,
+        )?;
 
         if !link_output.libs_to_deploy.is_empty() {
             eyre::bail!("incomplete libraries set");
@@ -85,7 +94,11 @@ pub struct LinkedBuildData {
 
 impl LinkedBuildData {
     pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
-        let sources = ContractSources::from_project_output(&build_data.output, &build_data.project_root, &link_output.libraries)?;
+        let sources = ContractSources::from_project_output(
+            &build_data.output,
+            &build_data.project_root,
+            &link_output.libraries,
+        )?;
 
         let highlevel_known_contracts = build_data
             .get_linker()

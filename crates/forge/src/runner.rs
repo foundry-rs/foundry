@@ -206,7 +206,7 @@ impl<'a> ContractRunner<'a> {
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
-                self.contract.libraries.clone()
+                self.contract.libraries.clone(),
             )
         }
 
@@ -243,7 +243,7 @@ impl<'a> ContractRunner<'a> {
                 )]
                 .into(),
                 warnings,
-                self.contract.libraries.clone()
+                self.contract.libraries.clone(),
             )
         }
 
@@ -299,7 +299,8 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let suite_result = SuiteResult::new(duration, test_results, warnings, self.contract.libraries.clone());
+        let suite_result =
+            SuiteResult::new(duration, test_results, warnings, self.contract.libraries.clone());
         info!(
             duration=?suite_result.duration,
             "done. {}/{} successful",
