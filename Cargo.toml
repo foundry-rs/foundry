@@ -185,6 +185,9 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
+## Vyper
+vyper-rs = "1.0.0"
+
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
