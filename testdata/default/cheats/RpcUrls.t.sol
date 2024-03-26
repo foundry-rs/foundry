@@ -39,6 +39,6 @@ contract RpcUrlTest is DSTest {
         assertEq(val[0], "rpcAlias");
 
         string[2] memory env = allUrls[1];
-        assertEq(env[0], "rpcEnvAlias");
+        assertEq(env[0], "rpcAliasSepolia");
     }
 }
