@@ -45,12 +45,12 @@ pub struct FilterArgs {
 impl FilterArgs {
     /// Returns true if the filter is empty.
     pub fn is_empty(&self) -> bool {
-        self.test_pattern.is_none() &&
-            self.test_pattern_inverse.is_none() &&
-            self.contract_pattern.is_none() &&
-            self.contract_pattern_inverse.is_none() &&
-            self.path_pattern.is_none() &&
-            self.path_pattern_inverse.is_none()
+        self.test_pattern.is_none()
+            && self.test_pattern_inverse.is_none()
+            && self.contract_pattern.is_none()
+            && self.contract_pattern_inverse.is_none()
+            && self.path_pattern.is_none()
+            && self.path_pattern_inverse.is_none()
     }
 
     /// Merges the set filter globs with the config's values
@@ -97,10 +97,10 @@ impl FileFilter for FilterArgs {
     /// [`FoundryPathExt::is_sol_test()`].
     fn is_match(&self, file: &Path) -> bool {
         if let Some(glob) = &self.path_pattern {
-            return glob.is_match(file)
+            return glob.is_match(file);
         }
         if let Some(glob) = &self.path_pattern_inverse {
-            return !glob.is_match(file)
+            return !glob.is_match(file);
         }
         file.is_sol_test()
     }

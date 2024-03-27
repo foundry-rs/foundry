@@ -338,8 +338,8 @@ impl MultiContractRunnerBuilder {
             };
 
             // if it's a test, add it to deployable contracts
-            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
+            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+                && abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
             {
                 deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
             }
@@ -371,8 +371,8 @@ impl MultiContractRunnerBuilder {
 }
 
 fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
-    (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
-        abi.functions().any(|func| is_matching_test(func, filter))
+    (filter.matches_path(&id.source) && filter.matches_contract(&id.name))
+        && abi.functions().any(|func| is_matching_test(func, filter))
 }
 
 /// Returns `true` if the function is a test function that matches the given filter.

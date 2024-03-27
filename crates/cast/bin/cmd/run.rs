@@ -109,8 +109,8 @@ impl RunArgs {
             .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
-            tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
+        if is_known_system_sender(tx.from)
+            || tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
         {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
@@ -166,16 +166,16 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.into_iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
-                    if is_known_system_sender(tx.from) ||
-                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                            Some(SYSTEM_TRANSACTION_TYPE)
+                    if is_known_system_sender(tx.from)
+                        || tx.transaction_type.map(|ty| ty.to::<u64>())
+                            == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
                         continue;

@@ -842,7 +842,7 @@ async fn can_stream_pending_transactions() {
                 let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
                 assert_eq!(sent_txs, watch_received.iter().map(|tx| tx.hash).collect());
                 assert_eq!(sent_txs, sub_received.iter().map(|tx| tx.hash).collect());
-                break
+                break;
             }
         }
     }

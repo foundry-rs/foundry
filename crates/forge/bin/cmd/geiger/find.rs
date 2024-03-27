@@ -118,15 +118,15 @@ impl UnsafeCheatcodes {
 
     /// The total number of unsafe calls.
     pub fn len(&self) -> usize {
-        self.ffi.len() +
-            self.read_file.len() +
-            self.read_line.len() +
-            self.write_file.len() +
-            self.write_line.len() +
-            self.close_file.len() +
-            self.set_env.len() +
-            self.derive_key.len() +
-            self.remove_file.len()
+        self.ffi.len()
+            + self.read_file.len()
+            + self.read_line.len()
+            + self.write_file.len()
+            + self.write_line.len()
+            + self.close_file.len()
+            + self.set_env.len()
+            + self.derive_key.len()
+            + self.remove_file.len()
     }
 }
 

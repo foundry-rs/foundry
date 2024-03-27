@@ -173,7 +173,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         args: Vec<String>,
     ) -> Result<(Vec<u8>, Function)> {
         if sig.trim().is_empty() {
-            return Err(FunctionSignatureError::MissingSignature.into())
+            return Err(FunctionSignatureError::MissingSignature.into());
         }
 
         let args = resolve_name_args(&args, self.provider).await;
@@ -228,7 +228,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         value: Option<(&str, Vec<String>)>,
     ) -> Result<&mut TxBuilder<'a, M>> {
         if let Some((sig, args)) = value {
-            return self.set_args(sig, args).await
+            return self.set_args(sig, args).await;
         }
         Ok(self)
     }

@@ -46,7 +46,7 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<(String, Decod
     let [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x @ 0x01..=0x0a] =
         trace.address.0 .0
     else {
-        return None
+        return None;
     };
 
     let data = &trace.data;

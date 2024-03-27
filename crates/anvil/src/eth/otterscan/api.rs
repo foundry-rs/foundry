@@ -69,7 +69,7 @@ impl EthApi {
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
             if receipt.inner.status_code == Some(U64::ZERO) {
-                return Ok(receipt.out.map(|b| b.0.into()))
+                return Ok(receipt.out.map(|b| b.0.into()));
             }
         }
 
@@ -164,7 +164,7 @@ impl EthApi {
                 res.extend(hashes);
 
                 if res.len() >= page_size {
-                    break
+                    break;
                 }
             }
         }
@@ -223,7 +223,7 @@ impl EthApi {
                 res.extend(hashes);
 
                 if res.len() >= page_size {
-                    break
+                    break;
                 }
             }
         }
@@ -248,7 +248,7 @@ impl EthApi {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
                     if U256::from(tx.nonce) == nonce && tx.from == address {
-                        return Ok(Some(tx))
+                        return Ok(Some(tx));
                     }
                 }
             }
