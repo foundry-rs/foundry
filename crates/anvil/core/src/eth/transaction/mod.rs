@@ -1015,6 +1015,16 @@ impl TypedReceipt {
             TypedReceipt::Deposit(r) => &r.bloom,
         }
     }
+
+    pub fn logs(&self) -> &Vec<Log> {
+        match self {
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
+            TypedReceipt::Deposit(r) => &r.receipt.logs,
+        }
+    }
 }
 
 impl From<TypedReceipt> for ReceiptWithBloom {

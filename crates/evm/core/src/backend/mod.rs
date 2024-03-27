@@ -17,7 +17,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
-        ResultAndState, SpecId, StorageSlot, TransactTo, KECCAK_EMPTY,
+        ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
@@ -1888,7 +1888,19 @@ fn commit_transaction<I: Inspector<Backend>>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(res.state, journaled_state, fork);
+    apply_state_changeset(res.state, journaled_state, fork)?;
+    Ok(())
+}
+
+/// Helper method which updates data in the state with the data from the database.
+pub fn update_state<DB: Database>(state: &mut State, db: &mut DB) -> Result<(), DB::Error> {
+    for (addr, acc) in state.iter_mut() {
+        acc.info = db.basic(*addr)?.unwrap_or_default();
+        for (key, val) in acc.storage.iter_mut() {
+            val.present_value = db.storage(*addr, *key)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1898,19 +1910,12 @@ fn apply_state_changeset(
     state: Map<revm::primitives::Address, Account>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
-) {
-    let changed_accounts = state.keys().copied().collect::<Vec<_>>();
+) -> Result<(), DatabaseError> {
     // commit the state and update the loaded accounts
     fork.db.commit(state);
 
-    for addr in changed_accounts {
-        // reload all changed accounts by removing them from the journaled state and reloading them
-        // from the now updated database
-        if journaled_state.state.remove(&addr).is_some() {
-            let _ = journaled_state.load_account(addr, &mut fork.db);
-        }
-        if fork.journaled_state.state.remove(&addr).is_some() {
-            let _ = fork.journaled_state.load_account(addr, &mut fork.db);
-        }
-    }
+    update_state(&mut journaled_state.state, &mut fork.db)?;
+    update_state(&mut fork.journaled_state.state, &mut fork.db)?;
+
+    Ok(())
 }

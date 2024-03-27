@@ -274,8 +274,6 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
 
 /// Container for data being collected after execution.
 pub struct ExecutionArtifacts {
-    /// Mapping from contract to its runtime code.
-    pub known_contracts: ContractsByArtifact,
     /// Trace decoder used to decode traces.
     pub decoder: CallTraceDecoder,
     /// Return values from the execution result.
@@ -327,7 +325,7 @@ impl ExecutedState {
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: self.execution_result,
-            execution_artifacts: ExecutionArtifacts { known_contracts, decoder, returns, rpc_data },
+            execution_artifacts: ExecutionArtifacts { decoder, returns, rpc_data },
         })
     }
 

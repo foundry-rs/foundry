@@ -17,8 +17,7 @@ use std::{fmt, sync::Arc};
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
-type FxIndexSet<T> =
-    indexmap::set::IndexSet<T, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+type FxIndexSet<T> = indexmap::set::IndexSet<T>;
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///

@@ -65,7 +65,6 @@ impl PreSimulationState {
             script_config: self.script_config,
             script_wallets: self.script_wallets,
             build_data: self.build_data,
-            execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
         })
@@ -198,12 +197,7 @@ impl PreSimulationState {
                 if let Ok(Some((_, (abi, code)))) =
                     contracts.find_by_name_or_identifier(contract_name)
                 {
-                    let info = ArtifactInfo {
-                        contract_name: contract_name.to_string(),
-                        contract_id: contract_id.to_string(),
-                        abi,
-                        code,
-                    };
+                    let info = ArtifactInfo { contract_name: contract_name.to_string(), abi, code };
                     return Some((*addr, info));
                 }
                 None
@@ -258,7 +252,6 @@ pub struct FilledTransactionsState {
     pub script_config: ScriptConfig,
     pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata>,
 }

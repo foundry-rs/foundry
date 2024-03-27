@@ -3867,7 +3867,6 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "revm",
- "rustc-hash",
  "serde",
  "thiserror",
  "tracing",
