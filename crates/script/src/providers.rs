@@ -46,7 +46,6 @@ pub struct ProviderInfo {
     pub provider: Arc<RetryProvider>,
     pub chain: u64,
     pub gas_price: GasPrice,
-    pub is_legacy: bool,
 }
 
 /// Represents the outcome of a gas price request
@@ -75,7 +74,7 @@ impl ProviderInfo {
             )
         };
 
-        Ok(ProviderInfo { provider, chain, gas_price, is_legacy })
+        Ok(ProviderInfo { provider, chain, gas_price })
     }
 
     /// Returns the gas price to use
