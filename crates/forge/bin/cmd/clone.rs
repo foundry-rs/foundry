@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs::read_dir, path::PathBuf};
 
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
@@ -7,6 +7,7 @@ use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_compilers::artifacts::Settings;
+use foundry_compilers::remappings::Remapping;
 use foundry_config::Config;
 use toml_edit;
 
@@ -51,11 +52,18 @@ impl CloneArgs {
 
         // let's try to init the project with default init args
         let init_args = InitArgs { root: root.clone(), vscode: true, ..Default::default() };
-        init_args.run().map_err(|_| eyre::eyre!("Cannot run `clone` on a non-empty directory."))?;
+        init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
         // canonicalize the root path
         // note that at this point, the root directory must have been created
         let root = dunce::canonicalize(root)?;
+
+        // dump sources
+        let remappings = dump_sources(&meta, root.clone())?;
+        let remappings_content =
+            remappings.into_iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+        // write the remappings to the root directory
+        fs::write(root.join("remappings.txt"), remappings_content)?;
 
         // remove the unnecessary example contracts
         // XXX (ZZ): this is a temporary solution until we have a proper way to remove contracts,
@@ -198,4 +206,75 @@ fn update_config_by_metadata(
     doc[Config::PROFILE_SECTION][profile]["libraries"] = toml_edit::value(lib_array);
 
     Ok(())
+}
+
+/// Dump the contract sources to the root directory.
+/// The sources are dumped to the `src` directory.
+/// The library sources are dumped to the `lib` directory.
+/// IO errors may be returned.
+fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
+    let lib_dir = root.join("lib");
+    let src_dir = root.join("src");
+    let contract_name = meta.contract_name.clone();
+    let source_tree = meta.source_tree();
+
+    // first we dump the sources to a temporary directory
+    let tmp_dump_dir = root.join("raw_sources");
+    source_tree
+        .write_to(&tmp_dump_dir)
+        .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
+
+    // then we move the sources to the correct directories
+    let mut remappings: Vec<Remapping> = vec![];
+    // 1. move library sources to the `lib` directory (those with names starting with `@`)
+    for entry in read_dir(tmp_dump_dir.join(contract_name.clone()))? {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with("@") {
+            if std::fs::metadata(&lib_dir).is_err() {
+                std::fs::create_dir(&lib_dir)?;
+            }
+            let dest = root.join("lib").join(entry.file_name());
+            std::fs::rename(entry.path(), dest)?;
+            // add remapping entry
+            remappings.push(Remapping {
+                context: None,
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: format!("lib/{}", entry.file_name().to_string_lossy()),
+            });
+        }
+    }
+    // 2. move contract sources to the `src` directory
+    for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
+        if std::fs::metadata(&src_dir).is_err() {
+            std::fs::create_dir(&src_dir)?;
+        }
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().to_string().as_str() == "contracts" {
+            // move all sub folders in contracts to src
+            for e in read_dir(entry.path())? {
+                let e = e?;
+                let dest = src_dir.join(e.file_name());
+                std::fs::rename(e.path(), dest)?;
+                remappings.push(Remapping {
+                    context: None,
+                    name: e.file_name().to_string_lossy().to_string(),
+                    path: format!("src/{}", e.file_name().to_string_lossy()),
+                });
+            }
+        } else {
+            // move the file to src
+            let dest = src_dir.join(entry.file_name());
+            std::fs::rename(entry.path(), dest)?;
+            remappings.push(Remapping {
+                context: None,
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: format!("src/{}", entry.file_name().to_string_lossy()),
+            });
+        }
+    }
+
+    // remove the temporary directory
+    std::fs::remove_dir_all(tmp_dump_dir)?;
+
+    Ok(remappings)
 }
