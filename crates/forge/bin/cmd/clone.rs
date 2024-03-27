@@ -310,6 +310,7 @@ mod tests {
     use tempfile;
 
     fn assert_successful_compilation(root: &PathBuf) {
+        // TODO: assert runtime code stays the same
         println!("project_root: {:#?}", root);
         // change directory to the root
         std::env::set_current_dir(root).unwrap();
@@ -342,4 +343,29 @@ mod tests {
         args.run().await.unwrap();
         assert_successful_compilation(&project_root);
     }
+
+    #[tokio::test]
+    async fn test_clone_contract_with_libraries() {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let args = CloneArgs {
+            address: "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".to_string(),
+            root: project_root.clone(),
+            etherscan: Default::default(),
+        };
+        args.run().await.unwrap();
+        assert_successful_compilation(&project_root);
+    }
+
+    #[tokio::test]
+    async fn test_clone_contract_with_metadata() {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let args = CloneArgs {
+            address: "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".to_string(),
+            root: project_root.clone(),
+            etherscan: Default::default(),
+        };
+        args.run().await.unwrap();
+        assert_successful_compilation(&project_root);
+    }
+    
 }
