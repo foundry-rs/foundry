@@ -73,6 +73,27 @@ impl CloneArgs {
     }
 }
 
+/// Update the configuration file with the metadata.
+/// This function will update the configuration file with the metadata from the contract.
+/// It will update the following fields:
+/// - `auto_detect_solc` to `false`
+/// - `solc_version` to the value from the metadata
+/// - `evm_version` to the value from the metadata
+/// - `via_ir` to the value from the metadata
+/// - `libraries` to the value from the metadata
+/// - `metadata` to the value from the metadata
+///     - `cbor_metadata`, `use_literal_content`, and `bytecode_hash`
+/// - `optimizer` to the value from the metadata
+/// - `optimizer_runs` to the value from the metadata
+/// - `optimizer_details` to the value from the metadata
+///     - `yul_details`, `yul`, etc.
+///     - `simpleCounterForLoopUncheckedIncrement` is ignored for now
+/// - `remappings` and `stop_after` are pre-validated to be empty and None, respectively
+/// - `model_checker`, `debug`, and `output_selection` are ignored for now
+///
+/// Detailed information can be found from the following link:
+/// - https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+/// - https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description
 fn update_config_by_metadata(
     config: &Config,
     doc: &mut toml_edit::Document,
