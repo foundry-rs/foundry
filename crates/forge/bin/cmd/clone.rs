@@ -2,12 +2,13 @@ use std::{fs::read_dir, path::PathBuf};
 
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_compilers::artifacts::Settings;
 use foundry_compilers::remappings::{RelativeRemapping, Remapping};
+use foundry_compilers::ProjectPathsConfig;
 use foundry_config::Config;
 use toml_edit;
 
@@ -224,13 +225,8 @@ fn update_config_by_metadata(
 /// IO errors may be returned.
 fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>> {
     // get config
-    let config = Config::load_with_root(root.clone());
-
-    let path_config = config.project_paths();
-    let lib_dir = root
-        .join(path_config.libraries.get(0).ok_or_eyre("no library path found")?)
-        .canonicalize()?;
-    let src_dir = root.join(path_config.sources).canonicalize()?;
+    let path_config = ProjectPathsConfig::builder().build_with_root(&root);
+    let src_dir = root.join(path_config.sources.clone()).canonicalize()?;
     let contract_name = meta.contract_name.clone();
     let source_tree = meta.source_tree();
 
@@ -241,30 +237,13 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
 
     // then we move the sources to the correct directories
-    // 0. we will first load existing remappings if necessary
+    // 1. we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
-    let mut remappings: Vec<Remapping> = Remapping::find_many(lib_dir.clone());
+    let mut remappings: Vec<Remapping> = Remapping::find_many(root.clone());
     // we also load the original remappings from the metadata
     remappings.extend(meta.settings()?.remappings);
 
-    // 1. move library sources to the `lib` directory (those with names starting with `@`)
-    for entry in read_dir(tmp_dump_dir.join(contract_name.clone()))? {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with("@") {
-            if std::fs::metadata(&lib_dir).is_err() {
-                std::fs::create_dir(&lib_dir)?;
-            }
-            let dest = lib_dir.join(entry.file_name());
-            std::fs::rename(entry.path(), dest.clone())?;
-            // add remapping entry
-            remappings.push(Remapping {
-                context: None,
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: dest.to_string_lossy().to_string(),
-            });
-        }
-    }
-    // 2. move contract sources to the `src` directory
+    // 1. move contract sources to the `src` directory
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
         if std::fs::metadata(&src_dir).is_err() {
             std::fs::create_dir(&src_dir)?;
@@ -283,7 +262,7 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
                 });
             }
         } else {
-            // move the file to src
+            // move the other folders to src
             let dest = src_dir.join(entry.file_name());
             std::fs::rename(entry.path(), dest.clone())?;
             remappings.push(Remapping {
@@ -295,7 +274,7 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
     }
 
     // remove the temporary directory
-    std::fs::remove_dir_all(tmp_dump_dir)?;
+    // std::fs::remove_dir_all(tmp_dump_dir)?;
 
     Ok(remappings.into_iter().map(|r| r.into_relative(&root)).collect())
 }
@@ -367,5 +346,4 @@ mod tests {
         args.run().await.unwrap();
         assert_successful_compilation(&project_root);
     }
-    
 }
