@@ -75,7 +75,7 @@ where
     L: TrieLayout,
 {
     if proof.is_empty() {
-        return Err(VerifyError::IncompleteProof)
+        return Err(VerifyError::IncompleteProof);
     }
     let key = NibbleSlice::new(raw_key);
     process_node::<L>(Some(root), &proof[0], key, expected_value, &proof[1..])
@@ -93,13 +93,13 @@ where
 {
     if let Some(value) = expected_value {
         if encoded_node == value {
-            return Ok(())
+            return Ok(());
         }
     }
     if let Some(expected) = expected_node_hash {
         let calculated_node_hash = <L::Hash as Hasher>::hash(encoded_node);
         if calculated_node_hash != *expected {
-            return Err(VerifyError::HashMismatch(calculated_node_hash))
+            return Err(VerifyError::HashMismatch(calculated_node_hash));
         }
     }
     let node = <L::Codec as NodeCodec>::decode(encoded_node).map_err(VerifyError::DecodeError)?;
@@ -144,9 +144,9 @@ where
     L: TrieLayout,
 {
     if key != nib && expected_value.is_none() {
-        return Ok(())
+        return Ok(());
     } else if key != nib {
-        return Err(VerifyError::NonExistingValue(key))
+        return Err(VerifyError::NonExistingValue(key));
     }
     match_value::<L>(Some(data), key, expected_value, proof)
 }
@@ -161,9 +161,9 @@ where
     L: TrieLayout,
 {
     if !key.starts_with(nib) && expected_value.is_none() {
-        return Ok(())
+        return Ok(());
     } else if !key.starts_with(nib) {
-        return Err(VerifyError::NonExistingValue(key))
+        return Err(VerifyError::NonExistingValue(key));
     }
     key.advance(nib.len());
 
@@ -191,9 +191,9 @@ where
     L: TrieLayout,
 {
     if !key.starts_with(&nib) && expected_value.is_none() {
-        return Ok(())
+        return Ok(());
     } else if !key.starts_with(&nib) && expected_value.is_some() {
-        return Err(VerifyError::NonExistingValue(key))
+        return Err(VerifyError::NonExistingValue(key));
     }
     key.advance(nib.len());
 

@@ -1128,13 +1128,13 @@ fn uint_assert_approx_eq_rel(
             right,
             max_delta,
             real_delta: EqRelDelta::Undefined,
-        })))
+        })));
     }
 
     let delta = get_delta_uint(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        right;
+        .ok_or(EqRelAssertionError::Overflow)?
+        / right;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -1159,14 +1159,14 @@ fn int_assert_approx_eq_rel(
             right,
             max_delta,
             real_delta: EqRelDelta::Undefined,
-        })))
+        })));
     }
 
     let (_, abs_right) = right.into_sign_and_abs();
     let delta = get_delta_int(left, right)
         .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        abs_right;
+        .ok_or(EqRelAssertionError::Overflow)?
+        / abs_right;
 
     if delta <= max_delta {
         Ok(Default::default())

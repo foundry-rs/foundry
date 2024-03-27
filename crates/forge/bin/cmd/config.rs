@@ -36,7 +36,7 @@ impl ConfigArgs {
             for warning in fix_tomls() {
                 cli_warn!("{warning}");
             }
-            return Ok(())
+            return Ok(());
         }
 
         let config = self

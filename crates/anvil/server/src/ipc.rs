@@ -48,7 +48,7 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
             Ok(connections) => connections,
             Err(err) => {
                 error!(%err, "Failed to create IPC listener");
-                return Err(err)
+                return Err(err);
             }
         };
 
@@ -156,7 +156,7 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
                 return match String::from_utf8(bts.as_ref().to_vec()) {
                     Ok(val) => Ok(Some(val)),
                     Err(_) => Ok(None),
-                }
+                };
             }
         }
         Ok(None)

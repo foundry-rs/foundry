@@ -125,7 +125,7 @@ impl FeeManager {
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
         if self.base_fee().is_zero() {
-            return 0
+            return 0;
         }
         calculate_next_block_base_fee(
             gas_used.to::<u64>(),
@@ -140,22 +140,22 @@ pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u6
     let gas_target = gas_limit / EIP1559_ELASTICITY_MULTIPLIER;
 
     if gas_used == gas_target {
-        return base_fee
+        return base_fee;
     }
     if gas_used > gas_target {
         let gas_used_delta = gas_used - gas_target;
         let base_fee_delta = std::cmp::max(
             1,
-            base_fee as u128 * gas_used_delta as u128 /
-                gas_target as u128 /
-                BASE_FEE_CHANGE_DENOMINATOR as u128,
+            base_fee as u128 * gas_used_delta as u128
+                / gas_target as u128
+                / BASE_FEE_CHANGE_DENOMINATOR as u128,
         );
         base_fee + (base_fee_delta as u64)
     } else {
         let gas_used_delta = gas_target - gas_used;
-        let base_fee_per_gas_delta = base_fee as u128 * gas_used_delta as u128 /
-            gas_target as u128 /
-            BASE_FEE_CHANGE_DENOMINATOR as u128;
+        let base_fee_per_gas_delta = base_fee as u128 * gas_used_delta as u128
+            / gas_target as u128
+            / BASE_FEE_CHANGE_DENOMINATOR as u128;
 
         base_fee.saturating_sub(base_fee_per_gas_delta as u64)
     }
@@ -288,7 +288,7 @@ impl FeeHistoryService {
                     for (gas_used, effective_reward) in transactions.iter().cloned() {
                         sum_gas += gas_used;
                         if target_gas <= sum_gas {
-                            return Some(effective_reward)
+                            return Some(effective_reward);
                         }
                     }
                     None
@@ -401,7 +401,7 @@ impl FeeDetails {
                 if let Some(max_priority) = max_priority {
                     let max_fee = max_fee.unwrap_or_default();
                     if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput)
+                        return Err(BlockchainError::InvalidFeeInput);
                     }
                 }
                 Ok(FeeDetails {

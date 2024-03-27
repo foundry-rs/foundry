@@ -1115,7 +1115,7 @@ pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
             path.with_extension(format!("tty.{ext}"))
         } else {
             path.with_extension("tty")
-        }
+        };
     }
     path.to_path_buf()
 }

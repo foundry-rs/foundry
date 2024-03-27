@@ -198,7 +198,7 @@ impl VerifyArgs {
             let args =
                 EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
             println!("{}", args.source);
-            return Ok(())
+            return Ok(());
         }
 
         let verifier_url = self.verifier.verifier_url.clone();

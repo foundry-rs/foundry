@@ -157,7 +157,7 @@ impl PendingTransactions {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(Box::new(
                     tx.transaction.as_ref().clone(),
-                )))
+                )));
             }
         }
 
@@ -343,7 +343,7 @@ impl Iterator for TransactionsIterator {
                 }
             }
 
-            return Some(best.transaction)
+            return Some(best.transaction);
         }
     }
 }
@@ -463,7 +463,7 @@ impl ReadyTransactions {
 
         // early exit if we are not replacing anything.
         if remove_hashes.is_empty() {
-            return Ok((Vec::new(), Vec::new()))
+            return Ok((Vec::new(), Vec::new()));
         }
 
         // check if we're replacing the same transaction and if it can be replaced
@@ -480,7 +480,7 @@ impl ReadyTransactions {
                     // check if underpriced
                     if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
-                        return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
+                        return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())));
                     } else {
                         trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                     }
