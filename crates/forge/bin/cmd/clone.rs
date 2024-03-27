@@ -74,7 +74,7 @@ impl CloneArgs {
         fs::remove_file(root.join("script/Counter.s.sol"))?;
 
         // update configuration
-        Config::update_at(root, |config, doc| {
+        Config::update_at(root.clone(), |config, doc| {
             update_config_by_metadata(config, doc, &meta, &remappings).is_ok()
         })?;
 
@@ -288,4 +288,48 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
     std::fs::remove_dir_all(tmp_dump_dir)?;
 
     Ok(remappings)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::CloneArgs;
+    use foundry_common::compile::ProjectCompiler;
+    use foundry_config::Config;
+    use tempfile;
+
+    fn assert_successful_compilation(root: &PathBuf) {
+        println!("project_root: {:#?}", root);
+        // change directory to the root
+        std::env::set_current_dir(root).unwrap();
+        let config = Config::load();
+        let project = config.project().unwrap();
+        let compiler = ProjectCompiler::new();
+        let _ = compiler.compile(&project).expect("compilation failure");
+    }
+
+    #[tokio::test]
+    async fn test_clone_single_file_contract() {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let args = CloneArgs {
+            address: "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".to_string(),
+            root: project_root.clone(),
+            etherscan: Default::default(),
+        };
+        args.run().await.unwrap();
+        assert_successful_compilation(&project_root);
+    }
+
+    #[tokio::test]
+    async fn test_clone_contract_with_optimization_details() {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let args = CloneArgs {
+            address: "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".to_string(),
+            root: project_root.clone(),
+            etherscan: Default::default(),
+        };
+        args.run().await.unwrap();
+        assert_successful_compilation(&project_root);
+    }
 }
