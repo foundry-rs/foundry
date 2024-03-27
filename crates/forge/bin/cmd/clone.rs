@@ -2,13 +2,12 @@ use std::{fs::read_dir, path::PathBuf};
 
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_compilers::artifacts::Settings;
-use foundry_compilers::remappings::Remapping;
-use foundry_compilers::ProjectPathsConfig;
+use foundry_compilers::remappings::{RelativeRemapping, Remapping};
 use foundry_config::Config;
 use toml_edit;
 
@@ -59,13 +58,6 @@ impl CloneArgs {
         // note that at this point, the root directory must have been created
         let root = dunce::canonicalize(root)?;
 
-        // dump sources
-        let remappings = dump_sources(&meta, root.clone())?;
-        let remappings_content =
-            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
-        // write the remappings to the root directory
-        fs::write(root.join("remappings.txt"), remappings_content)?;
-
         // remove the unnecessary example contracts
         // XXX (ZZ): this is a temporary solution until we have a proper way to remove contracts,
         // e.g., add a field in the InitArgs to control the example contract generation
@@ -73,9 +65,22 @@ impl CloneArgs {
         fs::remove_file(root.join("test/Counter.t.sol"))?;
         fs::remove_file(root.join("script/Counter.s.sol"))?;
 
-        // update configuration
+        // dump sources and update the remapping in configuration
+        let remappings = dump_sources(&meta, root.clone())?;
         Config::update_at(root.clone(), |config, doc| {
-            update_config_by_metadata(config, doc, &meta, &remappings).is_ok()
+            let profile = config.profile.as_str().as_str();
+            let mut remapping_array = toml_edit::Array::new();
+            for r in remappings {
+                remapping_array.push(r.to_string());
+            }
+            doc[Config::PROFILE_SECTION][profile]["remappings"] = toml_edit::value(remapping_array);
+
+            true
+        })?;
+
+        // update configuration
+        Config::update_at(root, |config, doc| {
+            update_config_by_metadata(config, doc, &meta).is_ok()
         })?;
 
         Ok(())
@@ -107,7 +112,6 @@ fn update_config_by_metadata(
     config: &Config,
     doc: &mut toml_edit::Document,
     meta: &Metadata,
-    remappings: &Vec<Remapping>,
 ) -> Result<()> {
     let profile = config.profile.as_str().as_str();
 
@@ -145,12 +149,12 @@ fn update_config_by_metadata(
         evm_version,
         via_ir,
         stop_after,
-        remappings: metadata_remappings,
+        remappings,
         metadata,
         ..
     } = meta.settings()?;
     eyre::ensure!(stop_after.is_none(), "stop_after should be None");
-    eyre::ensure!(metadata_remappings.is_empty(), "remappings should be empty");
+    eyre::ensure!(remappings.is_empty(), "remappings should be empty");
 
     update_if_needed!(["evm_version"], evm_version.map(|v| v.to_string()));
     update_if_needed!(["via_ir"], via_ir);
@@ -194,7 +198,7 @@ fn update_config_by_metadata(
     }
 
     // apply remapping on libraries
-    let path_config = ProjectPathsConfig::builder().remappings(remappings.clone()).build()?;
+    let path_config = config.project_paths();
     libraries = libraries.with_applied_remappings(&path_config);
 
     // update libraries
@@ -218,9 +222,15 @@ fn update_config_by_metadata(
 /// The sources are dumped to the `src` directory.
 /// The library sources are dumped to the `lib` directory.
 /// IO errors may be returned.
-fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
-    let lib_dir = root.join("lib");
-    let src_dir = root.join("src");
+fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>> {
+    // get config
+    let config = Config::load_with_root(root.clone());
+
+    let path_config = config.project_paths();
+    let lib_dir = root
+        .join(path_config.libraries.get(0).ok_or_eyre("no library path found")?)
+        .canonicalize()?;
+    let src_dir = root.join(path_config.sources).canonicalize()?;
     let contract_name = meta.contract_name.clone();
     let source_tree = meta.source_tree();
 
@@ -244,13 +254,13 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
             if std::fs::metadata(&lib_dir).is_err() {
                 std::fs::create_dir(&lib_dir)?;
             }
-            let dest = root.join("lib").join(entry.file_name());
-            std::fs::rename(entry.path(), dest)?;
+            let dest = lib_dir.join(entry.file_name());
+            std::fs::rename(entry.path(), dest.clone())?;
             // add remapping entry
             remappings.push(Remapping {
                 context: None,
                 name: entry.file_name().to_string_lossy().to_string(),
-                path: format!("lib/{}", entry.file_name().to_string_lossy()),
+                path: dest.to_string_lossy().to_string(),
             });
         }
     }
@@ -265,21 +275,21 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
             for e in read_dir(entry.path())? {
                 let e = e?;
                 let dest = src_dir.join(e.file_name());
-                std::fs::rename(e.path(), dest)?;
+                std::fs::rename(e.path(), dest.clone())?;
                 remappings.push(Remapping {
                     context: None,
                     name: e.file_name().to_string_lossy().to_string(),
-                    path: format!("src/{}", e.file_name().to_string_lossy()),
+                    path: dest.to_string_lossy().to_string(),
                 });
             }
         } else {
             // move the file to src
             let dest = src_dir.join(entry.file_name());
-            std::fs::rename(entry.path(), dest)?;
+            std::fs::rename(entry.path(), dest.clone())?;
             remappings.push(Remapping {
                 context: None,
                 name: entry.file_name().to_string_lossy().to_string(),
-                path: format!("src/{}", entry.file_name().to_string_lossy()),
+                path: dest.to_string_lossy().to_string(),
             });
         }
     }
@@ -287,7 +297,7 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
     // remove the temporary directory
     std::fs::remove_dir_all(tmp_dump_dir)?;
 
-    Ok(remappings)
+    Ok(remappings.into_iter().map(|r| r.into_relative(&root)).collect())
 }
 
 #[cfg(test)]
