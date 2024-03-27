@@ -77,6 +77,8 @@ solang-parser.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["time"] }
+toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.21"
 watchexec = "2.3.2"
 evm-disassembler.workspace = true
 rustc-hash.workspace = true
