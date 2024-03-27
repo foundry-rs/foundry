@@ -225,8 +225,7 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy =
-            self.tx.legacy || Chain::from(chain).is_legacy();
+        let is_legacy = self.tx.legacy || Chain::from(chain).is_legacy();
 
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);

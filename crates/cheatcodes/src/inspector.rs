@@ -1448,12 +1448,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ecx.journaled_state.load_account(address, &mut ecx.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
-                            create_access.deployedCode = created_acc
-                                .info
-                                .code
-                                .clone()
-                                .unwrap_or_default()
-                                .original_bytes();
+                            create_access.deployedCode =
+                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
                         }
                     }
                 }
