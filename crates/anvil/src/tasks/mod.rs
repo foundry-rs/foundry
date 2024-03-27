@@ -53,13 +53,14 @@ impl TaskManager {
     ///
     /// ```
     /// use anvil::{spawn, NodeConfig};
-    /// use ethers::providers::Provider;
-    /// use std::sync::Arc;
+    /// use alloy_provider::RootProvider;
+    /// use alloy_network::Ethereum;
+    /// 
     /// # async fn t() {
     /// let endpoint = "http://....";
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some(endpoint))).await;
     ///
-    /// let provider = Arc::new(Provider::try_from(endpoint).unwrap());
+    /// let provider = RootProvider::<Ethereum, _>::connect_builtin(endpoint).await.unwrap();
     ///
     /// handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
     /// # }
@@ -112,11 +113,13 @@ impl TaskManager {
     ///
     /// ```
     /// use anvil::{spawn, NodeConfig};
-    /// use ethers::providers::Provider;
+    /// use alloy_provider::RootProvider;
+    /// use alloy_network::Ethereum;
+    /// 
     /// # async fn t() {
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
     ///
-    /// let provider = Provider::connect("ws://...").await.unwrap();
+    /// let provider = RootProvider::<Ethereum, _>::connect_builtin("ws://...").await.unwrap();
     ///
     /// handle.task_manager().spawn_reset_on_subscribed_blocks(provider, api);
     ///
