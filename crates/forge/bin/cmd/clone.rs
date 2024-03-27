@@ -8,6 +8,7 @@ use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_compilers::artifacts::Settings;
 use foundry_compilers::remappings::Remapping;
+use foundry_compilers::ProjectPathsConfig;
 use foundry_config::Config;
 use toml_edit;
 
@@ -61,7 +62,7 @@ impl CloneArgs {
         // dump sources
         let remappings = dump_sources(&meta, root.clone())?;
         let remappings_content =
-            remappings.into_iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
         // write the remappings to the root directory
         fs::write(root.join("remappings.txt"), remappings_content)?;
 
@@ -74,7 +75,7 @@ impl CloneArgs {
 
         // update configuration
         Config::update_at(root, |config, doc| {
-            update_config_by_metadata(config, doc, &meta).is_ok()
+            update_config_by_metadata(config, doc, &meta, &remappings).is_ok()
         })?;
 
         Ok(())
@@ -106,6 +107,7 @@ fn update_config_by_metadata(
     config: &Config,
     doc: &mut toml_edit::Document,
     meta: &Metadata,
+    remappings: &Vec<Remapping>,
 ) -> Result<()> {
     let profile = config.profile.as_str().as_str();
 
@@ -139,16 +141,16 @@ fn update_config_by_metadata(
     // it seems they do not have impacts on the actual compilation
     let Settings {
         optimizer,
-        libraries,
+        mut libraries,
         evm_version,
         via_ir,
         stop_after,
-        remappings,
+        remappings: metadata_remappings,
         metadata,
         ..
     } = meta.settings()?;
     eyre::ensure!(stop_after.is_none(), "stop_after should be None");
-    eyre::ensure!(remappings.is_empty(), "remappings should be empty");
+    eyre::ensure!(metadata_remappings.is_empty(), "remappings should be empty");
 
     update_if_needed!(["evm_version"], evm_version.map(|v| v.to_string()));
     update_if_needed!(["via_ir"], via_ir);
@@ -191,6 +193,10 @@ fn update_config_by_metadata(
         }
     }
 
+    // apply remapping on libraries
+    let path_config = ProjectPathsConfig::builder().remappings(remappings.clone()).build()?;
+    libraries = libraries.with_applied_remappings(&path_config);
+
     // update libraries
     let mut lib_array = toml_edit::Array::new();
     for (path_to_lib, info) in libraries.libs {
@@ -228,6 +234,8 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
     // 0. we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
     let mut remappings: Vec<Remapping> = Remapping::find_many(lib_dir.clone());
+    // we also load the original remappings from the metadata
+    remappings.extend(meta.settings()?.remappings);
 
     // 1. move library sources to the `lib` directory (those with names starting with `@`)
     for entry in read_dir(tmp_dump_dir.join(contract_name.clone()))? {
