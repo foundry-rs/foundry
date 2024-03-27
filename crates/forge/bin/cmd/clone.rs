@@ -51,7 +51,7 @@ impl CloneArgs {
         }
 
         // let's try to init the project with default init args
-        let init_args = InitArgs { root: root.clone(), vscode: true, ..Default::default() };
+        let init_args = InitArgs { root: root.clone(), ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
         // canonicalize the root path
@@ -225,7 +225,10 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<Remapping>> {
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
 
     // then we move the sources to the correct directories
-    let mut remappings: Vec<Remapping> = vec![];
+    // 0. we will first load existing remappings if necessary
+    //  make sure this happens before dumping sources
+    let mut remappings: Vec<Remapping> = Remapping::find_many(lib_dir.clone());
+
     // 1. move library sources to the `lib` directory (those with names starting with `@`)
     for entry in read_dir(tmp_dump_dir.join(contract_name.clone()))? {
         let entry = entry?;
