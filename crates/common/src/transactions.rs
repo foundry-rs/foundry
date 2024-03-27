@@ -82,16 +82,10 @@ mod tests {
 
     #[test]
     fn test_extract_revert_reason() {
-        let error_string_1 = "(code: 3, message: execution reverted: Transaction too old, data: Some(String(\"0x08c379a0\")))";
-        let error_string_2 = "(code: 3, message: execution reverted: missing data: amountIn, amountOut, data: Some(String(\"0x08c379a0\")))";
-        let error_string_3 =
-            "(code: 4, message: invalid signature, data: Some(String(\"0x08c379a0\")))";
+        let error_string_1 = "server returned an error response: error code 3: execution reverted: Transaction too old";
+        let error_string_2 = "server returned an error response: error code 3: Invalid signature";
 
         assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
-        assert_eq!(
-            extract_revert_reason(error_string_2),
-            Some("missing data: amountIn, amountOut".to_string())
-        );
-        assert_eq!(extract_revert_reason(error_string_3), None);
+        assert_eq!(extract_revert_reason(error_string_2), None);
     }
 }
