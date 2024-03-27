@@ -5,6 +5,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::opts::EtherscanOpts;
+use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_compilers::artifacts::Settings;
 use foundry_compilers::remappings::{RelativeRemapping, Remapping};
@@ -67,8 +68,8 @@ impl CloneArgs {
         fs::remove_file(root.join("script/Counter.s.sol"))?;
 
         // dump sources and update the remapping in configuration
-        let remappings = dump_sources(&meta, root.clone())?;
-        Config::update_at(root.clone(), |config, doc| {
+        let remappings = dump_sources(&meta, &root)?;
+        Config::update_at(&root, |config, doc| {
             let profile = config.profile.as_str().as_str();
             let mut remapping_array = toml_edit::Array::new();
             for r in remappings {
@@ -80,9 +81,14 @@ impl CloneArgs {
         })?;
 
         // update configuration
-        Config::update_at(root, |config, doc| {
+        Config::update_at(&root, |config, doc| {
             update_config_by_metadata(config, doc, &meta).is_ok()
         })?;
+
+        // Git add and commit the changes
+        let git = Git::new(&root).quiet(true);
+        git.add(Some("--all"))?;
+        git.commit("chore: forge clone")?;
 
         Ok(())
     }
@@ -222,13 +228,12 @@ fn update_config_by_metadata(
 
 /// Dump the contract sources to the root directory.
 /// The sources are dumped to the `src` directory.
-/// The library sources are dumped to the `lib` directory.
 /// IO errors may be returned.
-fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>> {
+fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping>> {
     // get config
-    let path_config = ProjectPathsConfig::builder().build_with_root(&root);
-    let src_dir = root.join(path_config.sources.clone()).canonicalize()?;
-    let contract_name = meta.contract_name.clone();
+    let path_config = ProjectPathsConfig::builder().build_with_root(root);
+    let src_dir = root.join(&path_config.sources).canonicalize()?;
+    let contract_name = &meta.contract_name;
     let source_tree = meta.source_tree();
 
     // first we dump the sources to a temporary directory
@@ -240,7 +245,7 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
     // then we move the sources to the correct directories
     // 1. we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
-    let mut remappings: Vec<Remapping> = Remapping::find_many(root.clone());
+    let mut remappings: Vec<Remapping> = Remapping::find_many(root);
     // we also load the original remappings from the metadata
     remappings.extend(meta.settings()?.remappings);
 
@@ -255,7 +260,7 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
             for e in read_dir(entry.path())? {
                 let e = e?;
                 let dest = src_dir.join(e.file_name());
-                std::fs::rename(e.path(), dest.clone())?;
+                std::fs::rename(e.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
                     name: e.file_name().to_string_lossy().to_string(),
@@ -265,7 +270,7 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
         } else {
             // move the other folders to src
             let dest = src_dir.join(entry.file_name());
-            std::fs::rename(entry.path(), dest.clone())?;
+            std::fs::rename(entry.path(), &dest)?;
             remappings.push(Remapping {
                 context: None,
                 name: entry.file_name().to_string_lossy().to_string(),
@@ -282,17 +287,23 @@ fn dump_sources(meta: &Metadata, root: PathBuf) -> Result<Vec<RelativeRemapping>
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, thread::sleep, time::Duration};
 
     use super::CloneArgs;
     use foundry_common::compile::ProjectCompiler;
     use foundry_compilers::{Artifact, ProjectCompileOutput};
     use foundry_config::Config;
     use hex::ToHex;
+    use serial_test::serial;
     use tempfile;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
+        // wait 5 second to avoid etherscan rate limit
+        println!("wait for 5 seconds to avoid etherscan rate limit");
+        sleep(Duration::from_secs(5));
+
         println!("project_root: {:#?}", root);
+
         // change directory to the root
         std::env::set_current_dir(root).unwrap();
         let config = Config::load();
@@ -322,6 +333,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
     async fn test_clone_single_file_contract() {
         let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let args = CloneArgs {
@@ -337,6 +349,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
     async fn test_clone_contract_with_optimization_details() {
         let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let args = CloneArgs {
@@ -352,6 +365,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
     async fn test_clone_contract_with_libraries() {
         let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let args = CloneArgs {
@@ -367,6 +381,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
     async fn test_clone_contract_with_metadata() {
         let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let args = CloneArgs {
