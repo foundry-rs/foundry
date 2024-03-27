@@ -52,10 +52,10 @@ impl TaskManager {
     /// block
     ///
     /// ```
-    /// use anvil::{spawn, NodeConfig};
-    /// use alloy_provider::RootProvider;
     /// use alloy_network::Ethereum;
-    /// 
+    /// use alloy_provider::RootProvider;
+    /// use anvil::{spawn, NodeConfig};
+    ///
     /// # async fn t() {
     /// let endpoint = "http://....";
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some(endpoint))).await;
@@ -112,10 +112,10 @@ impl TaskManager {
     /// block
     ///
     /// ```
-    /// use anvil::{spawn, NodeConfig};
-    /// use alloy_provider::RootProvider;
     /// use alloy_network::Ethereum;
-    /// 
+    /// use alloy_provider::RootProvider;
+    /// use anvil::{spawn, NodeConfig};
+    ///
     /// # async fn t() {
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
     ///
