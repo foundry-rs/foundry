@@ -27,6 +27,10 @@ use std::path::PathBuf;
 use tracing::debug;
 use yansi::Paint;
 
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(Chisel, opts, evm_opts);
 
