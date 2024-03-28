@@ -1,7 +1,7 @@
 use clap::Parser;
 use forge::TestFilter;
 use foundry_cli::utils::FoundryPathExt;
-use foundry_common::glob::GlobMatcher;
+use foundry_common::{glob::GlobMatcher, CoverageFilter};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::Config;
 use std::{fmt, path::Path};
@@ -40,6 +40,10 @@ pub struct FilterArgs {
         value_name = "GLOB"
     )]
     pub path_pattern_inverse: Option<GlobMatcher>,
+
+    /// Only show coverage for files that do not match the specified glob pattern.
+    #[arg(long = "ignore-coverage-path", visible_alias = "icp", value_name = "GLOB")]
+    pub path_pattern_ignore_coverage: Option<GlobMatcher>,
 }
 
 impl FilterArgs {
@@ -73,6 +77,10 @@ impl FilterArgs {
         if self.path_pattern_inverse.is_none() {
             self.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
+        if self.path_pattern_ignore_coverage.is_none() {
+            self.path_pattern_ignore_coverage =
+                config.path_pattern_ignore_coverage.clone().map(Into::into);
+        }
         ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
     }
 }
@@ -86,6 +94,10 @@ impl fmt::Debug for FilterArgs {
             .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
+            .field(
+                "ignore-coverage-path",
+                &self.path_pattern_ignore_coverage.as_ref().map(|g| g.as_str()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -97,10 +109,10 @@ impl FileFilter for FilterArgs {
     /// [`FoundryPathExt::is_sol_test()`].
     fn is_match(&self, file: &Path) -> bool {
         if let Some(glob) = &self.path_pattern {
-            return glob.is_match(file)
+            return glob.is_match(file);
         }
         if let Some(glob) = &self.path_pattern_inverse {
-            return !glob.is_match(file)
+            return !glob.is_match(file);
         }
         file.is_sol_test()
     }
@@ -141,6 +153,16 @@ impl TestFilter for FilterArgs {
     }
 }
 
+impl CoverageFilter for FilterArgs {
+    /// Returns true if the file path does not match the ignore coverage pattern.
+    fn matches_file_path(&self, path: &Path) -> bool {
+        if let Some(glob) = &self.path_pattern_ignore_coverage {
+            return !glob.is_match(path);
+        }
+        true
+    }
+}
+
 impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(p) = &self.test_pattern {
@@ -160,6 +182,9 @@ impl fmt::Display for FilterArgs {
         }
         if let Some(p) = &self.path_pattern_inverse {
             writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
+        }
+        if let Some(p) = &self.path_pattern_ignore_coverage {
+            writeln!(f, "\tignore-coverage-path: `{}`", p.as_str())?;
         }
         Ok(())
     }
