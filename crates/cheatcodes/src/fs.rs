@@ -422,10 +422,9 @@ fn prompt(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Bytes;
-
     use super::*;
     use crate::CheatsConfig;
+    use alloy_primitives::Bytes;
     use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {

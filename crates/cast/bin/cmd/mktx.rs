@@ -2,7 +2,7 @@ use crate::tx;
 use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},

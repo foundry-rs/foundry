@@ -11,7 +11,7 @@ use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
-    ens::{lookup_address, resolve_name},
+    ens::ProviderEnsExt,
     fmt::{format_tokens, format_uint_exp},
     fs,
     selectors::{
@@ -449,9 +449,9 @@ async fn main() -> Result<()> {
             let provider = utils::get_alloy_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let name = lookup_address(who, &provider).await?;
+            let name = provider.lookup_address(who).await?;
             if verify {
-                let address = resolve_name(&name, &provider).await?;
+                let address = provider.resolve_name(&name).await?;
                 eyre::ensure!(
                     address == who,
                     "Forward lookup verification failed: got `{name:?}`, expected `{who:?}`"
@@ -464,9 +464,9 @@ async fn main() -> Result<()> {
             let provider = utils::get_alloy_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let address = resolve_name(&who, &provider).await?;
+            let address = provider.resolve_name(&who).await?;
             if verify {
-                let name = lookup_address(address, &provider).await?;
+                let name = provider.lookup_address(address).await?;
                 assert_eq!(
                     name, who,
                     "forward lookup verification failed. got {name}, expected {who}"

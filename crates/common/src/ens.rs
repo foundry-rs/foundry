@@ -4,6 +4,7 @@ use alloy_primitives::{address, keccak256, Address, B256};
 use alloy_provider::{Network, Provider};
 use alloy_sol_types::sol;
 use alloy_transport::Transport;
+use async_trait::async_trait;
 use std::str::FromStr;
 
 use self::EnsResolver::EnsResolverInstance;
@@ -33,6 +34,17 @@ pub const ENS_ADDRESS: Address = address!("00000000000C2E074eC69A0dFb2997BA6C7d2
 
 pub const ENS_REVERSE_REGISTRAR_DOMAIN: &str = "addr.reverse";
 
+/// Error type for ENS resolution.
+#[derive(Debug, thiserror::Error)]
+pub enum EnsResolutionError {
+    /// Failed to resolve ENS registry.
+    #[error("Failed to get resolver from ENS registry: {0}")]
+    EnsRegistryResolutionFailed(String),
+    /// Failed to resolve ENS name to an address.
+    #[error("Failed to resolve ENS name to an address: {0}")]
+    EnsResolutionFailed(String),
+}
+
 /// ENS name or Ethereum Address.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NameOrAddress {
@@ -49,7 +61,7 @@ impl NameOrAddress {
         provider: &P,
     ) -> Result<Address, EnsResolutionError> {
         match self {
-            NameOrAddress::Name(name) => resolve_name(name, provider).await,
+            NameOrAddress::Name(name) => provider.resolve_name(name).await,
             NameOrAddress::Address(addr) => Ok(*addr),
         }
     }
@@ -85,15 +97,57 @@ impl FromStr for NameOrAddress {
     }
 }
 
-/// Error type for ENS resolution.
-#[derive(Debug, thiserror::Error)]
-pub enum EnsResolutionError {
-    /// Failed to resolve ENS registry.
-    #[error("Failed to get resolver from ENS registry: {0}")]
-    EnsRegistryResolutionFailed(String),
-    /// Failed to resolve ENS name to an address.
-    #[error("Failed to resolve ENS name to an address: {0}")]
-    EnsResolutionFailed(String),
+#[async_trait]
+pub trait ProviderEnsExt<N: Network, T: Transport + Clone, P: Provider<N, T>> {
+    async fn get_resolver(&self) -> Result<EnsResolverInstance<N, T, &P>, EnsResolutionError>;
+
+    async fn resolve_name(&self, name: &str) -> Result<Address, EnsResolutionError> {
+        let node = namehash(name);
+        let addr = self
+            .get_resolver()
+            .await?
+            .addr(node)
+            .call()
+            .await
+            .map_err(|err| EnsResolutionError::EnsResolutionFailed(err.to_string()))?
+            ._0;
+
+        Ok(addr)
+    }
+
+    async fn lookup_address(&self, address: Address) -> Result<String, EnsResolutionError> {
+        let node = namehash(&reverse_address(address));
+        let name = self
+            .get_resolver()
+            .await?
+            .name(node)
+            .call()
+            .await
+            .map_err(|err| EnsResolutionError::EnsResolutionFailed(err.to_string()))?
+            ._0;
+
+        Ok(name)
+    }
+}
+
+#[async_trait]
+impl<P, N, T> ProviderEnsExt<N, T, P> for P
+where
+    P: Provider<N, T>,
+    N: Network,
+    T: Transport + Clone,
+{
+    async fn get_resolver(&self) -> Result<EnsResolverInstance<N, T, &P>, EnsResolutionError> {
+        let registry = EnsRegistry::new(ENS_ADDRESS, self);
+        let address = registry
+            .resolver(namehash("eth"))
+            .call()
+            .await
+            .map_err(|err| EnsResolutionError::EnsRegistryResolutionFailed(err.to_string()))?
+            ._0;
+
+        Ok(EnsResolverInstance::new(address, self))
+    }
 }
 
 /// Returns the ENS namehash as specified in [EIP-137](https://eips.ethereum.org/EIPS/eip-137)
@@ -116,52 +170,6 @@ pub fn reverse_address(addr: Address) -> String {
     format!("{addr:?}.{ENS_REVERSE_REGISTRAR_DOMAIN}")[2..].to_string()
 }
 
-pub async fn get_resolver<N: Network, T: Transport + Clone, P: Provider<N, T>>(
-    node: B256,
-    provider: &P,
-) -> Result<EnsResolverInstance<N, T, &P>, EnsResolutionError> {
-    let registry = EnsRegistry::new(ENS_ADDRESS, provider);
-    let address = registry
-        .resolver(node)
-        .call()
-        .await
-        .map_err(|err| EnsResolutionError::EnsRegistryResolutionFailed(err.to_string()))?
-        ._0;
-
-    Ok(EnsResolver::new(address, provider))
-}
-
-pub async fn resolve_name<N: Network, T: Transport + Clone, P: Provider<N, T>>(
-    name: &str,
-    provider: &P,
-) -> Result<Address, EnsResolutionError> {
-    let node = namehash(name);
-    let resolver = get_resolver(node, provider).await?;
-    let addr = resolver
-        .addr(node)
-        .call()
-        .await
-        .map_err(|err| EnsResolutionError::EnsResolutionFailed(err.to_string()))?
-        ._0;
-
-    Ok(addr)
-}
-
-pub async fn lookup_address<N: Network, T: Transport + Clone, P: Provider<N, T>>(
-    address: Address,
-    provider: &P,
-) -> Result<String, EnsResolutionError> {
-    let node = namehash(&reverse_address(address));
-    let resolver = get_resolver(node, provider).await?;
-    let name = resolver
-        .name(node)
-        .call()
-        .await
-        .map_err(|err| EnsResolutionError::EnsResolutionFailed(err.to_string()))?
-        ._0;
-
-    Ok(name)
-}
 #[cfg(test)]
 mod test {
     use super::*;
