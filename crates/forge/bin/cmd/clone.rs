@@ -38,7 +38,7 @@ pub struct CloneArgs {
 }
 
 /// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a cloned contract.
-/// The metadata can be serialized to the `clone.toml` file in the cloned project root.
+/// The metadata can be serialized to a metadata file in the cloned project root.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CloneMetadata {
     /// The path to the source file that contains the contract declaration.
@@ -126,8 +126,6 @@ impl CloneArgs {
         let compile_output = compile_project(&root)?;
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(&root)?.to_path_buf();
-        let c = format!("main_artifact: {:#?}", main_artifact);
-        std::fs::write("/tmp/artifact.json", c)?;
         let storage_layout =
             main_artifact.storage_layout.to_owned().expect("storage layout not found");
 
@@ -143,8 +141,12 @@ impl CloneArgs {
             deployer: creation_tx.contract_creator,
             storage_layout,
         };
-        let metadata_content = toml::to_string(&clone_meta)?;
-        fs::write(root.join("clone.toml"), metadata_content)?;
+        let metadata_content = serde_json::to_string(&clone_meta)?;
+        let metadata_file = root.join(".clone.meta");
+        fs::write(&metadata_file, metadata_content)?;
+        let mut perms = std::fs::metadata(&metadata_file)?.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&metadata_file, perms)?;
 
         // Git add and commit the changes if enabled
         if enable_git {
