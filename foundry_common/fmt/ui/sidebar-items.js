@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NAME_COLUMN_LEN"],"enum":["EthValue"],"fn":["get_pretty_block_attr","get_pretty_tx_attr","get_pretty_tx_receipt_attr","pretty_block_basics","to_bytes"],"mod":["temp_ethers"],"trait":["UIfmt"]};

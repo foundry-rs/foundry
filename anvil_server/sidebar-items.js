@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["serve_http","serve_http_ws"],"mod":["config","error","handler","ipc","pubsub","ws"],"struct":["PubSubContext","ServerConfig"],"trait":["PubSubRpcHandler","RpcHandler"],"type":["AnvilServer"]};

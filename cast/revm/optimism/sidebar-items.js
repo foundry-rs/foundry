@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BASE_FEE_RECIPIENT","L1_BLOCK_CONTRACT","L1_FEE_RECIPIENT"],"fn":["deduct_caller","end","last_frame_return","load_accounts","optimism_handle_register","output","reward_beneficiary","validate_env","validate_tx_against_state"],"struct":["L1BlockInfo"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ExecutionHandler"],"type":["FrameCallHandle","FrameCallReturnHandle","FrameCreateHandle","FrameCreateReturnHandle","InsertCallOutcomeHandle","InsertCreateOutcomeHandle","LastFrameReturnHandle"]};

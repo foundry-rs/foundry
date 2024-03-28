@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ArtifactFilters","InvariantContract","RandomCallGenerator","SenderFilters"],"type":["BasicTxDetails","FuzzRunIdentifiedContracts","TargetedContracts"]};

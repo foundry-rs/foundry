@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CONTRACT_SIZE_LIMIT"],"enum":["SkipBuildFilter"],"fn":["compile_from_source","compile_target_with_filter","deployed_contract_size","etherscan_project","is_match_exclude"],"struct":["ContractInfo","ContractSources","ProjectCompiler","SizeReport","SkipBuildFilters"]};

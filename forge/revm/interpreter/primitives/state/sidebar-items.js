@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Account","AccountInfo","AccountStatus","StorageSlot"],"type":["State","Storage","TransientStorage"]};

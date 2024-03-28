@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"foundry_common":[["impl&lt;S&gt; Layer&lt;S&gt; for <a class=\"struct\" href=\"foundry_common/provider/tower/struct.RetryBackoffLayer.html\" title=\"struct foundry_common::provider::tower::RetryBackoffLayer\">RetryBackoffLayer</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

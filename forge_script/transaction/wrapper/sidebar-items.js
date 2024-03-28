@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["serialize_addr","serialize_logs","serialize_opt_addr","serialize_receipts","serialize_vec_with_wrapped"],"struct":["WrappedLog","WrappedTransactionReceipt"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TxStatus"],"fn":["check_tx_status","clear_pendings","wait_for_pending"]};

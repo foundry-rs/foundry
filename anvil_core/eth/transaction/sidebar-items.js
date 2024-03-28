@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TypedReceipt","TypedTransaction","TypedTransactionRequest"],"fn":["impersonated_signature","to_alloy_access_list","to_alloy_transaction_with_hash_and_sender","to_eip_access_list","transaction_request_to_typed"],"mod":["optimism"],"struct":["MaybeImpersonatedTransaction","PendingTransaction","TransactionEssentials","TransactionInfo"]};
