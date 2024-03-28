@@ -14,6 +14,7 @@ use foundry_config::Config;
 use toml_edit;
 
 use super::init::InitArgs;
+use super::install::DependencyInstallOpts;
 
 /// CLI arguments for `forge clone`.
 #[derive(Clone, Debug, Parser)]
@@ -25,13 +26,17 @@ pub struct CloneArgs {
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
     root: PathBuf,
 
+    /// Enable git for the cloned project, default is false.
+    #[arg(long)]
+    pub enable_git: bool,
+
     #[command(flatten)]
     etherscan: EtherscanOpts,
 }
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let CloneArgs { address, root, etherscan } = self;
+        let CloneArgs { address, root, enable_git, etherscan } = self;
 
         // parse the contract address
         let contract_address: Address = address.parse()?;
@@ -53,7 +58,9 @@ impl CloneArgs {
         }
 
         // let's try to init the project with default init args
-        let init_args = InitArgs { root: root.clone(), ..Default::default() };
+        let opts =
+            DependencyInstallOpts { no_git: !enable_git, ..Default::default() };
+        let init_args = InitArgs { root: root.clone(), opts, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
         // canonicalize the root path
@@ -85,10 +92,12 @@ impl CloneArgs {
             update_config_by_metadata(config, doc, &meta).is_ok()
         })?;
 
-        // Git add and commit the changes
-        let git = Git::new(&root).quiet(true);
-        git.add(Some("--all"))?;
-        git.commit("chore: forge clone")?;
+        // Git add and commit the changes if enabled
+        if enable_git {
+            let git = Git::new(&root).quiet(true);
+            git.add(Some("--all"))?;
+            git.commit("chore: forge clone")?;
+        }
 
         Ok(())
     }
@@ -340,6 +349,7 @@ mod tests {
             address: "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
             pick_creation_info(&args.address).expect("creation code not found");
@@ -356,6 +366,7 @@ mod tests {
             address: "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
             pick_creation_info(&args.address).expect("creation code not found");
@@ -372,6 +383,7 @@ mod tests {
             address: "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
             pick_creation_info(&args.address).expect("creation code not found");
@@ -388,6 +400,7 @@ mod tests {
             address: "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
             pick_creation_info(&args.address).expect("creation code not found");
