@@ -258,6 +258,18 @@ impl CoverageArgs {
             )?
             .analyze()?;
 
+            // Build helper mapping
+            // source_id -> [item_id]
+            let items_by_source_id = source_analysis
+                .items
+                .iter()
+                .enumerate()
+                .map(|(item_id, item)| (item.loc.source_id, item_id))
+                .fold(HashMap::new(), |mut map, (source_id, item_id)| {
+                    map.entry(source_id).or_insert_with(Vec::new).push(item_id);
+                    map
+                });
+
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
                 .filter_map(|(contract_id, (_, deployed_source_map))| {
@@ -269,6 +281,7 @@ impl CoverageArgs {
                             deployed_source_map,
                             &ic_pc_maps.get(contract_id)?.1,
                             &source_analysis.items,
+                            &items_by_source_id,
                         ),
                     ))
                 })

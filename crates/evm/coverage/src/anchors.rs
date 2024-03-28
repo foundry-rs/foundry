@@ -15,22 +15,12 @@ pub fn find_anchors(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
     items: &[CoverageItem],
+    items_by_source_id: &HashMap<usize, Vec<usize>>,
 ) -> Vec<ItemAnchor> {
-    // Build helper mapping
-    // source_id -> [item_id]
-    let items_map = items
-        .iter()
-        .enumerate()
-        .map(|(item_id, item)| (item.loc.source_id, item_id))
-        .fold(HashMap::new(), |mut map, (source_id, item_id)| {
-            map.entry(source_id).or_insert_with(Vec::new).push(item_id);
-            map
-        });
-
     // Prepare coverage items from all sources referenced in the source map
     let potential_item_ids = source_map
         .iter()
-        .filter_map(|element| Some(items_map.get(&(element.index? as usize))?))
+        .filter_map(|element| Some(items_by_source_id.get(&(element.index? as usize))?))
         .flatten()
         .collect::<HashSet<_>>();
 
