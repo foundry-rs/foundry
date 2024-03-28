@@ -4,12 +4,16 @@ use crate::eth::{
         db::{MaybeHashDatabase, StateDb},
         mem::cache::DiskStateCache,
     },
+    error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
 use alloy_network::Sealable;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_trace_types::{
-    geth::{DefaultFrame, GethDefaultTracingOptions},
+    geth::{
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+        GethTrace, NoopFrame,
+    },
     parity::LocalizedTransactionTrace,
 };
 use alloy_rpc_types::{
@@ -19,9 +23,10 @@ use anvil_core::eth::{
     block::{Block, PartialHeader},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
+use anvil_rpc::error::RpcError;
 use foundry_evm::{
     revm::primitives::Env,
-    traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
+    traces::{FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
 };
 use parking_lot::RwLock;
 use std::{
@@ -415,13 +420,46 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
-        GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
-            .geth_traces(
-                self.receipt.gas_used().to::<u64>(),
-                self.info.out.clone().unwrap_or_default().0.into(),
-                opts,
-            )
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
+
+        if let Some(tracer) = tracer {
+            return match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::FourByteTracer => {
+                        let inspector = FourByteInspector::default();
+                        return Ok(FourByteFrame::from(inspector).into())
+                    }
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        match tracer_config.into_call_config() {
+                            Ok(call_config) => Ok(GethTraceBuilder::new(
+                                self.info.traces.clone(),
+                                TracingInspectorConfig::from_geth_config(&config),
+                            )
+                            .geth_call_traces(call_config, self.receipt.gas_used().to::<u64>())
+                            .into()),
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        }
+                    }
+                    GethDebugBuiltInTracerType::PreStateTracer => Ok(NoopFrame::default().into()),
+                    GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
+                    GethDebugBuiltInTracerType::MuxTracer => Ok(NoopFrame::default().into()),
+                },
+                GethDebugTracerType::JsTracer(_code) => return Ok(NoopFrame::default().into()),
+            }
+        }
+
+        // default structlog tracer
+        Ok(GethTraceBuilder::new(
+            self.info.traces.clone(),
+            TracingInspectorConfig::from_geth_config(&config),
+        )
+        .geth_traces(
+            self.receipt.gas_used().to::<u64>(),
+            self.info.out.clone().unwrap_or_default().0.into(),
+            opts.config,
+        )
+        .into())
     }
 }
 
