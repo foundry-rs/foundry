@@ -1,4 +1,5 @@
 use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
+use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rustc_hash::FxHashMap;
 use semver::Version;
@@ -485,7 +486,17 @@ impl SourceAnalyzer {
                     .clone(),
             )?;
 
-            self.items.extend(items);
+            let is_test = items.iter().any(|item| {
+                if let CoverageItemKind::Function { name } = &item.kind {
+                    name.is_test()
+                } else {
+                    false
+                }
+            });
+
+            if !is_test {
+                self.items.extend(items);
+            }
         }
 
         Ok(SourceAnalysis { items: self.items })
