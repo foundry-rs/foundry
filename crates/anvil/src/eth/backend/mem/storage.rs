@@ -6,7 +6,6 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_network::Sealable;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDefaultTracingOptions},
@@ -239,7 +238,7 @@ impl BlockchainStorage {
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
-        let genesis_hash = block.header.hash();
+        let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number: U64 = U64::from(0u64);
 

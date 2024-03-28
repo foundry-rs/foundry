@@ -1,7 +1,7 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::Block;
 use eyre::WrapErr;
 use foundry_common::{

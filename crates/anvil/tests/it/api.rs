@@ -5,12 +5,11 @@ use crate::{
     utils::ethers_http_provider,
 };
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
     state::{AccountOverride, StateOverride},
 };
-use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,

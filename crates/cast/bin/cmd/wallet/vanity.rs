@@ -1,5 +1,6 @@
 use alloy_primitives::Address;
-use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address, LocalWallet, Signer};
+use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
+use alloy_signer_wallet::LocalWallet;
 use clap::{builder::TypedValueParser, Parser};
 use eyre::Result;
 use rayon::iter::{self, ParallelIterator};

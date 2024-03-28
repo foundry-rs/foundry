@@ -120,7 +120,6 @@ impl From<Header> for PartialHeader {
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::Sealable;
     use alloy_primitives::{
         b256,
         hex::{self, FromHex},
@@ -257,7 +256,7 @@ mod tests {
             excess_blob_gas: None,
             parent_beacon_block_root: None,
         };
-        assert_eq!(header.hash(), expected_hash);
+        assert_eq!(header.hash_slow(), expected_hash);
     }
 
     #[test]

@@ -1,15 +1,14 @@
 use crate::tx;
+use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
+use alloy_provider::Provider;
+use alloy_signer::Signer;
 use clap::Parser;
-use ethers_core::types::NameOrAddress;
-use ethers_middleware::MiddlewareBuilder;
-use ethers_providers::Middleware;
-use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils,
+    utils::{self, get_alloy_provider},
 };
-use foundry_common::types::ToAlloy;
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::str::FromStr;
 
@@ -45,7 +44,7 @@ pub struct MakeTxArgs {
 #[derive(Debug, Parser)]
 pub enum MakeTxSubcommands {
     /// Use to deploy raw contract bytecode.
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// The initialization bytecode of the contract to deploy.
         code: String,
@@ -78,7 +77,7 @@ impl MakeTxArgs {
         tx::validate_to_address(&code, &to)?;
 
         let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
@@ -86,23 +85,21 @@ impl MakeTxArgs {
         let signer = eth.wallet.signer().await?;
         let from = signer.address();
 
-        tx::validate_from_address(eth.wallet.from, from.to_alloy())?;
+        tx::validate_from_address(eth.wallet.from, from)?;
 
         if resend {
-            tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
+            tx.nonce = Some(provider.get_transaction_count(from, None).await?);
         }
 
-        let provider = provider.with_signer(signer);
+        let provider = get_alloy_provider(&config)?;
 
-        let (mut tx, _) =
+        let (tx, _) =
             tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key).await?;
 
-        // Fill nonce, gas limit, gas price, and max priority fee per gas if needed
-        provider.fill_transaction(&mut tx, None).await?;
+        let tx = tx.build(&EthereumSigner::new(signer)).await?;
 
-        let signature = provider.sign_transaction(&tx, from).await?;
-        let signed_tx = tx.rlp_signed(&signature);
-        println!("{signed_tx}");
+        let signed_tx = hex::encode(tx.encoded_2718());
+        println!("0x{signed_tx}");
 
         Ok(())
     }

@@ -15,7 +15,11 @@ name = "cast"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # lib
@@ -30,12 +34,20 @@ alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
-alloy-providers.workspace = true
+alloy-provider = { workspace = true, features = ["pubsub"] }
+alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
+alloy-json-rpc.workspace = true
 alloy-signer.workspace = true
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-contract.workspace = true
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-network.workspace = true
+alloy-sol-types.workspace = true
+alloy-chains.workspace = true
 
 ethers-core.workspace = true
-ethers-providers.workspace = true
+ethers-contract.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true
@@ -48,16 +60,10 @@ serde_json.workspace = true
 serde.workspace = true
 
 # aws
-rusoto_core = { version = "0.48", default-features = false }
-rusoto_kms = { version = "0.48", default-features = false }
+aws-sdk-kms = { version = "1", default-features = false }
 
 # bin
 foundry-cli.workspace = true
-
-ethers-contract.workspace = true
-ethers-middleware.workspace = true
-ethers-signers.workspace = true
-eth-keystore = "0.5"
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
@@ -86,7 +92,7 @@ criterion = "0.5"
 [features]
 default = ["rustls"]
 rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
-openssl = ["foundry-cli/openssl", "foundry-wallets/openssl"]
+openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 

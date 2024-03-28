@@ -26,7 +26,7 @@ alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = "1.4"
-c-kzg = { version = "0.4.2", features = ["serde"] }
+c-kzg = { version = "1", features = ["serde"] }
 
 # trie
 hash-db = { version = "0.15", default-features = false }

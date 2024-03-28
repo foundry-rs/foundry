@@ -1,39 +1,35 @@
 use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
-use ethers_signers::{HDPath as LedgerHDPath, LocalWallet, TrezorHDPath, WalletError};
+use alloy_primitives::B256;
+use alloy_signer_ledger::HDPath as LedgerHDPath;
+use alloy_signer_trezor::HDPath as TrezorHDPath;
+use alloy_signer_wallet::LocalWallet;
 use eyre::{Context, Result};
 use foundry_config::Config;
 use std::{
     fs,
     path::{Path, PathBuf},
-    str::FromStr,
 };
+
+fn ensure_pk_not_env(pk: &str) -> Result<()> {
+    if !pk.starts_with("0x") && std::env::var(pk).is_ok() {
+        return Err(PrivateKeyError::ExistsAsEnvVar(pk.to_string()).into());
+    }
+    Ok(())
+}
 
 /// Validates and sanitizes user inputs, returning configured [WalletSigner].
 pub fn create_private_key_signer(private_key: &str) -> Result<WalletSigner> {
     let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
-    match LocalWallet::from_str(privk) {
+
+    let Ok(private_key) = hex::decode(privk) else {
+        ensure_pk_not_env(privk)?;
+        eyre::bail!("Failed to decode private key")
+    };
+
+    match LocalWallet::from_bytes(&B256::from_slice(&private_key)) {
         Ok(pk) => Ok(WalletSigner::Local(pk)),
         Err(err) => {
-            // helper closure to check if pk was meant to be an env var, this usually happens if
-            // `$` is missing
-            let ensure_not_env = |pk: &str| {
-                // check if pk was meant to be an env var
-                if !pk.starts_with("0x") && std::env::var(pk).is_ok() {
-                    // SAFETY: at this point we know the user actually wanted to use an env var
-                    // and most likely forgot the `$` anchor, so the
-                    // `private_key` here is an unresolved env var
-                    return Err(PrivateKeyError::ExistsAsEnvVar(pk.to_string()))
-                }
-                Ok(())
-            };
-            match err {
-                WalletError::HexError(err) => {
-                    ensure_not_env(private_key)?;
-                    return Err(PrivateKeyError::InvalidHex(err).into());
-                }
-                WalletError::EcdsaError(_) => ensure_not_env(private_key)?,
-                _ => {}
-            };
+            ensure_pk_not_env(privk)?;
             eyre::bail!("Failed to create wallet from private key: {err}")
         }
     }

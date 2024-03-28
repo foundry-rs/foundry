@@ -94,9 +94,9 @@ impl Cheatcode for mockCallRevert_1Call {
 fn mock_call(
     state: &mut Cheatcodes,
     callee: &Address,
-    cdata: &Vec<u8>,
+    cdata: &Bytes,
     value: Option<&U256>,
-    rdata: &Vec<u8>,
+    rdata: &Bytes,
     ret_type: InstructionResult,
 ) {
     state.mocked_calls.entry(*callee).or_default().insert(

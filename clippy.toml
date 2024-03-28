@@ -1,1 +1,2 @@
 msrv = "1.76"
+ignore-interior-mutability = ["bytes::Bytes", "alloy_primitives::Bytes"]

@@ -18,7 +18,7 @@ use revm::{
     },
     Database, DatabaseCommit, Inspector, JournaledState,
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::BTreeMap};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -213,7 +213,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
 
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), DatabaseError> {
         self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)

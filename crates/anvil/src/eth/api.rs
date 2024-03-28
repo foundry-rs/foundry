@@ -31,11 +31,9 @@ use crate::{
     revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxLegacy;
 use alloy_dyn_abi::TypedData;
-use alloy_network::{Signed, TxKind};
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
-use alloy_rlp::Decodable;
+use alloy_network::eip2718::Decodable2718;
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -903,7 +901,7 @@ impl EthApi {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
+        let requires = required_marker(nonce.to(), on_chain_nonce.to(), from);
         let provides = vec![to_marker(nonce.to::<u64>(), from)];
         debug_assert!(requires != provides);
 
@@ -919,26 +917,11 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
-        let transaction = if data[0] > 0x7f {
-            // legacy transaction
-            match Signed::<TxLegacy>::decode(&mut data) {
-                Ok(transaction) => TypedTransaction::Legacy(transaction),
-                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            }
-        } else {
-            // the [TypedTransaction] requires a valid rlp input,
-            // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
-            // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
-            // version byte
-            let extend = alloy_rlp::encode(data);
-            let tx = match TypedTransaction::decode(&mut &extend[..]) {
-                Ok(transaction) => transaction,
-                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            };
+        let transaction = TypedTransaction::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
-            self.ensure_typed_transaction_supported(&tx)?;
-            tx
-        };
+        self.ensure_typed_transaction_supported(&transaction)?;
+
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
@@ -952,7 +935,7 @@ impl EthApi {
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction = PoolTransaction {
             requires,
-            provides: vec![to_marker(nonce.to::<u64>(), *pending_transaction.sender())],
+            provides: vec![to_marker(nonce, *pending_transaction.sender())],
             pending_transaction,
             priority,
         };
@@ -2000,7 +1983,7 @@ impl EthApi {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
+        let requires = required_marker(nonce.to(), on_chain_nonce.to(), from);
         let provides = vec![to_marker(nonce.to::<u64>(), from)];
 
         self.add_pending_transaction(pending_transaction, requires, provides)
@@ -2480,7 +2463,7 @@ impl EthApi {
         request: TransactionRequest,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
-        let chain_id = request.chain_id.map(|c| c.to::<u64>()).unwrap_or_else(|| self.chain_id());
+        let chain_id = request.chain_id.unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
 
@@ -2539,7 +2522,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_nonce(address, number).await?);
+                    return Ok(fork.get_nonce(address, number).await?.to());
                 }
             }
         }
@@ -2563,7 +2546,7 @@ impl EthApi {
     ) -> Result<(U256, U256)> {
         let highest_nonce =
             self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.map(|n| n.to::<U256>()).unwrap_or(highest_nonce);
+        let nonce = request.nonce.map(U256::from).unwrap_or(highest_nonce);
 
         Ok((nonce, highest_nonce))
     }
@@ -2601,13 +2584,13 @@ impl EthApi {
     }
 }
 
-fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) -> Vec<TxMarker> {
+fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> Vec<TxMarker> {
     if provided_nonce == on_chain_nonce {
         return Vec::new();
     }
-    let prev_nonce = provided_nonce.saturating_sub(U256::from(1));
+    let prev_nonce = provided_nonce.saturating_sub(1);
     if on_chain_nonce <= prev_nonce {
-        vec![to_marker(prev_nonce.to::<u64>(), from)]
+        vec![to_marker(prev_nonce, from)]
     } else {
         Vec::new()
     }
@@ -2684,10 +2667,7 @@ fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP4844(req) => match req.tx().to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
+            TypedTransactionRequest::EIP4844(_) => MIN_TRANSACTION_GAS,
             TypedTransactionRequest::Deposit(req) => match req.kind {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,

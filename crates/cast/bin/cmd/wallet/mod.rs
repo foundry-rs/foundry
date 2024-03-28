@@ -1,13 +1,13 @@
+use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, Signature};
-use alloy_signer::{
+use alloy_signer::Signer;
+use alloy_signer_wallet::{
     coins_bip39::{English, Mnemonic},
-    LocalWallet, MnemonicBuilder, Signer as AlloySigner,
+    LocalWallet, MnemonicBuilder,
 };
 use clap::Parser;
-use ethers_core::types::transaction::eip712::TypedData;
-use ethers_signers::Signer;
 use eyre::{Context, Result};
-use foundry_common::{fs, types::ToAlloy};
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
@@ -258,7 +258,7 @@ impl WalletSubcommands {
                     .signer()
                     .await?;
                 let addr = wallet.address();
-                println!("{}", addr.to_alloy().to_checksum(None));
+                println!("{}", addr.to_checksum(None));
             }
             WalletSubcommands::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
@@ -270,13 +270,13 @@ impl WalletSubcommands {
                         // data is a json string
                         serde_json::from_str(&message)?
                     };
-                    wallet.sign_typed_data(&typed_data).await?
+                    wallet.sign_dynamic_typed_data(&typed_data).await?
                 } else if no_hash {
-                    wallet.sign_hash(&message.parse()?).await?
+                    wallet.sign_hash(&hex::decode(&message)?[..].try_into()?).await?
                 } else {
-                    wallet.sign_message(Self::hex_str_to_bytes(&message)?).await?
+                    wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
-                println!("0x{sig}");
+                println!("0x{}", hex::encode(sig.as_bytes()));
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;
@@ -335,11 +335,11 @@ flag to set your key via:
                 };
 
                 let mut rng = thread_rng();
-                eth_keystore::encrypt_key(
-                    &dir,
+                let (wallet, _) = LocalWallet::encrypt_keystore(
+                    dir,
                     &mut rng,
                     private_key,
-                    &password,
+                    password,
                     Some(&account_name),
                 )?;
                 let address = wallet.address();

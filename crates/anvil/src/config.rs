@@ -16,14 +16,16 @@ use crate::{
     FeeManager, Hardfork,
 };
 use alloy_genesis::Genesis;
+use alloy_network::Ethereum;
 use alloy_primitives::{hex, utils::Unit, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
-use alloy_signer::{
+use alloy_signer::Signer;
+use alloy_signer_wallet::{
     coins_bip39::{English, Mnemonic},
-    LocalWallet, MnemonicBuilder, Signer as AlloySigner,
+    LocalWallet, MnemonicBuilder,
 };
-use alloy_transport::TransportError;
+use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
 use foundry_common::{
     provider::alloy::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
@@ -1231,7 +1233,9 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
-async fn find_latest_fork_block<P: TempProvider>(provider: P) -> Result<u64, TransportError> {
+async fn find_latest_fork_block<P: Provider<Ethereum, T>, T: Transport + Clone>(
+    provider: P,
+) -> Result<u64, TransportError> {
     let mut num = provider.get_block_number().await?;
 
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough

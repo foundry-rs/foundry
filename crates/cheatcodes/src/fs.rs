@@ -382,8 +382,8 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
     };
     Ok(FfiResult {
         exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout,
-        stderr: output.stderr,
+        stdout: encoded_stdout.into(),
+        stderr: output.stderr.into(),
     })
 }
 
@@ -424,6 +424,7 @@ fn prompt(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
+    use alloy_primitives::Bytes;
     use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {
@@ -441,7 +442,7 @@ mod tests {
         let cheats = cheats();
         let args = ["echo".to_string(), hex::encode(msg)];
         let output = ffi(&cheats, &args).unwrap();
-        assert_eq!(output.stdout, msg);
+        assert_eq!(output.stdout, Bytes::from(msg));
     }
 
     #[test]
@@ -450,7 +451,7 @@ mod tests {
         let cheats = cheats();
         let args = ["echo".to_string(), msg.to_string()];
         let output = ffi(&cheats, &args).unwrap();
-        assert_eq!(output.stdout, msg.as_bytes());
+        assert_eq!(output.stdout, Bytes::from(msg.as_bytes()));
     }
 
     #[test]

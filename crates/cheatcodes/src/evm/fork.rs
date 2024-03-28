@@ -1,6 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{B256, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use eyre::WrapErr;
@@ -225,7 +225,7 @@ impl Cheatcode for rpcCall {
         let method: &'static str = Box::new(method.clone()).leak();
         let params_json: serde_json::Value = serde_json::from_str(params)?;
         let result = RuntimeOrHandle::new()
-            .block_on(provider.raw_request(method, params_json))
+            .block_on(provider.raw_request(method.into(), params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
         let result_as_tokens = crate::json::json_value_to_token(&result)
@@ -268,7 +268,7 @@ impl Cheatcode for eth_getLogsCall {
 
         // todo: handle the errors somehow
         let logs = RuntimeOrHandle::new()
-            .block_on(provider.get_logs(filter))
+            .block_on(provider.get_logs(&filter))
             .wrap_err("failed to get logs")?;
 
         let eth_logs = logs

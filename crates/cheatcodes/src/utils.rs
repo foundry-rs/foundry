@@ -2,15 +2,15 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
-use alloy_signer::{
+use alloy_signer::{Signer, SignerSync};
+use alloy_signer_wallet::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalWallet, MnemonicBuilder, Signer, SignerSync,
+    LocalWallet, MnemonicBuilder,
 };
 use alloy_sol_types::SolValue;
-use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, utils::RuntimeOrHandle};
 use k256::{
     ecdsa::SigningKey,
@@ -157,22 +157,22 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-fn encode_vrs(v: u8, r: U256, s: U256) -> Vec<u8> {
-    (U256::from(v), B256::from(r), B256::from(s)).abi_encode()
+fn encode_vrs(sig: alloy_primitives::Signature) -> Vec<u8> {
+    let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
+
+    (U256::from(v), B256::from(sig.r()), B256::from(sig.s())).abi_encode()
 }
 
 pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
 
-    let sig = wallet.sign_hash_sync(*digest)?;
+    let sig = wallet.sign_hash_sync(digest)?;
     let recovered = sig.recover_address_from_prehash(digest)?;
 
     assert_eq!(recovered, wallet.address());
 
-    let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
-
-    Ok(encode_vrs(v, sig.r(), sig.s()))
+    Ok(encode_vrs(sig))
 }
 
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
@@ -206,10 +206,10 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
         .block_on(wallet.sign_hash(digest))
         .map_err(|err| fmt_err!("{err}"))?;
 
-    let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
-    assert_eq!(recovered.to_alloy(), signer);
+    let recovered = sig.recover_address_from_prehash(digest).map_err(|err| fmt_err!("{err}"))?;
+    assert_eq!(recovered, signer);
 
-    Ok(encode_vrs(sig.v as u8, sig.r.to_alloy(), sig.s.to_alloy()))
+    Ok(encode_vrs(sig))
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {

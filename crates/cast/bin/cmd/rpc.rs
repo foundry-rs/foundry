@@ -38,7 +38,7 @@ impl RpcArgs {
         let RpcArgs { raw, method, params, rpc } = self;
 
         let config = Config::from(&rpc);
-        let provider = utils::get_provider(&config)?;
+        let provider = utils::get_alloy_provider(&config)?;
 
         let params = if raw {
             if params.is_empty() {
