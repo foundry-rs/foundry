@@ -2272,7 +2272,6 @@ impl EthApi {
 
         // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > U256::from(1) {
-            // set the gas limit to the midpoint
             request.gas = Some(mid_gas_limit);
             let ethres = self.backend.call_with_state(
                 &state,
