@@ -2216,7 +2216,7 @@ impl EthApi {
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
-        if gas_price > U256::ZERO {
+        if !gas_price.is_zero() {
             if let Some(from) = request.from {
                 let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
                 if let Some(value) = request.value {
@@ -2228,10 +2228,7 @@ impl EthApi {
                 }
                 // amount of gas the sender can afford with the `gas_price`
                 let allowance = available_funds.checked_div(gas_price).unwrap_or_default();
-                if highest_gas_limit > allowance {
-                    trace!(target: "node", "eth_estimateGas capped by limited user funds");
-                    highest_gas_limit = std::cmp::min(highest_gas_limit, allowance);
-                }
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance);
             }
         }
 
