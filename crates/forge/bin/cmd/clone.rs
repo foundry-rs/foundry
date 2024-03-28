@@ -9,9 +9,10 @@ use foundry_cli::opts::EtherscanOpts;
 use foundry_cli::utils::Git;
 use foundry_common::compile::ProjectCompiler;
 use foundry_common::fs;
-use foundry_compilers::artifacts::Settings;
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+use foundry_compilers::artifacts::{Settings, StorageLayout};
 use foundry_compilers::remappings::{RelativeRemapping, Remapping};
-use foundry_compilers::{ProjectCompileOutput, ProjectPathsConfig};
+use foundry_compilers::{ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig};
 use foundry_config::Config;
 use toml_edit;
 
@@ -53,6 +54,8 @@ pub struct CloneMetadata {
     pub creation_transaction: TxHash,
     /// The address of the deployer (caller of the CREATE/CREATE2).
     pub deployer: Address,
+    /// The storage layout of the contract on chain.
+    pub storage_layout: StorageLayout,
 }
 
 impl CloneArgs {
@@ -121,8 +124,12 @@ impl CloneArgs {
 
         // compile the cloned contract
         let compile_output = compile_project(&root)?;
-        let main_file = find_main_file(&compile_output, &meta.contract_name)?;
+        let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(&root)?.to_path_buf();
+        let c = format!("main_artifact: {:#?}", main_artifact);
+        std::fs::write("/tmp/artifact.json", c)?;
+        let storage_layout =
+            main_artifact.storage_layout.to_owned().expect("storage layout not found");
 
         // dump the metadata to the root directory
         std::thread::sleep(etherscan_call_interval);
@@ -134,6 +141,7 @@ impl CloneArgs {
             chain_id: etherscan.chain.unwrap_or_default().id(),
             creation_transaction: creation_tx.transaction_hash,
             deployer: creation_tx.contract_creator,
+            storage_layout,
         };
         let metadata_content = toml::to_string(&clone_meta)?;
         fs::write(root.join("clone.toml"), metadata_content)?;
@@ -343,18 +351,22 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &PathBuf) -> Result<ProjectCompileOutput> {
     std::env::set_current_dir(root)?;
-    let config = Config::load();
+    let mut config = Config::load();
+    config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
     let compiler = ProjectCompiler::new();
     compiler.compile(&project)
 }
 
-/// Find the file path that contains the contract with the specified name.
-/// The returned path is absolute path.
-pub fn find_main_file(compile_output: &ProjectCompileOutput, contract: &str) -> Result<PathBuf> {
-    for (f, c, _) in compile_output.artifacts_with_files() {
+/// Find the artifact of the contract with the specified name.
+/// This function returns the path to the source file and the artifact.
+pub fn find_main_contract<'a>(
+    compile_output: &'a ProjectCompileOutput,
+    contract: &str,
+) -> Result<(PathBuf, &'a ConfigurableContractArtifact)> {
+    for (f, c, a) in compile_output.artifacts_with_files() {
         if contract == c {
-            return Ok(PathBuf::from(f));
+            return Ok((PathBuf::from(f), a));
         }
     }
     Err(eyre::eyre!("contract not found"))
