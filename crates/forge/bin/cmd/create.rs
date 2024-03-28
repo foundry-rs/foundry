@@ -15,7 +15,7 @@ use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use forge_verify::RetryArgs;
 use foundry_cli::{
-    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
+    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, OKLinkOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
@@ -180,6 +180,7 @@ impl CreateArgs {
                 key: self.eth.etherscan.key.clone(),
                 chain: Some(chain.into()),
             },
+            oklink: OKLinkOpts { apikey: self.eth.oklink.apikey.clone() },
             rpc: Default::default(),
             flatten: false,
             force: false,
@@ -231,8 +232,8 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy = self.tx.legacy ||
-            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let is_legacy = self.tx.legacy
+            || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
 
         // set tx value if specified
@@ -331,6 +332,7 @@ impl CreateArgs {
             constructor_args_path: None,
             num_of_optimizations,
             etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            oklink: OKLinkOpts { apikey: self.eth.oklink.key() },
             rpc: Default::default(),
             flatten: false,
             force: false,

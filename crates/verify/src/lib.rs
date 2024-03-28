@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts},
+    opts::{EtherscanOpts, OKLinkOpts, RpcOpts},
     utils,
     utils::LoadConfig,
 };
@@ -19,6 +19,8 @@ use std::path::PathBuf;
 
 mod etherscan;
 use etherscan::EtherscanVerificationProvider;
+
+mod oklink;
 
 pub mod provider;
 use provider::VerificationProvider;
@@ -128,6 +130,9 @@ pub struct VerifyArgs {
     pub etherscan: EtherscanOpts,
 
     #[command(flatten)]
+    pub oklink: OKLinkOpts,
+
+    #[command(flatten)]
     pub rpc: RpcOpts,
 
     #[command(flatten)]
@@ -198,7 +203,7 @@ impl VerifyArgs {
             let args =
                 EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
             println!("{}", args.source);
-            return Ok(())
+            return Ok(());
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
@@ -246,6 +251,9 @@ pub struct VerifyCheckArgs {
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
+
+    #[command(flatten)]
+    oklink: OKLinkOpts,
 
     #[command(flatten)]
     verifier: VerifierArgs,
