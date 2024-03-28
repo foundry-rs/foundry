@@ -257,18 +257,16 @@ impl CoverageArgs {
                 })?,
             )?
             .analyze()?;
-            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_analysis
-                .contract_items
+            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
-                .filter_map(|(contract_id, item_ids)| {
+                .filter_map(|(contract_id, (_, deployed_source_map))| {
                     // TODO: Creation source map/bytecode as well
                     Some((
                         contract_id.clone(),
                         find_anchors(
                             &bytecodes.get(contract_id)?.1,
-                            &source_maps.get(contract_id)?.1,
+                            deployed_source_map,
                             &ic_pc_maps.get(contract_id)?.1,
-                            item_ids,
                             &source_analysis.items,
                         ),
                     ))

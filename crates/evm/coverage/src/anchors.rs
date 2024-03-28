@@ -12,36 +12,32 @@ pub fn find_anchors(
     bytecode: &Bytes,
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
-    item_ids: &[usize],
     items: &[CoverageItem],
 ) -> Vec<ItemAnchor> {
-    item_ids
+    items
         .iter()
-        .filter_map(|item_id| {
-            let item = items.get(*item_id)?;
-
-            match item.kind {
-                CoverageItemKind::Branch { path_id, .. } => {
-                    match find_anchor_branch(bytecode, source_map, *item_id, &item.loc) {
-                        Ok(anchors) => match path_id {
-                            0 => Some(anchors.0),
-                            1 => Some(anchors.1),
-                            _ => panic!("Too many paths for branch"),
-                        },
-                        Err(e) => {
-                            warn!("Could not find anchor for item: {}, error: {e}", item);
-                            None
-                        }
-                    }
-                }
-                _ => match find_anchor_simple(source_map, ic_pc_map, *item_id, &item.loc) {
-                    Ok(anchor) => Some(anchor),
+        .enumerate()
+        .filter_map(|(item_id, item)| match item.kind {
+            CoverageItemKind::Branch { path_id, .. } => {
+                match find_anchor_branch(bytecode, source_map, item_id, &item.loc) {
+                    Ok(anchors) => match path_id {
+                        0 => Some(anchors.0),
+                        1 => Some(anchors.1),
+                        _ => panic!("Too many paths for branch"),
+                    },
                     Err(e) => {
                         warn!("Could not find anchor for item: {}, error: {e}", item);
                         None
                     }
-                },
+                }
             }
+            _ => match find_anchor_simple(source_map, ic_pc_map, item_id, &item.loc) {
+                Ok(anchor) => Some(anchor),
+                Err(e) => {
+                    warn!("Could not find anchor for item: {}, error: {e}", item);
+                    None
+                }
+            },
         })
         .collect()
 }
