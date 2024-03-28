@@ -2609,8 +2609,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u64, State)>> for GasEst
 
     fn try_from(res: Result<(InstructionResult, Option<Output>, u64, State)>) -> Result<Self> {
         match res {
-            // Exceptional case: init used too much gas, we need to increase the gas limit and try
-            // again
+            // Exceptional case: init used too much gas, treated as out of gas error
             Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) => {
                 Ok(Self::OutOfGas)
             }
