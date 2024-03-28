@@ -258,8 +258,7 @@ impl CoverageArgs {
             )?
             .analyze()?;
 
-            // Build helper mapping
-            // source_id -> [item_id]
+            // Build helper mapping used by `find_anchors`
             let items_by_source_id = source_analysis
                 .items
                 .iter()
