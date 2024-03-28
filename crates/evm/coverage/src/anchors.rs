@@ -20,7 +20,7 @@ pub fn find_anchors(
     // Prepare coverage items from all sources referenced in the source map
     let potential_item_ids = source_map
         .iter()
-        .filter_map(|element| Some(items_by_source_id.get(&(element.index? as usize))?))
+        .filter_map(|element| items_by_source_id.get(&(element.index? as usize)))
         .flatten()
         .collect::<HashSet<_>>();
 

@@ -264,10 +264,13 @@ impl CoverageArgs {
                 .iter()
                 .enumerate()
                 .map(|(item_id, item)| (item.loc.source_id, item_id))
-                .fold(HashMap::new(), |mut map: HashMap<usize, Vec<usize>>, (source_id, item_id)| {
-                    map.entry(source_id).or_default().push(item_id);
-                    map
-                });
+                .fold(
+                    HashMap::new(),
+                    |mut map: HashMap<usize, Vec<usize>>, (source_id, item_id)| {
+                        map.entry(source_id).or_default().push(item_id);
+                        map
+                    },
+                );
 
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()

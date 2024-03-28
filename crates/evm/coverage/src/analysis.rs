@@ -296,16 +296,13 @@ impl<'a> ContractVisitor<'a> {
                 });
 
                 let expr: Option<Node> = node.attribute("expression");
-                match expr.as_ref().map(|expr| &expr.node_type) {
+                if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
                     // Might be a require/assert call
-                    Some(NodeType::Identifier) => {
-                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                        if let Some("assert" | "require") = name.as_deref() {
-                            self.push_branches(&node.src, self.branch_id);
-                            self.branch_id += 1;
-                        }
+                    let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
+                    if let Some("assert" | "require") = name.as_deref() {
+                        self.push_branches(&node.src, self.branch_id);
+                        self.branch_id += 1;
                     }
-                    _ => (),
                 }
 
                 Ok(())
