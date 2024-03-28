@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use alloy_primitives::Bytes;
 use foundry_compilers::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
-    primitives::SpecId,
+    primitives::{HashSet, SpecId},
 };
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -14,30 +16,51 @@ pub fn find_anchors(
     ic_pc_map: &IcPcMap,
     items: &[CoverageItem],
 ) -> Vec<ItemAnchor> {
-    items
+    // Build helper mapping
+    // source_id -> [item_id]
+    let items_map = items
         .iter()
         .enumerate()
-        .filter_map(|(item_id, item)| match item.kind {
-            CoverageItemKind::Branch { path_id, .. } => {
-                match find_anchor_branch(bytecode, source_map, item_id, &item.loc) {
-                    Ok(anchors) => match path_id {
-                        0 => Some(anchors.0),
-                        1 => Some(anchors.1),
-                        _ => panic!("Too many paths for branch"),
-                    },
+        .map(|(item_id, item)| (item.loc.source_id, item_id))
+        .fold(HashMap::new(), |mut map, (source_id, item_id)| {
+            map.entry(source_id).or_insert_with(Vec::new).push(item_id);
+            map
+        });
+
+    // Prepare coverage items from all sources referenced in the source map
+    let potential_item_ids = source_map
+        .iter()
+        .filter_map(|element| Some(items_map.get(&(element.index? as usize))?))
+        .flatten()
+        .collect::<HashSet<_>>();
+
+    potential_item_ids
+        .into_iter()
+        .filter_map(|item_id| {
+            let item = &items[*item_id];
+
+            match item.kind {
+                CoverageItemKind::Branch { path_id, .. } => {
+                    match find_anchor_branch(bytecode, source_map, *item_id, &item.loc) {
+                        Ok(anchors) => match path_id {
+                            0 => Some(anchors.0),
+                            1 => Some(anchors.1),
+                            _ => panic!("Too many paths for branch"),
+                        },
+                        Err(e) => {
+                            warn!("Could not find anchor for item: {}, error: {e}", item);
+                            None
+                        }
+                    }
+                }
+                _ => match find_anchor_simple(source_map, ic_pc_map, *item_id, &item.loc) {
+                    Ok(anchor) => Some(anchor),
                     Err(e) => {
                         warn!("Could not find anchor for item: {}, error: {e}", item);
                         None
                     }
-                }
+                },
             }
-            _ => match find_anchor_simple(source_map, ic_pc_map, item_id, &item.loc) {
-                Ok(anchor) => Some(anchor),
-                Err(e) => {
-                    warn!("Could not find anchor for item: {}, error: {e}", item);
-                    None
-                }
-            },
         })
         .collect()
 }

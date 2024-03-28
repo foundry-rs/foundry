@@ -257,6 +257,7 @@ impl CoverageArgs {
                 })?,
             )?
             .analyze()?;
+
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
                 .filter_map(|(contract_id, (_, deployed_source_map))| {
