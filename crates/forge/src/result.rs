@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, Log};
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_compilers::artifacts::Libraries;
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -193,6 +194,8 @@ pub struct SuiteResult {
     pub test_results: BTreeMap<String, TestResult>,
     /// Generated warnings.
     pub warnings: Vec<String>,
+    /// Libraries used to link test contract.
+    pub libraries: Libraries,
 }
 
 impl SuiteResult {
@@ -200,8 +203,9 @@ impl SuiteResult {
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
+        libraries: Libraries,
     ) -> Self {
-        Self { duration, test_results, warnings }
+        Self { duration, test_results, warnings, libraries }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.

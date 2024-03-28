@@ -224,14 +224,20 @@ impl TestArgs {
         let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
-            // There is only one test.
-            let Some((_, test_result)) = outcome.tests().next() else {
+            // Get first non-empty suite result. We will have only one such entry
+            let Some((suite_result, test_result)) = outcome
+                .results
+                .iter()
+                .find(|(_, r)| !r.test_results.is_empty())
+                .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
+            else {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
             let sources = ContractSources::from_project_output(
                 output_clone.as_ref().unwrap(),
                 project.root(),
+                &suite_result.libraries,
             )?;
 
             // Run the debugger.
