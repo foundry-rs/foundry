@@ -3108,6 +3108,8 @@ version = "0.2.0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-providers",
+ "alloy-rpc-types",
  "async-trait",
  "clap",
  "const-hex",
@@ -3124,12 +3126,14 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest",
+ "revm-primitives",
  "semver 1.0.22",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
+ "yansi 0.5.1",
 ]
 
 [[package]]

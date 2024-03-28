@@ -105,5 +105,6 @@ fn main() -> Result<()> {
         ForgeSubcommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
+        ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
     }
 }
