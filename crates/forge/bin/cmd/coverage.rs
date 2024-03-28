@@ -259,18 +259,11 @@ impl CoverageArgs {
             .analyze()?;
 
             // Build helper mapping used by `find_anchors`
-            let items_by_source_id = source_analysis
-                .items
-                .iter()
-                .enumerate()
-                .map(|(item_id, item)| (item.loc.source_id, item_id))
-                .fold(
-                    HashMap::new(),
-                    |mut map: HashMap<usize, Vec<usize>>, (source_id, item_id)| {
-                        map.entry(source_id).or_default().push(item_id);
-                        map
-                    },
-                );
+            let mut items_by_source_id = HashMap::new();
+
+            for (item_id, item) in source_analysis.items.iter().enumerate() {
+                items_by_source_id.entry(item.loc.source_id).or_insert_with(Vec::new).push(item_id);
+            }
 
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
