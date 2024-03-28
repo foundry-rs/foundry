@@ -12,7 +12,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
 };
-use foundry_config::{FuzzConfig, InvariantConfig};
+use foundry_config::{FuzzConfig, InlineFixturesConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     coverage::HitMaps,
@@ -20,9 +20,9 @@ use foundry_evm::{
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
-        EvmError, ExecutionErr, Executor, RawCallResult,
+        CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
-    fuzz::{invariant::InvariantContract, CounterExample},
+    fuzz::{invariant::InvariantContract, CounterExample, FuzzFixtures},
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -85,14 +85,14 @@ impl<'a> ContractRunner<'a> {
 impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
-    pub fn setup(&mut self, setup: bool) -> TestSetup {
-        match self._setup(setup) {
+    pub fn setup(&mut self, setup: bool, fixtures: &InlineFixturesConfig) -> TestSetup {
+        match self._setup(setup, fixtures) {
             Ok(setup) => setup,
             Err(err) => TestSetup::failed(err.to_string()),
         }
     }
 
-    fn _setup(&mut self, setup: bool) -> Result<TestSetup> {
+    fn _setup(&mut self, setup: bool, fixtures: &InlineFixturesConfig) -> Result<TestSetup> {
         trace!(?setup, "Setting test contract");
 
         // We max out their balance so that they can deploy and make calls.
@@ -174,12 +174,51 @@ impl<'a> ContractRunner<'a> {
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
 
-            TestSetup { address, logs, traces, labeled_addresses, reason, coverage }
+            TestSetup {
+                address,
+                logs,
+                traces,
+                labeled_addresses,
+                reason,
+                coverage,
+                fuzz_fixtures: self.fuzz_fixtures(address, fixtures),
+            }
         } else {
-            TestSetup::success(address, logs, traces, Default::default(), None)
+            TestSetup::success(
+                address,
+                logs,
+                traces,
+                Default::default(),
+                None,
+                self.fuzz_fixtures(address, fixtures),
+            )
         };
 
         Ok(setup)
+    }
+
+    /// Collect fixtures from test contract. Fixtures are functions prefixed with `fixture_` key
+    /// and followed by the name of the parameter.
+    ///
+    /// For example:
+    /// `fixture_test() returns (address[] memory)` function
+    /// define an array of addresses to be used for fuzzed `test` named parameter in scope of the
+    /// current test.
+    fn fuzz_fixtures(&mut self, address: Address, fixtures: &InlineFixturesConfig) -> FuzzFixtures {
+        match fixtures.to_owned().get_fixtures(self.name.to_string()) {
+            Some(functions) => {
+                let mut fixtures = HashMap::with_capacity(functions.len());
+                for func in self.contract.functions().filter(|f| functions.contains(&f.name)) {
+                    if let Ok(CallResult { raw: _, decoded_result }) =
+                        self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+                    {
+                        fixtures.insert(func.name.clone(), decoded_result);
+                    }
+                }
+                FuzzFixtures::new(fixtures)
+            }
+            None => FuzzFixtures::default(),
+        }
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -225,7 +264,7 @@ impl<'a> ContractRunner<'a> {
         if tmp_tracing {
             self.executor.set_tracing(true);
         }
-        let setup = self.setup(needs_setup);
+        let setup = self.setup(needs_setup, &test_options.inline_fixtures);
         if tmp_tracing {
             self.executor.set_tracing(false);
         }
@@ -460,7 +499,8 @@ impl<'a> ContractRunner<'a> {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
-        let TestSetup { address, logs, traces, labeled_addresses, coverage, .. } = setup;
+        let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
+            setup;
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
@@ -497,7 +537,7 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_function: func, abi: self.contract };
 
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
-            match evm.invariant_fuzz(invariant_contract.clone()) {
+            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures) {
                 Ok(x) => x,
                 Err(e) => {
                     return TestResult {
@@ -605,7 +645,13 @@ impl<'a> ContractRunner<'a> {
         let _guard = span.enter();
 
         let TestSetup {
-            address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
+            address,
+            mut logs,
+            mut traces,
+            mut labeled_addresses,
+            mut coverage,
+            fuzz_fixtures,
+            ..
         } = setup;
 
         // Run fuzz test
@@ -617,7 +663,8 @@ impl<'a> ContractRunner<'a> {
             fuzz_config.clone(),
         );
         let state = fuzzed_executor.build_fuzz_state();
-        let result = fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder);
+        let result =
+            fuzzed_executor.fuzz(func, &fuzz_fixtures, address, should_fail, self.revert_decoder);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();

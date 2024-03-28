@@ -14,7 +14,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -270,5 +270,30 @@ impl FuzzedCases {
     #[inline]
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
+    }
+}
+
+/// Fixtures to be used for fuzz tests.
+/// The key represents name of the fuzzed parameter, value holds possible fuzzed values.
+/// For example, for a fixture function declared as
+/// `function fixture_sender() external returns (address[] memory senders)`
+/// the fuzz fixtures will contain `sender` key with `senders` array as value
+#[derive(Clone, Default, Debug)]
+pub struct FuzzFixtures {
+    inner: Arc<HashMap<String, DynSolValue>>,
+}
+
+impl FuzzFixtures {
+    pub fn new(fixtures: HashMap<String, DynSolValue>) -> FuzzFixtures {
+        Self { inner: Arc::new(fixtures) }
+    }
+
+    /// Returns configured fixtures for `param_name` fuzzed parameter.
+    pub fn param_fixtures(&self, param_name: &String) -> Option<&[DynSolValue]> {
+        if let Some(param_fixtures) = self.inner.get(param_name) {
+            param_fixtures.as_array()
+        } else {
+            None
+        }
     }
 }

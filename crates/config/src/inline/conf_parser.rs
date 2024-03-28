@@ -1,10 +1,13 @@
 use super::{remove_whitespaces, InlineConfigParserError};
-use crate::{inline::INLINE_CONFIG_PREFIX, InlineConfigError, NatSpec};
+use crate::{
+    inline::{INLINE_CONFIG_FIXTURE_KEY, INLINE_CONFIG_PREFIX},
+    InlineConfigError, NatSpec,
+};
 use regex::Regex;
 
 /// This trait is intended to parse configurations from
 /// structured text. Foundry users can annotate Solidity test functions,
-/// providing special configs just for the execution of a specific test.
+/// providing special configs and fixtures just for the execution of a specific test.
 ///
 /// An example:
 ///
@@ -17,6 +20,10 @@ use regex::Regex;
 /// /// forge-config: default.fuzz.runs = 500
 /// /// forge-config: ci.fuzz.runs = 10000
 /// function test_ImportantFuzzTest(uint256 x) public {...}
+/// }
+///
+/// /// forge-config: fixture
+/// function x() public returns (uint256[] memory) {...}
 /// }
 /// ```
 pub trait InlineConfigParser
@@ -103,7 +110,16 @@ where
     }
 }
 
-/// Checks if all configuration lines specified in `natspec` use a valid profile.
+/// Type of inline config.
+pub enum InlineConfigType {
+    /// Profile inline config.
+    Profile,
+    /// Fixture inline config.
+    Fixture,
+}
+
+/// Checks if all configuration lines specified in `natspec` use a valid profile
+/// or are test fixture configurations.
 ///
 /// i.e. Given available profiles
 /// ```rust
@@ -111,8 +127,15 @@ where
 /// ```
 /// A configuration like `forge-config: ciii.invariant.depth = 1` would result
 /// in an error.
-pub fn validate_profiles(natspec: &NatSpec, profiles: &[String]) -> Result<(), InlineConfigError> {
+/// A fixture can be set by using `forge-config: fixture` configuration.
+pub fn validate_inline_config_type(
+    natspec: &NatSpec,
+    profiles: &[String],
+) -> Result<InlineConfigType, InlineConfigError> {
     for config in natspec.config_lines() {
+        if config.eq(&format!("{INLINE_CONFIG_PREFIX}:{INLINE_CONFIG_FIXTURE_KEY}")) {
+            return Ok(InlineConfigType::Fixture);
+        }
         if !profiles.iter().any(|p| config.starts_with(&format!("{INLINE_CONFIG_PREFIX}:{p}."))) {
             let err_line: String = natspec.debug_context();
             let profiles = format!("{profiles:?}");
@@ -122,7 +145,7 @@ pub fn validate_profiles(natspec: &NatSpec, profiles: &[String]) -> Result<(), I
             })?
         }
     }
-    Ok(())
+    Ok(InlineConfigType::Profile)
 }
 
 /// Tries to parse a `u32` from `value`. The `key` argument is used to give details
@@ -139,7 +162,7 @@ pub fn parse_config_bool(key: String, value: String) -> Result<bool, InlineConfi
 
 #[cfg(test)]
 mod tests {
-    use crate::{inline::conf_parser::validate_profiles, NatSpec};
+    use crate::{inline::conf_parser::validate_inline_config_type, NatSpec};
 
     #[test]
     fn can_reject_invalid_profiles() {
@@ -155,7 +178,7 @@ mod tests {
             .into(),
         };
 
-        let result = validate_profiles(&natspec, &profiles);
+        let result = validate_inline_config_type(&natspec, &profiles);
         assert!(result.is_err());
     }
 
@@ -173,7 +196,24 @@ mod tests {
             .into(),
         };
 
-        let result = validate_profiles(&natspec, &profiles);
+        let result = validate_inline_config_type(&natspec, &profiles);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn can_accept_fixtures() {
+        let profiles = ["ci".to_string(), "default".to_string()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r"
+            forge-config: fixture
+            "
+            .into(),
+        };
+
+        let result = validate_inline_config_type(&natspec, &profiles);
         assert!(result.is_ok());
     }
 }
