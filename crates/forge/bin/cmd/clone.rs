@@ -1,15 +1,17 @@
+use std::time::Duration;
 use std::{fs::read_dir, path::PathBuf};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, ChainId, TxHash};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_cli::utils::Git;
+use foundry_common::compile::ProjectCompiler;
 use foundry_common::fs;
 use foundry_compilers::artifacts::Settings;
 use foundry_compilers::remappings::{RelativeRemapping, Remapping};
-use foundry_compilers::ProjectPathsConfig;
+use foundry_compilers::{ProjectCompileOutput, ProjectPathsConfig};
 use foundry_config::Config;
 use toml_edit;
 
@@ -34,6 +36,25 @@ pub struct CloneArgs {
     etherscan: EtherscanOpts,
 }
 
+/// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a cloned contract.
+/// The metadata can be serialized to the `clone.toml` file in the cloned project root.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CloneMetadata {
+    /// The path to the source file that contains the contract declaration.
+    /// The path is relative to the root directory of the project.
+    pub path: PathBuf,
+    /// The name of the contract in the file.
+    pub target_contract: String,
+    /// The address of the contract on the blockchian.
+    pub address: Address,
+    /// The chain id.
+    pub chain_id: ChainId,
+    /// The transaction hash of the creation transaction.
+    pub creation_transaction: TxHash,
+    /// The address of the deployer (caller of the CREATE/CREATE2).
+    pub deployer: Address,
+}
+
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
         let CloneArgs { address, root, enable_git, etherscan } = self;
@@ -45,6 +66,13 @@ impl CloneArgs {
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+        let etherscan_call_interval = if etherscan_api_key.is_empty() {
+            // if the etherscan api key is not set, we need to wait for 1 seconds between calls
+            Duration::from_secs(5)
+        } else {
+            // if the etherscan api key is set, we can call etherscan more frequently
+            Duration::from_secs(1)
+        };
 
         // get the contract code
         let client = Client::new(chain, etherscan_api_key)?;
@@ -58,8 +86,7 @@ impl CloneArgs {
         }
 
         // let's try to init the project with default init args
-        let opts =
-            DependencyInstallOpts { no_git: !enable_git, ..Default::default() };
+        let opts = DependencyInstallOpts { no_git: !enable_git, ..Default::default() };
         let init_args = InitArgs { root: root.clone(), opts, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
@@ -91,6 +118,25 @@ impl CloneArgs {
         Config::update_at(&root, |config, doc| {
             update_config_by_metadata(config, doc, &meta).is_ok()
         })?;
+
+        // compile the cloned contract
+        let compile_output = compile_project(&root)?;
+        let main_file = find_main_file(&compile_output, &meta.contract_name)?;
+        let main_file = main_file.strip_prefix(&root)?.to_path_buf();
+
+        // dump the metadata to the root directory
+        std::thread::sleep(etherscan_call_interval);
+        let creation_tx = client.contract_creation_data(contract_address).await?;
+        let clone_meta = CloneMetadata {
+            path: main_file,
+            target_contract: meta.contract_name,
+            address: contract_address,
+            chain_id: etherscan.chain.unwrap_or_default().id(),
+            creation_transaction: creation_tx.transaction_hash,
+            deployer: creation_tx.contract_creator,
+        };
+        let metadata_content = toml::to_string(&clone_meta)?;
+        fs::write(root.join("clone.toml"), metadata_content)?;
 
         // Git add and commit the changes if enabled
         if enable_git {
@@ -294,14 +340,34 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
     Ok(remappings.into_iter().map(|r| r.into_relative(&root)).collect())
 }
 
+/// Compile the project in the root directory, and return the compilation result.
+pub fn compile_project(root: &PathBuf) -> Result<ProjectCompileOutput> {
+    std::env::set_current_dir(root)?;
+    let config = Config::load();
+    let project = config.project()?;
+    let compiler = ProjectCompiler::new();
+    compiler.compile(&project)
+}
+
+/// Find the file path that contains the contract with the specified name.
+/// The returned path is absolute path.
+pub fn find_main_file(compile_output: &ProjectCompileOutput, contract: &str) -> Result<PathBuf> {
+    for (f, c, _) in compile_output.artifacts_with_files() {
+        if contract == c {
+            return Ok(PathBuf::from(f));
+        }
+    }
+    Err(eyre::eyre!("contract not found"))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{path::PathBuf, thread::sleep, time::Duration};
 
+    use crate::cmd::clone::compile_project;
+
     use super::CloneArgs;
-    use foundry_common::compile::ProjectCompiler;
     use foundry_compilers::{Artifact, ProjectCompileOutput};
-    use foundry_config::Config;
     use hex::ToHex;
     use serial_test::serial;
     use tempfile;
@@ -312,13 +378,7 @@ mod tests {
         sleep(Duration::from_secs(5));
 
         println!("project_root: {:#?}", root);
-
-        // change directory to the root
-        std::env::set_current_dir(root).unwrap();
-        let config = Config::load();
-        let project = config.project().unwrap();
-        let compiler = ProjectCompiler::new();
-        compiler.compile(&project).expect("compilation failure")
+        compile_project(root).expect("compilation failure")
     }
 
     fn assert_compilation_result(
