@@ -408,8 +408,6 @@ pub struct SourceAnalysis {
 pub struct SourceAnalyzer {
     /// A map of source IDs to their source code
     sources: FxHashMap<usize, String>,
-    /// A map of AST node IDs of contracts to their contract IDs.
-    contract_ids: FxHashMap<usize, ContractId>,
     /// A map of contract IDs to their AST nodes.
     contracts: HashMap<ContractId, Node>,
     /// A collection of coverage items.
@@ -435,8 +433,6 @@ impl SourceAnalyzer {
                     continue
                 }
 
-                let node_id =
-                    child.id.ok_or_else(|| eyre::eyre!("The contract's AST node has no ID"))?;
                 let contract_id = ContractId {
                     version: version.clone(),
                     source_id,
@@ -444,7 +440,6 @@ impl SourceAnalyzer {
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?,
                 };
-                analyzer.contract_ids.insert(node_id, contract_id.clone());
                 analyzer.contracts.insert(contract_id, child);
             }
         }
@@ -466,22 +461,18 @@ impl SourceAnalyzer {
     /// two different solc versions will produce overlapping source IDs if the compiler version is
     /// not taken into account.
     pub fn analyze(mut self) -> eyre::Result<SourceAnalysis> {
-        for contract_id in self.contracts.keys() {
+        for (contract_id, ast) in self.contracts {
             let ContractVisitor { items, .. } = ContractVisitor::new(
                 contract_id.source_id,
-                self.sources.get(&contract_id.source_id).unwrap_or_else(|| {
-                    panic!("We should have the source code for source ID {}", contract_id.source_id)
-                }),
+                self.sources.get(&contract_id.source_id).ok_or_else(|| {
+                    eyre::eyre!(
+                        "We should have the source code for source ID {}",
+                        contract_id.source_id
+                    )
+                })?,
                 contract_id.contract_name.clone(),
             )
-            .visit(
-                self.contracts
-                    .get(contract_id)
-                    .unwrap_or_else(|| {
-                        panic!("We should have the AST of contract: {contract_id:?}")
-                    })
-                    .clone(),
-            )?;
+            .visit(ast)?;
 
             let is_test = items.iter().any(|item| {
                 if let CoverageItemKind::Function { name } = &item.kind {
