@@ -2242,7 +2242,6 @@ impl EthApi {
         let ethres =
             self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
 
-        // If the call succeeded, set upper bound of gas limit to the gas used
         let gas_used = match ethres.try_into()? {
             GasEstimationCallResult::Success(gas) => Ok(U256::from(gas)),
             GasEstimationCallResult::OutOfGas => {
