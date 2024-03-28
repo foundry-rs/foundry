@@ -16,11 +16,7 @@ path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # foundry internal
@@ -81,11 +77,7 @@ rand = "0.8"
 eyre.workspace = true
 
 # cli
-clap = { version = "4", features = [
-    "derive",
-    "env",
-    "wrap_help",
-], optional = true }
+clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono.workspace = true
 auto_impl = "1"
@@ -93,6 +85,9 @@ ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
 ethereum-forkid = "0.12"
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-json-abi.workspace = true
@@ -109,3 +104,6 @@ default = ["cli"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
+# TODO: parity dependencies are not compatible with a different global allocator.
+# jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = []

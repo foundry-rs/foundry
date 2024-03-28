@@ -81,6 +81,9 @@ tracing.workspace = true
 yansi = "0.5"
 evmole = "0.3.1"
 
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+
 [dev-dependencies]
 foundry-test-utils.workspace = true
 async-trait = "0.1"
@@ -91,6 +94,7 @@ default = ["rustls"]
 rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
 openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
+jemalloc = ["dep:tikv-jemallocator"]
 
 [[bench]]
 name = "vanity"
