@@ -1,7 +1,7 @@
 use std::time::Duration;
 use std::{fs::read_dir, path::PathBuf};
 
-use alloy_primitives::{Address, ChainId, TxHash};
+use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_block_explorers::{contract::Metadata, Client};
@@ -54,6 +54,8 @@ pub struct CloneMetadata {
     pub creation_transaction: TxHash,
     /// The address of the deployer (caller of the CREATE/CREATE2).
     pub deployer: Address,
+    /// The constructor arguments of the contract on chain.
+    pub consturctor_arguments: Bytes,
     /// The storage layout of the contract on chain.
     pub storage_layout: StorageLayout,
 }
@@ -139,6 +141,7 @@ impl CloneArgs {
             chain_id: etherscan.chain.unwrap_or_default().id(),
             creation_transaction: creation_tx.transaction_hash,
             deployer: creation_tx.contract_creator,
+            consturctor_arguments: meta.constructor_arguments,
             storage_layout,
         };
         let metadata_content = serde_json::to_string(&clone_meta)?;
@@ -366,6 +369,8 @@ pub fn find_main_contract<'a>(
     compile_output: &'a ProjectCompileOutput,
     contract: &str,
 ) -> Result<(PathBuf, &'a ConfigurableContractArtifact)> {
+    // XXX (ZZ): it is possible that we have multiple contracts with the same name
+    // in different files, we should handle this case in the future
     for (f, c, a) in compile_output.artifacts_with_files() {
         if contract == c {
             return Ok((PathBuf::from(f), a));
