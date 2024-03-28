@@ -15,7 +15,6 @@ anvil-rpc = { path = "../rpc" }
 
 # axum related
 axum = { workspace = true, features = ["ws"] }
-hyper.workspace = true
 tower-http = { workspace = true, features = ["trace", "cors"] }
 
 # tracing

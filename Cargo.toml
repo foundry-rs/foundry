@@ -211,7 +211,7 @@ vergen = { version = "8", default-features = false }
 indexmap = "2.2"
 tikv-jemallocator = "0.5.4"
 
-axum = "0.6"
-hyper = "0.14"
+axum = "0.7"
+hyper = "1.0"
 tower = "0.4"
-tower-http = "0.4"
+tower-http = "0.5"

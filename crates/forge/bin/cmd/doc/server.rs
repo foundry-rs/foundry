@@ -93,7 +93,8 @@ async fn serve(build_dir: PathBuf, address: SocketAddr, file_404: &str) {
     let file_404 = build_dir.join(file_404);
     let svc = ServeDir::new(build_dir).not_found_service(ServeFile::new(file_404));
     let app = Router::new().nest_service("/", get_service(svc));
-    hyper::Server::bind(&address).serve(app.into_make_service()).await.unwrap();
+    let tcp_listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    axum::serve(tcp_listener, app.into_make_service()).await.unwrap();
 }
 
 fn open<P: AsRef<std::ffi::OsStr>>(path: P) {

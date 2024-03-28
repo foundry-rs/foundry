@@ -1,4 +1,4 @@
-//! Bootstrap [axum] RPC servers
+//! Bootstrap [axum] RPC servers.
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
@@ -12,91 +12,66 @@ use anvil_rpc::{
 };
 use axum::{
     http::{header, HeaderValue, Method},
-    routing::{post, IntoMakeService},
-    Router, Server,
+    routing::{post, MethodRouter},
+    Router,
 };
-use hyper::server::conn::AddrIncoming;
 use serde::de::DeserializeOwned;
-use std::{fmt, net::SocketAddr};
+use std::fmt;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 mod config;
-
-mod error;
-/// handlers for axum server
-mod handler;
-#[cfg(feature = "ipc")]
-pub mod ipc;
-mod pubsub;
-mod ws;
-
-pub use crate::pubsub::{PubSubContext, PubSubRpcHandler};
 pub use config::ServerConfig;
 
-/// Type alias for the configured axum server
-pub type AnvilServer = Server<AddrIncoming, IntoMakeService<Router>>;
+mod error;
+mod handler;
 
-/// Configures an [axum::Server] that handles RPC-Calls, both HTTP requests and requests via
-/// websocket
-pub fn serve_http_ws<Http, Ws>(
-    addr: SocketAddr,
-    config: ServerConfig,
-    http: Http,
-    ws: Ws,
-) -> AnvilServer
+mod pubsub;
+pub use pubsub::{PubSubContext, PubSubRpcHandler};
+
+mod ws;
+
+#[cfg(feature = "ipc")]
+pub mod ipc;
+
+/// Configures an [`axum::Router`] that handles JSON-RPC calls via both HTTP and WS.
+pub fn http_ws_router<Http, Ws>(config: ServerConfig, http: Http, ws: Ws) -> Router
 where
     Http: RpcHandler,
     Ws: PubSubRpcHandler,
 {
-    let ServerConfig { allow_origin, no_cors } = config;
-
-    let svc = Router::new()
-        .route("/", post(handler::handle).get(ws::handle_ws))
-        .with_state((http, ws))
-        .layer(TraceLayer::new_for_http());
-
-    let svc = if no_cors {
-        svc
-    } else {
-        svc.layer(
-            // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
-            // for more details
-            CorsLayer::new()
-                .allow_origin(allow_origin.0)
-                .allow_headers(vec![header::CONTENT_TYPE])
-                .allow_methods(vec![Method::GET, Method::POST]),
-        )
-    }
-    .into_make_service();
-    Server::bind(&addr).serve(svc)
+    router_inner(config, post(handler::handle).get(ws::handle_ws), (http, ws))
 }
 
-/// Configures an [axum::Server] that handles RPC-Calls listing for POST on `/`
-pub fn serve_http<Http>(addr: SocketAddr, config: ServerConfig, http: Http) -> AnvilServer
+/// Configures an [`axum::Router`] that handles JSON-RPC calls via HTTP.
+pub fn http_router<Http>(config: ServerConfig, http: Http) -> Router
 where
     Http: RpcHandler,
 {
+    router_inner(config, post(handler::handle), (http, ()))
+}
+
+fn router_inner<S: Clone + Send + Sync + 'static>(
+    config: ServerConfig,
+    root_method_router: MethodRouter<S>,
+    state: S,
+) -> Router {
     let ServerConfig { allow_origin, no_cors } = config;
 
-    let svc = Router::new()
-        .route("/", post(handler::handle))
-        .with_state((http, ()))
+    let mut router = Router::new()
+        .route("/", root_method_router)
+        .with_state(state)
         .layer(TraceLayer::new_for_http());
-    let svc = if no_cors {
-        svc
-    } else {
-        svc.layer(
+    if !no_cors {
+        router = router.layer(
             // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
             // for more details
             CorsLayer::new()
                 .allow_origin(allow_origin.0)
-                .allow_headers(vec![header::CONTENT_TYPE])
-                .allow_methods(vec![Method::GET, Method::POST]),
-        )
+                .allow_headers([header::CONTENT_TYPE])
+                .allow_methods([Method::GET, Method::POST]),
+        );
     }
-    .into_make_service();
-
-    Server::bind(&addr).serve(svc)
+    router
 }
 
 /// Helper trait that is used to execute ethereum rpc calls
