@@ -525,11 +525,11 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
+        #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = NameOrAddress::from_str)]
+        #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[command(flatten)]
@@ -542,11 +542,11 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
+        #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = NameOrAddress::from_str)]
+        #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[command(flatten)]
@@ -622,11 +622,11 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
+        #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The account to query.
-        #[clap(value_parser = NameOrAddress::from_str)]
+        #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         /// Format the balance in ether.
@@ -660,11 +660,11 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
+        #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The contract address.
-        #[clap(value_parser = NameOrAddress::from_str)]
+        #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         /// Disassemble bytecodes into individual opcodes.
@@ -681,11 +681,11 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
+        #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The contract address.
-        #[clap(value_parser = NameOrAddress::from_str)]
+        #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[command(flatten)]
@@ -772,11 +772,11 @@ pub enum CastSubcommand {
         /// The block height to query at.
         ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
+        #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = NameOrAddress::from_str)]
+        #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[command(flatten)]

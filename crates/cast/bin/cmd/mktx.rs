@@ -2,7 +2,7 @@ use crate::tx;
 use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
@@ -44,7 +44,7 @@ pub struct MakeTxArgs {
 #[derive(Debug, Parser)]
 pub enum MakeTxSubcommands {
     /// Use to deploy raw contract bytecode.
-    #[clap(name = "--create")]
+    #[command(name = "--create")]
     Create {
         /// The initialization bytecode of the contract to deploy.
         code: String,
