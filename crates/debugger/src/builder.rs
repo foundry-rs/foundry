@@ -1,4 +1,4 @@
-//! TUI debugger builder.
+//! Debugger builder.
 
 use crate::Debugger;
 use alloy_primitives::Address;
