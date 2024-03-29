@@ -340,7 +340,7 @@ impl ScriptArgs {
                 ),
             }
         };
-        let data = encode_function_args(&func, &self.args)?;
+        let data = encode_function_args(func, &self.args)?;
 
         Ok((func.clone(), data.into()))
     }
