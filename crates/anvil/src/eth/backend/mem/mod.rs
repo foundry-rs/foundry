@@ -10,7 +10,7 @@ use crate::{
             genesis::GenesisConfig,
             mem::storage::MinedTransactionReceipt,
             notifications::{NewBlockNotification, NewBlockNotifications},
-            time::{utc_from_secs, TimeManager},
+            time::{duration_since_unix_epoch, utc_from_secs, TimeManager},
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
@@ -31,7 +31,9 @@ use crate::{
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_network::Sealable;
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_primitives::{
+    keccak256, utils::Unit, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8,
+};
 use alloy_rlp::Decodable;
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
@@ -470,37 +472,89 @@ impl Backend {
 
     /// Reset to fresh state
     pub async fn reset_to_non_fork(&self) -> Result<(), BlockchainError> {
-        // Reset fork
-        *self.fork.write() = None;
+        // Clear the db
+        let mut db = self.db.write().await;
+        // clear database
+        db.clear();
 
-        // Clear env
-        {
-            let mut env = self.env.write();
-            env.clear();
+        let genesis_init = self.genesis.genesis_init.to_owned();
+        if let Some(fork) = self.get_fork() {
+            // Node is currently in fork mode, reintialize the env and db
+            // Clear the fork storage and set ClientFork to None
+            fork.clear_cached_storage();
 
-            // Set default anvil chain_id
-            env.cfg.chain_id = DEV_CHAIN_ID;
+            self.fork.write().take();
 
-            // Reset time
-            self.time.reset(env.block.timestamp.to::<u64>());
+            // Reset the env and db
+            {
+                let mut env = self.env.write();
+
+                env.clear();
+
+                // Check if `genesis.json` is provided
+                if let Some(ref genesis) = genesis_init {
+                    env.cfg.chain_id = genesis.config.chain_id;
+                    env.block.timestamp = U256::from(genesis.timestamp);
+                    if let Some(base_fee) = genesis.base_fee_per_gas {
+                        env.block.basefee = U256::from(base_fee);
+                    }
+                    if let Some(number) = genesis.number {
+                        env.block.number = U256::from(number);
+                    }
+                    env.block.coinbase = genesis.coinbase;
+                    env.block.gas_limit = U256::from(genesis.gas_limit);
+                } else {
+                    // Anvil defaults for non-forked node.
+                    env.cfg.chain_id = DEV_CHAIN_ID;
+                    env.block = BlockEnv::default();
+                    env.block.timestamp = U256::from(duration_since_unix_epoch().as_secs());
+                    env.block.basefee = U256::from(INITIAL_BASE_FEE);
+                    env.block.gas_limit = U256::from(30_000_000);
+                }
+
+                // Reset time
+                self.time.reset(env.block.timestamp.to::<u64>());
+            }
+
+            // genesis accounts
+            let fork_genesis_accounts = self.genesis.fork_genesis_account_infos.lock();
+            for (address, info) in
+                self.genesis.accounts.iter().copied().zip(fork_genesis_accounts.iter().cloned())
+            {
+                db.insert_account(address, info);
+            }
+        } else {
+            // TODO: ENV related changes.
+
+            // genesis accounts
+
+            for (account, info) in self.genesis.account_infos() {
+                db.insert_account(account, info);
+            }
         }
 
+        let node_config = if let Some(ref genesis) = genesis_init {
+            NodeConfig::default()
+                .with_base_fee(Some(U256::from(
+                    genesis.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+                )))
+                .with_gas_price(Some(U256::from(INITIAL_GAS_PRICE)))
+                .with_genesis_balance(Unit::ETHER.wei().saturating_mul(U256::from(10000)))
+                .with_genesis(genesis_init)
+        } else {
+            NodeConfig::default()
+                .with_base_fee(Some(U256::from(INITIAL_BASE_FEE)))
+                .with_gas_price(Some(U256::from(INITIAL_GAS_PRICE)))
+                .with_genesis_balance(Unit::ETHER.wei().saturating_mul(U256::from(10000)))
+        };
+
+        *self.node_config.write().await = node_config;
         // reset fees
         self.fees.set_base_fee(U256::from(INITIAL_BASE_FEE));
         self.fees.set_gas_price(U256::from(INITIAL_GAS_PRICE));
         // Clear the state
         *self.blockchain.storage.write() = BlockchainStorage::empty();
         self.states.write().clear();
-
-        let mut db = self.db.write().await;
-
-        // clear database
-        db.clear();
-
-        // genesis accounts
-        for (account, info) in self.genesis.account_infos() {
-            db.insert_account(account, info);
-        }
 
         // Reset genensis alloc
         self.genesis.apply_genesis_json_alloc(db)?;
