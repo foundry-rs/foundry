@@ -313,10 +313,8 @@ impl ScriptArgs {
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
         if let Ok(decoded) = hex::decode(&self.sig) {
             let selector = &decoded[..SELECTOR_LEN];
-            let func = abi
-                .functions()
-                .find(|func| selector == &func.selector()[..])
-                .ok_or_else(|| {
+            let func =
+                abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
                     eyre::eyre!(
                         "Function selector `{}` not found in the ABI",
                         hex::encode(selector)
@@ -324,7 +322,7 @@ impl ScriptArgs {
                 })?;
             return Ok((func.clone(), decoded.into()));
         }
-        
+
         let func = if self.sig.contains('(') {
             let func = get_func(&self.sig)?;
             abi.functions()
