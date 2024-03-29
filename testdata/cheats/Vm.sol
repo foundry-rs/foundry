@@ -23,6 +23,7 @@ interface Vm {
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
+    struct DebugStep { uint256[] stack; uint8[] memoryData; uint8 opcode; uint64 depth; uint8 instructionResult; address contractAddr; }
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
