@@ -104,6 +104,12 @@ impl VerifyBytecodeArgs {
         // Setup
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
+
+        let code = provider.get_code_at(self.address, None).await?;
+        if code.is_empty() {
+            eyre::bail!("No bytecode found at address {}", self.address);
+        }
+
         println!(
             "Verifying bytecode for contract {} at address {}",
             Paint::green(self.contract.name.clone()),
@@ -129,6 +135,11 @@ impl VerifyBytecodeArgs {
 
         // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(self.address).await?;
+
+        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
+        if name.as_ref() != Some(&self.contract.name) {
+            eyre::bail!("Contract name mismatch");
+        }
 
         let constructor_args = match source_code.items.first() {
             Some(item) => item.constructor_arguments.clone(),
