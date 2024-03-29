@@ -11,6 +11,7 @@ use foundry_evm_core::opts::EvmOpts;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
@@ -22,6 +23,8 @@ pub struct CheatsConfig {
     pub ffi: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
+    /// Sets a timeout for vm.prompt cheatcodes
+    pub prompt_timeout: Duration,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
     /// All known endpoints and their aliases
@@ -55,6 +58,7 @@ impl CheatsConfig {
         Self {
             ffi: evm_opts.ffi,
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
+            prompt_timeout: Duration::from_secs(config.prompt_timeout),
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             rpc_endpoints,
             paths: config.project_paths(),
@@ -171,6 +175,7 @@ impl Default for CheatsConfig {
         Self {
             ffi: false,
             always_use_create_2_factory: false,
+            prompt_timeout: Duration::from_secs(120),
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
             paths: ProjectPathsConfig::builder().build_with_root("./"),

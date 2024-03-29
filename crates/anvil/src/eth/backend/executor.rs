@@ -174,12 +174,14 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
-            let contract_address = if let Some(Output::Create(_, contract_address)) = out {
-                trace!(target: "backend", "New contract deployed: at {:?}", contract_address);
-                contract_address
-            } else {
-                None
-            };
+            let contract_address = out.as_ref().and_then(|out| {
+                if let Output::Create(_, contract_address) = out {
+                    trace!(target: "backend", "New contract deployed: at {:?}", contract_address);
+                    *contract_address
+                } else {
+                    None
+                }
+            });
 
             let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {

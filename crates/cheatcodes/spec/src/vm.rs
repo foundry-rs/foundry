@@ -249,6 +249,22 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` with signer provided to script using the secp256k1 curve.
+    ///
+    /// If `--sender` is provided, the signer with provided address is used, otherwise,
+    /// if exactly one signer is provided to the script, that signer is used.
+    ///
+    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
+    /// if `--sender` is not provided and not exactly one signer is passed to the script.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs `digest` with signer provided to script using the secp256k1 curve.
+    ///
+    /// Raises error if none of the signers passed into the script have provided address.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     #[cheatcode(group = Evm, safety = Safe)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
@@ -1399,6 +1415,16 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
 
+    // -------- User Interaction --------
+
+    /// Prompts the user for a string value in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function prompt(string calldata promptText) external returns (string memory input);
+
+    /// Prompts the user for a hidden string value in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function promptSecret(string calldata promptText) external returns (string memory input);
+
     // ======== Environment Variables ========
 
     /// Sets environment variables.
@@ -1553,8 +1579,12 @@ interface Vm {
 
     // -------- Broadcasting Transactions --------
 
-    /// Using the address that calls the test contract, has the next call (at this call depth only)
-    /// create a transaction that can later be signed and sent onchain.
+    /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.
+    ///
+    /// Broadcasting address is determined by checking the following in order:
+    /// 1. If `--sender` argument was provided, that address is used.
+    /// 2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.
+    /// 3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.
     #[cheatcode(group = Scripting)]
     function broadcast() external;
 
@@ -1568,8 +1598,12 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function broadcast(uint256 privateKey) external;
 
-    /// Using the address that calls the test contract, has all subsequent calls
-    /// (at this call depth only) create transactions that can later be signed and sent onchain.
+    /// Has all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain.
+    ///
+    /// Broadcasting address is determined by checking the following in order:
+    /// 1. If `--sender` argument was provided, that address is used.
+    /// 2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.
+    /// 3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.
     #[cheatcode(group = Scripting)]
     function startBroadcast() external;
 

@@ -65,6 +65,7 @@ ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
 tiny-keccak.opt-level = 3
+bitvec.opt-level = 3
 
 # fuzzing
 proptest.opt-level = 3
@@ -208,6 +209,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 vergen = { version = "8", default-features = false }
 indexmap = "2.2"
+tikv-jemallocator = "0.5.4"
 
 axum = "0.6"
 hyper = "0.14"

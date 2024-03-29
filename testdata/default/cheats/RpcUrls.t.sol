@@ -33,12 +33,15 @@ contract RpcUrlTest is DSTest {
         assertEq(url, envUrl);
 
         string[2][] memory allUrls = vm.rpcUrls();
-        assertEq(allUrls.length, 2);
+        assertEq(allUrls.length, 3);
 
         string[2] memory val = allUrls[0];
         assertEq(val[0], "rpcAlias");
 
         string[2] memory env = allUrls[1];
-        assertEq(env[0], "rpcEnvAlias");
+        assertEq(env[0], "rpcAliasSepolia");
+
+        string[2] memory env2 = allUrls[2];
+        assertEq(env2[0], "rpcEnvAlias");
     }
 }

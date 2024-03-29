@@ -4,6 +4,7 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
+use dialoguer::{Input, Password};
 use foundry_common::{fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use std::{
@@ -11,6 +12,8 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::Path,
     process::Command,
+    sync::mpsc,
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 use walkdir::WalkDir;
@@ -296,6 +299,20 @@ impl Cheatcode for tryFfiCall {
     }
 }
 
+impl Cheatcode for promptCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { promptText: text } = self;
+        prompt(state, text, prompt_input).map(|res| res.abi_encode())
+    }
+}
+
+impl Cheatcode for promptSecretCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { promptText: text } = self;
+        prompt(state, text, prompt_password).map(|res| res.abi_encode())
+    }
+}
+
 pub(super) fn write_file(state: &Cheatcodes, path: &Path, contents: &[u8]) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
     // write access to foundry.toml is not allowed
@@ -368,6 +385,39 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
         stdout: encoded_stdout,
         stderr: output.stderr,
     })
+}
+
+fn prompt_input(prompt_text: &str) -> Result<String, dialoguer::Error> {
+    Input::new().allow_empty(true).with_prompt(prompt_text).interact_text()
+}
+
+fn prompt_password(prompt_text: &str) -> Result<String, dialoguer::Error> {
+    Password::new().with_prompt(prompt_text).interact()
+}
+
+fn prompt(
+    state: &Cheatcodes,
+    prompt_text: &str,
+    input: fn(&str) -> Result<String, dialoguer::Error>,
+) -> Result<String> {
+    let text_clone = prompt_text.to_string();
+    let timeout = state.config.prompt_timeout;
+    let (send, recv) = mpsc::channel();
+
+    thread::spawn(move || {
+        send.send(input(&text_clone)).unwrap();
+    });
+
+    match recv.recv_timeout(timeout) {
+        Ok(res) => res.map_err(|err| {
+            println!();
+            err.to_string().into()
+        }),
+        Err(_) => {
+            println!();
+            Err("Prompt timed out".into())
+        }
+    }
 }
 
 #[cfg(test)]

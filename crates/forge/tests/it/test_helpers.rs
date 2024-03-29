@@ -197,6 +197,9 @@ impl ForgeTestData {
         config.rpc_endpoints = rpc_endpoints();
         config.allow_paths.push(manifest_root().to_path_buf());
 
+        // no prompt testing
+        config.prompt_timeout = 0;
+
         let root = self.project.root();
         let opts = self.evm_opts.clone();
         let env = opts.local_evm_env();
@@ -287,6 +290,12 @@ pub fn rpc_endpoints() -> RpcEndpoints {
             "rpcAlias",
             RpcEndpoint::Url(
                 "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
+            ),
+        ),
+        (
+            "rpcAliasSepolia",
+            RpcEndpoint::Url(
+                "https://eth-sepolia.g.alchemy.com/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
             ),
         ),
         ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
