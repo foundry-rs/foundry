@@ -578,6 +578,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
     }
 
+    /// Returns true for post Cancun
+    pub fn is_eip4844(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::CANCUN as u8)
+    }
+
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
         self.env.read().handler_cfg.is_optimism
@@ -597,6 +602,13 @@ impl Backend {
             return Ok(());
         }
         Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
+    }
+
+    pub fn ensure_eip4844_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip4844() {
+            return Ok(());
+        }
+        Err(BlockchainError::EIP4844TransactionUnsupportedAtHardfork)
     }
 
     /// Returns an error if op-stack deposits are not active
@@ -1777,19 +1789,19 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        block_request: Option<BlockRequest>,
+        block_request: BlockRequest,
     ) -> Result<U256, BlockchainError> {
-        if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
+        if let BlockRequest::Pending(pool_transactions) = &block_request {
             if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
                 return Ok(value);
             }
         }
         let final_block_request = match block_request {
-            Some(BlockRequest::Pending(_)) => Some(BlockRequest::Number(self.best_number())),
-            Some(BlockRequest::Number(bn)) => Some(BlockRequest::Number(bn)),
-            None => None,
+            BlockRequest::Pending(_) => BlockRequest::Number(self.best_number()),
+            BlockRequest::Number(bn) => BlockRequest::Number(bn),
         };
-        self.with_database_at(final_block_request, |db, _| {
+
+        self.with_database_at(Some(final_block_request), |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(U256::from(db.basic_ref(address)?.unwrap_or_default().nonce))
         })
@@ -1972,6 +1984,12 @@ impl Backend {
                 .map_or(self.base_fee().to::<u128>(), |b| b as u128)
                 .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or(u128::MAX),
+            TypedTransaction::EIP4844(t) => block
+                .header
+                .base_fee_per_gas
+                .map_or(self.base_fee().to::<u128>(), |b| b as u128)
+                .checked_add(t.tx().tx().max_priority_fee_per_gas)
+                .unwrap_or(u128::MAX),
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
@@ -1991,8 +2009,9 @@ impl Backend {
                 let mut pre_receipts_log_index = None;
                 if !cumulative_receipts.is_empty() {
                     cumulative_receipts.truncate(cumulative_receipts.len() - 1);
-                    pre_receipts_log_index =
-                        Some(cumulative_receipts.iter().map(|_r| logs.len() as u32).sum::<u32>());
+                    pre_receipts_log_index = Some(
+                        cumulative_receipts.iter().map(|r| r.logs().len() as u32).sum::<u32>(),
+                    );
                 }
                 logs.iter()
                     .enumerate()
@@ -2258,19 +2277,14 @@ fn get_pool_transactions_nonce(
     pool_transactions: &[Arc<PoolTransaction>],
     address: Address,
 ) -> Option<U256> {
-    let highest_nonce_tx = pool_transactions
+    if let Some(highest_nonce) = pool_transactions
         .iter()
         .filter(|tx| *tx.pending_transaction.sender() == address)
-        .reduce(|accum, item| {
-            let nonce = item.pending_transaction.nonce();
-            if nonce > accum.pending_transaction.nonce() {
-                item
-            } else {
-                accum
-            }
-        });
-    if let Some(highest_nonce_tx) = highest_nonce_tx {
-        return Some(highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::from(1)));
+        .map(|tx| tx.pending_transaction.nonce())
+        .max()
+    {
+        let tx_count = highest_nonce.saturating_add(U256::from(1));
+        return Some(tx_count)
     }
     None
 }

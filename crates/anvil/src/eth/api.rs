@@ -413,6 +413,9 @@ impl EthApi {
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
             }
+            EthRequest::RemovePoolTransactions(address) => {
+                self.anvil_remove_pool_transactions(address).await.to_rpc_result()
+            }
         }
     }
 
@@ -1781,6 +1784,12 @@ impl EthApi {
         })
     }
 
+    pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
+        node_info!("anvil_removePoolTransactions");
+        self.pool.remove_transactions_by_address(address);
+        Ok(())
+    }
+
     /// Snapshot the state of the blockchain at the current block.
     ///
     /// Handler for RPC call: `evm_snapshot`
@@ -2535,7 +2544,7 @@ impl EthApi {
             }
         }
 
-        let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
+        let nonce = self.backend.get_nonce(address, block_request).await?;
 
         Ok(nonce)
     }
@@ -2585,6 +2594,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
             TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
@@ -2671,6 +2681,10 @@ fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
                 TxKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP2930(req) => match req.to {
+                TxKind::Call(_) => MIN_TRANSACTION_GAS,
+                TxKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::EIP4844(req) => match req.tx().to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },

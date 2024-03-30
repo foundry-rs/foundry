@@ -244,6 +244,8 @@ pub struct Config {
     pub ffi: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
+    /// Sets a timeout in seconds for vm.prompt cheatcodes
+    pub prompt_timeout: u64,
     /// The address which will be executing all tests
     pub sender: Address,
     /// The tx.origin value during EVM execution
@@ -1874,10 +1876,11 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
-            fuzz: Default::default(),
+            fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: Default::default(),
             always_use_create_2_factory: false,
             ffi: false,
+            prompt_timeout: 120,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),

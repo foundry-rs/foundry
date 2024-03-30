@@ -143,7 +143,7 @@ impl BindArgs {
                 "console[2]?",
                 "CommonBase",
                 "Components",
-                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Storage(Safe)?)",
+                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Toml|Storage(Safe)?)",
                 "[Vv]m.*",
             ])
             .extend_names(["IMulticall3"])
@@ -155,6 +155,10 @@ impl BindArgs {
         let abigens = json_files(artifacts.as_ref())
             .into_iter()
             .filter_map(|path| {
+                if path.to_string_lossy().contains("/build-info/") {
+                    // ignore the build info json
+                    return None
+                }
                 // we don't want `.metadata.json files
                 let stem = path.file_stem()?;
                 if stem.to_str()?.ends_with(".metadata") {

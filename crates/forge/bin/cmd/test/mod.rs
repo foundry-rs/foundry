@@ -104,6 +104,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// File to rerun fuzz failures from.
+    #[arg(long)]
+    pub fuzz_input_file: Option<String>,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -248,7 +252,7 @@ impl TestArgs {
         let profiles = get_available_profiles(toml)?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz)
+            .fuzz(config.clone().fuzz)
             .invariant(config.invariant)
             .profiles(profiles)
             .build(&output, project_root)?;
@@ -300,7 +304,7 @@ impl TestArgs {
 
         if should_debug {
             // There is only one test.
-            let Some(test) = outcome.into_tests_cloned().next() else {
+            let Some((_, test_result)) = outcome.tests().next() else {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
@@ -311,9 +315,9 @@ impl TestArgs {
 
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .debug_arenas(test.result.debug.as_slice())
+                .debug_arenas(test_result.debug.as_slice())
                 .sources(sources)
-                .breakpoints(test.result.breakpoints);
+                .breakpoints(test_result.breakpoints.clone());
             if let Some(decoder) = &outcome.decoder {
                 builder = builder.decoder(decoder);
             }
@@ -574,6 +578,9 @@ impl Provider for TestArgs {
         }
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
+        }
+        if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
+            fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 

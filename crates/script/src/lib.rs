@@ -58,7 +58,6 @@ mod execute;
 mod multi_sequence;
 mod providers;
 mod receipts;
-mod resume;
 mod runner;
 mod sequence;
 mod simulate;
@@ -219,49 +218,51 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        // Drive state machine to point at which we have everything needed for simulation/resuming.
-        let pre_simulation = self
-            .preprocess()
-            .await?
-            .compile()?
-            .link()?
-            .prepare_execution()
-            .await?
-            .execute()
-            .await?
-            .prepare_simulation()
-            .await?;
+        let compiled = self.preprocess().await?.compile()?;
 
-        if pre_simulation.args.debug {
-            pre_simulation.run_debugger()?;
-        }
-
-        if pre_simulation.args.json {
-            pre_simulation.show_json()?;
-        } else {
-            pre_simulation.show_traces().await?;
-        }
-
-        // Ensure that we have transactions to simulate/broadcast, otherwise exit early to avoid
-        // hard error.
-        if pre_simulation.execution_result.transactions.as_ref().map_or(true, |txs| txs.is_empty())
+        // Move from `CompiledState` to `BundledState` either by resuming or executing and
+        // simulating script.
+        let bundled = if compiled.args.resume || (compiled.args.verify && !compiled.args.broadcast)
         {
-            return Ok(());
-        }
-
-        // Check if there are any missing RPCs and exit early to avoid hard error.
-        if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-            shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
-            return Ok(());
-        }
-
-        // Move from `PreSimulationState` to `BundledState` either by resuming or simulating
-        // transactions.
-        let bundled = if pre_simulation.args.resume ||
-            (pre_simulation.args.verify && !pre_simulation.args.broadcast)
-        {
-            pre_simulation.resume().await?
+            compiled.resume().await?
         } else {
+            // Drive state machine to point at which we have everything needed for simulation.
+            let pre_simulation = compiled
+                .link()?
+                .prepare_execution()
+                .await?
+                .execute()
+                .await?
+                .prepare_simulation()
+                .await?;
+
+            if pre_simulation.args.debug {
+                pre_simulation.run_debugger()?;
+            }
+
+            if pre_simulation.args.json {
+                pre_simulation.show_json()?;
+            } else {
+                pre_simulation.show_traces().await?;
+            }
+
+            // Ensure that we have transactions to simulate/broadcast, otherwise exit early to avoid
+            // hard error.
+            if pre_simulation
+                .execution_result
+                .transactions
+                .as_ref()
+                .map_or(true, |txs| txs.is_empty())
+            {
+                return Ok(());
+            }
+
+            // Check if there are any missing RPCs and exit early to avoid hard error.
+            if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
+                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                return Ok(());
+            }
+
             pre_simulation.args.check_contract_sizes(
                 &pre_simulation.execution_result,
                 &pre_simulation.build_data.highlevel_known_contracts,

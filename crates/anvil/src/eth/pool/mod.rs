@@ -36,7 +36,7 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use alloy_primitives::{TxHash, U64};
+use alloy_primitives::{Address, TxHash, U64};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{channel, Receiver, Sender};
@@ -141,6 +141,11 @@ impl Pool {
         self.inner.write().remove_invalid(tx_hashes)
     }
 
+    /// Remove transactions by sender
+    pub fn remove_transactions_by_address(&self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        self.inner.write().remove_transactions_by_address(sender)
+    }
+
     /// Removes a single transaction from the pool
     ///
     /// This is similar to `[Pool::remove_invalid()]` but for a single transaction.
@@ -216,6 +221,24 @@ impl PoolInner {
         Some(
             self.ready_transactions.get(&hash)?.transaction.transaction.pending_transaction.clone(),
         )
+    }
+
+    /// Returns an iterator over all transactions in the pool filtered by the sender
+    pub fn transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
+        let pending_txs = self
+            .pending_transactions
+            .transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        let ready_txs = self
+            .ready_transactions
+            .get_transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        pending_txs.chain(ready_txs)
     }
 
     /// Returns true if this pool already contains the transaction
@@ -339,6 +362,25 @@ impl PoolInner {
         removed.extend(self.pending_transactions.remove(tx_hashes));
 
         trace!(target: "txpool", "Removed invalid transactions: {:?}", removed);
+
+        removed
+    }
+
+    /// Remove transactions by sender address
+    pub fn remove_transactions_by_address(&mut self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        let tx_hashes =
+            self.transactions_by_sender(sender).map(move |tx| tx.hash()).collect::<Vec<TxHash>>();
+
+        if tx_hashes.is_empty() {
+            return vec![]
+        }
+
+        trace!(target: "txpool", "Removing transactions: {:?}", tx_hashes);
+
+        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
+        removed.extend(self.pending_transactions.remove(tx_hashes));
+
+        trace!(target: "txpool", "Removed transactions: {:?}", removed);
 
         removed
     }

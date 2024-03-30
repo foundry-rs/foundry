@@ -12,7 +12,9 @@ use foundry_common::types::ToAlloy;
 use foundry_config::NamedChain;
 use reqwest::Url;
 use std::{
+    net::SocketAddr,
     path::{Path, PathBuf},
+    str::FromStr,
     time::Duration,
 };
 use url::ParseError;
@@ -93,12 +95,16 @@ impl ProviderBuilder {
         let url = Url::parse(url_str)
             .or_else(|err| match err {
                 ParseError::RelativeUrlWithoutBase => {
-                    let path = Path::new(url_str);
-
-                    if let Ok(path) = resolve_path(path) {
-                        Url::parse(&format!("file://{}", path.display()))
+                    if SocketAddr::from_str(url_str).is_ok() {
+                        Url::parse(&format!("http://{}", url_str))
                     } else {
-                        Err(err)
+                        let path = Path::new(url_str);
+
+                        if let Ok(path) = resolve_path(path) {
+                            Url::parse(&format!("file://{}", path.display()))
+                        } else {
+                            Err(err)
+                        }
                     }
                 }
                 _ => Err(err),

@@ -9,6 +9,7 @@ use anvil_core::{
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
+    signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
         TransactionRequest, H256, U256, U64,
@@ -441,7 +442,7 @@ async fn can_get_node_info() {
         current_block_number: U64([0]).to_alloy(),
         current_block_timestamp: 1,
         current_block_hash: block.hash.unwrap().to_alloy(),
-        hard_fork: SpecId::SHANGHAI,
+        hard_fork: SpecId::CANCUN,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap().to_alloy(),
@@ -630,4 +631,28 @@ async fn test_fork_revert_call_latest_block_timestamp() {
         multicall.get_current_block_coinbase().await.unwrap(),
         latest_block.header.miner.to_ethers()
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_remove_pool_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let provider = Arc::new(SignerMiddleware::new(provider, wallet.clone()));
+
+    let sender = Address::random();
+    let to = Address::random();
+    let val = 1337u64;
+
+    let tx = TransactionRequest::new().from(sender).to(to).value(val);
+
+    provider.send_transaction(tx.from(wallet.address()), None).await.unwrap();
+
+    let initial_txs = provider.txpool_inspect().await.unwrap();
+    assert_eq!(initial_txs.pending.len(), 1);
+
+    api.anvil_remove_pool_transactions(wallet.address().to_alloy()).await.unwrap();
+
+    let final_txs = provider.txpool_inspect().await.unwrap();
+    assert_eq!(final_txs.pending.len(), 0);
 }

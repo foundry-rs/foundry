@@ -81,6 +81,8 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
+    #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
+    EIP4844TransactionUnsupportedAtHardfork,
     #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
     DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
@@ -406,6 +408,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::EIP4844TransactionUnsupportedAtHardfork => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {

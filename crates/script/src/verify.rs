@@ -1,9 +1,4 @@
-use crate::{
-    build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData},
-    sequence::ScriptSequenceKind,
-    ScriptArgs, ScriptConfig,
-};
+use crate::{build::LinkedBuildData, sequence::ScriptSequenceKind, ScriptArgs, ScriptConfig};
 
 use alloy_primitives::Address;
 use eyre::Result;
@@ -21,8 +16,6 @@ pub struct BroadcastedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
-    pub execution_artifacts: ExecutionArtifacts,
     pub sequence: ScriptSequenceKind,
 }
 

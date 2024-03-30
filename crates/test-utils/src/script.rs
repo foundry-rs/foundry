@@ -38,6 +38,8 @@ impl ScriptTester {
             "script",
             "-R",
             "ds-test/=lib/",
+            "-R",
+            "cheats/=cheats/",
             target_contract,
             "--root",
             project_root.to_str().unwrap(),
@@ -75,7 +77,7 @@ impl ScriptTester {
 
         // copy the broadcast test
         fs::copy(
-            Self::testdata_path().join("cheats/Broadcast.t.sol"),
+            Self::testdata_path().join("default/cheats/Broadcast.t.sol"),
             project_root.join(BROADCAST_TEST_PATH),
         )
         .expect("Failed to initialize broadcast contract");
@@ -90,8 +92,11 @@ impl ScriptTester {
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
-            .expect("Failed to initialize broadcast contract");
+        fs::copy(
+            testdata.join("default/cheats/Broadcast.t.sol"),
+            project_root.join(BROADCAST_TEST_PATH),
+        )
+        .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, None, project_root, &target_contract)
     }
@@ -104,7 +109,8 @@ impl ScriptTester {
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
+        fs::create_dir_all(current_dir.join("cheats"))?;
+        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("cheats/Vm.sol"))?;
         fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
         Ok(())
     }
@@ -258,6 +264,7 @@ pub enum ScriptOutcome {
     ScriptFailed,
     UnsupportedLibraries,
     ErrorSelectForkOnBroadcast,
+    OkRun,
 }
 
 impl ScriptOutcome {
@@ -273,6 +280,7 @@ impl ScriptOutcome {
             Self::ScriptFailed => "script failed: ",
             Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
+            Self::OkRun => "Script ran successfully",
         }
     }
 
@@ -281,7 +289,8 @@ impl ScriptOutcome {
             ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::WarnSpecifyDeployer |
+            ScriptOutcome::OkRun => false,
             ScriptOutcome::MissingSender |
             ScriptOutcome::MissingWallet |
             ScriptOutcome::StaticCallNotAllowed |

@@ -15,11 +15,7 @@ name = "forge"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # lib
@@ -83,12 +79,16 @@ thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 watchexec = "2.3.2"
 evm-disassembler.workspace = true
+rustc-hash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
 hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 anvil.workspace = true
@@ -99,9 +99,7 @@ globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
 pretty_assertions.workspace = true
-svm = { package = "svm-rs", version = "0.3", default-features = false, features = [
-    "rustls",
-] }
+svm = { package = "svm-rs", version = "0.4", default-features = false, features = ["rustls"] }
 tempfile = "3"
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
@@ -113,12 +111,9 @@ rustls = [
     "reqwest/rustls-tls",
     "reqwest/rustls-tls-native-roots",
 ]
-openssl = [
-    "foundry-cli/openssl",
-    "reqwest/default-tls",
-    "foundry-wallets/openssl",
-]
+openssl = ["foundry-cli/openssl", "reqwest/default-tls", "foundry-wallets/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
+jemalloc = ["dep:tikv-jemallocator"]
 
 [[bench]]
 name = "test"
