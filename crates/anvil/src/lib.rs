@@ -246,6 +246,9 @@ impl NodeHandle {
                     .join(", ")
             )
         }
+        if let Some(ipc_path) = self.ipc_path() {
+            println!("IPC path provided: {}", ipc_path);
+        }
     }
 
     /// The address of the launched server
