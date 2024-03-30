@@ -1179,3 +1179,21 @@ forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
         .await
         .simulate(ScriptOutcome::OkRun);
 });
+
+forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "Sctipt.s.sol",
+            r#"
+contract Script {
+    function run() external {}
+
+    function run(address,uint256) external {}
+}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
+    assert!(cmd.stderr_lossy().contains("Multiple functions with the same name"));
+});
