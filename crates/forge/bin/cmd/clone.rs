@@ -55,7 +55,7 @@ pub struct CloneMetadata {
     /// The address of the deployer (caller of the CREATE/CREATE2).
     pub deployer: Address,
     /// The constructor arguments of the contract on chain.
-    pub consturctor_arguments: Bytes,
+    pub constructor_arguments: Bytes,
     /// The storage layout of the contract on chain.
     pub storage_layout: StorageLayout,
 }
@@ -141,7 +141,7 @@ impl CloneArgs {
             chain_id: etherscan.chain.unwrap_or_default().id(),
             creation_transaction: creation_tx.transaction_hash,
             deployer: creation_tx.contract_creator,
-            consturctor_arguments: meta.constructor_arguments,
+            constructor_arguments: meta.constructor_arguments,
             storage_layout,
         };
         let metadata_content = serde_json::to_string(&clone_meta)?;
