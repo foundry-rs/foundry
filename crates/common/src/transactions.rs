@@ -31,7 +31,7 @@ impl TransactionReceiptWithRevertReason {
 
     async fn fetch_revert_reason<M: Middleware>(&self, provider: &M) -> Result<Option<String>> {
         if let Some(false) | None = self.is_failure() {
-            return Ok(None);
+            return Ok(None)
         }
 
         if let Some(ref transaction) = provider

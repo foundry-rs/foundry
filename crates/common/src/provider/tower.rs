@@ -111,7 +111,7 @@ impl tower::Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
                             err = TransportError::ErrorResp(e.clone())
                         } else {
                             this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
-                            return Ok(res);
+                            return Ok(res)
                         }
                     }
                     Err(e) => err = e,
@@ -121,7 +121,7 @@ impl tower::Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
                 if should_retry {
                     rate_limit_retry_number += 1;
                     if rate_limit_retry_number > this.max_rate_limit_retries {
-                        return Err(TransportErrorKind::custom_str("Max retries exceeded"));
+                        return Err(TransportErrorKind::custom_str("Max retries exceeded"))
                     }
                     trace!("retrying request due to {:?}", err);
 
@@ -163,7 +163,7 @@ impl tower::Service<RequestPacket> for RetryBackoffService<RuntimeTransport> {
                     }
 
                     this.requests_enqueued.fetch_sub(1, Ordering::SeqCst);
-                    return Err(err);
+                    return Err(err)
                 }
             }
         })

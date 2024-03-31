@@ -1128,7 +1128,7 @@ fn uint_assert_approx_eq_rel(
             right,
             max_delta,
             real_delta: EqRelDelta::Undefined,
-        })));
+        })))
     }
 
     let delta = get_delta_uint(left, right)
@@ -1159,7 +1159,7 @@ fn int_assert_approx_eq_rel(
             right,
             max_delta,
             real_delta: EqRelDelta::Undefined,
-        })));
+        })))
     }
 
     let (_, abs_right) = right.into_sign_and_abs();

@@ -100,7 +100,7 @@ impl LogsArgs {
 
             println!("{}", logs);
 
-            return Ok(());
+            return Ok(())
         }
 
         let mut stdout = io::stdout();

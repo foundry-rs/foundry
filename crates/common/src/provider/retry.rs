@@ -32,7 +32,7 @@ impl RetryPolicy for RateLimitRetryPolicy {
             TransportError::SerError(_) => false,
             TransportError::DeserError { text, .. } => {
                 if let Ok(resp) = serde_json::from_str::<ErrorPayload>(text) {
-                    return should_retry_json_rpc_error(&resp);
+                    return should_retry_json_rpc_error(&resp)
                 }
 
                 // some providers send invalid JSON RPC in the error case (no `id:u64`), but the
@@ -43,7 +43,7 @@ impl RetryPolicy for RateLimitRetryPolicy {
                 }
 
                 if let Ok(resp) = serde_json::from_str::<Resp>(text) {
-                    return should_retry_json_rpc_error(&resp.error);
+                    return should_retry_json_rpc_error(&resp.error)
                 }
 
                 false
@@ -62,10 +62,10 @@ impl RetryPolicy for RateLimitRetryPolicy {
                 let backoff_seconds = &data["rate"]["backoff_seconds"];
                 // infura rate limit error
                 if let Some(seconds) = backoff_seconds.as_u64() {
-                    return Some(std::time::Duration::from_secs(seconds));
+                    return Some(std::time::Duration::from_secs(seconds))
                 }
                 if let Some(seconds) = backoff_seconds.as_f64() {
-                    return Some(std::time::Duration::from_secs(seconds as u64 + 1));
+                    return Some(std::time::Duration::from_secs(seconds as u64 + 1))
                 }
             }
         }
@@ -97,29 +97,29 @@ fn should_retry_json_rpc_error(error: &ErrorPayload) -> bool {
     let ErrorPayload { code, message, .. } = error;
     // alchemy throws it this way
     if *code == 429 {
-        return true;
+        return true
     }
 
     // This is an infura error code for `exceeded project rate limit`
     if *code == -32005 {
-        return true;
+        return true
     }
 
     // alternative alchemy error for specific IPs
     if *code == -32016 && message.contains("rate limit") {
-        return true;
+        return true
     }
 
     // quick node error `"credits limited to 6000/sec"`
     // <https://github.com/foundry-rs/foundry/pull/6712#issuecomment-1951441240>
     if *code == -32012 && message.contains("credits") {
-        return true;
+        return true
     }
 
     // quick node rate limit error: `100/second request limit reached - reduce calls per second or
     // upgrade your account at quicknode.com` <https://github.com/foundry-rs/foundry/issues/4894>
     if *code == -32007 && message.contains("request limit reached") {
-        return true;
+        return true
     }
 
     match message.as_str() {

@@ -67,7 +67,7 @@ impl BlockchainDb {
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
                     if skip_check {
-                        return true;
+                        return true
                     }
                     let mut existing = cache.meta().write();
                     existing.hosts.extend(meta.hosts.clone());
@@ -400,10 +400,10 @@ impl JsonBlockCacheDB {
 
         let mut writer = BufWriter::new(file);
         if let Err(e) = serde_json::to_writer(&mut writer, &self.data) {
-            return warn!(target: "cache", %e, "Failed to write to json cache");
+            return warn!(target: "cache", %e, "Failed to write to json cache")
         }
         if let Err(e) = writer.flush() {
-            return warn!(target: "cache", %e, "Failed to flush to json cache");
+            return warn!(target: "cache", %e, "Failed to flush to json cache")
         }
 
         trace!(target: "cache", "saved json cache");

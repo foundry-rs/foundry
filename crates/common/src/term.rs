@@ -66,7 +66,7 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return;
+            return
         }
 
         let indicator = Paint::green(self.indicator[self.idx % self.indicator.len()]);
@@ -120,7 +120,7 @@ impl SpinnerReporter {
                             // end with a newline
                             println!();
                             let _ = ack.send(());
-                            break;
+                            break
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),

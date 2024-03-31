@@ -191,7 +191,7 @@ impl FailedInvariantCaseData {
 
                 logs.extend(error_call_result.logs);
                 if error_call_result.reverted {
-                    break;
+                    break
                 }
             }
         }
@@ -217,7 +217,7 @@ impl FailedInvariantCaseData {
         let mut new_sequence = Vec::with_capacity(calls.len());
         for index in 0..calls.len() {
             if !use_calls.contains(&index) {
-                continue;
+                continue
             }
 
             new_sequence.push(index);

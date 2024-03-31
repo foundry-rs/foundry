@@ -5,7 +5,7 @@ use std::str::FromStr;
 /// Helper to convert a string number into a comparable one
 fn to_num(string: &str) -> I256 {
     if string.is_empty() {
-        return I256::ZERO;
+        return I256::ZERO
     }
     string.replace('_', "").trim().parse().unwrap()
 }
@@ -14,7 +14,7 @@ fn to_num(string: &str) -> I256 {
 /// This will reverse the number so that 0's can be ignored
 fn to_num_reversed(string: &str) -> U256 {
     if string.is_empty() {
-        return U256::from(0);
+        return U256::from(0)
     }
     string.replace('_', "").trim().chars().rev().collect::<String>().parse().unwrap()
 }

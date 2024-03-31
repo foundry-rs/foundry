@@ -67,7 +67,7 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             gas_limit: gas.unwrap_or_default(),
             is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
-        }));
+        }))
     }
 
     match (
@@ -214,7 +214,7 @@ impl MaybeImpersonatedTransaction {
     #[cfg(feature = "impersonated-tx")]
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
-            return Ok(sender);
+            return Ok(sender)
         }
         self.transaction.recover()
     }
@@ -227,7 +227,7 @@ impl MaybeImpersonatedTransaction {
     pub fn hash(&self) -> B256 {
         if self.transaction.is_impersonated() {
             if let Some(sender) = self.impersonated_sender {
-                return self.transaction.impersonated_hash(sender);
+                return self.transaction.impersonated_hash(sender)
             }
         }
         self.transaction.hash()

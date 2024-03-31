@@ -838,7 +838,7 @@ impl Backend {
                 // created account takes precedence: for example contract creation in setups
                 if init_account.is_created() {
                     trace!(?loaded_account, "skipping created account");
-                    continue;
+                    continue
                 }
 
                 // otherwise we need to replace the account's info with the one from the fork's
@@ -912,7 +912,7 @@ impl Backend {
 
                 if tx.hash == tx_hash {
                     // found the target transaction
-                    return Ok(Some(tx));
+                    return Ok(Some(tx))
                 }
                 trace!(tx=?tx.hash, "committing transaction");
 

@@ -97,10 +97,10 @@ impl FileFilter for FilterArgs {
     /// [`FoundryPathExt::is_sol_test()`].
     fn is_match(&self, file: &Path) -> bool {
         if let Some(glob) = &self.path_pattern {
-            return glob.is_match(file);
+            return glob.is_match(file)
         }
         if let Some(glob) = &self.path_pattern_inverse {
-            return !glob.is_match(file);
+            return !glob.is_match(file)
         }
         file.is_sol_test()
     }

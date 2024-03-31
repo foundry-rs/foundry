@@ -739,7 +739,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let ecx = &mut ecx.inner;
 
         if call.contract == HARDHAT_CONSOLE_ADDRESS {
-            return None;
+            return None
         }
 
         // Handle expected calls
@@ -789,7 +789,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
-                });
+                })
             }
         }
 
@@ -851,7 +851,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 gas,
                             },
                             memory_offset: call.return_memory_offset.clone(),
-                        });
+                        })
                     }
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
@@ -892,7 +892,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
-                    });
+                    })
                 }
             }
         }
@@ -1100,7 +1100,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if self.expected_emits.iter().any(|expected| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
-                return outcome;
+                return outcome
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
@@ -1118,7 +1118,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if outcome.result.is_revert() {
             if let Some(err) = diag {
                 outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-                return outcome;
+                return outcome
             }
         }
 
@@ -1254,7 +1254,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             gas,
                         },
                         address: None,
-                    });
+                    })
                 }
 
                 ecx.env.tx.caller = broadcast.new_origin;

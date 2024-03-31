@@ -215,7 +215,7 @@ impl<'a> ContractRunner<'a> {
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
-            );
+            )
         }
 
         let has_invariants = self.contract.functions().any(|func| func.is_invariant_test());
@@ -251,7 +251,7 @@ impl<'a> ContractRunner<'a> {
                 )]
                 .into(),
                 warnings,
-            );
+            )
         }
 
         // Filter out functions sequentially since it's very fast and there is no need to do it
@@ -482,7 +482,7 @@ impl<'a> ContractRunner<'a> {
                 coverage,
                 duration: start.elapsed(),
                 ..Default::default()
-            };
+            }
         };
 
         let mut evm = InvariantExecutor::new(
@@ -637,7 +637,7 @@ impl<'a> ContractRunner<'a> {
                 coverage,
                 duration: start.elapsed(),
                 ..Default::default()
-            };
+            }
         }
 
         // if should debug

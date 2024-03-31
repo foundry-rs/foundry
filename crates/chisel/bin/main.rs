@@ -135,7 +135,7 @@ async fn main() -> eyre::Result<()> {
                 DispatchResult::CommandFailed(e) => eprintln!("{e}"),
                 _ => panic!("Unexpected result: Please report this bug."),
             }
-            return Ok(());
+            return Ok(())
         }
         Some(ChiselSubcommand::Load { id }) | Some(ChiselSubcommand::View { id }) => {
             // For both of these subcommands, we need to attempt to load the session from cache
@@ -143,7 +143,7 @@ async fn main() -> eyre::Result<()> {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
                 DispatchResult::CommandFailed(e) => {
                     eprintln!("{e}");
-                    return Ok(());
+                    return Ok(())
                 }
                 _ => panic!("Unexpected result! Please report this bug."),
             }
@@ -156,7 +156,7 @@ async fn main() -> eyre::Result<()> {
                     }
                     _ => panic!("Unexpected result! Please report this bug."),
                 }
-                return Ok(());
+                return Ok(())
             }
         }
         Some(ChiselSubcommand::ClearCache) => {
@@ -165,7 +165,7 @@ async fn main() -> eyre::Result<()> {
                 DispatchResult::CommandFailed(e) => eprintln!("{e}"),
                 _ => panic!("Unexpected result! Please report this bug."),
             }
-            return Ok(());
+            return Ok(())
         }
         None => { /* No chisel subcommand present; Continue */ }
     }
@@ -207,7 +207,7 @@ async fn main() -> eyre::Result<()> {
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
-                    break;
+                    break
                 } else {
                     println!("(To exit, press Ctrl+C again)");
                     interrupt = true;
@@ -216,7 +216,7 @@ async fn main() -> eyre::Result<()> {
             Err(ReadlineError::Eof) => break,
             Err(err) => {
                 println!("Error: {err:?}");
-                break;
+                break
             }
         }
     }
