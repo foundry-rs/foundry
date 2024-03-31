@@ -244,10 +244,10 @@ impl NodeHandle {
                     .map(|addr| { addr.to_string() })
                     .collect::<Vec<String>>()
                     .join(", ")
-            )
-        }
-        if let Some(ipc_path) = self.ipc_path() {
-            println!("IPC path provided: {}", ipc_path);
+            );
+            if let Some(ipc_path) = self.ipc_path() {
+                println!("IPC path: {}", ipc_path);
+            }
         }
     }
 
