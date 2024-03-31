@@ -304,26 +304,28 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
     let contract_name = &meta.contract_name;
     let source_tree = meta.source_tree();
 
+    // then we move the sources to the correct directories
+    // we will first load existing remappings if necessary
+    //  make sure this happens before dumping sources
+    let mut remappings: Vec<Remapping> = Remapping::find_many(root);
+    // we also load the original remappings from the metadata
+    remappings.extend(meta.settings()?.remappings);
+
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
     source_tree
         .write_to(&tmp_dump_dir)
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
 
-    // then we move the sources to the correct directories
-    // 1. we will first load existing remappings if necessary
-    //  make sure this happens before dumping sources
-    let mut remappings: Vec<Remapping> = Remapping::find_many(root);
-    // we also load the original remappings from the metadata
-    remappings.extend(meta.settings()?.remappings);
-
-    // 1. move contract sources to the `src` directory
+    // move contract sources to the `src` directory
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
         if std::fs::metadata(&src_dir).is_err() {
             std::fs::create_dir(&src_dir)?;
         }
         let entry = entry?;
-        if entry.file_name().to_string_lossy().to_string().as_str() == "contracts" {
+        let folder_name = entry.file_name().to_string_lossy().to_string();
+        // special handling for contracts and src directories: we flatten them.
+        if folder_name.as_str() == "contracts" || folder_name.as_str() == "src" {
             // move all sub folders in contracts to src
             for e in read_dir(entry.path())? {
                 let e = e?;
@@ -331,7 +333,11 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
                 std::fs::rename(e.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
-                    name: format!("contracts/{}", e.file_name().to_string_lossy().to_string()),
+                    name: format!(
+                        "{}/{}",
+                        folder_name,
+                        e.file_name().to_string_lossy().to_string()
+                    ),
                     path: dest.to_string_lossy().to_string(),
                 });
             }
@@ -486,6 +492,20 @@ mod tests {
         args.run().await.unwrap();
         let rv = assert_successful_compilation(&project_root);
         assert_compilation_result(rv, contract_name, stripped_creation_code)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
+    async fn test_clone_contract_with_relative_import() {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let args = CloneArgs {
+            address: "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".to_string(),
+            root: project_root.clone(),
+            etherscan: Default::default(),
+            enable_git: false,
+        };
+        args.run().await.unwrap();
+        assert_successful_compilation(&project_root);
     }
 
     fn pick_creation_info(address: &str) -> Option<(&'static str, &'static str)> {
