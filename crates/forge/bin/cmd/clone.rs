@@ -331,7 +331,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
                 std::fs::rename(e.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
-                    name: e.file_name().to_string_lossy().to_string(),
+                    name: format!("contracts/{}", e.file_name().to_string_lossy().to_string()),
                     path: dest.to_string_lossy().to_string(),
                 });
             }
