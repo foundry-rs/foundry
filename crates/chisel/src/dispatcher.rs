@@ -86,11 +86,11 @@ impl DispatchResult {
     pub fn is_error(&self) -> bool {
         matches!(
             self,
-            DispatchResult::Failure(_)
-                | DispatchResult::CommandFailed(_)
-                | DispatchResult::UnrecognizedCommand(_)
-                | DispatchResult::SolangParserFailed(_)
-                | DispatchResult::FileIoError(_)
+            DispatchResult::Failure(_) |
+                DispatchResult::CommandFailed(_) |
+                DispatchResult::UnrecognizedCommand(_) |
+                DispatchResult::SolangParserFailed(_) |
+                DispatchResult::FileIoError(_)
         )
     }
 }

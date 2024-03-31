@@ -65,8 +65,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
-        if !args.skip_is_verified_check
-            && self.is_contract_verified(&etherscan, &verify_args).await?
+        if !args.skip_is_verified_check &&
+            self.is_contract_verified(&etherscan, &verify_args).await?
         {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",

@@ -405,9 +405,9 @@ impl InspectorStack {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result
-                    || (new_outcome.result.result == InstructionResult::Revert
-                        && new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
             self,
@@ -651,10 +651,10 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
             ecx
         );
 
-        if self.enable_isolation
-            && call.context.scheme == CallScheme::Call
-            && !self.in_inner_context
-            && ecx.journaled_state.depth == 1
+        if self.enable_isolation &&
+            call.context.scheme == CallScheme::Call &&
+            !self.in_inner_context &&
+            ecx.journaled_state.depth == 1
         {
             let (result, _) = self.transact_inner(
                 ecx,
@@ -748,9 +748,9 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result
-                    || (new_outcome.result.result == InstructionResult::Revert
-                        && new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
             self,

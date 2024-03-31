@@ -523,9 +523,9 @@ contract {contract_name} {{
                 .into_iter()
                 .filter_map(|sup| match sup {
                     pt::SourceUnitPart::ImportDirective(i) => match i {
-                        pt::Import::Plain(s, _)
-                        | pt::Import::Rename(s, _, _)
-                        | pt::Import::GlobalSymbol(s, _, _) => {
+                        pt::Import::Plain(s, _) |
+                        pt::Import::Rename(s, _, _) |
+                        pt::Import::GlobalSymbol(s, _, _) => {
                             let s = match s {
                                 pt::ImportPath::Filename(s) => s.string.clone(),
                                 pt::ImportPath::Path(p) => p.to_string(),

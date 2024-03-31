@@ -131,10 +131,10 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let filter = args.filter(&config);
 
     // marker to check whether to override the command
-    let no_reconfigure = filter.args().test_pattern.is_some()
-        || filter.args().path_pattern.is_some()
-        || filter.args().contract_pattern.is_some()
-        || args.watch.run_all;
+    let no_reconfigure = filter.args().test_pattern.is_some() ||
+        filter.args().path_pattern.is_some() ||
+        filter.args().contract_pattern.is_some() ||
+        args.watch.run_all;
 
     let state = WatchTestState {
         project_root: config.__root.0,
@@ -189,8 +189,8 @@ fn on_test(action: OnActionState<WatchTestState>) {
         cmd.drain(pos..=(pos + 1));
     }
 
-    if changed_sol_test_files.len() > 1
-        || (changed_sol_test_files.is_empty() && last_test_files.is_empty())
+    if changed_sol_test_files.len() > 1 ||
+        (changed_sol_test_files.is_empty() && last_test_files.is_empty())
     {
         // this could happen if multiple files were changed at once, for example `forge fmt` was
         // run, or if no test files were changed and no previous test files were modified in which

@@ -120,10 +120,7 @@ impl InferInlineHyperlinks {
                 ParseSource::Event(ev) => {
                     let ev_name = &ev.name.safe_unwrap().name;
                     if ev_name == link.ref_name() {
-                        return Some(InlineLinkTarget::borrowed(
-                            ev_name,
-                            target_path.to_path_buf(),
-                        ));
+                        return Some(InlineLinkTarget::borrowed(ev_name, target_path.to_path_buf()));
                     }
                 }
                 ParseSource::Error(err) => {

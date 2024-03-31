@@ -81,10 +81,10 @@ impl<'a> Iterator for QuotedRanges<'a> {
         let (quote, start) = loop {
             let (state, idx, _) = self.0.next()?;
             match state {
-                QuoteState::Opening(quote)
-                | QuoteState::Escaping(quote)
-                | QuoteState::Escaped(quote)
-                | QuoteState::String(quote) => break (quote, idx),
+                QuoteState::Opening(quote) |
+                QuoteState::Escaping(quote) |
+                QuoteState::Escaped(quote) |
+                QuoteState::String(quote) => break (quote, idx),
                 QuoteState::Closing(quote) => return Some((quote, idx, idx)),
                 QuoteState::None => {}
             }

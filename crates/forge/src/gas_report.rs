@@ -80,10 +80,10 @@ impl GasReport {
 
         // Only include top-level calls which accout for calldata and base (21.000) cost.
         // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1
-            && (trace.kind == CallKind::Call
-                || trace.kind == CallKind::Create
-                || trace.kind == CallKind::Create2)
+        if trace.depth > 1 &&
+            (trace.kind == CallKind::Call ||
+                trace.kind == CallKind::Create ||
+                trace.kind == CallKind::Create2)
         {
             return;
         }

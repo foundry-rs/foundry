@@ -75,6 +75,6 @@ contract AContractTest is DSTest {
         .unwrap()
         .as_str()
         .parse::<i32>()
-        .unwrap()
-        > 0)));
+        .unwrap() >
+        0)));
 });

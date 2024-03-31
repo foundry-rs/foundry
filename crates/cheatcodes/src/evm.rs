@@ -99,13 +99,13 @@ impl Cheatcode for dumpStateCall {
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
-            key == &CHEATCODE_ADDRESS
-                || key == &CALLER
-                || key == &HARDHAT_CONSOLE_ADDRESS
-                || key == &TEST_CONTRACT_ADDRESS
-                || key == &ccx.caller
-                || key == &ccx.state.config.evm_opts.sender
-                || val.is_empty()
+            key == &CHEATCODE_ADDRESS ||
+                key == &CALLER ||
+                key == &HARDHAT_CONSOLE_ADDRESS ||
+                key == &TEST_CONTRACT_ADDRESS ||
+                key == &ccx.caller ||
+                key == &ccx.state.config.evm_opts.sender ||
+                val.is_empty()
         };
 
         let alloc = ccx

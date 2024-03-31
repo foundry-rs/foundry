@@ -81,8 +81,8 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         sidecar,
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None, None, None, None)
-        | (None, Some(_), None, None, None, None, None, None) => {
+        (Some(0), _, None, None, None, None, None, None) |
+        (None, Some(_), None, None, None, None, None, None) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 gas_price: gas_price.unwrap_or_default().to::<u128>(),
@@ -97,8 +97,8 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _, None, None, None)
-        | (None, _, None, None, Some(_), None, None, None) => {
+        (Some(1), _, None, None, _, None, None, None) |
+        (None, _, None, None, Some(_), None, None, None) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 gas_price: gas_price.unwrap_or_default().to(),
@@ -114,10 +114,10 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _, _, None, None)
-        | (None, None, Some(_), _, _, _, None, None)
-        | (None, None, _, Some(_), _, _, None, None)
-        | (None, None, None, None, None, _, None, None) => {
+        (Some(2), None, _, _, _, _, None, None) |
+        (None, None, Some(_), _, _, _, None, None) |
+        (None, None, _, Some(_), _, _, None, None) |
+        (None, None, None, None, None, _, None, None) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
@@ -994,31 +994,31 @@ pub enum TypedReceipt {
 impl TypedReceipt {
     pub fn gas_used(&self) -> U256 {
         match self {
-            TypedReceipt::Legacy(r)
-            | TypedReceipt::EIP1559(r)
-            | TypedReceipt::EIP2930(r)
-            | TypedReceipt::EIP4844(r)
-            | TypedReceipt::Deposit(r) => U256::from(r.receipt.cumulative_gas_used),
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
+            TypedReceipt::Deposit(r) => U256::from(r.receipt.cumulative_gas_used),
         }
     }
 
     pub fn logs_bloom(&self) -> &Bloom {
         match self {
-            TypedReceipt::Legacy(r)
-            | TypedReceipt::EIP1559(r)
-            | TypedReceipt::EIP2930(r)
-            | TypedReceipt::EIP4844(r)
-            | TypedReceipt::Deposit(r) => &r.bloom,
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
+            TypedReceipt::Deposit(r) => &r.bloom,
         }
     }
 
     pub fn logs(&self) -> &Vec<Log> {
         match self {
-            TypedReceipt::Legacy(r)
-            | TypedReceipt::EIP1559(r)
-            | TypedReceipt::EIP2930(r)
-            | TypedReceipt::EIP4844(r)
-            | TypedReceipt::Deposit(r) => &r.receipt.logs,
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
+            TypedReceipt::Deposit(r) => &r.receipt.logs,
         }
     }
 }
@@ -1026,11 +1026,11 @@ impl TypedReceipt {
 impl From<TypedReceipt> for ReceiptWithBloom {
     fn from(val: TypedReceipt) -> Self {
         match val {
-            TypedReceipt::Legacy(r)
-            | TypedReceipt::EIP1559(r)
-            | TypedReceipt::EIP2930(r)
-            | TypedReceipt::EIP4844(r)
-            | TypedReceipt::Deposit(r) => r,
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
+            TypedReceipt::Deposit(r) => r,
         }
     }
 }

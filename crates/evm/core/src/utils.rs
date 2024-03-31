@@ -31,10 +31,10 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
 
                 return;
             }
-            NamedChain::Arbitrum
-            | NamedChain::ArbitrumGoerli
-            | NamedChain::ArbitrumNova
-            | NamedChain::ArbitrumTestnet => {
+            NamedChain::Arbitrum |
+            NamedChain::ArbitrumGoerli |
+            NamedChain::ArbitrumNova |
+            NamedChain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {

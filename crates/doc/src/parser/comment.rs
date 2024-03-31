@@ -178,8 +178,8 @@ impl<'a> CommentsRef<'a> {
         self.iter().any(|c| match (&c.tag, &target.tag) {
             (CommentTag::Inheritdoc, CommentTag::Inheritdoc) => c.value == target.value,
             (CommentTag::Param, CommentTag::Param) | (CommentTag::Return, CommentTag::Return) => {
-                c.split_first_word().map(|(name, _)| name)
-                    == target.split_first_word().map(|(name, _)| name)
+                c.split_first_word().map(|(name, _)| name) ==
+                    target.split_first_word().map(|(name, _)| name)
             }
             (tag1, tag2) => tag1 == tag2,
         })

@@ -44,10 +44,10 @@ impl ConsoleFmt for String {
         match spec {
             FormatSpec::String => self.clone(),
             FormatSpec::Object => format!("'{}'", self.clone()),
-            FormatSpec::Number
-            | FormatSpec::Integer
-            | FormatSpec::Exponential
-            | FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number |
+            FormatSpec::Integer |
+            FormatSpec::Exponential |
+            FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }

@@ -524,8 +524,8 @@ impl<'a> ContractRunner<'a> {
         match error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error) => match error {
-                InvariantFuzzError::BrokenInvariant(case_data)
-                | InvariantFuzzError::Revert(case_data) => {
+                InvariantFuzzError::BrokenInvariant(case_data) |
+                InvariantFuzzError::Revert(case_data) => {
                     match case_data.replay(
                         self.executor.clone(),
                         known_contracts,

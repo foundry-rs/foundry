@@ -73,9 +73,9 @@ impl FmtArgs {
             paths => {
                 let mut inputs = Vec::with_capacity(paths.len());
                 for path in paths {
-                    if !ignored.is_empty()
-                        && ((path.is_absolute() && ignored.contains(path))
-                            || ignored.contains(&cwd.join(path)))
+                    if !ignored.is_empty() &&
+                        ((path.is_absolute() && ignored.contains(path)) ||
+                            ignored.contains(&cwd.join(path)))
                     {
                         continue;
                     }

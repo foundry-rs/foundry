@@ -154,10 +154,10 @@ pub fn filter_logs(
     fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
         if params.filter.is_some() {
             let block_number = block.header.number;
-            if !params.filter_block_range(block_number)
-                || !params.filter_block_hash(block_hash)
-                || !params.filter_address(&l.address)
-                || !params.filter_topics(l.topics())
+            if !params.filter_block_range(block_number) ||
+                !params.filter_block_hash(block_hash) ||
+                !params.filter_address(&l.address) ||
+                !params.filter_topics(l.topics())
             {
                 return false;
             }

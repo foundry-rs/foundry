@@ -818,8 +818,8 @@ impl Type {
                     match name {
                         "block" => match access {
                             "coinbase" => Some(DynSolType::Address),
-                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit"
-                            | "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
+                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" |
+                            "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "msg" => match access {
@@ -1196,9 +1196,9 @@ impl Type {
                     Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes)
-                    | Some(DynSolType::String)
-                    | Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
+                    Some(DynSolType::Bytes) |
+                    Some(DynSolType::String) |
+                    Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
                     ty => ty,
                 }
             }
@@ -1226,10 +1226,10 @@ impl Type {
     fn is_array(&self) -> bool {
         matches!(
             self,
-            Self::Array(_)
-                | Self::FixedArray(_, _)
-                | Self::Builtin(DynSolType::Array(_))
-                | Self::Builtin(DynSolType::FixedArray(_, _))
+            Self::Array(_) |
+                Self::FixedArray(_, _) |
+                Self::Builtin(DynSolType::Array(_)) |
+                Self::Builtin(DynSolType::FixedArray(_, _))
         )
     }
 

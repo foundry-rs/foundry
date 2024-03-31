@@ -157,8 +157,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config, self.build_args().silent)
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
+            config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
