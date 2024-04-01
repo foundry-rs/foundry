@@ -268,6 +268,7 @@ impl CoverageArgs {
 
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
+                .filter(|(contract_id, _)| contract_id.version == version)
                 .filter_map(|(contract_id, (_, deployed_source_map))| {
                     // TODO: Creation source map/bytecode as well
                     Some((
