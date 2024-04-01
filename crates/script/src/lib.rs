@@ -11,7 +11,6 @@ use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers_signers::Signer;
 use eyre::{ContextCompat, Result};
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
@@ -22,7 +21,6 @@ use foundry_common::{
     evm::{Breakpoints, EvmArgs},
     provider::ethers::RpcUrl,
     shell,
-    types::ToAlloy,
     CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
@@ -46,7 +44,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::Traces,
 };
-use foundry_wallets::MultiWalletOpts;
+use foundry_wallets::{multi_wallet::MultiWallet, MultiWalletOpts};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use yansi::Paint;
@@ -200,12 +198,16 @@ pub struct ScriptArgs {
 
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {
+        let mut multi_wallet = self.wallets.get_multi_wallet().await?;
+
+        let maybe_sender = self.maybe_load_sender(&mut multi_wallet).await?;
+
         let script_wallets =
-            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+            ScriptWallets::new(multi_wallet, self.evm_opts.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        if let Some(sender) = self.maybe_load_private_key()? {
+        if let Some(sender) = maybe_sender {
             evm_opts.sender = sender;
         }
 
@@ -292,15 +294,18 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
+    /// In case the user has loaded *only* one signer, we can assume that he's using it as the
     /// `--sender`
-    fn maybe_load_private_key(&self) -> Result<Option<Address>> {
-        let maybe_sender = self
-            .wallets
-            .private_keys()?
-            .filter(|pks| pks.len() == 1)
-            .map(|pks| pks.first().unwrap().address().to_alloy());
-        Ok(maybe_sender)
+    async fn maybe_load_sender(&self, multi_wallet: &mut MultiWallet) -> Result<Option<Address>> {
+        let signers = multi_wallet
+            .signers()?;
+        if signers.len() != 1 {
+            return Ok(None);
+        }
+        let sender = signers.iter()
+            .last()
+            .map(|(addr, _)| *addr);
+        Ok(sender)
     }
 
     /// Returns the Function and calldata based on the signature
