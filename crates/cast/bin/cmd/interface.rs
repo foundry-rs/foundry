@@ -7,6 +7,30 @@ use foundry_config::Config;
 use itertools::Itertools;
 use std::path::{Path, PathBuf};
 
+fn find_file_in_folders(artifact_path: &Path, filename: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(artifact_path) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    // Recursively search inside the subdirectory
+                    if let Some(found_path) = find_file_in_folders(&path, filename) {
+                        return Some(found_path);
+                    }
+                } else if path.is_file() {
+                    // Check if the file name matches the given filename
+                    if let Some(file_name) = path.file_stem() {
+                        if file_name == filename {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// CLI arguments for `cast interface`.
 #[derive(Clone, Debug, Parser)]
 pub struct InterfaceArgs {
@@ -55,13 +79,15 @@ impl InterfaceArgs {
         let source = if Path::new(&path_or_address).exists() {
             AbiPath::Local { path: path_or_address, name }
         } else {
-            let config = Config::from(&etherscan);
-            let chain = config.chain.unwrap_or_default();
-            let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-            AbiPath::Etherscan {
-                chain,
-                api_key,
-                address: path_or_address.parse().wrap_err("invalid path or address")?,
+            let config = Config::load();
+            // Search the artifacts folder for the abi file
+            if let Some(found_path) = find_file_in_folders(&config.out, &path_or_address) {
+                AbiPath::Local { path: found_path.into_os_string().into_string().unwrap(), name: Some("I".to_string() + &path_or_address) }
+            } else {
+                config = Config::from(&etherscan);
+                let chain = config.chain.unwrap_or_default();
+                let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+                AbiPath::Etherscan { chain, api_key, address: path_or_address.parse().wrap_err("invalid path or address")? }
             }
         };
 
