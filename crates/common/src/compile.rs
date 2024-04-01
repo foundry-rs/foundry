@@ -287,8 +287,10 @@ impl ProjectCompiler {
 pub struct ContractSources {
     /// Map over artifacts' contract names -> vector of file IDs
     pub ids_by_name: HashMap<String, Vec<u32>>,
-    /// Map over file_id -> (source code, contract)
+    /// Map over artifact_id -> (source code, contract)
     pub sources_by_id: FxHashMap<u32, (String, ContractBytecodeSome)>,
+    /// Next artifact id, kept private
+    artifact_id: u32,
 }
 
 impl ContractSources {
@@ -299,7 +301,7 @@ impl ContractSources {
     ) -> Result<ContractSources> {
         let mut sources = ContractSources::default();
         for (id, artifact) in output.artifact_ids() {
-            if let Some(file_id) = artifact.id {
+            if artifact.id.is_some() {
                 let abs_path = root.join(&id.source);
                 let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
                     format!("failed to read artifact source file for `{}`", id.identifier())
@@ -310,7 +312,7 @@ impl ContractSources {
                     deployed_bytecode: artifact.deployed_bytecode.clone(),
                 };
                 let contract = compact_to_contract(compact)?;
-                sources.insert(&id, file_id, source_code, contract);
+                sources.insert(&id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");
             }
@@ -322,12 +324,13 @@ impl ContractSources {
     pub fn insert(
         &mut self,
         artifact_id: &ArtifactId,
-        file_id: u32,
         source: String,
         bytecode: ContractBytecodeSome,
     ) {
-        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
-        self.sources_by_id.insert(file_id, (source, bytecode));
+        let next_id = self.artifact_id;
+        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(next_id);
+        self.sources_by_id.insert(next_id, (source, bytecode));
+        self.artifact_id += 1;
     }
 
     /// Returns the source for a contract by file ID.

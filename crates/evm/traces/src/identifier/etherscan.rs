@@ -84,8 +84,8 @@ impl EtherscanIdentifier {
         // construct the map
         for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
-            let (artifact_id, file_id, bytecode) = results?;
-            sources.insert(&artifact_id, file_id, metadata.source_code(), bytecode);
+            let (artifact_id, _, bytecode) = results?;
+            sources.insert(&artifact_id, metadata.source_code(), bytecode);
         }
 
         Ok(sources)
