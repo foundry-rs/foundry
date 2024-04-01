@@ -1,7 +1,7 @@
 //! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
@@ -10,7 +10,8 @@ use alloy_signer::{
     LocalWallet, MnemonicBuilder, Signer, SignerSync,
 };
 use alloy_sol_types::SolValue;
-use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, utils::RuntimeOrHandle};
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, Curve},
@@ -49,7 +50,7 @@ impl Cheatcode for getNonce_1Call {
     }
 }
 
-impl Cheatcode for sign_1Call {
+impl Cheatcode for sign_3Call {
     fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
         sign(&wallet.privateKey, digest)
@@ -156,6 +157,10 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
+fn encode_vrs(v: u8, r: U256, s: U256) -> Vec<u8> {
+    (U256::from(v), B256::from(r), B256::from(s)).abi_encode()
+}
+
 pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
@@ -165,11 +170,46 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
 
     assert_eq!(recovered, wallet.address());
 
-    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
-    let r = B256::from(sig.r());
-    let s = B256::from(sig.s());
+    let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
 
-    Ok((v, r, s).abi_encode())
+    Ok(encode_vrs(v, sig.r(), sig.s()))
+}
+
+pub(super) fn sign_with_wallet<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    signer: Option<Address>,
+    digest: &B256,
+) -> Result {
+    let Some(script_wallets) = &ccx.state.script_wallets else {
+        return Err("no wallets are available".into());
+    };
+
+    let mut script_wallets = script_wallets.inner.lock();
+    let maybe_provided_sender = script_wallets.provided_sender;
+    let signers = script_wallets.multi_wallet.signers()?;
+
+    let signer = if let Some(signer) = signer {
+        signer
+    } else if let Some(provided_sender) = maybe_provided_sender {
+        provided_sender
+    } else if signers.len() == 1 {
+        *signers.keys().next().unwrap()
+    } else {
+        return Err("could not determine signer".into());
+    };
+
+    let wallet = signers
+        .get(&signer)
+        .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
+
+    let sig = RuntimeOrHandle::new()
+        .block_on(wallet.sign_hash(digest))
+        .map_err(|err| fmt_err!("{err}"))?;
+
+    let recovered = sig.recover(digest.to_ethers()).map_err(|err| fmt_err!("{err}"))?;
+    assert_eq!(recovered.to_alloy(), signer);
+
+    Ok(encode_vrs(sig.v as u8, sig.r.to_alloy(), sig.s.to_alloy()))
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {

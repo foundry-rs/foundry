@@ -1,7 +1,7 @@
-* @danipopes @mattsse
+* @danipopes @evalir @mattsse
 
-crates/anvil/        @danipopes @mattsse
-crates/cheatcodes/   @danipopes @mattsse @klkvr
+crates/anvil/        @danipopes @mattsse @evalir
+crates/cheatcodes/   @danipopes @mattsse @klkvr @evalir
 crates/evm/coverage/ @onbjerg
 crates/fmt/          @rkrasiuk
 crates/linking/      @klkvr

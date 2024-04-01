@@ -86,6 +86,32 @@ async fn get_all_events() {
 
     let num_logs = num_tx + pre_logs.len();
     assert_eq!(logs.len(), num_logs);
+
+    // test that logs returned from get_logs and get_transaction_receipt have
+    // the same log_index, block_number, and transaction_hash
+    let mut tasks = vec![];
+    let mut seen_tx_hashes = std::collections::HashSet::new();
+    for log in &logs {
+        if seen_tx_hashes.contains(&log.transaction_hash.unwrap()) {
+            continue;
+        }
+        tasks.push(client.get_transaction_receipt(log.transaction_hash.unwrap()));
+        seen_tx_hashes.insert(log.transaction_hash.unwrap());
+    }
+    let receipt_logs = futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .flat_map(|receipt| receipt.unwrap().logs)
+        .collect::<Vec<_>>();
+    assert_eq!(receipt_logs.len(), logs.len());
+    for (receipt_log, log) in receipt_logs.iter().zip(logs.iter()) {
+        assert_eq!(receipt_log.transaction_hash, log.transaction_hash);
+        assert_eq!(receipt_log.block_number, log.block_number);
+        assert_eq!(receipt_log.log_index, log.log_index);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

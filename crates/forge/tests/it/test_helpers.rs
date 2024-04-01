@@ -292,6 +292,12 @@ pub fn rpc_endpoints() -> RpcEndpoints {
                 "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
             ),
         ),
+        (
+            "rpcAliasSepolia",
+            RpcEndpoint::Url(
+                "https://eth-sepolia.g.alchemy.com/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
+            ),
+        ),
         ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
     ])
 }

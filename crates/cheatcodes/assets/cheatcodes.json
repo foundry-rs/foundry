@@ -2983,7 +2983,7 @@
     {
       "func": {
         "id": "broadcast_0",
-        "description": "Using the address that calls the test contract, has the next call (at this call depth only)\ncreate a transaction that can later be signed and sent onchain.",
+        "description": "Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function broadcast() external;",
         "visibility": "external",
         "mutability": "",
@@ -7143,6 +7143,46 @@
     {
       "func": {
         "id": "sign_1",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(bytes32)",
+        "selector": "0x799cd333",
+        "selectorBytes": [
+          121,
+          156,
+          211,
+          51
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "sign_2",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(address,bytes32)",
+        "selector": "0x8c1aa205",
+        "selectorBytes": [
+          140,
+          26,
+          162,
+          5
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "sign_3",
         "description": "Signs data with a `Wallet`.",
         "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
@@ -7243,7 +7283,7 @@
     {
       "func": {
         "id": "startBroadcast_0",
-        "description": "Using the address that calls the test contract, has all subsequent calls\n(at this call depth only) create transactions that can later be signed and sent onchain.",
+        "description": "Has all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function startBroadcast() external;",
         "visibility": "external",
         "mutability": "",

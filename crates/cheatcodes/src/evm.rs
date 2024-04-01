@@ -145,6 +145,20 @@ impl Cheatcode for sign_0Call {
     }
 }
 
+impl Cheatcode for sign_1Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { digest } = self;
+        super::utils::sign_with_wallet(ccx, None, digest)
+    }
+}
+
+impl Cheatcode for sign_2Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { signer, digest } = self;
+        super::utils::sign_with_wallet(ccx, Some(*signer), digest)
+    }
+}
+
 impl Cheatcode for signP256Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey, digest } = self;

@@ -6,6 +6,7 @@ use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
+use indexmap::IndexSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -15,22 +16,19 @@ use revm::{
 };
 use std::{fmt, sync::Arc};
 
-// We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
-// for performance when iterating over the sets.
-type FxIndexSet<T> =
-    indexmap::set::IndexSet<T, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
-
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
 pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
 
+// We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
+// for performance when iterating over the sets.
 #[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
-    state_values: FxIndexSet<[u8; 32]>,
+    state_values: IndexSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
-    addresses: FxIndexSet<Address>,
+    addresses: IndexSet<Address>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -44,22 +42,22 @@ impl fmt::Debug for FuzzDictionary {
 
 impl FuzzDictionary {
     #[inline]
-    pub fn values(&self) -> &FxIndexSet<[u8; 32]> {
+    pub fn values(&self) -> &IndexSet<[u8; 32]> {
         &self.state_values
     }
 
     #[inline]
-    pub fn values_mut(&mut self) -> &mut FxIndexSet<[u8; 32]> {
+    pub fn values_mut(&mut self) -> &mut IndexSet<[u8; 32]> {
         &mut self.state_values
     }
 
     #[inline]
-    pub fn addresses(&self) -> &FxIndexSet<Address> {
+    pub fn addresses(&self) -> &IndexSet<Address> {
         &self.addresses
     }
 
     #[inline]
-    pub fn addresses_mut(&mut self) -> &mut FxIndexSet<Address> {
+    pub fn addresses_mut(&mut self) -> &mut IndexSet<Address> {
         &mut self.addresses
     }
 }

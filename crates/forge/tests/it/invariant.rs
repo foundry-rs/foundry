@@ -153,6 +153,7 @@ async fn test_invariant() {
 async fn test_invariant_override() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = false;
     runner.test_options.invariant.call_override = true;
     let results = runner.test_collect(&filter);
 

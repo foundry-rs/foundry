@@ -5,13 +5,17 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
+use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
 
 mod cmd;
-mod opts;
-
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
-use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
+
+mod opts;
 use opts::{Forge, ForgeSubcommand};
+
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> Result<()> {
     handler::install();
