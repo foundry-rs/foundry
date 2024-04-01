@@ -125,6 +125,14 @@ impl UIfmt for U64 {
     }
 }
 
+pub fn pretty_status(status: Option<ethers_core::types::U64>) -> String {
+    match status {
+        Some(ethers_core::types::U64([0])) => "0 (failed)".to_string(),
+        Some(ethers_core::types::U64([1])) => "1 (success)".to_string(),
+        _ => status.pretty(),
+    }
+}
+
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
         let Self {
@@ -173,7 +181,7 @@ type                    {}",
             serde_json::to_string(logs).unwrap(),
             logs_bloom.pretty(),
             root.pretty(),
-            status.pretty(),
+            pretty_status(*status),
             transaction_hash.pretty(),
             transaction_index.pretty(),
             transaction_type.pretty()
@@ -419,7 +427,7 @@ pub fn get_pretty_tx_receipt_attr(
         "logs" => Some(receipt.receipt.logs.pretty()),
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
         "root" => Some(receipt.receipt.root.pretty()),
-        "status" => Some(receipt.receipt.status.pretty()),
+        "status" => Some(pretty_status(receipt.receipt.status)),
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
             Some(receipt.receipt.transaction_index.pretty())
