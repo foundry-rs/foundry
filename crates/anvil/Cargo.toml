@@ -32,9 +32,6 @@ foundry-evm.workspace = true
 bytes = "1.4.0"
 k256.workspace = true
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
-trie-db = "0.23"
-hash-db = "0.15"
-memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
@@ -48,6 +45,7 @@ alloy-providers.workspace = true
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
+alloy-trie = "0.3"
 
 # axum related
 axum.workspace = true
