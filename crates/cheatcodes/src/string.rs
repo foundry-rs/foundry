@@ -135,11 +135,16 @@ impl Cheatcode for splitCall {
     }
 }
 
-// Index
-impl Cheatcode for indexCall {
+// indexOf
+impl Cheatcode for indexOfCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, key } = self;
-        let Some(index) = input.find(key) else { todo!() };
+        let Some(index) = input.find(key) else {
+            return parse(
+                "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                &DynSolType::Uint(256),
+            );
+        };
         parse(index.to_string().as_str(), &DynSolType::Uint(256))
     }
 }

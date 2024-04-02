@@ -4800,18 +4800,18 @@
     },
     {
       "func": {
-        "id": "index",
+        "id": "indexOf",
         "description": "Returns the index of the first occurrence of a `key` in an `input` string.",
-        "declaration": "function index(string memory input, string memory key) external pure returns (uint256);",
+        "declaration": "function indexOf(string memory input, string memory key) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "index(string,string)",
-        "selector": "0x2e191895",
+        "signature": "indexOf(string,string)",
+        "selector": "0x8a0807b7",
         "selectorBytes": [
-          46,
-          25,
-          24,
-          149
+          138,
+          8,
+          7,
+          183
         ]
       },
       "group": "string",
