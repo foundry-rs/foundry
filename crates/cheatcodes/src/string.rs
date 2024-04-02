@@ -140,7 +140,7 @@ impl Cheatcode for indexCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, key } = self;
         let Some(index) = input.find(key) else { todo!() };
-        Ok(index.to_string().abi_encode())
+        parse(&index.to_string(), &DynSolType::Uint(256))
     }
 }
 
