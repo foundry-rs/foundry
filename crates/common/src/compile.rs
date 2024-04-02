@@ -5,12 +5,13 @@ use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, CompactContractBytecode, ContractBytecodeSome},
+    artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
+use foundry_linking::Linker;
 use rustc_hash::FxHashMap;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -296,7 +297,10 @@ impl ContractSources {
     pub fn from_project_output(
         output: &ProjectCompileOutput,
         root: &Path,
+        libraries: &Libraries,
     ) -> Result<ContractSources> {
+        let linker = Linker::new(root, output.artifact_ids().collect());
+
         let mut sources = ContractSources::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
@@ -304,12 +308,8 @@ impl ContractSources {
                 let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
-                let compact = CompactContractBytecode {
-                    abi: artifact.abi.clone(),
-                    bytecode: artifact.bytecode.clone(),
-                    deployed_bytecode: artifact.deployed_bytecode.clone(),
-                };
-                let contract = compact_to_contract(compact)?;
+                let linked = linker.link(&id, libraries)?;
+                let contract = compact_to_contract(linked)?;
                 sources.insert(&id, file_id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");
