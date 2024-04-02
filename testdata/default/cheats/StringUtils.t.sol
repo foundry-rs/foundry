@@ -39,4 +39,11 @@ contract StringManipulationTest is DSTest {
         assertEq("World", splitResult[1]);
         assertEq("Reth", splitResult[2]);
     }
+
+    function testIndex() public {
+        string memory input = "Hello, World!";
+        string memory key = "W";
+        uint256 index = vm.index(input, key);
+        assertEq(index, 0);
+    }
 }

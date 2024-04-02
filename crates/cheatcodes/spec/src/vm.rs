@@ -1678,6 +1678,9 @@ interface Vm {
     /// Splits the given `string` into an array of strings divided by the `delimiter`.
     #[cheatcode(group = String)]
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
+    /// Returns the index of the first occurrence of a `key` in an `input` string.
+    #[cheatcode(group = String)]
+    function index(string memory input, string memory key) external pure returns (uint256);
 
     // ======== JSON Parsing and Manipulation ========
 

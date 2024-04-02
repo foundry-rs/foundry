@@ -135,6 +135,15 @@ impl Cheatcode for splitCall {
     }
 }
 
+// Index
+impl Cheatcode for indexCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, key } = self;
+        let Some(index) = input.find(key) else { todo!() };
+        Ok(index.to_string().abi_encode())
+    }
+}
+
 pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
     parse_value(s, ty).map(|v| v.abi_encode())
 }

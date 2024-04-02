@@ -4800,6 +4800,26 @@
     },
     {
       "func": {
+        "id": "index",
+        "description": "Returns the index of the first occurrence of a `key` in an `input` string.",
+        "declaration": "function index(string memory input, string memory key) external pure returns (uint256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "index(string,string)",
+        "selector": "0x2e191895",
+        "selectorBytes": [
+          46,
+          25,
+          24,
+          149
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "isDir",
         "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
         "declaration": "function isDir(string calldata path) external returns (bool result);",
