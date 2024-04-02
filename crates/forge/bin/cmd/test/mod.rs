@@ -1,6 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -30,7 +30,7 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
-use std::{sync::mpsc::channel, time::Instant};
+use std::{path::PathBuf, sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -65,6 +65,14 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Dumps all debugger steps to file.
+    #[arg(
+    long,
+    requires = "debug",
+    value_hint = ValueHint::FilePath,
+    )]
+    dump: Option<PathBuf>,
 
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
@@ -243,7 +251,11 @@ impl TestArgs {
                 builder = builder.decoder(decoder);
             }
             let mut debugger = builder.build();
-            debugger.try_run()?;
+            if let Some(dump_path) = self.dump {
+                debugger.dump_to_file(&dump_path)?;
+            } else {
+                debugger.try_run_tui()?;
+            }
         }
 
         Ok(outcome)

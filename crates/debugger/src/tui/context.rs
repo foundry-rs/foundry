@@ -1,6 +1,6 @@
 //! Debugger context and event handler implementation.
 
-use crate::{Debugger, ExitReason};
+use crate::{context::DebuggerContext, ExitReason};
 use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
@@ -45,8 +45,8 @@ impl BufferKind {
     }
 }
 
-pub(crate) struct DebuggerContext<'a> {
-    pub(crate) debugger: &'a mut Debugger,
+pub(crate) struct TUIContext<'a> {
+    pub(crate) debugger_context: &'a mut DebuggerContext,
 
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations.
     pub(crate) key_buffer: String,
@@ -64,10 +64,10 @@ pub(crate) struct DebuggerContext<'a> {
     pub(crate) active_buffer: BufferKind,
 }
 
-impl<'a> DebuggerContext<'a> {
-    pub(crate) fn new(debugger: &'a mut Debugger) -> Self {
-        DebuggerContext {
-            debugger,
+impl<'a> TUIContext<'a> {
+    pub(crate) fn new(debugger_context: &'a mut DebuggerContext) -> Self {
+        TUIContext {
+            debugger_context,
 
             key_buffer: String::with_capacity(64),
             current_step: 0,
@@ -87,7 +87,7 @@ impl<'a> DebuggerContext<'a> {
     }
 
     pub(crate) fn debug_arena(&self) -> &[DebugNodeFlat] {
-        &self.debugger.debug_arena
+        &self.debugger_context.debug_arena
     }
 
     pub(crate) fn debug_call(&self) -> &DebugNodeFlat {
@@ -129,7 +129,7 @@ impl<'a> DebuggerContext<'a> {
     }
 }
 
-impl DebuggerContext<'_> {
+impl TUIContext<'_> {
     pub(crate) fn handle_event(&mut self, event: Event) -> ControlFlow<ExitReason> {
         if self.last_index != self.draw_memory.inner_call_index {
             self.gen_opcode_list();
@@ -305,7 +305,7 @@ impl DebuggerContext<'_> {
     fn handle_breakpoint(&mut self, c: char) {
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
-        if let Some((caller, pc)) = self.debugger.breakpoints.get(&c) {
+        if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
             for (i, node) in self.debug_arena().iter().enumerate() {
                 if node.address == *caller {
                     if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {

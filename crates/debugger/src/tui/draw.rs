@@ -1,6 +1,6 @@
 //! TUI draw implementation.
 
-use super::context::{BufferKind, DebuggerContext};
+use super::context::{BufferKind, TUIContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::sourcemap::SourceElement;
@@ -15,7 +15,7 @@ use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
 use std::{cmp, collections::VecDeque, fmt::Write, io};
 
-impl DebuggerContext<'_> {
+impl TUIContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
     pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
@@ -329,24 +329,24 @@ impl DebuggerContext<'_> {
 
     fn src_map(&self) -> Result<(SourceElement, &str), String> {
         let address = self.address();
-        let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
+        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
         let Some(mut files_source_code) =
-            self.debugger.contracts_sources.get_sources(contract_name)
+            self.debugger_context.contracts_sources.get_sources(contract_name)
         else {
             return Err(format!("No source map index for contract {contract_name}"));
         };
 
-        let Some((create_map, rt_map)) = self.debugger.pc_ic_maps.get(contract_name) else {
+        let Some((create_map, rt_map)) = self.debugger_context.pc_ic_maps.get(contract_name) else {
             return Err(format!("No PC-IC maps for contract {contract_name}"));
         };
 
         let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
         let pc = self.current_step().pc;
         let Some((source_element, source_code)) =
-            files_source_code.find_map(|(file_id, (source_code, contract_source))| {
+            files_source_code.find_map(|(file_id, (source_code, contract_source, _))| {
                 let bytecode = if is_create {
                     &contract_source.bytecode
                 } else {
@@ -365,11 +365,11 @@ impl DebuggerContext<'_> {
                     (index == file_id).then(|| (source_element.clone(), source_code)))
                     .or_else(|| {
                         // otherwise find the source code for the element's index
-                        self.debugger
+                        self.debugger_context
                             .contracts_sources
                             .sources_by_id
                             .get(&(source_element.index?))
-                            .map(|(source_code, _)| (source_element.clone(), source_code))
+                            .map(|(source_code, _, _)| (source_element.clone(), source_code))
                     })
             })
         else {
