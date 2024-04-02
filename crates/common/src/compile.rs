@@ -350,7 +350,7 @@ impl ContractSources {
         })
     }
 
-    /// Returns all (name, source) pairs.
+    /// Returns all (name, source, bytecode) sets.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str, &ContractBytecodeSome)> {
         self.artifacts_by_id.iter().filter_map(|(id, artifacts)| {
             let source = self.sources_by_id.get(id)?;
