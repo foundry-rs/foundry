@@ -1,4 +1,5 @@
 //! In memory blockchain backend
+use self::state::trie_storage;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -87,7 +88,6 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-use self::state::trie_storage;
 
 pub mod cache;
 pub mod fork_db;
