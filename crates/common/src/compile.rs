@@ -345,17 +345,28 @@ impl ContractSources {
     ) -> Option<impl Iterator<Item = (u32, &'_ str, &'_ ContractBytecodeSome)>> {
         self.ids_by_name.get(name).map(|ids| {
             ids.iter().filter_map(|id| {
-                Some((*id, self.sources_by_id.get(id)?.as_ref(), self.artifacts_by_id.get(id)?.get(name)?))
+                Some((
+                    *id,
+                    self.sources_by_id.get(id)?.as_ref(),
+                    self.artifacts_by_id.get(id)?.get(name)?,
+                ))
             })
         })
     }
 
     /// Returns all (name, source, bytecode) sets.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str, &ContractBytecodeSome)> {
-        self.artifacts_by_id.iter().filter_map(|(id, artifacts)| {
-            let source = self.sources_by_id.get(id)?;
-            Some(artifacts.iter().map(move |(name, bytecode)| (name.as_ref(), source.as_ref(), bytecode)))
-        }).flatten()
+        self.artifacts_by_id
+            .iter()
+            .filter_map(|(id, artifacts)| {
+                let source = self.sources_by_id.get(id)?;
+                Some(
+                    artifacts
+                        .iter()
+                        .map(move |(name, bytecode)| (name.as_ref(), source.as_ref(), bytecode)),
+                )
+            })
+            .flatten()
     }
 }
 
