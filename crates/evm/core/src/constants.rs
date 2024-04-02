@@ -35,3 +35,33 @@ pub const DEFAULT_CREATE2_DEPLOYER: Address = address!("4e59b44847b379578588920c
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
 /// The runtime code of the default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
+
+/// The ECRecover precompile address.
+pub const EC_RECOVER_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
+
+/// The SHA-256 precompile address.
+pub const SHA_256_ADDRESS: Address = address!("0000000000000000000000000000000000000002");
+
+/// The RIPEMD-160 precompile address.
+pub const RIPEMD_160_ADDRESS: Address = address!("0000000000000000000000000000000000000003");
+
+/// The Identity precompile address.
+pub const IDENTITY_ADDRESS: Address = address!("0000000000000000000000000000000000000004");
+
+/// The ModExp precompile address.
+pub const MOD_EXP_ADDRESS: Address = address!("0000000000000000000000000000000000000005");
+
+/// The ECAdd precompile address.
+pub const EC_ADD_ADDRESS: Address = address!("0000000000000000000000000000000000000006");
+
+/// The ECMul precompile address.
+pub const EC_MUL_ADDRESS: Address = address!("0000000000000000000000000000000000000007");
+
+/// The ECPairing precompile address.
+pub const EC_PAIRING_ADDRESS: Address = address!("0000000000000000000000000000000000000008");
+
+/// The Blake2F precompile address.
+pub const BLAKE_2F_ADDRESS: Address = address!("0000000000000000000000000000000000000009");
+
+/// The PointEvaluation precompile address.
+pub const POINT_EVALUATION_ADDRESS: Address = address!("000000000000000000000000000000000000000a");

@@ -13,8 +13,10 @@ use foundry_common::{
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
-        TEST_CONTRACT_ADDRESS,
+        BLAKE_2F_ADDRESS, CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, EC_ADD_ADDRESS,
+        EC_MUL_ADDRESS, EC_PAIRING_ADDRESS, EC_RECOVER_ADDRESS, HARDHAT_CONSOLE_ADDRESS,
+        IDENTITY_ADDRESS, MOD_EXP_ADDRESS, POINT_EVALUATION_ADDRESS, RIPEMD_160_ADDRESS,
+        SHA_256_ADDRESS, TEST_CONTRACT_ADDRESS,
     },
     decode::RevertDecoder,
 };
@@ -158,6 +160,16 @@ impl CallTraceDecoder {
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
+                (EC_RECOVER_ADDRESS, "ECRecover".to_string()),
+                (SHA_256_ADDRESS, "SHA-256".to_string()),
+                (RIPEMD_160_ADDRESS, "RIPEMD-160".to_string()),
+                (IDENTITY_ADDRESS, "Identity".to_string()),
+                (MOD_EXP_ADDRESS, "ModExp".to_string()),
+                (EC_ADD_ADDRESS, "ECAdd".to_string()),
+                (EC_MUL_ADDRESS, "ECMul".to_string()),
+                (EC_PAIRING_ADDRESS, "ECPairing".to_string()),
+                (BLAKE_2F_ADDRESS, "Blake2F".to_string()),
+                (POINT_EVALUATION_ADDRESS, "PointEvaluation".to_string()),
             ]
             .into(),
             receive_contracts: Default::default(),

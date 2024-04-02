@@ -1,6 +1,11 @@
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::{abi, sol, SolCall};
+use foundry_evm_core::constants::{
+    BLAKE_2F_ADDRESS, EC_ADD_ADDRESS, EC_MUL_ADDRESS, EC_PAIRING_ADDRESS, EC_RECOVER_ADDRESS,
+    IDENTITY_ADDRESS, MOD_EXP_ADDRESS, POINT_EVALUATION_ADDRESS, RIPEMD_160_ADDRESS,
+    SHA_256_ADDRESS,
+};
 use itertools::Itertools;
 
 sol! {
@@ -41,40 +46,58 @@ macro_rules! tri {
     };
 }
 
+macro_rules! decoded_call {
+    ($sig:expr,$args:expr) => {
+        Some(("PRECOMPILES".into(), DecodedCallData { signature: $sig, args: $args }))
+    };
+}
+
 /// Tries to decode a precompile call. Returns `Some` if successful.
 pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<(String, DecodedCallData)> {
-    let [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x @ 0x01..=0x0a] =
-        trace.address.0 .0
-    else {
-        return None
-    };
-
     let data = &trace.data;
 
-    let (signature, args) = match x {
-        0x01 => {
+    match trace.address {
+        EC_RECOVER_ADDRESS => {
             let (sig, ecrecoverCall { hash, v, r, s }) = tri!(abi_decode_call(data));
-            (sig, vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()])
+            decoded_call!(
+                sig.to_string(),
+                vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()]
+            )
         }
-        0x02 => (sha256Call::SIGNATURE, vec![data.to_string()]),
-        0x03 => (ripemdCall::SIGNATURE, vec![data.to_string()]),
-        0x04 => (identityCall::SIGNATURE, vec![data.to_string()]),
-        0x05 => (modexpCall::SIGNATURE, tri!(decode_modexp(data))),
-        0x06 => {
+        SHA_256_ADDRESS => {
+            decoded_call!(sha256Call::SIGNATURE.to_string(), vec![data.to_string()])
+        }
+        RIPEMD_160_ADDRESS => {
+            decoded_call!(ripemdCall::SIGNATURE.to_string(), vec![data.to_string()])
+        }
+        IDENTITY_ADDRESS => {
+            decoded_call!(identityCall::SIGNATURE.to_string(), vec![data.to_string()])
+        }
+        MOD_EXP_ADDRESS => {
+            decoded_call!(modexpCall::SIGNATURE.to_string(), tri!(decode_modexp(data)))
+        }
+        EC_ADD_ADDRESS => {
             let (sig, ecaddCall { x1, y1, x2, y2 }) = tri!(abi_decode_call(data));
-            (sig, vec![x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string()])
+            decoded_call!(
+                sig.to_string(),
+                vec![x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string()]
+            )
         }
-        0x07 => {
+        EC_MUL_ADDRESS => {
             let (sig, ecmulCall { x1, y1, s }) = tri!(abi_decode_call(data));
-            (sig, vec![x1.to_string(), y1.to_string(), s.to_string()])
+            decoded_call!(sig.to_string(), vec![x1.to_string(), y1.to_string(), s.to_string()])
         }
-        0x08 => (ecpairingCall::SIGNATURE, tri!(decode_ecpairing(data))),
-        0x09 => (blake2fCall::SIGNATURE, tri!(decode_blake2f(data))),
-        0x0a => (pointEvaluationCall::SIGNATURE, tri!(decode_kzg(data))),
-        0x00 | 0x0b.. => unreachable!(),
-    };
-
-    Some(("PRECOMPILES".into(), DecodedCallData { signature: signature.to_string(), args }))
+        EC_PAIRING_ADDRESS => {
+            decoded_call!(ecpairingCall::SIGNATURE.to_string(), tri!(decode_ecpairing(data)))
+        }
+        BLAKE_2F_ADDRESS => {
+            decoded_call!(blake2fCall::SIGNATURE.to_string(), tri!(decode_blake2f(data)))
+        }
+        POINT_EVALUATION_ADDRESS => {
+            decoded_call!(pointEvaluationCall::SIGNATURE.to_string(), tri!(decode_kzg(data)))
+        }
+        _ => None,
+    }
 }
 
 // Note: we use the ABI decoder, but this is not necessarily ABI-encoded data. It's just a
