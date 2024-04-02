@@ -2191,6 +2191,7 @@ impl Backend {
             let _ = builder.root();
 
             let proof = builder.take_proofs().values().cloned().collect::<Vec<_>>();
+            let storage_proofs = prove_storage(&account.storage, &keys);
 
             let account_proof = AccountProof {
                 address,
@@ -2201,11 +2202,11 @@ impl Backend {
                 account_proof: proof,
                 storage_proof: keys
                     .into_iter()
-                    .map(|storage_key| {
-                        let key = storage_key.into();
-                        let proof = prove_storage(&account.storage, key);
-                        let value = account.storage.get(&key).cloned().unwrap_or_default();
-                        StorageProof { key: JsonStorageKey(storage_key), value, proof }
+                    .zip(storage_proofs)
+                    .map(|(key, proof)| {
+                        let storage_key: U256 = key.into();
+                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        StorageProof { key: JsonStorageKey(key), value, proof }
                     })
                     .collect(),
             };
@@ -2429,9 +2430,10 @@ pub fn transaction_build(
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)
-pub fn prove_storage(storage: &HashMap<U256, U256>, storage_key: U256) -> Vec<Bytes> {
-    let mut builder = HashBuilder::default()
-        .with_proof_retainer(vec![Nibbles::unpack(keccak256(storage_key.to_be_bytes_vec()))]);
+pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &Vec<B256>) -> Vec<Vec<Bytes>> {
+    let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
+
+    let mut builder = HashBuilder::default().with_proof_retainer(keys.clone());
 
     for (key, value) in trie_storage(storage) {
         builder.add_leaf(key, &value);
@@ -2439,5 +2441,18 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, storage_key: U256) -> Vec<By
 
     let _ = builder.root();
 
-    builder.take_proofs().values().cloned().collect()
+    let mut proofs = Vec::new();
+    let all_proof_nodes = builder.take_proofs();
+
+    for proof_key in keys {
+        // Iterate over all proof nodes and find the matching ones.
+        // The filtered results are guaranteed to be in order.
+        let matching_proof_nodes = all_proof_nodes
+            .iter()
+            .filter(|(path, _)| proof_key.starts_with(path))
+            .map(|(_, node)| node.clone());
+        proofs.push(matching_proof_nodes.collect());
+    }
+
+    proofs
 }
