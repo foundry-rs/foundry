@@ -20,8 +20,7 @@ use foundry_common::{
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     provider::ethers::RpcUrl,
-    shell,
-    CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
 use foundry_config::{
@@ -44,7 +43,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::Traces,
 };
-use foundry_wallets::{multi_wallet::MultiWallet, MultiWalletOpts};
+use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use yansi::Paint;
@@ -198,18 +197,10 @@ pub struct ScriptArgs {
 
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {
-        let mut multi_wallet = self.wallets.get_multi_wallet().await?;
-
-        let maybe_sender = self.maybe_load_sender(&mut multi_wallet).await?;
-
         let script_wallets =
-            ScriptWallets::new(multi_wallet, self.evm_opts.sender);
+            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-
-        if let Some(sender) = maybe_sender {
-            evm_opts.sender = sender;
-        }
+        let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
@@ -292,20 +283,6 @@ impl ScriptArgs {
         }
 
         Ok(())
-    }
-
-    /// In case the user has loaded *only* one signer, we can assume that he's using it as the
-    /// `--sender`
-    async fn maybe_load_sender(&self, multi_wallet: &mut MultiWallet) -> Result<Option<Address>> {
-        let signers = multi_wallet
-            .signers()?;
-        if signers.len() != 1 {
-            return Ok(None);
-        }
-        let sender = signers.iter()
-            .last()
-            .map(|(addr, _)| *addr);
-        Ok(sender)
     }
 
     /// Returns the Function and calldata based on the signature
@@ -593,6 +570,24 @@ impl ScriptConfig {
             .gas_limit(self.evm_opts.gas_limit());
 
         if let Some(script_wallets) = script_wallets {
+            let mut inner = script_wallets.inner.lock();
+            // if a sender is provided it will be set on evm_opts already
+            // otherwise if we have exactly one signer we can assume it is the sender
+            // else we throw an error to avoid landing on the DEFAULT_SENDER.
+            if inner.provided_sender.is_none() {
+                // may unlock some pending keystores
+                let signers = inner.multi_wallet.signers()?;
+                if signers.len() == 1 {
+                    let address = signers.keys().next().unwrap();
+                    self.evm_opts.sender = *address;
+                }
+                if signers.len() > 1 {
+                    eyre::bail!("multiple signers found, please provide a --sender address.");
+                }
+            }
+            // we can drop the inner wallet now that we have the sender
+            // and release the lock for the runner.
+            drop(inner);
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(debug)
