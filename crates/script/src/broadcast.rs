@@ -321,7 +321,8 @@ impl BundledState {
 
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
-                let batch_size = if sequential_broadcast { 1 } else { 100 };
+                let valid_batch_size = if self.args.batch_size > 100 { 100 } else { self.args.batch_size };
+                let batch_size = if sequential_broadcast { 1 } else { valid_batch_size as usize };
                 let mut index = already_broadcasted;
 
                 for (batch_number, batch) in
