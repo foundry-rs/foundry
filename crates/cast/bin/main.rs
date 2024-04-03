@@ -30,6 +30,10 @@ pub mod tx;
 
 use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
 
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     handler::install();
