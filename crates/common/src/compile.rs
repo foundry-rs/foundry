@@ -288,8 +288,10 @@ impl ProjectCompiler {
 pub struct ContractSources {
     /// Map over artifacts' contract names -> vector of file IDs
     pub ids_by_name: HashMap<String, Vec<u32>>,
-    /// Map over file_id -> (source code, contract)
-    pub sources_by_id: FxHashMap<u32, (String, ContractBytecodeSome)>,
+    /// Map over file_id -> source code
+    pub sources_by_id: FxHashMap<u32, String>,
+    /// Map over file_id -> contract name -> bytecode
+    pub artifacts_by_id: FxHashMap<u32, HashMap<String, ContractBytecodeSome>>,
 }
 
 impl ContractSources {
@@ -327,29 +329,44 @@ impl ContractSources {
         bytecode: ContractBytecodeSome,
     ) {
         self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
-        self.sources_by_id.insert(file_id, (source, bytecode));
+        self.sources_by_id.insert(file_id, source);
+        self.artifacts_by_id.entry(file_id).or_default().insert(artifact_id.name.clone(), bytecode);
     }
 
     /// Returns the source for a contract by file ID.
-    pub fn get(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
+    pub fn get(&self, id: u32) -> Option<&String> {
         self.sources_by_id.get(&id)
     }
 
     /// Returns all sources for a contract by name.
-    pub fn get_sources(
-        &self,
-        name: &str,
-    ) -> Option<impl Iterator<Item = (u32, &(String, ContractBytecodeSome))>> {
-        self.ids_by_name
-            .get(name)
-            .map(|ids| ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))))
+    pub fn get_sources<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Option<impl Iterator<Item = (u32, &'_ str, &'_ ContractBytecodeSome)>> {
+        self.ids_by_name.get(name).map(|ids| {
+            ids.iter().filter_map(|id| {
+                Some((
+                    *id,
+                    self.sources_by_id.get(id)?.as_ref(),
+                    self.artifacts_by_id.get(id)?.get(name)?,
+                ))
+            })
+        })
     }
 
-    /// Returns all (name, source) pairs.
-    pub fn entries(&self) -> impl Iterator<Item = (String, &(String, ContractBytecodeSome))> {
-        self.ids_by_name.iter().flat_map(|(name, ids)| {
-            ids.iter().filter_map(|id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
-        })
+    /// Returns all (name, source, bytecode) sets.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &str, &ContractBytecodeSome)> {
+        self.artifacts_by_id
+            .iter()
+            .filter_map(|(id, artifacts)| {
+                let source = self.sources_by_id.get(id)?;
+                Some(
+                    artifacts
+                        .iter()
+                        .map(move |(name, bytecode)| (name.as_ref(), source.as_ref(), bytecode)),
+                )
+            })
+            .flatten()
     }
 }
 
