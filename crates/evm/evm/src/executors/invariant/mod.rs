@@ -358,7 +358,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
         let fuzz_state: EvmFuzzState =
-            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary.clone());
+            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary);
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.

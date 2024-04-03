@@ -649,13 +649,12 @@ impl<'a> ContractRunner<'a> {
                 result.first_case.calldata.clone()
             };
             // rerun the last relevant test with traces
-            let debug_result = FuzzedExecutor::new(
-                debug_executor,
-                runner,
-                self.sender,
-                fuzz_config,
-            )
-            .single_fuzz(address, should_fail, calldata);
+            let debug_result =
+                FuzzedExecutor::new(debug_executor, runner, self.sender, fuzz_config).single_fuzz(
+                    address,
+                    should_fail,
+                    calldata,
+                );
 
             (debug, breakpoints) = match debug_result {
                 Ok(fuzz_outcome) => match fuzz_outcome {

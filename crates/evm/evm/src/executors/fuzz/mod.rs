@@ -240,9 +240,9 @@ impl FuzzedExecutor {
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend.active_fork_db() {
-            build_initial_state(fork_db, self.config.dictionary.clone())
+            build_initial_state(fork_db, self.config.dictionary)
         } else {
-            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary.clone())
+            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary)
         }
     }
 }
