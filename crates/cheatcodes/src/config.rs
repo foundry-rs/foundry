@@ -2,7 +2,7 @@ use super::Result;
 use crate::{script::ScriptWallets, Vm::Rpc};
 use alloy_primitives::Address;
 use foundry_common::fs::normalize_path;
-use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
+use foundry_compilers::{utils::canonicalize, ArtifactId, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoints,
@@ -43,17 +43,30 @@ pub struct CheatsConfig {
     pub labels: HashMap<Address, String>,
     /// Script wallets
     pub script_wallets: Option<ScriptWallets>,
+    /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
+    /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
+    /// If None, no validation is performed.
+    pub available_artifacts: Option<Vec<ArtifactId>>,
 }
 
 impl CheatsConfig {
     /// Extracts the necessary settings from the Config
-    pub fn new(config: &Config, evm_opts: EvmOpts, script_wallets: Option<ScriptWallets>) -> Self {
+    pub fn new(
+        config: &Config,
+        evm_opts: EvmOpts,
+        available_artifacts: Option<Vec<ArtifactId>>,
+        script_wallets: Option<ScriptWallets>,
+    ) -> Self {
         let mut allowed_paths = vec![config.__root.0.clone()];
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
 
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
+
+        // If user explicitly disabled safety checks, do not set available_artifacts
+        let available_artifacts =
+            if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
 
         Self {
             ffi: evm_opts.ffi,
@@ -68,6 +81,7 @@ impl CheatsConfig {
             evm_opts,
             labels: config.labels.clone(),
             script_wallets,
+            available_artifacts,
         }
     }
 
@@ -185,6 +199,7 @@ impl Default for CheatsConfig {
             evm_opts: Default::default(),
             labels: Default::default(),
             script_wallets: None,
+            available_artifacts: Default::default(),
         }
     }
 }
@@ -198,6 +213,7 @@ mod tests {
         CheatsConfig::new(
             &Config { __root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             Default::default(),
+            None,
             None,
         )
     }
