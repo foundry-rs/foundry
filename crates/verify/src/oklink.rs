@@ -3,6 +3,9 @@ use async_trait::async_trait;
 use eyre::Result;
 use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::{evm, fs, retry::Retry};
+use foundry_block_explorers::{
+    Client,
+};
 use foundry_compilers::ConfigurableContractArtifact;
 use futures::FutureExt;
 use reqwest::Url;
@@ -126,8 +129,8 @@ impl OklinkVerificationProvider {
 
         let evm_version;
         let license_type;
-        let library_name;
-        let libaray_address;
+        let mut library_name:Vec<String> = vec![];
+        let mut library_address: Vec<String> = vec![];
 
         if let Some(metadata) = artifact.metadata {
             compiler_version = metadata.compiler.version.clone();
@@ -147,15 +150,15 @@ impl OklinkVerificationProvider {
                 Some(runs) => Some(runs.to_string()),
                 None => None,
             };
-            license_type = match metadata.sources.inner.get(&args.contract.name) {
+            let contract_path = args.contract.path.as_ref().unwrap();
+            license_type = match metadata.sources.inner.get(contract_path) {
                 Some(metadata_source) => metadata_source.license.clone(),
                 None => None,
             };
-            library_name = match  {
-                
+            for (name, address) in settings.libraries.into_iter() {
+                library_name.push(name.clone());
+                library_address.push(address.clone());
             }
-
-
 
         } else {
             eyre::bail!(
@@ -168,18 +171,13 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
         }
 
         let contract_path = args.contract.path.clone().map_or(path, PathBuf::from);
-        let filename = contract_path.file_name().unwrap().to_string_lossy().to_string();
+        let source_code = fs::read_to_string(&contract_path)?;
 
-        let mut source_code = fs::read_to_string(&contract_path)?;
-
-        // for import in entry.imports {
-        //     let import_entry = format!("{}", import.display());
-        //     files.insert(import_entry, fs::read_to_string(&import)?);
-        // }
 
         let req = OklinkVerifyRequest {
             sourceCode: source_code,
-            contractaddress: args.address.to_string(),
+            contractaddress: args.address.clone().to_string(),
+            // currently only single file supported
             codeformat: CodeFormat::SingleFile.as_str().to_string(),
             contractname: args.contract.name.clone(),
             compilerversion: compiler_version,
@@ -188,8 +186,8 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
             constructorArguments: args.constructor_args.clone(),
             evmversion: evm_version,
             licenseType: license_type,
-            libraryname: library_name,
-            libraryaddress: libaray_address,
+            libraryname: Some(library_name.join(",")),
+            libraryaddress: Some(library_address.join(",")),
 
         };
 
@@ -218,6 +216,8 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
         Ok(())
     }
 }
+
+
 #[derive(Debug, Serialize)]
 pub enum CodeFormat {
     SingleFile,
