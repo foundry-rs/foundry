@@ -15,7 +15,9 @@ use foundry_common::{
     types::ToEthers,
 };
 use foundry_compilers::{
-    artifacts::BytecodeObject, info::ContractInfo, Artifact, ProjectCompileOutput,
+    artifacts::{BytecodeHash, BytecodeObject},
+    info::ContractInfo,
+    Artifact, EvmVersion, ProjectCompileOutput,
 };
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use foundry_evm::{
@@ -224,13 +226,21 @@ impl VerifyBytecodeArgs {
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
+        // If bytecode_hash is disabled then its always partial verification
+        let (verification_type, has_metadata) =
+            match (self.verification_type.as_str(), config.bytecode_hash) {
+                ("full", BytecodeHash::None) => (String::from("partial"), false),
+                ("partial", BytecodeHash::None) => (String::from("partial"), false),
+                _ => (String::from("partial"), true),
+            };
         // Cmp creation code with locally built bytecode and maybe_creation_code
         let res = try_match(
             local_bytecode_vec.as_slice(),
             maybe_creation_code,
             &constructor_args,
-            &self.verification_type,
+            &verification_type,
             false,
+            has_metadata,
         )?;
 
         if res.0 {
@@ -239,7 +249,7 @@ impl VerifyBytecodeArgs {
                 Paint::green("Creation code matched").bold(),
                 Paint::green(res.1.clone().unwrap()).bold()
             );
-            if res.1.unwrap() == "partial" {
+            if res.1.unwrap() == "partial" && config.bytecode_hash != BytecodeHash::None {
                 find_mismatch_in_settings(etherscan_metadata, &config)?;
             }
         } else {
@@ -280,7 +290,8 @@ impl VerifyBytecodeArgs {
 
         let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
         fork_config.fork_block_number = Some(simulation_block - 1);
-        fork_config.evm_version = etherscan_metadata.evm_version().unwrap().unwrap();
+        fork_config.evm_version =
+            etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
         let (mut env, fork, _chain) =
             TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
 
@@ -359,8 +370,9 @@ impl VerifyBytecodeArgs {
             &fork_runtime_code.bytecode,
             &onchain_runtime_code,
             &constructor_args,
-            &self.verification_type,
+            &verification_type,
             true,
+            has_metadata,
         )?;
 
         if res.0 {
@@ -403,7 +415,9 @@ fn try_match(
     constructor_args: &[u8],
     match_type: &String,
     is_runtime: bool,
+    has_metadata: bool,
 ) -> Result<(bool, Option<String>)> {
+    tracing::info!("has_metadata: {}", has_metadata);
     // 1. Try full match
     if match_type == "full" {
         if local_bytecode.starts_with(bytecode) {
@@ -411,14 +425,26 @@ fn try_match(
             Ok((true, Some("full".to_string())))
         } else {
             // Failure => Try partial match
-            match try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime) {
+            match try_partial_match(
+                local_bytecode,
+                bytecode,
+                constructor_args,
+                is_runtime,
+                has_metadata,
+            ) {
                 Ok(true) => Ok((true, Some("partial".to_string()))),
                 Ok(false) => Ok((false, None)),
                 Err(e) => Err(e),
             }
         }
     } else {
-        match try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime) {
+        match try_partial_match(
+            local_bytecode,
+            bytecode,
+            constructor_args,
+            is_runtime,
+            has_metadata,
+        ) {
             Ok(true) => Ok((true, Some("partial".to_string()))),
             Ok(false) => Ok((false, None)),
             Err(e) => Err(e),
@@ -431,20 +457,31 @@ fn try_partial_match(
     mut bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
+    has_metadata: bool,
 ) -> Result<bool> {
     // 1. Check length of constructor args
     if constructor_args.is_empty() {
+        tracing::info!("No constructor args found");
+
         // Assume metadata is at the end of the bytecode
-        local_bytecode = extract_metadata_hash(local_bytecode)?;
-        bytecode = extract_metadata_hash(bytecode)?;
+        if has_metadata {
+            tracing::info!("Attempting to extract metadata hash");
+            local_bytecode = extract_metadata_hash(local_bytecode)?;
+            bytecode = extract_metadata_hash(bytecode)?;
+        }
 
         // Now compare the creation code and bytecode
         return Ok(local_bytecode.starts_with(bytecode));
     }
 
     if is_runtime {
-        local_bytecode = extract_metadata_hash(local_bytecode)?;
-        bytecode = extract_metadata_hash(bytecode)?;
+        tracing::info!("Runtime code detected");
+
+        if has_metadata {
+            tracing::info!("Attempting to extract metadata hash");
+            local_bytecode = extract_metadata_hash(local_bytecode)?;
+            bytecode = extract_metadata_hash(bytecode)?;
+        }
 
         // Now compare the local code and bytecode
         return Ok(local_bytecode.starts_with(bytecode));
@@ -454,8 +491,12 @@ fn try_partial_match(
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
-    local_bytecode = extract_metadata_hash(local_bytecode)?;
-    bytecode = extract_metadata_hash(bytecode)?;
+    tracing::info!("Removed constructor args from bytecode");
+    tracing::info!("Attempting to extract metadata hash");
+    if has_metadata {
+        local_bytecode = extract_metadata_hash(local_bytecode)?;
+        bytecode = extract_metadata_hash(bytecode)?;
+    }
 
     Ok(local_bytecode.starts_with(bytecode))
 }
