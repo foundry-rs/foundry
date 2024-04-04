@@ -993,6 +993,7 @@ pub struct TransactionInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct DepositReceipt<T = alloy_primitives::Log> {
     #[serde(flatten)]
     pub inner: ReceiptWithBloom<T>,
@@ -1247,7 +1248,6 @@ pub fn convert_to_anvil_receipt(receipt: TransactionReceipt) -> ReceiptResponse 
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Receipt;
     use alloy_primitives::{b256, hex, LogData};
     use std::str::FromStr;
 
