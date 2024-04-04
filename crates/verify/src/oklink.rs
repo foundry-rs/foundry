@@ -1,6 +1,6 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use async_trait::async_trait;
-use eyre::Result;
+use eyre::{Ok, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::{evm, fs, retry::Retry};
 use foundry_block_explorers::{
@@ -61,13 +61,13 @@ impl VerificationProvider for OklinkVerificationProvider {
 
                     let text = response.text().await?;
                     debug!("text {:?}", text);
-                    Ok(Some(serde_json::from_str::<OklinkVerificationResponse>(&text)?))
+                    Ok(Some(serde_json::from_str::<OklinkResponseElement>(&text)?))
                 }
                 .boxed()
             })
             .await?;
 
-        self.process_oklink_response(resp.map(|r| r.result))
+        self.process_oklink_response(resp)
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
@@ -101,8 +101,10 @@ impl VerificationProvider for OklinkVerificationProvider {
                     };
                     
                     
-                    debug!("response.json {:?}", response.json().await?);
-                    Ok(Some(response.json::<Vec<OklinkResponseElement>>().await?))
+                    let text = response.text().await?;
+                    debug!("text {:?}", text);
+                    Ok(Some(serde_json::from_str::<OklinkResponseElement>(&text)?))
+
                 }
                 .boxed()
             })
@@ -222,9 +224,9 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
 
     fn process_oklink_response(
         &self,
-        response: Option<Vec<OklinkResponseElement>>,
+        response: Option<OklinkResponseElement>,
     ) -> Result<()> {
-        let Some([response, ..]) = response.as_deref() else { return Ok(()) };
+        let Some(response) = response else { return Ok(()) };
         match response.status.as_str() {
             "1" => match response.message.as_str() {
                 "OK" => {
@@ -244,7 +246,17 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
                 }
                 s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
             }
-            _ => println!("POST fail")
+            "0" => match response.message.as_str() {
+                "NOTOK" => {
+                    if let Some(result) = &response.result {
+                        println!("Contract source code verified fail. the result is {result}")
+                    } else {
+                        println!("Contract verified fail")
+                    }
+                }
+                s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
+            }
+            s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
         }
         
         Ok(())
