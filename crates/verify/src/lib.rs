@@ -238,7 +238,7 @@ pub struct VerifyCheckArgs {
     /// The verification ID.
     ///
     /// For Etherscan - Submission GUID.
-    ///
+    /// For Oklink - Submission GUID
     /// For Sourcify - Contract Address.
     id: String,
 

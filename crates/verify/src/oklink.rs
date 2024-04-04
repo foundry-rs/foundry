@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 pub static OKLINK_URL: &str = "https://www.oklink.com/api/v5/explorer/contract/verify-source-code-plugin/";
-
+pub static OKLINK_URL_CHECK: &str = "https://www.oklink.com/api/v5/explorer/eth/api?module=contract&action=checkverifystatus";
 /// The type that can verify a contract on `oklink`
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -27,9 +27,10 @@ impl VerificationProvider for OklinkVerificationProvider {
     }
 
     async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
-        let body = self.prepare_request(&args)?;
+        let (body, api_key) = self.prepare_request(&args)?;
 
-        trace!("submitting verification request {:?}", body);
+        debug!("submitting verification request {:?}", serde_json::to_string(&body)?);
+        debug!("api key {:?}", api_key);
 
         let client = reqwest::Client::new();
 
@@ -45,10 +46,11 @@ impl VerificationProvider for OklinkVerificationProvider {
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(OKLINK_URL))
                         .header("Content-Type", "application/json")
+                        .header("Ok-Access-Key", &api_key)
                         .body(serde_json::to_string(&body)?)
                         .send()
                         .await?;
-
+                    debug!("response {:?}", response);
                     let status = response.status();
                     if !status.is_success() {
                         let error: serde_json::Value = response.json().await?;
@@ -59,6 +61,7 @@ impl VerificationProvider for OklinkVerificationProvider {
                     }
 
                     let text = response.text().await?;
+                    debug!("text {:?}", text);
                     Ok(Some(serde_json::from_str::<OklinkVerificationResponse>(&text)?))
                 }
                 .boxed()
@@ -74,12 +77,11 @@ impl VerificationProvider for OklinkVerificationProvider {
             .run_async(|| {
                 async {
                     let url = Url::from_str(
-                        args.verifier.verifier_url.as_deref().unwrap_or(OKLINK_URL),
+                        args.verifier.verifier_url.as_deref().unwrap_or(OKLINK_URL_CHECK),
                     )?;
                     let query = format!(
-                        "check-by-addresses?addresses={}&chainIds={}",
-                        args.id,
-                        args.etherscan.chain.unwrap_or_default().id(),
+                        "&guid={}",
+                        args.id
                     );
                     let url = url.join(&query)?;
                     let response = reqwest::get(url).await?;
@@ -102,10 +104,13 @@ impl VerificationProvider for OklinkVerificationProvider {
 
 impl OklinkVerificationProvider {
     /// Configures the API request to the oklink API using the given [`VerifyArgs`].
-    fn prepare_request(&self, args: &VerifyArgs) -> Result<OklinkVerifyRequest> {
+    fn prepare_request(&self, args: &VerifyArgs) -> Result<(OklinkVerifyRequest, String)> {
         let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
-
+        let api_key = match args.etherscan.key.clone() {
+            None => eyre::bail!("API KEY is not set"),
+            Some(key) => key
+        };
         let project = config.project()?;
 
         if !config.cache {
@@ -150,8 +155,12 @@ impl OklinkVerificationProvider {
                 Some(runs) => Some(runs.to_string()),
                 None => None,
             };
-            let contract_path = args.contract.path.as_ref().unwrap();
-            license_type = match metadata.sources.inner.get(contract_path) {
+            println!("{:?}",args.contract.path);
+            let contract_path = args.contract.path.clone().map_or(path.clone(), PathBuf::from);
+            let contract_path = contract_path.to_string_lossy().to_string();
+            println!("contract Path {:?}", contract_path);
+            // let filename = contract_path.file_name().unwrap().to_string_lossy().to_string();
+            license_type = match metadata.sources.inner.get(&contract_path) {
                 Some(metadata_source) => metadata_source.license.clone(),
                 None => None,
             };
@@ -169,6 +178,14 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
                 args.contract.name
             )
         }
+        let library_name = match library_name.len() {
+            0 => None,
+            _ => Some(library_name.join(","))
+        };
+        let library_address = match library_address.len() {
+            0 => None,
+            _ => Some(library_address.join(","))
+        };
 
         let contract_path = args.contract.path.clone().map_or(path, PathBuf::from);
         let source_code = fs::read_to_string(&contract_path)?;
@@ -186,12 +203,11 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
             constructorArguments: args.constructor_args.clone(),
             evmversion: evm_version,
             licenseType: license_type,
-            libraryname: Some(library_name.join(",")),
-            libraryaddress: Some(library_address.join(",")),
-
+            libraryname: library_name,
+            libraryaddress: library_address,
         };
 
-        Ok(req)
+        Ok((req, api_key))
     }
 
     fn process_oklink_response(
@@ -200,24 +216,32 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
     ) -> Result<()> {
         let Some([response, ..]) = response.as_deref() else { return Ok(()) };
         match response.status.as_str() {
-            "perfect" => {
-                if let Some(ts) = &response.GUID {
-                    println!("Contract source code already verified. Storage Timestamp: {ts}");
-                } else {
-                    println!("Contract successfully verified");
+            "1" => match response.message.as_str() {
+                "OK" => {
+                    if let Some(result) = &response.result {
+                        println!("Contract source code already verified. the result is {result}");
+                    } else {
+                        println!("Contract successfully verified");
+                    }
                 }
+                "NOTOK" => {
+                    if let Some(result) = &response.result {
+                        println!("Contract source code verified fail. the result is {result}")
+                    } else {
+                        println!("Contract verified fail")
+                    }
+    
+                }
+                s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
             }
-            "partial" => {
-                println!("The recompiled contract partially matches the deployed version");
-            }
-            "false" => println!("Contract source code is not verified"),
-            s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
+            _ => println!("POST fail")
         }
+        
         Ok(())
     }
 }
 
-
+#[warn(dead_code)]
 #[derive(Debug, Serialize)]
 pub enum CodeFormat {
     SingleFile,
@@ -258,8 +282,7 @@ pub struct OklinkVerificationResponse {
 pub struct OklinkResponseElement {
     status: String,
     message: String,
-    #[serde(rename = "result")]
-    GUID: Option<String>,
+    result: Option<String>,
 }
 
 #[cfg(test)]
