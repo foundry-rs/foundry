@@ -1157,3 +1157,43 @@ contract ScriptC {}
     tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
     tester.simulate(ScriptOutcome::OkNoEndpoint);
 });
+
+forgetest_async!(can_sign_with_script_wallet_single, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester
+        .add_sig("ScriptSign", "run()")
+        .load_private_keys(&[0])
+        .await
+        .simulate(ScriptOutcome::OkNoEndpoint);
+});
+
+forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    let acc = tester.accounts_pub[0].to_checksum(None);
+    tester
+        .add_sig("ScriptSign", "run(address)")
+        .arg(&acc)
+        .load_private_keys(&[0, 1, 2])
+        .await
+        .simulate(ScriptOutcome::OkRun);
+});
+
+forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "Sctipt.s.sol",
+            r#"
+contract Script {
+    function run() external {}
+
+    function run(address,uint256) external {}
+}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
+    assert!(cmd.stderr_lossy().contains("Multiple functions with the same name"));
+});

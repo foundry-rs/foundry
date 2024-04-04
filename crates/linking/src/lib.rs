@@ -2,13 +2,13 @@
 
 use alloy_primitives::{Address, Bytes};
 use foundry_compilers::{
-    artifacts::{CompactContractBytecode, Libraries},
+    artifacts::{CompactContractBytecode, CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
     Artifact, ArtifactId,
 };
 use semver::Version;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -24,11 +24,11 @@ pub enum LinkerError {
     InvalidAddress(<Address as std::str::FromStr>::Err),
 }
 
-pub struct Linker {
+pub struct Linker<'a> {
     /// Root of the project, used to determine whether artifact/library path can be stripped.
     pub root: PathBuf,
     /// Compilation artifacts.
-    pub contracts: ArtifactContracts,
+    pub contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
 }
 
 /// Output of the `link_with_nonce_or_address`
@@ -41,8 +41,11 @@ pub struct LinkOutput {
     pub libs_to_deploy: Vec<Bytes>,
 }
 
-impl Linker {
-    pub fn new(root: impl Into<PathBuf>, contracts: ArtifactContracts) -> Self {
+impl<'a> Linker<'a> {
+    pub fn new(
+        root: impl Into<PathBuf>,
+        contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
+    ) -> Linker<'a> {
         Linker { root: root.into(), contracts }
     }
 
@@ -62,7 +65,7 @@ impl Linker {
     /// library path in the form of "./path/to/Lib.sol:Lib"
     ///
     /// Optionally accepts solc version, and if present, only compares artifacts with given version.
-    fn find_artifact_id_by_library_path<'a>(
+    fn find_artifact_id_by_library_path(
         &'a self,
         file: &str,
         name: &str,
@@ -85,16 +88,23 @@ impl Linker {
     }
 
     /// Performs DFS on the graph of link references, and populates `deps` with all found libraries.
-    fn collect_dependencies<'a>(
+    fn collect_dependencies(
         &'a self,
         target: &'a ArtifactId,
         deps: &mut BTreeSet<&'a ArtifactId>,
     ) -> Result<(), LinkerError> {
-        let references = self
-            .contracts
-            .get(target)
-            .ok_or(LinkerError::MissingTargetArtifact)?
-            .all_link_references();
+        let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
+
+        let mut references = BTreeMap::new();
+        if let Some(bytecode) = &contract.bytecode {
+            references.extend(bytecode.link_references.clone());
+        }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
+            if let Some(bytecode) = &deployed_bytecode.bytecode {
+                references.extend(bytecode.link_references.clone());
+            }
+        }
+
         for (file, libs) in &references {
             for contract in libs.keys() {
                 let id = self
@@ -121,7 +131,7 @@ impl Linker {
     /// When calling for `target` being an external library itself, you should check that `target`
     /// does not appear in `libs_to_deploy` to avoid deploying it twice. It may happen in cases
     /// when there is a dependency cycle including `target`.
-    pub fn link_with_nonce_or_address<'a>(
+    pub fn link_with_nonce_or_address(
         &'a self,
         libraries: Libraries,
         sender: Address,
@@ -174,16 +184,21 @@ impl Linker {
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
                 if let Some(bytecode) = contract.bytecode.as_mut() {
-                    bytecode.link(file.to_string_lossy(), name, address);
+                    bytecode.to_mut().link(file.to_string_lossy(), name, address);
                 }
                 if let Some(deployed_bytecode) =
-                    contract.deployed_bytecode.as_mut().and_then(|b| b.bytecode.as_mut())
+                    contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
                 {
                     deployed_bytecode.link(file.to_string_lossy(), name, address);
                 }
             }
         }
-        Ok(contract)
+
+        Ok(CompactContractBytecode {
+            abi: contract.abi.map(|a| a.into_owned()),
+            bytecode: contract.bytecode.map(|b| b.into_owned()),
+            deployed_bytecode: contract.deployed_bytecode.map(|b| b.into_owned()),
+        })
     }
 
     pub fn get_linked_artifacts(
@@ -197,12 +212,12 @@ impl Linker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{Project, ProjectPathsConfig};
+    use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
     use std::collections::HashMap;
 
     struct LinkerTest {
         project: Project,
-        linker: Linker,
+        output: ProjectCompileOutput,
         dependency_assertions: HashMap<String, Vec<(String, Address)>>,
     }
 
@@ -220,20 +235,13 @@ mod tests {
             let project =
                 Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
 
-            let mut contracts = project.compile().unwrap();
+            let mut output = project.compile().unwrap();
 
             if strip_prefixes {
-                contracts = contracts.with_stripped_file_prefixes(project.root());
+                output = output.with_stripped_file_prefixes(project.root());
             }
 
-            let contracts = contracts
-                .into_artifacts()
-                .map(|(id, c)| (id, c.into_contract_bytecode()))
-                .collect::<ArtifactContracts>();
-
-            let linker = Linker::new(project.root(), contracts);
-
-            Self { project, linker, dependency_assertions: HashMap::new() }
+            Self { project, output, dependency_assertions: HashMap::new() }
         }
 
         fn assert_dependencies(
@@ -246,7 +254,8 @@ mod tests {
         }
 
         fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: u64) {
-            for id in self.linker.contracts.keys() {
+            let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
+            for id in linker.contracts.keys() {
                 // If we didn't strip paths, artifacts will have absolute paths.
                 // That's expected and we want to ensure that only `libraries` object has relative
                 // paths, artifacts should be kept as is.
@@ -263,8 +272,7 @@ mod tests {
                     continue;
                 }
 
-                let LinkOutput { libs_to_deploy, libraries, .. } = self
-                    .linker
+                let LinkOutput { libs_to_deploy, libraries, .. } = linker
                     .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
                     .expect("Linking failed");
 

@@ -346,7 +346,7 @@ impl DebuggerContext<'_> {
         let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
         let pc = self.current_step().pc;
         let Some((source_element, source_code)) =
-            files_source_code.find_map(|(file_id, (source_code, contract_source))| {
+            files_source_code.find_map(|(file_id, source_code, contract_source)| {
                 let bytecode = if is_create {
                     &contract_source.bytecode
                 } else {
@@ -369,7 +369,7 @@ impl DebuggerContext<'_> {
                             .contracts_sources
                             .sources_by_id
                             .get(&(source_element.index?))
-                            .map(|(source_code, _)| (source_element.clone(), source_code))
+                            .map(|source_code| (source_element.clone(), source_code.as_ref()))
                     })
             })
         else {
