@@ -108,7 +108,7 @@ impl OklinkVerificationProvider {
         let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
         let api_key = match args.etherscan.key.clone() {
-            None => eyre::bail!("API KEY is not set"),
+            None => eyre::bail!("OKLINK API KEY is not set"),
             Some(key) => key
         };
         let project = config.project()?;
