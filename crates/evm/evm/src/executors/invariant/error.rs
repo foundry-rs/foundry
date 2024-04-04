@@ -1,6 +1,6 @@
 use super::{BasicTxDetails, InvariantContract};
 use crate::executors::{Executor, RawCallResult};
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -119,8 +119,10 @@ impl FailedInvariantCaseData {
 
         // Collect abis of fuzzed and invariant contracts to decode custom error.
         let targets = targeted_contracts.lock();
-        let mut abis: Vec<&JsonAbi> = targets.iter().map(|contract| &contract.1 .1).collect();
-        abis.push(invariant_contract.abi);
+        let abis = targets
+            .iter()
+            .map(|contract| &contract.1 .1)
+            .chain(std::iter::once(invariant_contract.abi));
 
         let revert_reason = RevertDecoder::new()
             .with_abis(abis)
