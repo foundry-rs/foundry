@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash, U256};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
@@ -37,7 +37,7 @@ pub async fn estimate_gas<P, T>(
     estimate_multiplier: u64,
 ) -> Result<()>
 where
-    P: Provider<Ethereum, T>,
+    P: Provider<T>,
     T: Transport + Clone,
 {
     // if already set, some RPC endpoints might simply return the gas value that is already
@@ -371,22 +371,15 @@ impl BundledState {
             shell::println("\n\n==========================")?;
             shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
-            let (total_gas, total_gas_price, total_paid) = sequence.receipts.iter().fold(
-                (U256::ZERO, U256::ZERO, U256::ZERO),
-                |acc, receipt| {
+            let (total_gas, total_gas_price, total_paid) =
+                sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
                     let gas_used = receipt.gas_used.unwrap_or_default();
                     let gas_price = receipt.effective_gas_price;
-                    (
-                        acc.0 + gas_used,
-                        acc.1 + U256::from(gas_price),
-                        acc.2 + gas_used * U256::from(gas_price),
-                    )
-                },
-            );
+                    (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
+                });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price =
-                format_units(total_gas_price / U256::from(sequence.receipts.len()), 9)
-                    .unwrap_or_else(|_| "N/A".to_string());
+            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
+                .unwrap_or_else(|_| "N/A".to_string());
 
             shell::println(format!(
                 "Total Paid: {} ETH ({} gas * avg {} gwei)",

@@ -1,7 +1,6 @@
 //! Task management support
 
 use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
-use alloy_network::Ethereum;
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::Block;
@@ -67,7 +66,7 @@ impl TaskManager {
     /// ```
     pub fn spawn_reset_on_new_polled_blocks<P, T>(&self, provider: P, api: EthApi)
     where
-        P: Provider<Ethereum, T> + Clone + Unpin + 'static,
+        P: Provider<T> + Clone + Unpin + 'static,
         T: Transport + Clone,
     {
         self.spawn_block_poll_listener(provider.clone(), move |hash| {
@@ -91,7 +90,7 @@ impl TaskManager {
     /// block hash
     pub fn spawn_block_poll_listener<P, T, F, Fut>(&self, provider: P, task_factory: F)
     where
-        P: Provider<Ethereum, T> + 'static,
+        P: Provider<T> + 'static,
         T: Transport + Clone,
         F: Fn(B256) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
@@ -127,7 +126,7 @@ impl TaskManager {
     /// ```
     pub fn spawn_reset_on_subscribed_blocks<P, T>(&self, provider: P, api: EthApi)
     where
-        P: Provider<Ethereum, T> + 'static,
+        P: Provider<T> + 'static,
         T: Transport + Clone,
     {
         self.spawn_block_subscription(provider, move |block| {
@@ -148,7 +147,7 @@ impl TaskManager {
     /// new block hash
     pub fn spawn_block_subscription<P, T, F, Fut>(&self, provider: P, task_factory: F)
     where
-        P: Provider<Ethereum, T> + 'static,
+        P: Provider<T> + 'static,
         T: Transport + Clone,
         F: Fn(Block) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,

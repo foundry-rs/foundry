@@ -201,7 +201,7 @@ impl CreateArgs {
     }
 
     /// Deploys the contract
-    async fn deploy<P: Provider<Ethereum, T>, T: Transport + Clone>(
+    async fn deploy<P: Provider<T>, T: Transport + Clone>(
         self,
         abi: JsonAbi,
         bin: BytecodeObject,
@@ -433,7 +433,7 @@ where
 impl<B, P, T> Deployer<B, P, T>
 where
     B: Borrow<P> + Clone,
-    P: Provider<Ethereum, T>,
+    P: Provider<T>,
     T: Transport + Clone,
 {
     /// Broadcasts the contract deployment transaction and after waiting for it to
@@ -522,7 +522,7 @@ where
 impl<P, T, B> DeploymentTxFactory<B, P, T>
 where
     B: Borrow<P> + Clone,
-    P: Provider<Ethereum, T>,
+    P: Provider<T>,
     T: Transport + Clone,
 {
     /// Creates a factory for deployment of the Contract with bytecode, and the

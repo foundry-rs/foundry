@@ -245,7 +245,7 @@ impl FeeHistoryService {
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
-                    let gas_used = receipt.gas_used();
+                    let gas_used = receipt.cumulative_gas_used();
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
                         Some(TypedTransaction::Legacy(t)) => {
@@ -272,7 +272,7 @@ impl FeeHistoryService {
                         None => 0,
                     };
 
-                    (gas_used.to::<u64>(), effective_reward)
+                    (gas_used, effective_reward)
                 })
                 .collect();
 

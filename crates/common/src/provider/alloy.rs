@@ -28,7 +28,7 @@ use super::{
 };
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = RootProvider<Ethereum, RetryBackoffService<RuntimeTransport>>;
+pub type RetryProvider = RootProvider<RetryBackoffService<RuntimeTransport>>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -255,7 +255,7 @@ impl ProviderBuilder {
 ///   - polygon
 ///
 /// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
-pub async fn estimate_eip1559_fees<P: Provider<Ethereum, T>, T: Transport + Clone>(
+pub async fn estimate_eip1559_fees<P: Provider<T>, T: Transport + Clone>(
     provider: &P,
     chain: Option<u64>,
 ) -> Result<Eip1559Estimation> {

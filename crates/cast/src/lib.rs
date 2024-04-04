@@ -66,7 +66,7 @@ pub struct Cast<P, T> {
 impl<T, P> Cast<P, T>
 where
     T: Transport + Clone,
-    P: Provider<Ethereum, T>,
+    P: Provider<T>,
 {
     /// Creates a new Cast instance from the provided client
     ///
@@ -244,7 +244,7 @@ where
     pub async fn send(
         &self,
         tx: TransactionRequest,
-    ) -> Result<PendingTransactionBuilder<'_, Ethereum, T>> {
+    ) -> Result<PendingTransactionBuilder<'_, T, Ethereum>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -269,7 +269,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<Ethereum, T>> {
+    ) -> Result<PendingTransactionBuilder<T, Ethereum>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,

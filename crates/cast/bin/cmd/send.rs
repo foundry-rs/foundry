@@ -198,7 +198,7 @@ impl SendTxArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cast_send<P: Provider<Ethereum, T>, T: Transport + Clone>(
+async fn cast_send<P: Provider<T>, T: Transport + Clone>(
     provider: P,
     from: Address,
     to: Option<Address>,

@@ -7,16 +7,14 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
-use alloy_rpc_trace_types::{
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo};
+use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDefaultTracingOptions},
     parity::LocalizedTransactionTrace,
 };
-use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo, TransactionReceipt,
-};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
+    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
 };
 use foundry_evm::{
     revm::primitives::Env,
@@ -417,7 +415,7 @@ impl MinedTransaction {
     pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
         GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
             .geth_traces(
-                self.receipt.gas_used().to::<u64>(),
+                self.receipt.cumulative_gas_used(),
                 self.info.out.clone().unwrap_or_default().0.into(),
                 opts,
             )
@@ -428,7 +426,7 @@ impl MinedTransaction {
 #[derive(Clone, Debug)]
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
-    pub inner: TransactionReceipt,
+    pub inner: ReceiptResponse,
     /// Output data fo the transaction
     pub out: Option<Bytes>,
 }

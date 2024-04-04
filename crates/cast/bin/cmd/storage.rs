@@ -1,6 +1,6 @@
 use crate::opts::parse_slot;
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{network::Ethereum, Provider};
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use alloy_transport::Transport;
 use cast::Cast;
@@ -204,7 +204,7 @@ impl StorageValue {
     }
 }
 
-async fn fetch_and_print_storage<P: Provider<Ethereum, T>, T: Transport + Clone>(
+async fn fetch_and_print_storage<P: Provider<T>, T: Transport + Clone>(
     provider: P,
     address: Address,
     block: Option<BlockId>,
@@ -221,7 +221,7 @@ async fn fetch_and_print_storage<P: Provider<Ethereum, T>, T: Transport + Clone>
     }
 }
 
-async fn fetch_storage_slots<P: Provider<Ethereum, T>, T: Transport + Clone>(
+async fn fetch_storage_slots<P: Provider<T>, T: Transport + Clone>(
     provider: P,
     address: Address,
     block: Option<BlockId>,

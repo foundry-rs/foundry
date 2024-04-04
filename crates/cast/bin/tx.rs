@@ -1,7 +1,7 @@
 use alloy_json_abi::Function;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::Address;
-use alloy_provider::{network::Ethereum, Provider};
+use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -38,7 +38,7 @@ pub fn validate_to_address(code: &Option<String>, to: &Option<NameOrAddress>) ->
 
 #[allow(clippy::too_many_arguments)]
 pub async fn build_tx<
-    P: Provider<Ethereum, T>,
+    P: Provider<T>,
     T: Transport + Clone,
     F: Into<NameOrAddress>,
     TO: Into<NameOrAddress>,

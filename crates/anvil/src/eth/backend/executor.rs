@@ -10,7 +10,9 @@ use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_primitives::{Bloom, BloomInput, Log, B256, U256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
-    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    transaction::{
+        DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
+    },
     trie,
 };
 use foundry_evm::{
@@ -43,54 +45,25 @@ pub struct ExecutedTransaction {
 
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
-    fn create_receipt(&self) -> TypedReceipt {
-        let used_gas = U256::from(self.gas_used);
-        let mut bloom = Bloom::default();
-        logs_bloom(self.logs.clone(), &mut bloom);
+    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> TypedReceipt {
         let logs = self.logs.clone();
+        *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
+        let receipt_with_bloom: ReceiptWithBloom =
+            Receipt { status: status_code == 1, cumulative_gas_used: *cumulative_gas_used, logs }
+                .into();
+
         match &self.transaction.pending_transaction.transaction.transaction {
-            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(ReceiptWithBloom {
-                receipt: Receipt {
-                    success: status_code == 1,
-                    cumulative_gas_used: used_gas.to::<u64>(),
-                    logs,
-                },
-                bloom,
-            }),
-            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(ReceiptWithBloom {
-                receipt: Receipt {
-                    success: status_code == 1,
-                    cumulative_gas_used: used_gas.to::<u64>(),
-                    logs,
-                },
-                bloom,
-            }),
-            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(ReceiptWithBloom {
-                receipt: Receipt {
-                    success: status_code == 1,
-                    cumulative_gas_used: used_gas.to::<u64>(),
-                    logs,
-                },
-                bloom,
-            }),
-            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(ReceiptWithBloom {
-                receipt: Receipt {
-                    success: status_code == 1,
-                    cumulative_gas_used: used_gas.to::<u64>(),
-                    logs,
-                },
-                bloom,
-            }),
-            TypedTransaction::Deposit(_) => TypedReceipt::Deposit(ReceiptWithBloom {
-                receipt: Receipt {
-                    success: status_code == 1,
-                    cumulative_gas_used: used_gas.to::<u64>(),
-                    logs,
-                },
-                bloom,
+            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
+            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
+            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
+            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
+            TypedTransaction::Deposit(tx) => TypedReceipt::Deposit(DepositReceipt {
+                inner: receipt_with_bloom,
+                deposit_nonce: Some(tx.nonce),
+                deposit_nonce_version: Some(1),
             }),
         }
     }
@@ -132,7 +105,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
         let mut bloom = Bloom::default();
-        let mut cumulative_gas_used = U256::ZERO;
+        let mut cumulative_gas_used: u64 = 0;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
         let gas_limit = self.block_env.gas_limit;
@@ -169,10 +142,9 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     continue
                 }
             };
-            let receipt = tx.create_receipt();
-            cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
+            let receipt = tx.create_receipt(&mut cumulative_gas_used);
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
-            logs_bloom(logs.clone(), &mut bloom);
+            build_logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = out.as_ref().and_then(|out| {
                 if let Output::Create(_, contract_address) = out {
@@ -190,8 +162,6 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to(),
                 contract_address,
-                logs,
-                logs_bloom: *receipt.logs_bloom(),
                 traces,
                 exit,
                 out: match out {
@@ -200,6 +170,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     _ => None,
                 },
                 nonce: tx.nonce,
+                gas_used: tx.gas_used,
             };
 
             transaction_infos.push(info);
@@ -219,7 +190,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             difficulty,
             number: block_number.to::<u64>(),
             gas_limit: gas_limit.to::<u64>(),
-            gas_used: cumulative_gas_used.to::<u64>(),
+            gas_used: cumulative_gas_used,
             timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
@@ -366,7 +337,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 }
 
 /// Inserts all logs into the bloom
-fn logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
+fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     for log in logs {
         bloom.accrue(BloomInput::Raw(&log.address[..]));
         for topic in log.topics() {

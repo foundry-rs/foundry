@@ -3,16 +3,17 @@
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256, U64};
 use alloy_provider::Provider;
-use alloy_rpc_trace_types::{
-    geth::{GethDebugTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace as Trace,
-};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
     BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
-    Filter, Log, Transaction, TransactionReceipt,
+    Filter, Log, Transaction, WithOtherFields,
+};
+use alloy_rpc_types_trace::{
+    geth::{GethDebugTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace as Trace,
 };
 use alloy_transport::TransportError;
+use anvil_core::eth::transaction::{convert_to_anvil_receipt, ReceiptResponse};
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -191,7 +192,7 @@ impl ClientFork {
     /// Sends `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        request: &TransactionRequest,
+        request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
         self.provider().create_access_list(request, block.map(|b| b.into())).await
@@ -367,12 +368,14 @@ impl ClientFork {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> Result<Option<TransactionReceipt>, TransportError> {
+    ) -> Result<Option<ReceiptResponse>, TransportError> {
         if let Some(receipt) = self.storage_read().transaction_receipts.get(&hash).cloned() {
             return Ok(Some(receipt));
         }
 
-        if let Some(receipt) = self.provider().get_transaction_receipt(hash).await? {
+        if let Some(receipt) =
+            self.provider().get_transaction_receipt(hash).await?.map(convert_to_anvil_receipt)
+        {
             let mut storage = self.storage_write();
             storage.transaction_receipts.insert(hash, receipt.clone());
             return Ok(Some(receipt));
@@ -384,7 +387,7 @@ impl ClientFork {
     pub async fn block_receipts(
         &self,
         number: u64,
-    ) -> Result<Option<Vec<TransactionReceipt>>, TransportError> {
+    ) -> Result<Option<Vec<ReceiptResponse>>, TransportError> {
         if let receipts @ Some(_) = self.storage_read().block_receipts.get(&number).cloned() {
             return Ok(receipts);
         }
@@ -394,6 +397,7 @@ impl ClientFork {
         // this is being temporarily implemented in anvil.
         if self.predates_fork_inclusive(number) {
             let receipts = self.provider().get_block_receipts(BlockNumber::Number(number)).await?;
+            let receipts = receipts.map(|r| r.into_iter().map(convert_to_anvil_receipt).collect());
 
             if let Some(receipts) = receipts.clone() {
                 let mut storage = self.storage_write();
@@ -632,12 +636,12 @@ pub struct ForkedStorage {
     pub blocks: HashMap<B256, Block>,
     pub hashes: HashMap<u64, B256>,
     pub transactions: HashMap<B256, Transaction>,
-    pub transaction_receipts: HashMap<B256, TransactionReceipt>,
+    pub transaction_receipts: HashMap<B256, ReceiptResponse>,
     pub transaction_traces: HashMap<B256, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: HashMap<B256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
-    pub block_receipts: HashMap<u64, Vec<TransactionReceipt>>,
+    pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
 

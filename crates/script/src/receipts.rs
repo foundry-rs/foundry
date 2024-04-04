@@ -18,8 +18,7 @@ enum TxStatus {
 
 impl From<TransactionReceipt> for TxStatus {
     fn from(receipt: TransactionReceipt) -> Self {
-        let status = receipt.status_code.expect("receipt is from an ancient, pre-EIP658 block");
-        if status.is_zero() {
+        if !receipt.status() {
             TxStatus::Revert(receipt)
         } else {
             TxStatus::Success(receipt)
@@ -157,11 +156,7 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     let gas_price = receipt.effective_gas_price;
     foundry_common::shell::println(format!(
         "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
-        status = if receipt.status_code.map_or(true, |s| s.is_zero()) {
-            "❌  [Failed]"
-        } else {
-            "✅  [Success]"
-        },
+        status = if !receipt.status() { "❌  [Failed]" } else { "✅  [Success]" },
         tx_hash = receipt.transaction_hash,
         caddr = if let Some(addr) = &receipt.contract_address {
             format!("\nContract Address: {}", addr.to_checksum(None))
@@ -169,10 +164,10 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
             String::new()
         },
         bn = receipt.block_number.unwrap_or_default(),
-        gas = if gas_price.is_zero() {
+        gas = if gas_price == 0 {
             format!("Gas Used: {gas_used}")
         } else {
-            let paid = format_units(gas_used.saturating_mul(gas_price.to()), 18)
+            let paid = format_units(gas_used.saturating_mul(gas_price), 18)
                 .unwrap_or_else(|_| "N/A".into());
             let gas_price = format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());
             format!(

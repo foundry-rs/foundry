@@ -30,25 +30,25 @@ use crate::{
     NodeConfig,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rlp::Decodable;
-use alloy_rpc_trace_types::{
-    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace,
-};
 use alloy_rpc_types::{
     request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
     Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt,
+    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt, WithOtherFields,
+};
+use alloy_rpc_types_trace::{
+    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace,
 };
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},
         proof::BasicAccount,
         transaction::{
-            MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo, TypedReceipt,
-            TypedTransaction,
+            DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
+            TransactionInfo, TypedReceipt, TypedTransaction,
         },
         trie::RefTrieDB,
         utils::{alloy_to_revm_access_list, meets_eip155},
@@ -972,7 +972,7 @@ impl Backend {
                 if let Some(contract) = &info.contract_address {
                     node_info!("    Contract created: {contract:?}");
                 }
-                node_info!("    Gas used: {}", receipt.gas_used());
+                node_info!("    Gas used: {}", receipt.cumulative_gas_used());
                 if !info.exit.is_ok() {
                     let r = RevertDecoder::new().decode(
                         info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
@@ -1039,7 +1039,7 @@ impl Backend {
     /// Returns an error if the `block_number` is greater than the current height
     pub async fn call(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         overrides: Option<StateOverride>,
@@ -1060,11 +1060,14 @@ impl Backend {
 
     fn build_call_env(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> EnvWithHandlerCfg {
-        let TransactionRequest { from, to, gas, value, input, nonce, access_list, .. } = request;
+        let WithOtherFields::<TransactionRequest> {
+            inner: TransactionRequest { from, to, gas, value, input, nonce, access_list, .. },
+            ..
+        } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
@@ -1111,7 +1114,7 @@ impl Backend {
     pub fn call_with_state<D>(
         &self,
         state: D,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError>
@@ -1138,7 +1141,7 @@ impl Backend {
 
     pub async fn call_with_tracing(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         opts: GethDefaultTracingOptions,
@@ -1171,7 +1174,7 @@ impl Backend {
     pub fn build_access_list_with_state<D>(
         &self,
         state: D,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
@@ -1247,50 +1250,41 @@ impl Backend {
         let block_hash = block.header.hash_slow();
         let mut block_log_index = 0u32;
 
-        let transactions: Vec<_> = {
-            let storage = self.blockchain.storage.read();
-            block
-                .transactions
-                .iter()
-                .filter_map(|tx| storage.transactions.get(&tx.hash()).map(|tx| tx.info.clone()))
-                .collect()
-        };
+        let storage = self.blockchain.storage.read();
 
-        for transaction in transactions {
-            let logs = transaction.logs.clone();
-            let transaction_hash = transaction.transaction_hash;
+        for tx in block.transactions {
+            let Some(tx) = storage.transactions.get(&tx.hash()) else {
+                continue;
+            };
+            let logs = tx.receipt.logs();
+            let transaction_hash = tx.info.transaction_hash;
 
-            for log in logs.into_iter() {
-                let mut log = Log {
-                    address: log.address,
-                    topics: log.topics().to_vec(),
-                    data: log.data.data,
-                    block_hash: None,
-                    block_number: None,
-                    transaction_hash: None,
-                    transaction_index: None,
-                    log_index: None,
-                    removed: false,
-                };
+            for log in logs {
                 let mut is_match: bool = true;
                 if !filter.address.is_empty() && filter.has_topics() {
-                    if !params.filter_address(&log.address) || !params.filter_topics(&log.topics) {
+                    if !params.filter_address(&log.address) || !params.filter_topics(log.topics())
+                    {
                         is_match = false;
                     }
                 } else if !filter.address.is_empty() {
                     if !params.filter_address(&log.address) {
                         is_match = false;
                     }
-                } else if filter.has_topics() && !params.filter_topics(&log.topics) {
+                } else if filter.has_topics() && !params.filter_topics(log.topics()) {
                     is_match = false;
                 }
 
                 if is_match {
-                    log.block_hash = Some(block_hash);
-                    log.block_number = Some(block.header.number.to_alloy());
-                    log.transaction_hash = Some(transaction_hash);
-                    log.transaction_index = Some(U256::from(transaction.transaction_index));
-                    log.log_index = Some(U256::from(block_log_index));
+                    let log = Log {
+                        inner: log.clone(),
+                        block_hash: Some(block_hash),
+                        block_number: Some(block.header.number),
+                        block_timestamp: Some(block.header.timestamp),
+                        transaction_hash: Some(transaction_hash),
+                        transaction_index: Some(tx.info.transaction_index as u64),
+                        log_index: Some(block_log_index as u64),
+                        removed: false,
+                    };
                     all_logs.push(log);
                 }
                 block_log_index += 1;
@@ -1897,7 +1891,7 @@ impl Backend {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> Result<Option<TransactionReceipt>, BlockchainError> {
+    ) -> Result<Option<ReceiptResponse>, BlockchainError> {
         if let Some(receipt) = self.mined_transaction_receipt(hash) {
             return Ok(Some(receipt.inner));
         }
@@ -1905,10 +1899,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let receipt = fork.transaction_receipt(hash).await?;
             let number = self.convert_block_number(
-                receipt
-                    .clone()
-                    .and_then(|r| r.block_number)
-                    .map(|n| BlockNumber::from(n.to::<u64>())),
+                receipt.clone().and_then(|r| r.block_number).map(BlockNumber::from),
             );
 
             if fork.predates_fork_inclusive(number) {
@@ -1932,7 +1923,7 @@ impl Backend {
     }
 
     /// Returns all transaction receipts of the block
-    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<TransactionReceipt>> {
+    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<ReceiptResponse>> {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
@@ -1946,33 +1937,12 @@ impl Backend {
 
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
-        let MinedTransaction { info, receipt, block_hash, .. } =
+        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
             self.blockchain.get_transaction_by_hash(&hash)?;
 
-        let ReceiptWithBloom { receipt, bloom } = receipt.into();
-        let Receipt { success, cumulative_gas_used: _, logs } = receipt;
-        let logs_bloom = bloom;
-
         let index = info.transaction_index as usize;
-
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
-
-        // TODO store cumulative gas used in receipt instead
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
-
-        let mut cumulative_gas_used = U256::ZERO;
-        for receipt in receipts.iter().take(index + 1) {
-            cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-        }
-
-        // cumulative_gas_used = cumulative_gas_used.saturating_sub(gas_used);
-
-        let mut cumulative_receipts = receipts;
-        cumulative_receipts.truncate(index + 1);
-
         let transaction = block.transactions[index].clone();
-
-        let transaction_type = transaction.transaction.r#type();
 
         let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.tx().gas_price,
@@ -1992,57 +1962,61 @@ impl Backend {
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
-        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
+        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        let mut inner = TransactionReceipt {
-            transaction_hash: info.transaction_hash,
-            transaction_index: U64::from(info.transaction_index),
-            block_hash: Some(block_hash),
-            block_number: Some(U256::from(block.header.number)),
-            from: info.from,
-            to: info.to,
-            cumulative_gas_used,
-            gas_used: Some(cumulative_gas_used),
-            contract_address: info.contract_address,
-            logs: {
-                let mut pre_receipts_log_index = None;
-                if !cumulative_receipts.is_empty() {
-                    cumulative_receipts.truncate(cumulative_receipts.len() - 1);
-                    pre_receipts_log_index = Some(
-                        cumulative_receipts.iter().map(|r| r.logs().len() as u32).sum::<u32>(),
-                    );
-                }
-                logs.iter()
-                    .enumerate()
-                    .map(|(i, log)| Log {
-                        address: log.address,
-                        topics: log.topics().to_vec(),
-                        data: log.data.data.clone(),
-                        block_hash: Some(block_hash),
-                        block_number: Some(U256::from(block.header.number)),
-                        transaction_hash: Some(info.transaction_hash),
-                        transaction_index: Some(U256::from(info.transaction_index)),
-                        log_index: Some(U256::from(
-                            (pre_receipts_log_index.unwrap_or(0)) + i as u32,
-                        )),
-                        removed: false,
-                    })
-                    .collect()
-            },
-            status_code: Some(U64::from(success)),
-            state_root: None,
-            logs_bloom,
-            transaction_type: transaction_type.map(U8::from).unwrap_or_default(),
-            effective_gas_price: U128::from(effective_gas_price),
-            blob_gas_price: None,
-            blob_gas_used: None,
-            other: Default::default(),
+        let receipt = tx_receipt.as_receipt_with_bloom().receipt.clone();
+        let receipt = Receipt {
+            status: receipt.status,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            logs: receipt
+                .logs
+                .into_iter()
+                .enumerate()
+                .map(|(index, log)| alloy_rpc_types::Log {
+                    inner: log,
+                    block_hash: Some(block_hash),
+                    block_number: Some(block.header.number),
+                    block_timestamp: Some(block.header.timestamp),
+                    transaction_hash: Some(info.transaction_hash),
+                    transaction_index: Some(info.transaction_index as u64),
+                    log_index: Some((next_log_index + index) as u64),
+                    removed: false,
+                })
+                .collect(),
+        };
+        let receipt_with_bloom = ReceiptWithBloom {
+            receipt,
+            logs_bloom: tx_receipt.as_receipt_with_bloom().logs_bloom,
         };
 
-        inner.other.insert(
-            "depositNonce".to_string(),
-            serde_json::to_value(deposit_nonce).expect("Infallible"),
-        );
+        let inner = match tx_receipt {
+            TypedReceipt::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
+            TypedReceipt::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
+            TypedReceipt::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
+            TypedReceipt::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
+            TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
+                inner: receipt_with_bloom,
+                deposit_nonce: r.deposit_nonce,
+                deposit_nonce_version: r.deposit_nonce_version,
+            }),
+        };
+
+        let inner = TransactionReceipt {
+            inner,
+            transaction_hash: info.transaction_hash,
+            transaction_index: info.transaction_index as u64,
+            block_number: Some(block.header.number),
+            gas_used: Some(info.gas_used),
+            contract_address: info.contract_address,
+            effective_gas_price: effective_gas_price as u64,
+            block_hash: Some(block_hash),
+            from: info.from,
+            to: info.to,
+            state_root: Some(block.header.state_root),
+            blob_gas_price: None,
+            blob_gas_used: None,
+        };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
     }
@@ -2051,7 +2025,7 @@ impl Backend {
     pub async fn block_receipts(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<Vec<TransactionReceipt>>, BlockchainError> {
+    ) -> Result<Option<Vec<ReceiptResponse>>, BlockchainError> {
         if let Some(receipts) = self.mined_block_receipts(number) {
             return Ok(Some(receipts));
         }

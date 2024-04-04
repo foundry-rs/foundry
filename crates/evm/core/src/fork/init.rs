@@ -11,7 +11,7 @@ use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
 // todo(onbjerg): these bounds needed cus of the bounds in `Provider`, can simplify?
-pub async fn environment<N: Network, T: Transport + Clone, P: Provider<N, T>>(
+pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     provider: &P,
     memory_limit: u64,
     gas_price: Option<u64>,

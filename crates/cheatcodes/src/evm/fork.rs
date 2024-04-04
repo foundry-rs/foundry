@@ -274,14 +274,14 @@ impl Cheatcode for eth_getLogsCall {
         let eth_logs = logs
             .into_iter()
             .map(|log| EthGetLogs {
-                emitter: log.address,
-                topics: log.topics.into_iter().collect(),
-                data: log.data.0.into(),
+                emitter: log.address(),
+                topics: log.topics().to_vec(),
+                data: log.inner.data.data,
                 blockHash: log.block_hash.unwrap_or_default(),
-                blockNumber: log.block_number.unwrap_or_default().to(),
+                blockNumber: log.block_number.unwrap_or_default(),
                 transactionHash: log.transaction_hash.unwrap_or_default(),
-                transactionIndex: log.transaction_index.unwrap_or_default().to(),
-                logIndex: log.log_index.unwrap_or_default(),
+                transactionIndex: log.transaction_index.unwrap_or_default(),
+                logIndex: U256::from(log.log_index.unwrap_or_default()),
                 removed: log.removed,
             })
             .collect::<Vec<_>>();

@@ -4,7 +4,7 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
-use alloy_provider::{network::Ethereum, Provider};
+use alloy_provider::{ Provider};
 use alloy_rpc_types::{Block, BlockId, Transaction};
 use alloy_transport::Transport;
 use eyre::WrapErr;
@@ -103,7 +103,7 @@ pub struct BackendHandler<T, P> {
 impl<T, P> BackendHandler<T, P>
 where
     T: Transport + Clone,
-    P: Provider<Ethereum, T> + Clone + Unpin + 'static,
+    P: Provider<T> + Clone + Unpin + 'static,
 {
     fn new(
         provider: P,
@@ -291,7 +291,7 @@ where
 impl<T, P> Future for BackendHandler<T, P>
 where
     T: Transport + Clone + Unpin,
-    P: Provider<Ethereum, T> + Clone + Unpin + 'static,
+    P: Provider<T> + Clone + Unpin + 'static,
 {
     type Output = ();
 
@@ -525,7 +525,7 @@ impl SharedBackend {
     ) -> Self
     where
         T: Transport + Clone + Unpin,
-        P: Provider<Ethereum, T> + Unpin + 'static + Clone,
+        P: Provider<T> + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
         // spawn the provider handler to a task
@@ -543,7 +543,7 @@ impl SharedBackend {
     ) -> Self
     where
         T: Transport + Clone + Unpin,
-        P: Provider<Ethereum, T> + Unpin + 'static + Clone,
+        P: Provider<T> + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
 
@@ -573,7 +573,7 @@ impl SharedBackend {
     ) -> (Self, BackendHandler<T, P>)
     where
         T: Transport + Clone + Unpin,
-        P: Provider<Ethereum, T> + Unpin + 'static + Clone,
+        P: Provider<T> + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
         let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));

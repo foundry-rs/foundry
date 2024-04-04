@@ -1,12 +1,12 @@
 //! wrappers for transactions
-use alloy_provider::{network::Ethereum, Provider};
+use alloy_provider::{Provider};
 use alloy_rpc_types::{BlockId, TransactionReceipt};
 use alloy_transport::Transport;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
 /// Helper type to carry a transaction along with an optional revert reason
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionReceiptWithRevertReason {
     /// The underlying transaction receipt
     #[serde(flatten)]
@@ -19,13 +19,13 @@ pub struct TransactionReceiptWithRevertReason {
 
 impl TransactionReceiptWithRevertReason {
     /// Returns if the status of the transaction is 0 (failure)
-    pub fn is_failure(&self) -> Option<bool> {
-        self.receipt.status_code.map(|status| status.is_zero())
+    pub fn is_failure(&self) -> bool {
+        self.receipt.status()
     }
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<Ethereum, T>>(
+    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<T>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -33,11 +33,11 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<Ethereum, T>>(
+    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<T>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
-        if let Some(false) | None = self.is_failure() {
+        if !self.is_failure() {
             return Ok(None)
         }
 

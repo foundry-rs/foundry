@@ -8,7 +8,7 @@ use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
-    state::{AccountOverride, StateOverride},
+    state::{AccountOverride, StateOverride}, WithOtherFields,
 };
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
@@ -243,11 +243,11 @@ where
 {
     let result = api
         .call(
-            CallRequest {
+            WithOtherFields::new(CallRequest {
                 input: CallInput::maybe_input(call.tx.data().cloned().map(|b| b.0.into())),
                 to: Some(to.to_alloy()),
                 ..Default::default()
-            },
+            }),
             None,
             Some(overrides),
         )

@@ -6,7 +6,7 @@ use alloy_primitives::{Bytes, U256 as rU256};
 use alloy_rpc_types::{
     request::TransactionRequest as AlloyTransactionRequest,
     state::{AccountOverride, StateOverride},
-    BlockNumberOrTag,
+    BlockNumberOrTag, WithOtherFields,
 };
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
@@ -966,7 +966,7 @@ async fn estimates_gas_on_pending_by_default() {
         .to(Some(sender.to_alloy()))
         .value(rU256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
-    api.estimate_gas(tx, None, None).await.unwrap();
+    api.estimate_gas(WithOtherFields::new(tx), None, None).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -983,7 +983,7 @@ async fn test_estimate_gas() {
         .value(rU256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.
-    let error_result = api.estimate_gas(tx.clone(), None, None).await;
+    let error_result = api.estimate_gas(WithOtherFields::new(tx.clone()), None, None).await;
 
     assert!(error_result.is_err(), "Expected an error due to insufficient funds");
     let error_message = error_result.unwrap_err().to_string();
@@ -1002,7 +1002,7 @@ async fn test_estimate_gas() {
 
     // Estimate gas with state override implying sufficient funds.
     let gas_estimate = api
-        .estimate_gas(tx, None, Some(state_override))
+        .estimate_gas(WithOtherFields::new(tx), None, Some(state_override))
         .await
         .expect("Failed to estimate gas with state override");
 
@@ -1098,8 +1098,8 @@ async fn can_mine_multiple_in_block() {
     };
 
     // broadcast it via the eth_sendTransaction API
-    let first = api.send_transaction(tx.clone()).await.unwrap();
-    let second = api.send_transaction(tx.clone()).await.unwrap();
+    let first = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
+    let second = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
 
     api.anvil_mine(Some(rU256::from(1)), Some(rU256::ZERO)).await.unwrap();
 

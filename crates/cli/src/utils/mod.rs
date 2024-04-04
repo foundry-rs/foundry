@@ -1,6 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
-use alloy_provider::{network::Ethereum, Provider};
+use alloy_provider::{Provider};
 use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
 use foundry_config::{Chain, Config};
@@ -144,7 +144,7 @@ pub fn get_alloy_provider_builder(
 
 pub async fn get_chain<P, T>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    P: Provider<Ethereum, T>,
+    P: Provider<T>,
     T: Transport + Clone,
 {
     match chain {

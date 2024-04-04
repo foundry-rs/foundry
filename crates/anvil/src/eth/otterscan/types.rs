@@ -3,8 +3,9 @@ use crate::eth::{
     error::{BlockchainError, Result},
 };
 use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
-use alloy_rpc_trace_types::parity::{Action, CallType, LocalizedTransactionTrace};
-use alloy_rpc_types::{Block, BlockTransactions, Transaction, TransactionReceipt};
+use alloy_rpc_types::{Block, BlockTransactions, Transaction};
+use alloy_rpc_types_trace::parity::{Action, CallType, LocalizedTransactionTrace};
+use anvil_core::eth::transaction::ReceiptResponse;
 use foundry_evm::{revm::interpreter::InstructionResult, traces::CallKind};
 use futures::future::join_all;
 use serde::Serialize;
@@ -40,7 +41,7 @@ pub struct Issuance {
 #[derive(Clone, Serialize, Debug)]
 pub struct OtsBlockTransactions {
     pub fullblock: OtsBlock,
-    pub receipts: Vec<TransactionReceipt>,
+    pub receipts: Vec<ReceiptResponse>,
 }
 
 /// Patched Receipt struct, to include the additional `timestamp` field expected by Otterscan
@@ -48,7 +49,7 @@ pub struct OtsBlockTransactions {
 #[serde(rename_all = "camelCase")]
 pub struct OtsTransactionReceipt {
     #[serde(flatten)]
-    receipt: TransactionReceipt,
+    receipt: ReceiptResponse,
     timestamp: u64,
 }
 
@@ -132,22 +133,22 @@ impl OtsBlockDetails {
             block_txs.iter().map(|tx| async { backend.transaction_receipt(*tx).await });
 
         // fetch all receipts
-        let receipts: Vec<TransactionReceipt> = join_all(receipts_futs)
+        let receipts = join_all(receipts_futs)
             .await
             .into_iter()
             .map(|r| match r {
                 Ok(Some(r)) => Ok(r),
                 _ => Err(BlockchainError::DataUnavailable),
             })
-            .collect::<Result<_>>()?;
+            .collect::<Result<Vec<_>>>()?;
 
-        let total_fees = receipts.iter().fold(U256::ZERO, |acc, receipt| {
-            acc + receipt.gas_used.unwrap() * (U256::from(receipt.effective_gas_price))
-        });
+        let total_fees = receipts
+            .iter()
+            .fold(0, |acc, receipt| acc + receipt.gas_used.unwrap() * receipt.effective_gas_price);
 
         Ok(Self {
             block: block.into(),
-            total_fees,
+            total_fees: U256::from(total_fees),
             // issuance has no meaningful value in anvil's backend. just default to 0
             issuance: Default::default(),
         })
@@ -198,7 +199,7 @@ impl OtsBlockTransactions {
         let receipt_futs =
             block_txs.iter().map(|tx| async { backend.transaction_receipt(*tx).await });
 
-        let receipts: Vec<TransactionReceipt> = join_all(receipt_futs)
+        let receipts = join_all(receipt_futs)
             .await
             .into_iter()
             .map(|r| match r {
@@ -237,11 +238,8 @@ impl OtsSearchTransactions {
         join_all(hashes.iter().map(|hash| async {
             match backend.transaction_receipt(*hash).await {
                 Ok(Some(receipt)) => {
-                    let timestamp = backend
-                        .get_block(receipt.block_number.unwrap().to::<u64>())
-                        .unwrap()
-                        .header
-                        .timestamp;
+                    let timestamp =
+                        backend.get_block(receipt.block_number.unwrap()).unwrap().header.timestamp;
                     Ok(OtsTransactionReceipt { receipt, timestamp })
                 }
                 Ok(None) => Err(BlockchainError::DataUnavailable),

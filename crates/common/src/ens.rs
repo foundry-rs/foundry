@@ -56,7 +56,7 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<N: Network, T: Transport + Clone, P: Provider<N, T>>(
+    pub async fn resolve<N: Network, T: Transport + Clone, P: Provider<T, N>>(
         &self,
         provider: &P,
     ) -> Result<Address, EnsResolutionError> {
@@ -98,8 +98,8 @@ impl FromStr for NameOrAddress {
 }
 
 #[async_trait]
-pub trait ProviderEnsExt<N: Network, T: Transport + Clone, P: Provider<N, T>> {
-    async fn get_resolver(&self) -> Result<EnsResolverInstance<N, T, &P>, EnsResolutionError>;
+pub trait ProviderEnsExt<T: Transport + Clone, N: Network, P: Provider<T, N>> {
+    async fn get_resolver(&self) -> Result<EnsResolverInstance<T, &P, N>, EnsResolutionError>;
 
     async fn resolve_name(&self, name: &str) -> Result<Address, EnsResolutionError> {
         let node = namehash(name);
@@ -131,13 +131,13 @@ pub trait ProviderEnsExt<N: Network, T: Transport + Clone, P: Provider<N, T>> {
 }
 
 #[async_trait]
-impl<P, N, T> ProviderEnsExt<N, T, P> for P
+impl<T, N, P> ProviderEnsExt<T, N, P> for P
 where
-    P: Provider<N, T>,
+    P: Provider<T, N>,
     N: Network,
     T: Transport + Clone,
 {
-    async fn get_resolver(&self) -> Result<EnsResolverInstance<N, T, &P>, EnsResolutionError> {
+    async fn get_resolver(&self) -> Result<EnsResolverInstance<T, &P, N>, EnsResolutionError> {
         let registry = EnsRegistry::new(ENS_ADDRESS, self);
         let address = registry
             .resolver(namehash("eth"))

@@ -1,4 +1,4 @@
-use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
@@ -91,7 +91,7 @@ impl AccessListArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<P: Provider<Ethereum, T>, T: Transport + Clone>(
+async fn access_list<P: Provider<T>, T: Transport + Clone>(
     provider: P,
     etherscan_api_key: Option<&str>,
     from: Address,

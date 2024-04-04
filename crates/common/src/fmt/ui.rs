@@ -1,6 +1,7 @@
 //! Helper trait and functions to format Ethereum types.
 
 use crate::TransactionReceiptWithRevertReason;
+use alloy_consensus::{Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::*;
 use alloy_rpc_types::{
     other::OtherFields, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
@@ -25,6 +26,12 @@ pub trait UIfmt {
     fn pretty(&self) -> String;
 }
 
+impl<T: UIfmt> UIfmt for &T {
+    fn pretty(&self) -> String {
+        (*self).pretty()
+    }
+}
+
 impl<T: UIfmt> UIfmt for Option<T> {
     fn pretty(&self) -> String {
         if let Some(ref inner) = self {
@@ -35,7 +42,7 @@ impl<T: UIfmt> UIfmt for Option<T> {
     }
 }
 
-impl<T: UIfmt> UIfmt for Vec<T> {
+impl<T: UIfmt> UIfmt for [T] {
     fn pretty(&self) -> String {
         if !self.is_empty() {
             let mut s = String::with_capacity(self.len() * 64);
@@ -56,6 +63,12 @@ impl<T: UIfmt> UIfmt for Vec<T> {
 }
 
 impl UIfmt for String {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for u64 {
     fn pretty(&self) -> String {
         self.to_string()
     }
@@ -91,6 +104,12 @@ impl UIfmt for Bloom {
     }
 }
 
+impl UIfmt for TxType {
+    fn pretty(&self) -> String {
+        (*self as u8).to_string()
+    }
+}
+
 impl UIfmt for Vec<u8> {
     fn pretty(&self) -> String {
         self[..].pretty()
@@ -123,6 +142,7 @@ impl UIfmt for [u8] {
 
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
+        let transaction_type = self.transaction_type();
         let Self {
             transaction_hash,
             transaction_index,
@@ -130,18 +150,27 @@ impl UIfmt for TransactionReceipt {
             block_number,
             from,
             to,
-            cumulative_gas_used,
             gas_used,
             contract_address,
-            logs,
-            status_code,
             state_root,
-            logs_bloom,
-            transaction_type,
             effective_gas_price,
-            other,
-            ..
+            inner,
+            blob_gas_price,
+            blob_gas_used,
         } = self;
+
+        let (logs_bloom, status, cumulative_gas_used, logs) = if let Some(receipt) =
+            inner.as_receipt_with_bloom()
+        {
+            let ReceiptWithBloom {
+                logs_bloom,
+                receipt: Receipt { status, cumulative_gas_used, logs },
+            } = receipt;
+
+            (Some(logs_bloom), Some(status), Some(cumulative_gas_used), Some(logs))
+        } else {
+            Default::default()
+        };
 
         let mut pretty = format!(
             "
@@ -158,7 +187,9 @@ root                    {}
 status                  {}
 transactionHash         {}
 transactionIndex        {}
-type                    {}",
+type                    {}
+blobGasPrice            {}
+blobGasUsed             {}",
             block_hash.pretty(),
             block_number.pretty(),
             contract_address.pretty(),
@@ -166,13 +197,15 @@ type                    {}",
             effective_gas_price.pretty(),
             from.pretty(),
             gas_used.pretty(),
-            serde_json::to_string(logs).unwrap(),
+            serde_json::to_string(&logs).unwrap(),
             logs_bloom.pretty(),
             state_root.pretty(),
-            status_code.pretty(),
+            status.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),
-            transaction_type.pretty()
+            transaction_type.pretty(),
+            blob_gas_price.pretty(),
+            blob_gas_used.pretty(),
         );
 
         if let Some(to) = to {
@@ -180,9 +213,9 @@ type                    {}",
         }
 
         // additional captured fields
-        for (key, val) in other.iter() {
-            pretty.push_str(&format!("\n{}             {}", key, val));
-        }
+        // for (key, val) in other.iter() {
+        //    pretty.push_str(&format!("\n{}             {}", key, val));
+        // }
 
         pretty
     }
@@ -201,13 +234,13 @@ removed: {}
 topics: {}
 transactionHash: {}
 transactionIndex: {}",
-            self.address.pretty(),
+            self.address().pretty(),
             self.block_hash.pretty(),
             self.block_number.pretty(),
-            self.data.pretty(),
+            self.data().data.pretty(),
             self.log_index.pretty(),
             self.removed.pretty(),
-            self.topics.pretty(),
+            self.topics().pretty(),
             self.transaction_hash.pretty(),
             self.transaction_index.pretty(),
         )
@@ -397,21 +430,23 @@ pub fn get_pretty_tx_receipt_attr(
         "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
         "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
         "cumulativeGasUsed" | "cumulative_gas_used" => {
-            Some(receipt.receipt.cumulative_gas_used.pretty())
+            Some(receipt.receipt.inner.as_receipt().map(|r| r.cumulative_gas_used).pretty())
         }
         "effectiveGasPrice" | "effective_gas_price" => {
-            Some(receipt.receipt.effective_gas_price.pretty())
+            Some(receipt.receipt.effective_gas_price.to_string())
         }
-        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
-        "logs" => Some(receipt.receipt.logs.pretty()),
-        "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
+        "gasUsed" | "gas_used" => receipt.receipt.gas_used.map(|g| g.to_string()),
+        "logs" => receipt.receipt.inner.as_receipt().map(|r| r.logs.as_slice().pretty()),
+        "logsBloom" | "logs_bloom" => {
+            Some(receipt.receipt.inner.as_receipt_with_bloom().map(|r| r.logs_bloom).pretty())
+        }
         "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
-        "status" | "statusCode" | "status_code" => Some(receipt.receipt.status_code.pretty()),
+        "status" | "statusCode" | "status_code" => Some(receipt.receipt.status().pretty()),
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
-            Some(receipt.receipt.transaction_index.pretty())
+            Some(receipt.receipt.transaction_index.to_string())
         }
-        "type" | "transaction_type" => Some(receipt.receipt.transaction_type.pretty()),
+        "type" | "transaction_type" => Some(receipt.receipt.transaction_type().pretty()),
         "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
         _ => None,
     }

@@ -8,7 +8,7 @@ use alloy_primitives::{address, U256 as rU256, U64 as rU64};
 use alloy_provider::Provider as AlloyProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest as CallRequest},
-    BlockNumberOrTag,
+    BlockNumberOrTag, WithOtherFields,
 };
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
@@ -802,11 +802,11 @@ async fn test_fork_call() {
 
     let res1 = api
         .call(
-            CallRequest {
+            WithOtherFields::new(CallRequest {
                 to: Some(to.to_alloy()),
                 input: input.to_alloy().into(),
                 ..Default::default()
-            },
+            }),
             None,
             None,
         )
@@ -1194,11 +1194,11 @@ async fn test_fork_execution_reverted() {
 
     let resp = api
         .call(
-            CallRequest {
+            WithOtherFields::new(CallRequest {
                 to: Some(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377")),
                 input: TransactionInput::new("0x8f283b3c".as_bytes().into()),
                 ..Default::default()
-            },
+            }),
             Some(target.into()),
             None,
         )

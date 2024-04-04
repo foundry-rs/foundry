@@ -34,24 +34,24 @@ use crate::{
 use alloy_dyn_abi::TypedData;
 use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
-use alloy_rpc_trace_types::{
-    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace,
-};
 use alloy_rpc_types::{
     request::TransactionRequest,
     state::StateOverride,
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Log,
-    Transaction, TransactionReceipt,
+    Transaction, WithOtherFields,
+};
+use alloy_rpc_types_trace::{
+    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace,
 };
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, PendingTransaction, TypedTransaction,
+            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
             TypedTransactionRequest,
         },
         EthRequest,
@@ -843,7 +843,10 @@ impl EthApi {
     /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
-    pub async fn sign_transaction(&self, mut request: TransactionRequest) -> Result<String> {
+    pub async fn sign_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<String> {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -870,7 +873,10 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, mut request: TransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -950,7 +956,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_call`
     pub async fn call(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> Result<Bytes> {
@@ -1003,7 +1009,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        mut request: TransactionRequest,
+        mut request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
@@ -1052,7 +1058,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> Result<U256> {
@@ -1121,7 +1127,7 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<TransactionReceipt>> {
+    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<ReceiptResponse>> {
         node_info!("eth_getTransactionReceipt");
         let tx = self.pool.get_transaction(hash);
         if tx.is_some() {
@@ -1136,7 +1142,7 @@ impl EthApi {
     pub async fn block_receipts(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Option<Vec<ReceiptResponse>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
@@ -1430,7 +1436,7 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceCall`
     pub async fn debug_trace_call(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         opts: GethDefaultTracingOptions,
     ) -> Result<DefaultFrame> {
@@ -1890,7 +1896,7 @@ impl EthApi {
                     if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
-                            if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
+                            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status {
                                 if let Some(reason) =
                                     RevertDecoder::new().maybe_decode(&output, None)
                                 {
@@ -1963,7 +1969,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
@@ -2129,7 +2135,7 @@ impl EthApi {
 
     async fn do_estimate_gas(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> Result<U256> {
@@ -2166,7 +2172,7 @@ impl EthApi {
     /// This will execute the [CallRequest] and find the best gas limit via binary search
     fn do_estimate_gas_with_state<D>(
         &self,
-        mut request: TransactionRequest,
+        mut request: WithOtherFields<TransactionRequest>,
         state: D,
         block_env: BlockEnv,
     ) -> Result<U256>
@@ -2460,7 +2466,7 @@ impl EthApi {
 
     fn build_typed_tx_request(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
         let chain_id = request.chain_id.unwrap_or_else(|| self.chain_id());
@@ -2618,7 +2624,7 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 /// not
 #[inline]
 fn map_out_of_gas_err<D>(
-    mut request: TransactionRequest,
+    mut request: WithOtherFields<TransactionRequest>,
     state: D,
     backend: Arc<backend::mem::Backend>,
     block_env: BlockEnv,
@@ -2652,7 +2658,7 @@ where
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
 #[inline]
-fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
+fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> U256 {
     match transaction_request_to_typed(request.clone()) {
         Some(request) => match request {
             TypedTransactionRequest::Legacy(req) => match req.to {
