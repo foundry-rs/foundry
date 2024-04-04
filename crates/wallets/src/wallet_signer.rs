@@ -42,7 +42,7 @@ impl WalletSigner {
     }
 
     pub async fn from_aws(key_id: String) -> Result<Self> {
-        let config = aws_config::load_defaults(BehaviorVersion {}).await;
+        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let client = AwsClient::new(&config);
 
         Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))

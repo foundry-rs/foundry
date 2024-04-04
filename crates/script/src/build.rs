@@ -21,22 +21,26 @@ use foundry_compilers::{
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
-    ArtifactId,
+    ArtifactId, ProjectCompileOutput,
 };
 use foundry_linking::{LinkOutput, Linker};
-use std::{str::FromStr, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
 pub struct BuildData {
+    /// Root of the project
+    pub project_root: PathBuf,
     /// Linker which can be used to link contracts, owns [ArtifactContracts] map.
-    pub linker: Linker,
+    pub output: ProjectCompileOutput,
     /// Id of target contract artifact.
     pub target: ArtifactId,
-    /// Source files of the contracts. Used by debugger.
-    pub sources: ContractSources,
 }
 
 impl BuildData {
+    pub fn get_linker(&self) -> Linker {
+        Linker::new(self.project_root.clone(), self.output.artifact_ids().collect())
+    }
+
     /// Links the build data with given libraries, using sender and nonce to compute addresses of
     /// missing libraries.
     pub fn link(
@@ -45,8 +49,12 @@ impl BuildData {
         sender: Address,
         nonce: u64,
     ) -> Result<LinkedBuildData> {
-        let link_output =
-            self.linker.link_with_nonce_or_address(known_libraries, sender, nonce, &self.target)?;
+        let link_output = self.get_linker().link_with_nonce_or_address(
+            known_libraries,
+            sender,
+            nonce,
+            &self.target,
+        )?;
 
         LinkedBuildData::new(link_output, self)
     }
@@ -54,8 +62,12 @@ impl BuildData {
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
     /// to fully link target contract.
     pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        let link_output =
-            self.linker.link_with_nonce_or_address(libraries, Address::ZERO, 0, &self.target)?;
+        let link_output = self.get_linker().link_with_nonce_or_address(
+            libraries,
+            Address::ZERO,
+            0,
+            &self.target,
+        )?;
 
         if !link_output.libs_to_deploy.is_empty() {
             eyre::bail!("incomplete libraries set");
@@ -75,12 +87,20 @@ pub struct LinkedBuildData {
     pub libraries: Libraries,
     /// Libraries that need to be deployed by sender before script execution.
     pub predeploy_libraries: Vec<Bytes>,
+    /// Source files of the contracts. Used by debugger.
+    pub sources: ContractSources,
 }
 
 impl LinkedBuildData {
     pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
+        let sources = ContractSources::from_project_output(
+            &build_data.output,
+            &build_data.project_root,
+            &link_output.libraries,
+        )?;
+
         let highlevel_known_contracts = build_data
-            .linker
+            .get_linker()
             .get_linked_artifacts(&link_output.libraries)?
             .iter()
             .filter_map(|(id, contract)| {
@@ -96,6 +116,7 @@ impl LinkedBuildData {
             highlevel_known_contracts,
             libraries: link_output.libraries,
             predeploy_libraries: link_output.libs_to_deploy,
+            sources,
         })
     }
 
@@ -219,16 +240,13 @@ impl PreprocessedState {
             target_id = Some(id);
         }
 
-        let sources = ContractSources::from_project_output(&output, project.root())?;
-        let contracts = output.into_artifacts().collect();
         let target = target_id.ok_or_eyre("Could not find target contract")?;
-        let linker = Linker::new(project.root(), contracts);
 
         Ok(CompiledState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData { linker, target, sources },
+            build_data: BuildData { output, target, project_root: project.root().clone() },
         })
     }
 }

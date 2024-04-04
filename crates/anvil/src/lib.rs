@@ -237,6 +237,9 @@ impl NodeHandle {
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
         if !self.config.silent {
+            if let Some(ipc_path) = self.ipc_path() {
+                println!("IPC path: {}", ipc_path);
+            }
             println!(
                 "Listening on {}",
                 self.addresses
@@ -244,7 +247,7 @@ impl NodeHandle {
                     .map(|addr| { addr.to_string() })
                     .collect::<Vec<String>>()
                     .join(", ")
-            )
+            );
         }
     }
 
