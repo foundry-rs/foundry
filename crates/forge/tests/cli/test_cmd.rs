@@ -526,3 +526,53 @@ contract GasLimitTest is Test {
 
     cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
 });
+
+// <https://github.com/foundry-rs/foundry/issues/7530>
+forgetest_init!(repro_7530, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract PrecompileLabelsTest is Test {
+    function testPrecompileLabels() public {
+        vm.deal(address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D), 1 ether);
+        vm.deal(address(0x000000000000000000636F6e736F6c652e6c6f67), 1 ether);
+        vm.deal(address(0x4e59b44847b379578588920cA78FbF26c0B4956C), 1 ether);
+        vm.deal(address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38), 1 ether);
+        vm.deal(address(0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84), 1 ether);
+        vm.deal(address(1), 1 ether);
+        vm.deal(address(2), 1 ether);
+        vm.deal(address(3), 1 ether);
+        vm.deal(address(4), 1 ether);
+        vm.deal(address(5), 1 ether);
+        vm.deal(address(6), 1 ether);
+        vm.deal(address(7), 1 ether);
+        vm.deal(address(8), 1 ether);
+        vm.deal(address(9), 1 ether);
+        vm.deal(address(10), 1 ether);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let output = cmd.args(["test", "-vvvv"]).stdout_lossy();
+    assert!(output.contains("VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D]"));
+    assert!(output.contains("console: [0x000000000000000000636F6e736F6c652e6c6f67]"));
+    assert!(output.contains("Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C]"));
+    assert!(output.contains("DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38]"));
+    assert!(output.contains("DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84]"));
+    assert!(output.contains("ECRecover: [0x0000000000000000000000000000000000000001]"));
+    assert!(output.contains("SHA-256: [0x0000000000000000000000000000000000000002]"));
+    assert!(output.contains("RIPEMD-160: [0x0000000000000000000000000000000000000003]"));
+    assert!(output.contains("Identity: [0x0000000000000000000000000000000000000004]"));
+    assert!(output.contains("ModExp: [0x0000000000000000000000000000000000000005]"));
+    assert!(output.contains("ECAdd: [0x0000000000000000000000000000000000000006]"));
+    assert!(output.contains("ECMul: [0x0000000000000000000000000000000000000007]"));
+    assert!(output.contains("ECPairing: [0x0000000000000000000000000000000000000008]"));
+    assert!(output.contains("Blake2F: [0x0000000000000000000000000000000000000009]"));
+    assert!(output.contains("PointEvaluation: [0x000000000000000000000000000000000000000A]"));
+});
