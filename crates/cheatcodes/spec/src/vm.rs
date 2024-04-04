@@ -1680,6 +1680,7 @@ interface Vm {
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
     /// Returns the index of the first occurrence of a `key` in an `input` string.
     /// Returns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.
+    /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
     function indexOf(string memory input, string memory key) external pure returns (uint256);
 

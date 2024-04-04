@@ -42,13 +42,13 @@ contract StringManipulationTest is DSTest {
 
     function testIndexOf() public {
         string memory input = "Hello, World!";
-        string memory key1 = "Hello";
-        string memory key2 = "World";
-        string memory key3 = "!";
+        string memory key1 = "Hello,";
+        string memory key2 = "World!";
+        string memory key3 = "";
         string memory key4 = "foundry";
         assertEq(vm.indexOf(input, key1), 0);
         assertEq(vm.indexOf(input, key2), 7);
-        assertEq(vm.indexOf(input, key3), 12);
+        assertEq(vm.indexOf(input, key3), 0);
         assertEq(vm.indexOf(input, key4), type(uint256).max);
     }
 }

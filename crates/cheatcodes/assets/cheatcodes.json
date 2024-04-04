@@ -4801,7 +4801,7 @@
     {
       "func": {
         "id": "indexOf",
-        "description": "Returns the index of the first occurrence of a `key` in an `input` string.",
+        "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
         "declaration": "function indexOf(string memory input, string memory key) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
