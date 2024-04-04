@@ -99,8 +99,6 @@ impl VerificationProvider for OklinkVerificationProvider {
                             response.status()
                         );
                     };
-                    
-                    
                     let text = response.text().await?;
                     debug!("text {:?}", text);
                     Ok(Some(serde_json::from_str::<OklinkResponseElement>(&text)?))
@@ -249,12 +247,12 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
             "0" => match response.message.as_str() {
                 "NOTOK" => {
                     if let Some(result) = &response.result {
-                        println!("Contract source code verified fail. the result is {result}")
+                        println!("Contract source code verified fail. the result is '{result}'")
                     } else {
                         println!("Contract verified fail")
                     }
                 }
-                s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
+                s => eyre::bail!("Unknown message from oklink. message: {s:?}"),
             }
             s => eyre::bail!("Unknown status from oklink. Status: {s:?}"),
         }
@@ -295,10 +293,10 @@ pub struct OklinkVerifyRequest {
     libraryaddress:Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct OklinkVerificationResponse {
-    result: Vec<OklinkResponseElement>,
-}
+// #[derive(Debug, Deserialize)]
+// pub struct OklinkVerificationResponse {
+//     result: Vec<OklinkResponseElement>,
+// }
 
 #[derive(Debug, Deserialize)]
 pub struct OklinkResponseElement {
