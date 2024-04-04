@@ -117,13 +117,11 @@ impl VerifyBytecodeArgs {
         );
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
-        let chain = match config.get_rpc_url() {
-            Some(_) => {
-                let chain_id = provider.get_chain_id().await?;
-                // Convert to u64
-                Chain::from(chain_id.to::<u64>())
-            }
-            None => config.chain.unwrap_or_default(),
+        let chain = if config.get_rpc_url().is_some() {
+            let chain_id = provider.get_chain_id().await?;
+            Chain::from(chain_id.to::<u64>())
+        } else {
+            config.chain.unwrap_or_default()
         };
 
         // Set Etherscan options
@@ -136,17 +134,20 @@ impl VerifyBytecodeArgs {
         // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(self.address).await?;
 
+        // Check if the contract name matches
         let name = source_code.items.first().map(|item| item.contract_name.to_owned());
         if name.as_ref() != Some(&self.contract.name) {
             eyre::bail!("Contract name mismatch");
         }
 
-        let constructor_args = match source_code.items.first() {
-            Some(item) => item.constructor_arguments.clone(),
-            None => {
-                eyre::bail!("No source code found for contract at address {}", self.address);
-            }
+        // Get the constructor args from etherscan
+        let constructor_args = if let Some(args) = source_code.items.first() {
+            args.constructor_arguments.clone()
+        } else {
+            eyre::bail!("No constructor arguments found for contract at address {}", self.address);
         };
+
+        // Get user provided constructor args
         let provided_constructor_args = if let Some(args) = self.constructor_args.to_owned() {
             args
         } else if let Some(path) = self.constructor_args_path.to_owned() {
@@ -157,12 +158,15 @@ impl VerifyBytecodeArgs {
         } else {
             constructor_args.to_string()
         };
+
+        // Constructor args mismatch
         if provided_constructor_args != constructor_args.to_string() {
             println!(
                 "{}",
                 Paint::red("The provider constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
             );
         }
+
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
 
@@ -175,14 +179,13 @@ impl VerifyBytecodeArgs {
             .await
             .or_else(|_| eyre::bail!("Couldn't fetch transacrion receipt from RPC"))?;
 
-        let receipt = match receipt {
-            Some(receipt) => receipt,
-            None => {
-                eyre::bail!(
-                    "Receipt not found for transaction hash {}",
-                    creation_data.transaction_hash
-                );
-            }
+        let receipt = if let Some(receipt) = receipt {
+            receipt
+        } else {
+            eyre::bail!(
+                "Receipt not found for transaction hash {}",
+                creation_data.transaction_hash
+            );
         };
         // Extract creation code
         let maybe_creation_code = if receipt.contract_address == Some(self.address) {
@@ -230,45 +233,45 @@ impl VerifyBytecodeArgs {
             false,
         )?;
 
-        match res.0 {
-            true => {
-                println!(
-                    "{} with status {}",
-                    Paint::green("Creation code matched").bold(),
-                    Paint::green(res.1.clone().unwrap()).bold()
-                );
-                if res.1.unwrap() == "partial" {
-                    find_mismatch_in_settings(etherscan_metadata, &config)?;
-                }
-            }
-            false => {
-                println!(
-                    "{}",
-                    Paint::red("Creation code did not match - This may be due to varying compiler settings").bold()
-                );
+        if res.0 {
+            println!(
+                "{} with status {}",
+                Paint::green("Creation code matched").bold(),
+                Paint::green(res.1.clone().unwrap()).bold()
+            );
+            if res.1.unwrap() == "partial" {
                 find_mismatch_in_settings(etherscan_metadata, &config)?;
             }
+        } else {
+            println!(
+                "{}",
+                Paint::red(
+                    "Creation code did not match - This may be due to varying compiler settings"
+                )
+                .bold()
+            );
+            find_mismatch_in_settings(etherscan_metadata, &config)?;
         }
+
         // Get contract creation block
-        let simulation_block = match self.block {
-            Some(block) => match block {
+        let simulation_block = if let Some(block) = self.block {
+            match block {
                 BlockId::Number(BlockNumberOrTag::Number(block)) => block,
                 _ => {
                     eyre::bail!("Invalid block number");
                 }
-            },
-            None => {
-                let provider = utils::get_provider(&config)?;
-                let creation_block =
-                    provider.get_transaction(creation_data.transaction_hash.to_ethers()).await?;
-                match creation_block {
-                    Some(tx) => tx.block_number.unwrap().as_u64(),
-                    None => {
-                        eyre::bail!(
-                            "Failed to get block number of the contract creation tx, specify using
+            }
+        } else {
+            let provider = utils::get_provider(&config)?;
+            let creation_block =
+                provider.get_transaction(creation_data.transaction_hash.to_ethers()).await?;
+            match creation_block {
+                Some(tx) => tx.block_number.unwrap().as_u64(),
+                None => {
+                    eyre::bail!(
+                        "Failed to get block number of the contract creation tx, specify using
         the --block flag"
-                        );
-                    }
+                    );
                 }
             }
         };
@@ -308,23 +311,20 @@ impl VerifyBytecodeArgs {
         let env_with_handler =
             EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
 
-        let contract_address = match transaction.to {
-            Some(to) => {
-                if to != DEFAULT_CREATE2_DEPLOYER {
-                    eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
-                }
-                let result = executor.commit_tx_with_env(env_with_handler.to_owned())?;
-
-                if result.result.len() > 20 {
-                    eyre::bail!("Failed to deploy contract using commit_tx_with_env on fork at block {} | Err: Call result is greater than 20 bytes, cannot be converted to Address", simulation_block);
-                }
-
-                Address::from_slice(&result.result)
+        let contract_address = if let Some(to) = transaction.to {
+            if to != DEFAULT_CREATE2_DEPLOYER {
+                eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
             }
-            None => {
-                let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
-                deploy_result.address
+            let result = executor.commit_tx_with_env(env_with_handler.to_owned())?;
+
+            if result.result.len() > 20 {
+                eyre::bail!("Failed to deploy contract using commit_tx_with_env on fork at block {} | Err: Call result is greater than 20 bytes, cannot be converted to Address", simulation_block);
             }
+
+            Address::from_slice(&result.result)
+        } else {
+            let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
+            deploy_result.address
         };
 
         // State commited using deploy_with_env, now get the runtime bytecode from the db.
@@ -362,23 +362,21 @@ impl VerifyBytecodeArgs {
             &self.verification_type,
             true,
         )?;
-        match res.0 {
-            true => {
-                println!(
-                    "{} with status {}",
-                    Paint::green("Runtime code matched").bold(),
-                    Paint::green(res.1.unwrap()).bold()
-                );
-            }
-            false => {
-                println!(
-                    "{}",
-                    Paint::red(
-                        "Runtime code did not match - This may be due to varying compiler settings"
-                    )
-                    .bold()
-                );
-            }
+
+        if res.0 {
+            println!(
+                "{} with status {}",
+                Paint::green("Runtime code matched").bold(),
+                Paint::green(res.1.unwrap()).bold()
+            );
+        } else {
+            println!(
+                "{}",
+                Paint::red(
+                    "Runtime code did not match - This may be due to varying compiler settings"
+                )
+                .bold()
+            );
         }
 
         Ok(())
