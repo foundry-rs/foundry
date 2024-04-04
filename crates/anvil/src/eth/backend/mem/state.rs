@@ -1,7 +1,7 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::error::BlockchainError;
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types::state::StateOverride;
 use alloy_trie::{HashBuilder, Nibbles};
@@ -12,9 +12,8 @@ use foundry_evm::{
         primitives::{AccountInfo, Bytecode, HashMap},
     },
 };
-use itertools::Itertools;
 
-pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Bytes)>) -> B256 {
+pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {
     let mut builder = HashBuilder::default();
     for (key, value) in values {
         builder.add_leaf(key, value.as_ref());
@@ -33,38 +32,42 @@ pub fn storage_root(storage: &HashMap<U256, U256>) -> B256 {
 }
 
 /// Builds iterator over stored key-value pairs ready for storage trie root calculation.
-pub fn trie_storage(storage: &HashMap<U256, U256>) -> Vec<(Nibbles, Bytes)> {
-    storage
+pub fn trie_storage(storage: &HashMap<U256, U256>) -> Vec<(Nibbles, Vec<u8>)> {
+    let mut storage = storage
         .iter()
         .map(|(key, value)| {
             let data = alloy_rlp::encode(value);
-            (Nibbles::unpack(keccak256(key.to_be_bytes_vec())), data.into())
+            (Nibbles::unpack(keccak256(key.to_be_bytes::<32>())), data)
         })
-        .sorted_by_key(|(key, _)| key.clone())
-        .collect()
+        .collect::<Vec<_>>();
+    storage.sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
+
+    storage
 }
 
 /// Builds iterator over stored key-value pairs ready for account trie root calculation.
-pub fn trie_accounts(accounts: &HashMap<Address, DbAccount>) -> Vec<(Nibbles, Bytes)> {
-    accounts
+pub fn trie_accounts(accounts: &HashMap<Address, DbAccount>) -> Vec<(Nibbles, Vec<u8>)> {
+    let mut accounts = accounts
         .iter()
         .map(|(address, account)| {
             let data = trie_account_rlp(&account.info, &account.storage);
             (Nibbles::unpack(keccak256(*address)), data)
         })
-        .sorted_by_key(|(key, _)| key.clone())
-        .collect()
+        .collect::<Vec<_>>();
+    accounts.sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
+
+    accounts
 }
 
 /// Returns the RLP for this account.
-pub fn trie_account_rlp(info: &AccountInfo, storage: &HashMap<U256, U256>) -> Bytes {
+pub fn trie_account_rlp(info: &AccountInfo, storage: &HashMap<U256, U256>) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
     let list: [&dyn Encodable; 4] =
         [&info.nonce, &info.balance, &storage_root(storage), &info.code_hash];
 
     alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
 
-    out.into()
+    out
 }
 
 /// Applies the given state overrides to the state, returning a new CacheDB state
