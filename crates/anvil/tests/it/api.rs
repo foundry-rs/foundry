@@ -8,7 +8,8 @@ use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
-    state::{AccountOverride, StateOverride}, WithOtherFields,
+    state::{AccountOverride, StateOverride},
+    WithOtherFields,
 };
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},

@@ -4,7 +4,7 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
-use alloy_provider::{ Provider};
+use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockId, Transaction};
 use alloy_transport::Transport;
 use eyre::WrapErr;

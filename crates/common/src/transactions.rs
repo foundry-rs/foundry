@@ -1,5 +1,5 @@
 //! wrappers for transactions
-use alloy_provider::{Provider};
+use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionReceipt};
 use alloy_transport::Transport;
 use eyre::Result;

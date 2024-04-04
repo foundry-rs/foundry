@@ -159,18 +159,17 @@ impl UIfmt for TransactionReceipt {
             blob_gas_used,
         } = self;
 
-        let (logs_bloom, status, cumulative_gas_used, logs) = if let Some(receipt) =
-            inner.as_receipt_with_bloom()
-        {
-            let ReceiptWithBloom {
-                logs_bloom,
-                receipt: Receipt { status, cumulative_gas_used, logs },
-            } = receipt;
+        let (logs_bloom, status, cumulative_gas_used, logs) =
+            if let Some(receipt) = inner.as_receipt_with_bloom() {
+                let ReceiptWithBloom {
+                    logs_bloom,
+                    receipt: Receipt { status, cumulative_gas_used, logs },
+                } = receipt;
 
-            (Some(logs_bloom), Some(status), Some(cumulative_gas_used), Some(logs))
-        } else {
-            Default::default()
-        };
+                (Some(logs_bloom), Some(status), Some(cumulative_gas_used), Some(logs))
+            } else {
+                Default::default()
+            };
 
         let mut pretty = format!(
             "

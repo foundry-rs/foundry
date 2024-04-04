@@ -1262,8 +1262,7 @@ impl Backend {
             for log in logs {
                 let mut is_match: bool = true;
                 if !filter.address.is_empty() && filter.has_topics() {
-                    if !params.filter_address(&log.address) || !params.filter_topics(log.topics())
-                    {
+                    if !params.filter_address(&log.address) || !params.filter_topics(log.topics()) {
                         is_match = false;
                     }
                 } else if !filter.address.is_empty() {
@@ -1985,10 +1984,8 @@ impl Backend {
                 })
                 .collect(),
         };
-        let receipt_with_bloom = ReceiptWithBloom {
-            receipt,
-            logs_bloom: tx_receipt.as_receipt_with_bloom().logs_bloom,
-        };
+        let receipt_with_bloom =
+            ReceiptWithBloom { receipt, logs_bloom: tx_receipt.as_receipt_with_bloom().logs_bloom };
 
         let inner = match tx_receipt {
             TypedReceipt::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),

@@ -1,6 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
-use alloy_provider::{Provider};
+use alloy_provider::Provider;
 use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
 use foundry_config::{Chain, Config};
