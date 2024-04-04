@@ -179,6 +179,7 @@ impl<'a> InvariantExecutor<'a> {
         // This does not count as a fuzz run. It will just register the revert.
         let last_call_results = RefCell::new(assert_invariants(
             &invariant_contract,
+            &targeted_contracts,
             &self.executor,
             &[],
             &mut failures.borrow_mut(),
@@ -715,7 +716,7 @@ fn can_continue(
         !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
     });
 
-    // Assert invariants IFF the call did not revert and the handlers did not fail.
+    // Assert invariants IF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
         if let Some(traces) = call_result.traces {
             run_traces.push(traces);
@@ -723,6 +724,7 @@ fn can_continue(
 
         call_results = assert_invariants(
             invariant_contract,
+            targeted_contracts,
             executor,
             calldata,
             failures,
@@ -739,6 +741,7 @@ fn can_continue(
         if fail_on_revert {
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
+                targeted_contracts,
                 None,
                 calldata,
                 call_result,
