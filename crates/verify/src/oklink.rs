@@ -12,8 +12,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
-pub static OKLINK_URL: &str = "https://www.oklink.com/api/v5/explorer/contract/verify-source-code-plugin/";
-pub static OKLINK_URL_CHECK: &str = "https://www.oklink.com/api/v5/explorer/eth/api?module=contract&action=checkverifystatus";
+pub static OKLINK_URL: &str = "https://www.oklink.com/api";
 /// The type that can verify a contract on `oklink`
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -72,26 +71,37 @@ impl VerificationProvider for OklinkVerificationProvider {
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
+        let api_key = match args.etherscan.key.clone() {
+            None => eyre::bail!("OKLINK API KEY is not set"),
+            Some(key) => key
+        };
+        debug!("api key {:?}", api_key);
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| {
                 async {
                     let url = Url::from_str(
-                        args.verifier.verifier_url.as_deref().unwrap_or(OKLINK_URL_CHECK),
+                        args.verifier.verifier_url.as_deref().unwrap_or(OKLINK_URL),
                     )?;
                     let query = format!(
-                        "&guid={}",
+                        "?module=contract&action=getabi&address={}",
                         args.id
                     );
                     let url = url.join(&query)?;
-                    let response = reqwest::get(url).await?;
+                    let client = reqwest::Client::new();
+                    debug!("url {:?}", url);
+                    let response = client.get(url).header("Ok-Access-Key", &api_key).send().await?;
+                    debug!("response: {:?}", response);
+                    
                     if !response.status().is_success() {
                         eyre::bail!(
                             "Failed to request verification status with status code {}",
                             response.status()
                         );
                     };
-
+                    
+                    
+                    debug!("response.json {:?}", response.json().await?);
                     Ok(Some(response.json::<Vec<OklinkResponseElement>>().await?))
                 }
                 .boxed()
@@ -157,7 +167,7 @@ impl OklinkVerificationProvider {
             };
             println!("{:?}",args.contract.path);
             let contract_path = args.contract.path.clone().map_or(path.clone(), PathBuf::from);
-            let contract_path = contract_path.to_string_lossy().to_string();
+            let contract_path = contract_path.strip_prefix(project.root())?.to_string_lossy().to_string();
             println!("contract Path {:?}", contract_path);
             // let filename = contract_path.file_name().unwrap().to_string_lossy().to_string();
             license_type = match metadata.sources.inner.get(&contract_path) {
