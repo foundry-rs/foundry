@@ -4581,7 +4581,7 @@
     {
       "func": {
         "id": "gasUsed",
-        "description": "Gets the gas of all top-level transactions made in the current run.",
+        "description": "Gets the gas of all top-level transactions made in the current isolated run.",
         "declaration": "function gasUsed() external view returns (uint256[] memory gasUsed);",
         "visibility": "external",
         "mutability": "view",
@@ -4981,7 +4981,7 @@
     {
       "func": {
         "id": "lastGasUsed",
-        "description": "Gets the gas of the last top-level transaction made in the current run.",
+        "description": "Gets the gas of the last top-level transaction made in the current isolated run.",
         "declaration": "function lastGasUsed() external view returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "view",

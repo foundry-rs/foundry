@@ -169,6 +169,22 @@ interface Vm {
         uint256 chainId;
     }
 
+    /// The storage accessed during an `AccountAccess`.
+    struct StorageAccess {
+        /// The account whose storage was accessed.
+        address account;
+        /// The slot that was accessed.
+        bytes32 slot;
+        /// If the access was a write.
+        bool isWrite;
+        /// The previous value of the slot.
+        bytes32 previousValue;
+        /// The new value of the slot.
+        bytes32 newValue;
+        /// If the access was reverted.
+        bool reverted;
+    }
+
     /// The result of a `stopAndReturnStateDiff` call.
     struct AccountAccess {
         /// The chain and fork the access occurred.
@@ -205,22 +221,6 @@ interface Vm {
         StorageAccess[] storageAccesses;
         /// Call depth traversed during the recording of state differences
         uint64 depth;
-    }
-
-    /// The storage accessed during an `AccountAccess`.
-    struct StorageAccess {
-        /// The account whose storage was accessed.
-        address account;
-        /// The slot that was accessed.
-        bytes32 slot;
-        /// If the access was a write.
-        bool isWrite;
-        /// The previous value of the slot.
-        bytes32 previousValue;
-        /// The new value of the slot.
-        bytes32 newValue;
-        /// If the access was reverted.
-        bool reverted;
     }
 
     // ======== EVM ========
@@ -364,14 +364,6 @@ interface Vm {
     /// See https://github.com/foundry-rs/foundry/issues/6180
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
-
-    /// Gets the gas of all top-level transactions made in the current run.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function gasUsed() external view returns (uint256[] memory gasUsed);
-
-    /// Gets the gas of the last top-level transaction made in the current run.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function lastGasUsed() external view returns (uint256 gasUsed);
 
     // -------- Account State --------
 
@@ -602,6 +594,7 @@ interface Vm {
     function getRecordedLogs() external returns (Log[] memory logs);
 
     // -------- Gas Metering --------
+
     // It's recommend to use the `noGasMetering` modifier included with forge-std, instead of
     // using these functions directly.
 
@@ -612,6 +605,16 @@ interface Vm {
     /// Resumes gas metering (i.e. gas usage is counted again). Noop if already on.
     #[cheatcode(group = Evm, safety = Safe)]
     function resumeGasMetering() external;
+
+    // -------- Gas Measurement --------
+
+    /// Gets the gas of all top-level transactions made in the current isolated run.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function gasUsed() external view returns (uint256[] memory gasUsed);
+
+    /// Gets the gas of the last top-level transaction made in the current isolated run.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastGasUsed() external view returns (uint256 gasUsed);
 
     // ======== Test Assertions and Utilities ========
 
