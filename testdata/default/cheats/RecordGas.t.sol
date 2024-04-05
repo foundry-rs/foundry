@@ -8,25 +8,15 @@ contract RecordGasTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testRecordGasA() public {
-        _burn(100001);
-
-        uint64 gas = vm.lastGasUsed();
-
-        emit log_named_uint("gas", gas);
-
-        _burn(100001);
-
-        gas = vm.lastGasUsed();
-
-        emit log_named_uint("gas", gas);
-    }
-
-    function testRecordGasB() public {
         _burn(1);
 
-        uint64 gas = vm.lastGasUsed();
+        emit log_named_uint("gas A", vm.lastGasUsed());
 
-        emit log_named_uint("gas", gas);
+        _burn(100);
+        emit log_named_uint("gas B", vm.lastGasUsed());
+
+        _burn(10000);
+        emit log_named_uint("gas C", vm.lastGasUsed());
     }
 
     function _burn(uint256 x) internal pure {
