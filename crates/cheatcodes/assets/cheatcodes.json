@@ -418,32 +418,32 @@
     },
     {
       "name": "Gas",
-      "description": "A gas information context. Returned by `gasUsed` and `lastGasUsed`.",
+      "description": "A gas context. Returned by `getLastRecordedGas` and `getRecordedGas`.",
       "fields": [
         {
-          "name": "initialGasLimit",
+          "name": "gasLimit",
           "ty": "uint64",
-          "description": "The initial gas limit."
+          "description": ""
         },
         {
-          "name": "totalUsedGas",
+          "name": "gasMemoryUsed",
           "ty": "uint64",
-          "description": "The total used gas."
+          "description": ""
         },
         {
-          "name": "usedGas",
+          "name": "gasUsed",
           "ty": "uint64",
-          "description": "Used gas without memory expansion."
+          "description": ""
         },
         {
-          "name": "memoryGas",
-          "ty": "uint64",
-          "description": "Used gas for memory expansion."
-        },
-        {
-          "name": "refundedGas",
+          "name": "gasRefunded",
           "ty": "int64",
-          "description": "Refunded gas. This is used only at the end of execution."
+          "description": ""
+        },
+        {
+          "name": "gasRemaining",
+          "ty": "uint64",
+          "description": ""
         }
       ]
     }

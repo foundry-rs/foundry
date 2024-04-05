@@ -960,15 +960,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Record the gas used in the call if `recordGas` has been called
         if let Some(storage_recorded_gas_used) = &mut self.recorded_gas_usage {
-            let CallOutcome::Gas { limit, used, memory, refunded, all_used_gas } =
-                outcome.result.gas();
+            let gas = outcome.result.gas;
 
             storage_recorded_gas_used.push(crate::Vm::Gas {
-                initialGasLimit: limit.as_u64(),
-                totalUsedGas: all_used_gas.as_u64(),
-                usedGas: used.as_u64(),
-                memoryGas: memory.as_u64(),
-                refundedGas: refunded.as_i64(),
+                gasLimit: gas.limit(),
+                gasMemoryUsed: gas.memory(),
+                gasUsed: gas.spend(),
+                gasRefunded: gas.refunded(),
+                gasRemaining: gas.remaining(),
             })
         }
 

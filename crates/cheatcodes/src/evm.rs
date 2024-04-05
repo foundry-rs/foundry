@@ -227,7 +227,7 @@ impl Cheatcode for resumeGasMeteringCall {
 impl Cheatcode for recordGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.recorded_gas_usage.push(Default::default());
+        state.recorded_gas_usage = Some(Default::default());
         Ok(Default::default())
     }
 }
@@ -235,15 +235,23 @@ impl Cheatcode for recordGasCall {
 impl Cheatcode for getLastRecordedGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let last_gas_used = state.recorded_gas_usage.as_slice().last().copied().unwrap_or_default();
-        Ok(last_gas_used.abi_encode())
+
+        // let last_gas_used =
+        //     state.recorded_gas_usage.as_ref().map(|gas| gas.last().copied()).flatten();
+
+        // // let last_gas_used = state.recorded_gas_usage.as_slice().last().copied().unwrap_or_default();
+        // Ok(last_gas_used.abi_encode())
+
+        Ok(Default::default())
     }
 }
 
 impl Cheatcode for getRecordedGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        Ok(state.recorded_gas_usage.abi_encode())
+        // Ok(state.recorded_gas_usage.abi_encode())
+
+        Ok(Default::default())
     }
 }
 

@@ -73,18 +73,18 @@ interface Vm {
         address emitter;
     }
 
-    /// A gas information context. Returned by `gasUsed` and `lastGasUsed`.
+    /// A gas context. Returned by `getLastRecordedGas` and `getRecordedGas`.
     struct Gas {
-        /// The initial gas limit.
-        uint64 initialGasLimit;
-        /// The total used gas.
-        uint64 totalUsedGas;
-        /// Used gas without memory expansion.
-        uint64 usedGas;
-        /// Used gas for memory expansion.
-        uint64 memoryGas;
-        /// Refunded gas. This is used only at the end of execution.
-        int64 refundedGas;
+        // The gas limit of the call.
+        uint64 gasLimit;
+        // The amount of gas used for memory expansion.
+        uint64 gasMemoryUsed;
+        // The amount of gas used without memory expansion.
+        uint64 gasUsed;
+        // The amount of gas refunded.
+        int64 gasRefunded;
+        // The amount of gas remaining.
+        uint64 gasRemaining;
     }
 
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
