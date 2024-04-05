@@ -100,7 +100,6 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
-        tracing::info!("Verification type: {}", self.verification_type);
         // Setup
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
@@ -238,7 +237,9 @@ impl VerifyBytecodeArgs {
                 Paint::green("Creation code matched").bold(),
                 Paint::green(res.1.clone().unwrap()).bold()
             );
-            if res.1.unwrap() == "partial" && config.bytecode_hash != BytecodeHash::None {
+            if res.1.unwrap() == VerificationType::Partial &&
+                config.bytecode_hash != BytecodeHash::None
+            {
                 find_mismatch_in_settings(etherscan_metadata, &config)?;
             }
         } else {
@@ -482,12 +483,12 @@ fn try_match(
     match_type: &VerificationType,
     is_runtime: bool,
     has_metadata: bool,
-) -> Result<(bool, Option<String>)> {
+) -> Result<(bool, Option<VerificationType>)> {
     // 1. Try full match
     if *match_type == VerificationType::Full {
         if local_bytecode.starts_with(bytecode) {
             // Success => Full match
-            Ok((true, Some("full".to_string())))
+            Ok((true, Some(VerificationType::Full)))
         } else {
             // Failure => Try partial match
             match try_partial_match(
@@ -497,7 +498,7 @@ fn try_match(
                 is_runtime,
                 has_metadata,
             ) {
-                Ok(true) => Ok((true, Some("partial".to_string()))),
+                Ok(true) => Ok((true, Some(VerificationType::Partial))),
                 Ok(false) => Ok((false, None)),
                 Err(e) => Err(e),
             }
@@ -510,7 +511,7 @@ fn try_match(
             is_runtime,
             has_metadata,
         ) {
-            Ok(true) => Ok((true, Some("partial".to_string()))),
+            Ok(true) => Ok((true, Some(VerificationType::Partial))),
             Ok(false) => Ok((false, None)),
             Err(e) => Err(e),
         }
