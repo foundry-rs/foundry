@@ -7,7 +7,7 @@ import "cheats/Vm.sol";
 contract RecordGasTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testRecordGasA() public {
+    function testRecordGasStruct() public {
         address(0).call("");
         Vm.Gas memory record = vm.lastGasUsed();
         _logGasRecord(record);
@@ -19,6 +19,12 @@ contract RecordGasTest is DSTest {
         address(0).call("");
         record = vm.lastGasUsed();
         _logGasRecord(record);
+    }
+
+    function testRecordGasField() public {
+        address(0).call("");
+        uint256 gasTotalUsed = vm.lastGasUsed().gasTotalUsed;
+        emit log_named_uint("gasTotalUsed", gasTotalUsed);
     }
 
     function _logGasRecord(Vm.Gas memory record) internal {
