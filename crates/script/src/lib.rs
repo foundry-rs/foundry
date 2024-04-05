@@ -108,7 +108,6 @@ pub struct ScriptArgs {
     pub broadcast: bool,
 
     /// Batch size of transactions.
-    /// --batch-size
     #[arg(long, default_value = "100")]
     pub batch_size: usize,
 
