@@ -91,7 +91,7 @@ async fn test_storage_proof() {
 
     let (api, _handle) = spawn(NodeConfig::empty_state()).await;
     let storage: BTreeMap<U256, B256> =
-        serde_json::from_str(include_str!("../../../test-data/storage_sample.json")).unwrap();
+        serde_json::from_str(include_str!("../../test-data/storage_sample.json")).unwrap();
 
     for (key, value) in storage {
         api.anvil_set_storage_at(target, key, value).await.unwrap();
