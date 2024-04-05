@@ -1782,9 +1782,6 @@ mod tests {
     }
 
     fn init_tracing() {
-        if std::env::var_os("RUST_LOG").is_none() {
-            std::env::set_var("RUST_LOG", "debug");
-        }
         let _ = tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
