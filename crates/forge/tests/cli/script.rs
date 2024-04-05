@@ -1197,3 +1197,37 @@ contract Script {
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     assert!(cmd.stderr_lossy().contains("Multiple functions with the same name"));
 });
+
+forgetest_async!(can_decode_custom_errors, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
+
+    let script = prj
+        .add_script(
+            "CustomErrorScript.s.sol",
+            r#"
+import { Script } from "forge-std/Script.sol";
+
+contract ContractWithCustomError {
+    error CustomError();
+
+    constructor() {
+        revert CustomError();
+    }
+}
+
+contract CustomErrorScript is Script {
+    ContractWithCustomError test;
+
+    function run() public {
+        test = new ContractWithCustomError();
+    }
+}
+"#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
+    assert!(cmd.stderr_lossy().contains("script failed: CustomError()"));
+});
