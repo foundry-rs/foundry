@@ -742,7 +742,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let ecx = &mut ecx.inner;
 
         if call.contract == HARDHAT_CONSOLE_ADDRESS {
-            return None;
+            return None
         }
 
         // Handle expected calls
@@ -1053,7 +1053,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 gasRefunded: gas.refunded(),
                 // The amount of gas remaining.
                 gasRemaining: gas.remaining(),
-            });
+            })
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -1274,7 +1274,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             gas,
                         },
                         address: None,
-                    });
+                    })
                 }
 
                 ecx.env.tx.caller = broadcast.new_origin;
