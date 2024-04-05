@@ -622,13 +622,17 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
-    /// Gets the gas of all top-level transactions made in the current isolated run.
+    /// Record the gas used to be returned by `getRecordedGas` and `getLastRecordedGas`.
     #[cheatcode(group = Evm, safety = Safe)]
-    function gasUsed() external view returns (Gas[] memory gasUsed);
+    function recordGas() external;
 
-    /// Gets the gas of the last top-level transaction made in the current isolated run.
+    /// Gets the last recorded gas.
     #[cheatcode(group = Evm, safety = Safe)]
-    function lastGasUsed() external view returns (Gas memory gasUsed);
+    function getLastRecordedGas() external returns (Gas memory gasUsed);
+
+    /// Gets all the recorded gas.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRecordedGas() external returns (Gas[] memory gasUsed);
 
     // ======== Test Assertions and Utilities ========
 

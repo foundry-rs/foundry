@@ -4611,26 +4611,6 @@
     },
     {
       "func": {
-        "id": "gasUsed",
-        "description": "Gets the gas of all top-level transactions made in the current isolated run.",
-        "declaration": "function gasUsed() external view returns (Gas[] memory gasUsed);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "gasUsed()",
-        "selector": "0x592cdadd",
-        "selectorBytes": [
-          89,
-          44,
-          218,
-          221
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "getBlockNumber",
         "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockNumber() external view returns (uint256 height);",
@@ -4731,6 +4711,26 @@
     },
     {
       "func": {
+        "id": "getLastRecordedGas",
+        "description": "Gets the last recorded gas.",
+        "declaration": "function getLastRecordedGas() external returns (Gas memory gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getLastRecordedGas()",
+        "selector": "0xd766a9c1",
+        "selectorBytes": [
+          215,
+          102,
+          169,
+          193
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getMappingKeyAndParentOf",
         "description": "Gets the map key and parent of a mapping at a given slot, for a given address.",
         "declaration": "function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);",
@@ -4826,6 +4826,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getRecordedGas",
+        "description": "Gets all the recorded gas.",
+        "declaration": "function getRecordedGas() external returns (Gas[] memory gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getRecordedGas()",
+        "selector": "0xd797217a",
+        "selectorBytes": [
+          215,
+          151,
+          33,
+          122
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -5006,26 +5026,6 @@
         ]
       },
       "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "lastGasUsed",
-        "description": "Gets the gas of the last top-level transaction made in the current isolated run.",
-        "declaration": "function lastGasUsed() external view returns (Gas memory gasUsed);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "lastGasUsed()",
-        "selector": "0x95c570bd",
-        "selectorBytes": [
-          149,
-          197,
-          112,
-          189
-        ]
-      },
-      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -6343,6 +6343,26 @@
           108,
           241,
           9
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "recordGas",
+        "description": "Record the gas used to be returned by `getRecordedGas` and `getLastRecordedGas`.",
+        "declaration": "function recordGas() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "recordGas()",
+        "selector": "0x6f62f0be",
+        "selectorBytes": [
+          111,
+          98,
+          240,
+          190
         ]
       },
       "group": "evm",

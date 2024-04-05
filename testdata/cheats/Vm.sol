@@ -227,17 +227,18 @@ interface Vm {
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
-    function gasUsed() external view returns (Gas[] memory gasUsed);
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
     function getLabel(address account) external view returns (string memory currentLabel);
+    function getLastRecordedGas() external returns (Gas memory gasUsed);
     function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);
     function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);
     function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
+    function getRecordedGas() external returns (Gas[] memory gasUsed);
     function getRecordedLogs() external returns (Log[] memory logs);
     function indexOf(string memory input, string memory key) external pure returns (uint256);
     function isDir(string calldata path) external returns (bool result);
@@ -247,7 +248,6 @@ interface Vm {
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
-    function lastGasUsed() external view returns (Gas memory gasUsed);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;
@@ -314,6 +314,7 @@ interface Vm {
     function readLine(string calldata path) external view returns (string memory line);
     function readLink(string calldata linkPath) external view returns (string memory targetPath);
     function record() external;
+    function recordGas() external;
     function recordLogs() external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
     function removeDir(string calldata path, bool recursive) external;

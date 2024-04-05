@@ -224,19 +224,26 @@ impl Cheatcode for resumeGasMeteringCall {
     }
 }
 
-impl Cheatcode for lastGasUsedCall {
+impl Cheatcode for recordGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
+        state.recorded_gas_usage.push(Default::default());
+        Ok(Default::default())
+    }
+}
 
-        let last_gas_used = state.gas_usage.as_slice().last().copied().unwrap_or_default();
+impl Cheatcode for getLastRecordedGasCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let last_gas_used = state.recorded_gas_usage.as_slice().last().copied().unwrap_or_default();
         Ok(last_gas_used.abi_encode())
     }
 }
 
-impl Cheatcode for gasUsedCall {
+impl Cheatcode for getRecordedGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        Ok(state.gas_used.abi_encode())
+        Ok(state.recorded_gas_usage.abi_encode())
     }
 }
 
