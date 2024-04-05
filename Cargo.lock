@@ -3184,7 +3184,6 @@ dependencies = [
  "itertools 0.12.1",
  "jsonpath_lib",
  "k256",
- "once_cell",
  "p256",
  "parking_lot",
  "revm",

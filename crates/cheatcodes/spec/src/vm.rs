@@ -64,6 +64,7 @@ interface Vm {
     }
 
     /// Forge execution contexts.
+    #[derive(PartialEq, Eq)]
     enum ForgeContext {
         /// Test group execution context (test, coverage or snapshot).
         TestGroup,

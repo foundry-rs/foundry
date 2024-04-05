@@ -4,11 +4,10 @@ use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
-use once_cell::sync::OnceCell;
-use std::{env, mem::discriminant};
+use std::{env, sync::OnceLock};
 
 /// Stores the forge execution context for the duration of the program.
-static FORGE_CONTEXT: OnceCell<ForgeContext> = OnceCell::new();
+static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
 impl Cheatcode for setEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -295,7 +294,7 @@ fn get_env(key: &str) -> Result<String> {
 }
 
 fn is_forge_context(context: &ForgeContext) -> bool {
-    discriminant(context) == discriminant(FORGE_CONTEXT.get().unwrap())
+    context == FORGE_CONTEXT.get().unwrap()
 }
 
 /// Converts the error message of a failed parsing attempt to a more user-friendly message that
