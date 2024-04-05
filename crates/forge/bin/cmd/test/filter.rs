@@ -196,7 +196,8 @@ impl FileFilter for ProjectPathsAwareFilter {
     ///
     /// If no file regex is set this returns true if the file ends with `.t.sol`, see
     /// [FoundryPathExr::is_sol_test()]
-    fn is_match(&self, file: &Path) -> bool {
+    fn is_match(&self, mut file: &Path) -> bool {
+        file = file.strip_prefix(&self.paths.root).unwrap_or(file);
         self.args_filter.is_match(file)
     }
 }
@@ -210,8 +211,9 @@ impl TestFilter for ProjectPathsAwareFilter {
         self.args_filter.matches_contract(contract_name)
     }
 
-    fn matches_path(&self, path: &Path) -> bool {
+    fn matches_path(&self, mut path: &Path) -> bool {
         // we don't want to test files that belong to a library
+        path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
     }
 }
