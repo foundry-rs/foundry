@@ -23,7 +23,7 @@ use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    decode::{decode_console_logs, RevertDecoder},
+    decode::decode_console_logs,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
     traces::{
         identifier::{SignaturesIdentifier, TraceIdentifiers},
@@ -423,7 +423,7 @@ impl PreSimulationState {
         if !self.execution_result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                RevertDecoder::new().decode(&self.execution_result.returned[..], None)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 
@@ -504,7 +504,7 @@ impl PreSimulationState {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 
