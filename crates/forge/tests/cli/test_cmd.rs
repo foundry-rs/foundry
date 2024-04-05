@@ -527,7 +527,6 @@ contract GasLimitTest is Test {
     cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
 });
 
-// tests that warning is displayed with pattern when no tests match
 forgetest!(test_match_path, |prj, cmd| {
     prj.add_source(
         "dummy",
@@ -539,9 +538,6 @@ contract Dummy {
     )
     .unwrap();
 
-    // set up command
     cmd.args(["test", "--match-path", "src/dummy.sol"]);
-
-    // run command and assert
     cmd.assert_success()
 });
