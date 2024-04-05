@@ -227,7 +227,10 @@ impl Cheatcode for resumeGasMeteringCall {
 impl Cheatcode for lastGasUsedCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-
+        ensure!(
+            state.config.isolate,
+            "`lastGasUsed` is only available in isolated mode (`--isolate`)"
+        );
         if let Some(latest_gas_usage) = &state.latest_gas_usage {
             Ok(latest_gas_usage.abi_encode())
         } else {
