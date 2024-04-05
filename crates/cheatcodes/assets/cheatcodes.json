@@ -4663,7 +4663,7 @@
     {
       "func": {
         "id": "getCode",
-        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.",
+        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4683,7 +4683,7 @@
     {
       "func": {
         "id": "getDeployedCode",
-        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file.",
+        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4837,6 +4837,26 @@
         ]
       },
       "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "indexOf",
+        "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
+        "declaration": "function indexOf(string memory input, string memory key) external pure returns (uint256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "indexOf(string,string)",
+        "selector": "0x8a0807b7",
+        "selectorBytes": [
+          138,
+          8,
+          7,
+          183
+        ]
+      },
+      "group": "string",
       "status": "stable",
       "safety": "safe"
     },

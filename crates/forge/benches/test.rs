@@ -15,7 +15,7 @@ fn forge_test_benchmark(c: &mut Criterion) {
         let mut cmd = prj.forge_command();
         cmd.arg("test");
         b.iter(|| {
-            cmd.ensure_execute_success().unwrap();
+            cmd.print_output();
         });
     });
 }
