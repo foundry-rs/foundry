@@ -9,15 +9,23 @@ contract RecordGasTest is DSTest {
 
     function testRecordGasA() public {
         address(0).call("");
-        uint64 gasUsed = vm.lastGasUsed();
-        emit log_named_uint("gas A", gasUsed);
+        Vm.Gas memory record = vm.lastGasUsed();
+        _logGasRecord(record);
 
         address(0).call("");
-        gasUsed = vm.lastGasUsed();
-        emit log_named_uint("gas B", gasUsed);
+        record = vm.lastGasUsed();
+        _logGasRecord(record);
 
         address(0).call("");
-        gasUsed = vm.lastGasUsed();
-        emit log_named_uint("gas C", gasUsed);
+        record = vm.lastGasUsed();
+        _logGasRecord(record);
+    }
+
+    function _logGasRecord(Vm.Gas memory record) internal {
+        emit log_named_uint("gasLimit", record.gasLimit);
+        emit log_named_uint("gasTotalUsed", record.gasTotalUsed);
+        emit log_named_uint("gasMemoryUsed", record.gasMemoryUsed);
+        emit log_named_int("gasRefunded", record.gasRefunded);
+        emit log_named_uint("gasRemaining", record.gasRemaining);
     }
 }
