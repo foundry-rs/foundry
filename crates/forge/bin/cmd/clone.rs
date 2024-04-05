@@ -4,14 +4,14 @@ use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_block_explorers::{contract::Metadata, Client};
-use foundry_cli::{opts::EtherscanOpts, utils::Git};
+use foundry_cli::{opts::EtherscanOpts, p_println, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{output_selection::ContractOutputSelection, Settings, StorageLayout},
     remappings::{RelativeRemapping, Remapping},
     ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
 };
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 
 use super::{init::InitArgs, install::DependencyInstallOpts};
 
@@ -28,6 +28,10 @@ pub struct CloneArgs {
     /// Enable git for the cloned project, default is false.
     #[arg(long)]
     pub enable_git: bool,
+
+    /// Do not print any messages.
+    #[arg(short, long)]
+    pub quiet: bool,
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
@@ -58,7 +62,7 @@ pub struct CloneMetadata {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let CloneArgs { address, root, enable_git, etherscan } = self;
+        let CloneArgs { address, quiet, root, enable_git, etherscan } = self;
 
         // parse the contract address
         let contract_address: Address = address.parse()?;
@@ -76,6 +80,7 @@ impl CloneArgs {
         };
 
         // get the contract code
+        p_println!(!quiet => "Downloading the source code of {} from Etherscan...", contract_address);
         let client = Client::new(chain, etherscan_api_key)?;
         let mut meta = client.contract_source_code(contract_address).await?;
         if meta.items.len() != 1 {
@@ -87,7 +92,7 @@ impl CloneArgs {
         }
 
         // let's try to init the project with default init args
-        let opts = DependencyInstallOpts { no_git: !enable_git, ..Default::default() };
+        let opts = DependencyInstallOpts { no_git: !enable_git, quiet, ..Default::default() };
         let init_args = InitArgs { root: root.clone(), opts, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
@@ -103,10 +108,24 @@ impl CloneArgs {
         fs::remove_file(root.join("script/Counter.s.sol"))?;
 
         // dump sources and update the remapping in configuration
+        let Settings { remappings: original_remappings, .. } = meta.settings()?;
         let remappings = dump_sources(&meta, &root)?;
         Config::update_at(&root, |config, doc| {
             let profile = config.profile.as_str().as_str();
             let mut remapping_array = toml_edit::Array::new();
+            // original remappings
+            for r in original_remappings.iter() {
+                // we should update its remapped path in the same way as we dump sources
+                // i.e., remove prefix `contracts` (if any) and add prefix `src`
+                let mut r = r.to_owned();
+                let new_path = PathBuf::from(r.path.clone())
+                    .strip_prefix("contracts")
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or(PathBuf::from(r.path));
+                r.path = PathBuf::from("src").join(new_path).to_string_lossy().to_string();
+                remapping_array.push(r.to_string());
+            }
+            // new remappings
             for r in remappings {
                 remapping_array.push(r.to_string());
             }
@@ -117,7 +136,7 @@ impl CloneArgs {
 
         // update configuration
         Config::update_at(&root, |config, doc| {
-            update_config_by_metadata(config, doc, &meta).is_ok()
+            update_config_by_metadata(config, doc, &meta, chain).is_ok()
         })?;
 
         // compile the cloned contract
@@ -128,6 +147,7 @@ impl CloneArgs {
             main_artifact.storage_layout.to_owned().expect("storage layout not found");
 
         // dump the metadata to the root directory
+        p_println!(!quiet => "Collecting the creation information of {} from Etherscan...", contract_address);
         std::thread::sleep(etherscan_call_interval);
         let creation_tx = client.contract_creation_data(contract_address).await?;
         let clone_meta = CloneMetadata {
@@ -183,6 +203,7 @@ fn update_config_by_metadata(
     config: &Config,
     doc: &mut toml_edit::Document,
     meta: &Metadata,
+    chain: Chain,
 ) -> Result<()> {
     let profile = config.profile.as_str().as_str();
 
@@ -205,6 +226,9 @@ fn update_config_by_metadata(
         };
     }
 
+    // update the chain id
+    doc[Config::PROFILE_SECTION][profile]["chain_id"] = toml_edit::value(chain.id() as i64);
+
     // disable auto detect solc and set the solc version
     doc[Config::PROFILE_SECTION][profile]["auto_detect_solc"] = toml_edit::value(false);
     let version = meta.compiler_version()?;
@@ -214,18 +238,9 @@ fn update_config_by_metadata(
     // get optimizer settings
     // XXX (ZZ): we ignore `model_checker`, `debug`, and `output_selection` for now,
     // it seems they do not have impacts on the actual compilation
-    let Settings {
-        optimizer,
-        libraries,
-        evm_version,
-        via_ir,
-        stop_after,
-        remappings,
-        metadata,
-        ..
-    } = meta.settings()?;
+    let Settings { optimizer, libraries, evm_version, via_ir, stop_after, metadata, .. } =
+        meta.settings()?;
     eyre::ensure!(stop_after.is_none(), "stop_after should be None");
-    eyre::ensure!(remappings.is_empty(), "remappings should be empty");
 
     update_if_needed!(["evm_version"], evm_version.map(|v| v.to_string()));
     update_if_needed!(["via_ir"], via_ir);
@@ -270,8 +285,9 @@ fn update_config_by_metadata(
 
     // apply remapping on libraries
     let path_config = config.project_paths();
-    let libraries =
-        libraries.with_stripped_file_prefixes("contracts").with_applied_remappings(&path_config);
+    let libraries = libraries
+        .with_applied_remappings(&path_config)
+        .with_stripped_file_prefixes(&path_config.root);
 
     // update libraries
     let mut lib_array = toml_edit::Array::new();
@@ -349,7 +365,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &PathBuf) -> Result<ProjectCompileOutput> {
     std::env::set_current_dir(root)?;
-    let mut config = Config::load();
+    let mut config = Config::load_with_root(root);
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
     let compiler = ProjectCompiler::new();
@@ -420,6 +436,7 @@ mod tests {
             address: "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            quiet: false,
             enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
@@ -437,6 +454,7 @@ mod tests {
             address: "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            quiet: false,
             enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
@@ -454,6 +472,7 @@ mod tests {
             address: "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            quiet: false,
             enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
@@ -471,6 +490,7 @@ mod tests {
             address: "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            quiet: false,
             enable_git: false,
         };
         let (contract_name, stripped_creation_code) =
@@ -488,6 +508,22 @@ mod tests {
             address: "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".to_string(),
             root: project_root.clone(),
             etherscan: Default::default(),
+            quiet: false,
+            enable_git: false,
+        };
+        args.run().await.unwrap();
+        assert_successful_compilation(&project_root);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
+    async fn test_clone_contract_with_original_remappings() {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let args = CloneArgs {
+            address: "0x9ab6b21cdf116f611110b048987e58894786c244".to_string(),
+            root: project_root.clone(),
+            etherscan: Default::default(),
+            quiet: false,
             enable_git: false,
         };
         args.run().await.unwrap();
