@@ -145,6 +145,9 @@ pub struct Cheatcodes {
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
+    /// Recorded gas usage
+    pub gas_usage: Option<Vec<Gas>>,
+
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
     pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
@@ -514,10 +517,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     );
                 }
                 // Record account accesses via the EXT family of opcodes
-                opcode::EXTCODECOPY |
-                opcode::EXTCODESIZE |
-                opcode::EXTCODEHASH |
-                opcode::BALANCE => {
+                opcode::EXTCODECOPY
+                | opcode::EXTCODESIZE
+                | opcode::EXTCODEHASH
+                | opcode::BALANCE => {
                     let kind = match interpreter.current_opcode() {
                         opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                         opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
@@ -739,7 +742,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let ecx = &mut ecx.inner;
 
         if call.contract == HARDHAT_CONSOLE_ADDRESS {
-            return None
+            return None;
         }
 
         // Handle expected calls
@@ -777,8 +780,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 mocks
                     .iter()
                     .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.map_or(true, |value| value == call.transfer.value)
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.map_or(true, |value| value == call.transfer.value)
                     })
                     .map(|(_, v)| v)
             }) {
@@ -789,14 +792,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
-                })
+                });
             }
         }
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if ecx.journaled_state.depth() >= prank.depth &&
-                call.context.caller == prank.prank_caller
+            if ecx.journaled_state.depth() >= prank.depth
+                && call.context.caller == prank.prank_caller
             {
                 let mut prank_applied = false;
 
@@ -828,8 +831,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             //
             // We do this because any subsequent contract calls *must* exist on chain and
             // we only want to grab *this* call, not internal ones
-            if ecx.journaled_state.depth() == broadcast.depth &&
-                call.context.caller == broadcast.original_caller
+            if ecx.journaled_state.depth() == broadcast.depth
+                && call.context.caller == broadcast.original_caller
             {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
@@ -851,7 +854,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 gas,
                             },
                             memory_offset: call.return_memory_offset.clone(),
-                        })
+                        });
                     }
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
@@ -892,7 +895,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
-                    })
+                    });
                 }
             }
         }
@@ -954,6 +957,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let ecx = &mut ecx.inner;
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
+
+        // Record the gas used in the call if `gasUsed` has been called
+        if let Some(storage_gas_used) = &mut self.gas_used {
+            storage_gas_used.push(outcome.gas());
+        }
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
@@ -1100,7 +1108,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if self.expected_emits.iter().any(|expected| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
-                return outcome
+                return outcome;
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
@@ -1118,7 +1126,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if outcome.result.is_revert() {
             if let Some(err) = diag {
                 outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-                return outcome
+                return outcome;
             }
         }
 
@@ -1127,9 +1135,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let TransactTo::Call(test_contract) = ecx.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.db.is_forked_mode() &&
-                outcome.result.result == InstructionResult::Stop &&
-                call.contract != test_contract
+            if ecx.db.is_forked_mode()
+                && outcome.result.result == InstructionResult::Stop
+                && call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
                     ecx.db.diagnose_revert(call.contract, &ecx.journaled_state);
@@ -1241,8 +1249,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if ecx.journaled_state.depth() >= broadcast.depth &&
-                call.caller == broadcast.original_caller
+            if ecx.journaled_state.depth() >= broadcast.depth
+                && call.caller == broadcast.original_caller
             {
                 if let Err(err) =
                     ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
@@ -1254,7 +1262,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             gas,
                         },
                         address: None,
-                    })
+                    });
                 }
 
                 ecx.env.tx.caller = broadcast.new_origin;
@@ -1390,8 +1398,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if ecx.journaled_state.depth() <= expected_revert.depth &&
-                matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            if ecx.journaled_state.depth() <= expected_revert.depth
+                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
@@ -1638,10 +1646,10 @@ fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
-        crate::Vm::AccountAccessKind::Call |
-            crate::Vm::AccountAccessKind::StaticCall |
-            crate::Vm::AccountAccessKind::CallCode |
-            crate::Vm::AccountAccessKind::DelegateCall
+        crate::Vm::AccountAccessKind::Call
+            | crate::Vm::AccountAccessKind::StaticCall
+            | crate::Vm::AccountAccessKind::CallCode
+            | crate::Vm::AccountAccessKind::DelegateCall
     )
 }
 

@@ -18,6 +18,7 @@ interface Vm {
     struct ChainInfo { uint256 forkId; uint256 chainId; }
     struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
+    struct Gas { uint64 initialGasLimit; uint64 totalUsedGas; uint64 usedGas; uint64 memoryGas; int64 refundedGas; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -226,7 +227,7 @@ interface Vm {
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
-    function gasUsed() external view returns (uint256[] memory gasUsed);
+    function gasUsed() external view returns (Gas[] memory gasUsed);
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
@@ -246,7 +247,7 @@ interface Vm {
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
-    function lastGasUsed() external view returns (uint256 gasUsed);
+    function lastGasUsed() external view returns (Gas memory gasUsed);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;

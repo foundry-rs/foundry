@@ -415,6 +415,37 @@
           "description": "If the access was reverted."
         }
       ]
+    },
+    {
+      "name": "Gas",
+      "description": "A gas information context. Returned by `gasUsed` and `lastGasUsed`.",
+      "fields": [
+        {
+          "name": "initialGasLimit",
+          "ty": "uint64",
+          "description": "The initial gas limit."
+        },
+        {
+          "name": "totalUsedGas",
+          "ty": "uint64",
+          "description": "The total used gas."
+        },
+        {
+          "name": "usedGas",
+          "ty": "uint64",
+          "description": "Used gas without memory expansion."
+        },
+        {
+          "name": "memoryGas",
+          "ty": "uint64",
+          "description": "Used gas for memory expansion."
+        },
+        {
+          "name": "refundedGas",
+          "ty": "int64",
+          "description": "Refunded gas. This is used only at the end of execution."
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -4582,7 +4613,7 @@
       "func": {
         "id": "gasUsed",
         "description": "Gets the gas of all top-level transactions made in the current isolated run.",
-        "declaration": "function gasUsed() external view returns (uint256[] memory gasUsed);",
+        "declaration": "function gasUsed() external view returns (Gas[] memory gasUsed);",
         "visibility": "external",
         "mutability": "view",
         "signature": "gasUsed()",
@@ -4982,7 +5013,7 @@
       "func": {
         "id": "lastGasUsed",
         "description": "Gets the gas of the last top-level transaction made in the current isolated run.",
-        "declaration": "function lastGasUsed() external view returns (uint256 gasUsed);",
+        "declaration": "function lastGasUsed() external view returns (Gas memory gasUsed);",
         "visibility": "external",
         "mutability": "view",
         "signature": "lastGasUsed()",

@@ -73,6 +73,20 @@ interface Vm {
         address emitter;
     }
 
+    /// A gas information context. Returned by `gasUsed` and `lastGasUsed`.
+    struct Gas {
+        /// The initial gas limit.
+        uint64 initialGasLimit;
+        /// The total used gas.
+        uint64 totalUsedGas;
+        /// Used gas without memory expansion.
+        uint64 usedGas;
+        /// Used gas for memory expansion.
+        uint64 memoryGas;
+        /// Refunded gas. This is used only at the end of execution.
+        int64 refundedGas;
+    }
+
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
     struct Rpc {
         /// The alias of the RPC URL.
@@ -610,11 +624,11 @@ interface Vm {
 
     /// Gets the gas of all top-level transactions made in the current isolated run.
     #[cheatcode(group = Evm, safety = Safe)]
-    function gasUsed() external view returns (uint256[] memory gasUsed);
+    function gasUsed() external view returns (Gas[] memory gasUsed);
 
     /// Gets the gas of the last top-level transaction made in the current isolated run.
     #[cheatcode(group = Evm, safety = Safe)]
-    function lastGasUsed() external view returns (uint256 gasUsed);
+    function lastGasUsed() external view returns (Gas memory gasUsed);
 
     // ======== Test Assertions and Utilities ========
 

@@ -99,13 +99,13 @@ impl Cheatcode for dumpStateCall {
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
-            key == &CHEATCODE_ADDRESS ||
-                key == &CALLER ||
-                key == &HARDHAT_CONSOLE_ADDRESS ||
-                key == &TEST_CONTRACT_ADDRESS ||
-                key == &ccx.caller ||
-                key == &ccx.state.config.evm_opts.sender ||
-                val.is_empty()
+            key == &CHEATCODE_ADDRESS
+                || key == &CALLER
+                || key == &HARDHAT_CONSOLE_ADDRESS
+                || key == &TEST_CONTRACT_ADDRESS
+                || key == &ccx.caller
+                || key == &ccx.state.config.evm_opts.sender
+                || val.is_empty()
         };
 
         let alloc = ccx
@@ -221,6 +221,20 @@ impl Cheatcode for resumeGasMeteringCall {
         let Self {} = self;
         state.gas_metering = None;
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for lastGasUsedCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        Ok(state.gas_usage.as_slice().last().copied().unwrap_or_default().abi_encode())
+    }
+}
+
+impl Cheatcode for gasUsedCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        Ok(state.gas_used.abi_encode())
     }
 }
 
