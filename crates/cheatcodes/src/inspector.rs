@@ -146,7 +146,7 @@ pub struct Cheatcodes {
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
     /// Latest gas usage
-    pub latest_gas_usage: u64,
+    pub latest_gas_usage: Option<crate::Vm::Gas>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -958,13 +958,25 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
+        // Record the gas usage of the call
+        let gas = outcome.result.gas;
+        self.latest_gas_usage = Some(crate::Vm::Gas {
+            // The gas limit of the call.
+            gasLimit: gas.limit(),
+            // The total gas used.
+            gasTotalUsed: gas.spend(),
+            // The amount of gas used for memory expansion.
+            gasMemoryUsed: gas.memory(),
+            // The amount of gas refunded.
+            gasRefunded: gas.refunded(),
+            // The amount of gas remaining.
+            gasRemaining: gas.remaining(),
+        });
+
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
-            // Cache the gas usage of the call
-            // self.latest_gas_usage = outcome.gas().spend();
-
             // Clean up pranks
             if let Some(prank) = &self.prank {
                 if ecx.journaled_state.depth() == prank.depth {
@@ -1034,24 +1046,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     }
                 }
             }
-        }
-
-        if cheatcode_call {
-            warn!("before C: {}", self.latest_gas_usage);
-
-            self.latest_gas_usage += 1000;
-
-            warn!("after C: {}", self.latest_gas_usage);
-        } else {
-            warn!("before NC: {}", self.latest_gas_usage);
-
-            let foo = outcome.gas().spend();
-
-            self.latest_gas_usage = 5555;
-
-            warn!("gas: {}", foo);
-
-            warn!("after NC: {}", self.latest_gas_usage);
         }
 
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
@@ -1162,9 +1156,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If the depth is 0, then this is the root call terminating
         if ecx.journaled_state.depth() == 0 {
-            // Cache the gas usage of the call
-            // self.latest_gas_usage = outcome.gas().spend();
-
             // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
             // earlier error that happened first with unrelated information about
             // another error when using cheatcodes.

@@ -1,6 +1,6 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::Gas as GasRecord, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
@@ -228,9 +228,18 @@ impl Cheatcode for lastGasUsedCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
 
-        warn!(target: "cheatcodes", "{:?}", state);
-
-        Ok(state.latest_gas_usage.abi_encode())
+        if let Some(latest_gas_usage) = &state.latest_gas_usage {
+            Ok(latest_gas_usage.abi_encode())
+        } else {
+            Ok(GasRecord {
+                gasLimit: 0,
+                gasTotalUsed: 0,
+                gasMemoryUsed: 0,
+                gasRefunded: 0,
+                gasRemaining: 0,
+            }
+            .abi_encode())
+        }
     }
 }
 

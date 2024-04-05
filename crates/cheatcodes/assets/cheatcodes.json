@@ -415,6 +415,37 @@
           "description": "If the access was reverted."
         }
       ]
+    },
+    {
+      "name": "Gas",
+      "description": "",
+      "fields": [
+        {
+          "name": "gasLimit",
+          "ty": "uint64",
+          "description": ""
+        },
+        {
+          "name": "gasTotalUsed",
+          "ty": "uint64",
+          "description": ""
+        },
+        {
+          "name": "gasMemoryUsed",
+          "ty": "uint64",
+          "description": ""
+        },
+        {
+          "name": "gasRefunded",
+          "ty": "int64",
+          "description": ""
+        },
+        {
+          "name": "gasRemaining",
+          "ty": "uint64",
+          "description": ""
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -4962,7 +4993,7 @@
       "func": {
         "id": "lastGasUsed",
         "description": "Gets the gas used in the last call.",
-        "declaration": "function lastGasUsed() external returns (uint64);",
+        "declaration": "function lastGasUsed() external returns (Gas memory gas);",
         "visibility": "external",
         "mutability": "",
         "signature": "lastGasUsed()",

@@ -73,6 +73,19 @@ interface Vm {
         address emitter;
     }
 
+    struct Gas {
+        // The gas limit of the call.
+        uint64 gasLimit;
+        // The total gas used.
+        uint64 gasTotalUsed;
+        // The amount of gas used for memory expansion.
+        uint64 gasMemoryUsed;
+        // The amount of gas refunded.
+        int64 gasRefunded;
+        // The amount of gas remaining.
+        uint64 gasRemaining;
+    }
+
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
     struct Rpc {
         /// The alias of the RPC URL.
@@ -610,7 +623,7 @@ interface Vm {
 
     /// Gets the gas used in the last call.
     #[cheatcode(group = Evm, safety = Safe)]
-    function lastGasUsed() external returns (uint64);
+    function lastGasUsed() external returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 
