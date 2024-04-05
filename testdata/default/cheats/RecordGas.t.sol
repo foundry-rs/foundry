@@ -33,5 +33,6 @@ contract RecordGasTest is DSTest {
         emit log_named_uint("gasMemoryUsed", record.gasMemoryUsed);
         emit log_named_int("gasRefunded", record.gasRefunded);
         emit log_named_uint("gasRemaining", record.gasRemaining);
+        emit log_string("\n");
     }
 }

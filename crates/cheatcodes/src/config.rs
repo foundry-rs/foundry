@@ -21,6 +21,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// Whether the isolation of calls is enabled.
+    pub isolate: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
     /// Sets a timeout for vm.prompt cheatcodes
@@ -70,6 +72,7 @@ impl CheatsConfig {
 
         Self {
             ffi: evm_opts.ffi,
+            isolate: evm_opts.isolate,
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
             rpc_storage_caching: config.rpc_storage_caching.clone(),
@@ -188,6 +191,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            isolate: false,
             always_use_create_2_factory: false,
             prompt_timeout: Duration::from_secs(120),
             rpc_storage_caching: Default::default(),

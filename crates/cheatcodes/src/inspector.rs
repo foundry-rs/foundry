@@ -958,21 +958,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
-        // Record the gas usage of the call
-        let gas = outcome.result.gas;
-        self.latest_gas_usage = Some(crate::Vm::Gas {
-            // The gas limit of the call.
-            gasLimit: gas.limit(),
-            // The total gas used.
-            gasTotalUsed: gas.spend(),
-            // The amount of gas used for memory expansion.
-            gasMemoryUsed: gas.memory(),
-            // The amount of gas refunded.
-            gasRefunded: gas.refunded(),
-            // The amount of gas remaining.
-            gasRemaining: gas.remaining(),
-        });
-
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
@@ -1052,6 +1037,23 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // invocations
         if cheatcode_call {
             return outcome;
+        }
+
+        if self.config.isolate {
+            // Record the gas usage of the call
+            let gas = outcome.result.gas;
+            self.latest_gas_usage = Some(crate::Vm::Gas {
+                // The gas limit of the call.
+                gasLimit: gas.limit(),
+                // The total gas used.
+                gasTotalUsed: gas.spend(),
+                // The amount of gas used for memory expansion.
+                gasMemoryUsed: gas.memory(),
+                // The amount of gas refunded.
+                gasRefunded: gas.refunded(),
+                // The amount of gas remaining.
+                gasRemaining: gas.remaining(),
+            });
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
