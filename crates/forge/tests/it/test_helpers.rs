@@ -209,6 +209,7 @@ impl ForgeTestData {
             .with_cheats_config(CheatsConfig::new(&config, opts.clone(), Some(artifact_ids), None))
             .sender(config.sender)
             .with_test_options(self.test_opts.clone())
+            .enable_isolation(config.isolate)
             .build(root, output, env, opts.clone())
             .unwrap()
     }

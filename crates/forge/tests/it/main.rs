@@ -8,5 +8,6 @@ mod fs;
 mod fuzz;
 mod inline;
 mod invariant;
+mod isolate;
 mod repros;
 mod spec;
