@@ -24,9 +24,9 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
+use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
-
 impl_figment_convert!(VerifyBytecodeArgs);
 /// CLI arguments for `forge verify-bytecode`.
 #[derive(Clone, Debug, Parser)]
@@ -73,6 +73,10 @@ pub struct VerifyBytecodeArgs {
 
     /// The path to the project's root directory.
     pub root: Option<PathBuf>,
+
+    /// Suppress logs and emit json results to stdout
+    #[clap(long, default_value = "false")]
+    pub json: bool,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -109,11 +113,14 @@ impl VerifyBytecodeArgs {
             eyre::bail!("No bytecode found at address {}", self.address);
         }
 
-        println!(
-            "Verifying bytecode for contract {} at address {}",
-            Paint::green(self.contract.name.clone()),
-            Paint::green(self.address.to_string())
-        );
+        if !self.json {
+            println!(
+                "Verifying bytecode for contract {} at address {}",
+                Paint::green(self.contract.name.clone()),
+                Paint::green(self.address.to_string())
+            );
+        }
+
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
         let chain = if config.get_rpc_url().is_some() {
@@ -159,7 +166,7 @@ impl VerifyBytecodeArgs {
         };
 
         // Constructor args mismatch
-        if provided_constructor_args != constructor_args.to_string() {
+        if provided_constructor_args != constructor_args.to_string() && !self.json {
             println!(
                 "{}",
                 Paint::red("The provider constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
@@ -231,27 +238,14 @@ impl VerifyBytecodeArgs {
             has_metadata,
         )?;
 
-        if res.0 {
-            println!(
-                "{} with status {}",
-                Paint::green("Creation code matched").bold(),
-                Paint::green(res.1.clone().unwrap()).bold()
-            );
-            if res.1.unwrap() == VerificationType::Partial &&
-                config.bytecode_hash != BytecodeHash::None
-            {
-                find_mismatch_in_settings(etherscan_metadata, &config)?;
-            }
-        } else {
-            println!(
-                "{}",
-                Paint::red(
-                    "Creation code did not match - This may be due to varying compiler settings"
-                )
-                .bold()
-            );
-            find_mismatch_in_settings(etherscan_metadata, &config)?;
-        }
+        let mut json_results: Vec<JsonResult> = vec![];
+        self.print_result(
+            res,
+            BytecodeType::Creation,
+            &mut json_results,
+            etherscan_metadata,
+            &config,
+        );
 
         // Get contract creation block
         let simulation_block = if let Some(block) = self.block {
@@ -365,22 +359,17 @@ impl VerifyBytecodeArgs {
             has_metadata,
         )?;
 
-        if res.0 {
-            println!(
-                "{} with status {}",
-                Paint::green("Runtime code matched").bold(),
-                Paint::green(res.1.unwrap()).bold()
-            );
-        } else {
-            println!(
-                "{}",
-                Paint::red(
-                    "Runtime code did not match - This may be due to varying compiler settings"
-                )
-                .bold()
-            );
-        }
+        self.print_result(
+            res,
+            BytecodeType::Runtime,
+            &mut json_results,
+            etherscan_metadata,
+            &config,
+        );
 
+        if self.json {
+            println!("{}", serde_json::to_string(&json_results)?);
+        }
         Ok(())
     }
 
@@ -437,12 +426,66 @@ impl VerifyBytecodeArgs {
 
         None
     }
+
+    fn print_result(
+        &self,
+        res: (bool, Option<VerificationType>),
+        bytecode_type: BytecodeType,
+        json_results: &mut Vec<JsonResult>,
+        etherscan_config: &Metadata,
+        config: &Config,
+    ) {
+        if res.0 {
+            if !self.json {
+                println!(
+                    "{} with status {}",
+                    Paint::green(format!("{:?} code matched", bytecode_type)).bold(),
+                    Paint::green(res.1.unwrap()).bold()
+                );
+            } else {
+                let json_res = JsonResult {
+                    bytecode_type,
+                    matched: true,
+                    verification_type: res.1.unwrap(),
+                    message: None,
+                };
+                json_results.push(json_res);
+            }
+        } else if !res.0 && !self.json {
+            println!(
+                "{}",
+                Paint::red(format!(
+                    "{:?} code did not match - this may be due to varying compiler settings",
+                    bytecode_type
+                ))
+                .bold()
+            );
+            let mismatches = find_mismatch_in_settings(etherscan_config, config);
+            for mismatch in mismatches {
+                println!("{}", Paint::red(mismatch).bold());
+            }
+        } else if !res.0 && self.json {
+            let json_res = JsonResult {
+                bytecode_type,
+                matched: false,
+                verification_type: self.verification_type,
+                message: Some(format!(
+                    "{:?} code did not match - this may be due to varying compiler settings",
+                    bytecode_type
+                )),
+            };
+            json_results.push(json_res);
+        }
+    }
 }
 
-#[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq)]
+/// Enum to represent the type of verification: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+#[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum VerificationType {
     #[default]
+    #[serde(rename = "full")]
     Full,
+    #[serde(rename = "partial")]
     Partial,
 }
 
@@ -474,6 +517,24 @@ impl fmt::Display for VerificationType {
             VerificationType::Partial => write!(f, "partial"),
         }
     }
+}
+
+/// Enum to represent the type of bytecode being verified
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum BytecodeType {
+    #[serde(rename = "creation")]
+    Creation,
+    #[serde(rename = "runtime")]
+    Runtime,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonResult {
+    pub bytecode_type: BytecodeType,
+    pub matched: bool,
+    pub verification_type: VerificationType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 fn try_match(
@@ -569,35 +630,33 @@ fn extract_metadata_hash(bytecode: &[u8]) -> Result<&[u8]> {
     Ok(&bytecode[..bytecode.len() - 2 - metadata_len as usize])
 }
 
-fn find_mismatch_in_settings(etherscan_settings: &Metadata, local_settings: &Config) -> Result<()> {
-    println!("Scanning for mismatch in compiler settings...");
+fn find_mismatch_in_settings(
+    etherscan_settings: &Metadata,
+    local_settings: &Config,
+) -> Vec<String> {
+    let mut mismatches: Vec<String> = vec![];
     if etherscan_settings.evm_version != local_settings.evm_version.to_string().to_lowercase() {
-        println!(
-            "{} - local: {} VS onchain: {}",
-            Paint::red("EVM version mismatch").bold(),
-            local_settings.evm_version,
-            etherscan_settings.evm_version
+        let str = format!(
+            "EVM version mismatch: local={}, onchain={}",
+            local_settings.evm_version, etherscan_settings.evm_version
         );
+        mismatches.push(str);
     }
     let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
     if etherscan_settings.optimization_used != local_optimizer {
-        println!(
-            "{} - local: {} VS onchain: {}",
-            Paint::red("Optimizer mismatch").bold(),
-            local_settings.optimizer,
-            etherscan_settings.optimization_used
+        let str = format!(
+            "Optimizer mismatch: local={}, onchain={}",
+            local_settings.optimizer, etherscan_settings.optimization_used
         );
+        mismatches.push(str);
     }
     if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
-        println!(
-            "{} - local: {} VS onchain: {}",
-            Paint::red("Optimizer runs mismatch").bold(),
-            local_settings.optimizer_runs,
-            etherscan_settings.runs
+        let str = format!(
+            "Optimizer runs mismatch: local={}, onchain={}",
+            local_settings.optimizer_runs, etherscan_settings.runs
         );
+        mismatches.push(str);
     }
 
-    // TODO: Compiler Version Check
-
-    Ok(())
+    mismatches
 }
