@@ -2190,6 +2190,13 @@ impl EthApi {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+        )?
+        .or_zero_fees();
+
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
         let likely_transfer = request.input.clone().into_input().is_none();
@@ -2197,18 +2204,23 @@ impl EthApi {
             if let Some(to) = request.to {
                 if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
                     if target_code.as_ref().is_empty() {
-                        return Ok(MIN_TRANSACTION_GAS);
+                        // ensure the call succeeds
+                        if let Ok(GasEstimationCallResult::Success(_)) = self
+                            .backend
+                            .call_with_state(
+                                &state,
+                                request.clone(),
+                                fees.clone(),
+                                block_env.clone(),
+                            )
+                            .try_into()
+                        {
+                            return Ok(MIN_TRANSACTION_GAS);
+                        }
                     }
                 }
             }
         }
-
-        let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-        )?
-        .or_zero_fees();
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
