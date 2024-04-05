@@ -226,6 +226,7 @@ interface Vm {
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
+    function gasUsed() external view returns (uint256[] memory gasUsed);
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
@@ -245,6 +246,7 @@ interface Vm {
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
+    function lastGasUsed() external view returns (uint256 gasUsed);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;

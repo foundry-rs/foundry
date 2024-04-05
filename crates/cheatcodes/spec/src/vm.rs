@@ -365,6 +365,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
 
+    /// Gets the gas of all top-level transactions made in the current run.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function gasUsed() external view returns (uint256[] memory gasUsed);
+
+    /// Gets the gas of the last top-level transaction made in the current run.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastGasUsed() external view returns (uint256 gasUsed);
+
     // -------- Account State --------
 
     /// Sets an address' balance.
