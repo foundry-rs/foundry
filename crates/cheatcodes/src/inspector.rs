@@ -145,8 +145,8 @@ pub struct Cheatcodes {
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
-    /// Recorded gas usage
-    pub recorded_gas_usage: Option<Vec<crate::Vm::Gas>>,
+    /// Latest gas usage
+    pub latest_gas_usage: u64,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -958,19 +958,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
-        // Record the gas used in the call if `recordGas` has been called
-        if let Some(storage_recorded_gas_used) = &mut self.recorded_gas_usage {
-            let gas = outcome.result.gas;
-
-            storage_recorded_gas_used.push(crate::Vm::Gas {
-                gasLimit: gas.limit(),
-                gasMemoryUsed: gas.memory(),
-                gasUsed: gas.spend(),
-                gasRefunded: gas.refunded(),
-                gasRemaining: gas.remaining(),
-            })
-        }
-
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
@@ -1228,6 +1215,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 return outcome;
             }
         }
+
+        // Cache the gas usage of the call
+        self.latest_gas_usage = outcome.result.gas.spend();
+
+        warn!("latest gas usage: {:?}", self.latest_gas_usage);
 
         outcome
     }

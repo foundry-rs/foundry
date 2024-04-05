@@ -415,37 +415,6 @@
           "description": "If the access was reverted."
         }
       ]
-    },
-    {
-      "name": "Gas",
-      "description": "A gas context. Returned by `getLastRecordedGas` and `getRecordedGas`.",
-      "fields": [
-        {
-          "name": "gasLimit",
-          "ty": "uint64",
-          "description": ""
-        },
-        {
-          "name": "gasMemoryUsed",
-          "ty": "uint64",
-          "description": ""
-        },
-        {
-          "name": "gasUsed",
-          "ty": "uint64",
-          "description": ""
-        },
-        {
-          "name": "gasRefunded",
-          "ty": "int64",
-          "description": ""
-        },
-        {
-          "name": "gasRemaining",
-          "ty": "uint64",
-          "description": ""
-        }
-      ]
     }
   ],
   "cheatcodes": [
@@ -4711,26 +4680,6 @@
     },
     {
       "func": {
-        "id": "getLastRecordedGas",
-        "description": "Gets the last recorded gas.",
-        "declaration": "function getLastRecordedGas() external returns (Gas memory gasUsed);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "getLastRecordedGas()",
-        "selector": "0xd766a9c1",
-        "selectorBytes": [
-          215,
-          102,
-          169,
-          193
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "getMappingKeyAndParentOf",
         "description": "Gets the map key and parent of a mapping at a given slot, for a given address.",
         "declaration": "function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);",
@@ -4826,26 +4775,6 @@
         ]
       },
       "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getRecordedGas",
-        "description": "Gets all the recorded gas.",
-        "declaration": "function getRecordedGas() external returns (Gas[] memory gasUsed);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "getRecordedGas()",
-        "selector": "0xd797217a",
-        "selectorBytes": [
-          215,
-          151,
-          33,
-          122
-        ]
-      },
-      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -5026,6 +4955,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "lastGasUsed",
+        "description": "Gets the gas used in the last call.",
+        "declaration": "function lastGasUsed() external returns (uint64);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "lastGasUsed()",
+        "selector": "0x95c570bd",
+        "selectorBytes": [
+          149,
+          197,
+          112,
+          189
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -6343,26 +6292,6 @@
           108,
           241,
           9
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "recordGas",
-        "description": "Record the gas used to be returned by `getRecordedGas` and `getLastRecordedGas`.",
-        "declaration": "function recordGas() external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "recordGas()",
-        "selector": "0x6f62f0be",
-        "selectorBytes": [
-          111,
-          98,
-          240,
-          190
         ]
       },
       "group": "evm",

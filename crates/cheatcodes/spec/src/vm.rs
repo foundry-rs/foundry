@@ -73,20 +73,6 @@ interface Vm {
         address emitter;
     }
 
-    /// A gas context. Returned by `getLastRecordedGas` and `getRecordedGas`.
-    struct Gas {
-        // The gas limit of the call.
-        uint64 gasLimit;
-        // The amount of gas used for memory expansion.
-        uint64 gasMemoryUsed;
-        // The amount of gas used without memory expansion.
-        uint64 gasUsed;
-        // The amount of gas refunded.
-        int64 gasRefunded;
-        // The amount of gas remaining.
-        uint64 gasRemaining;
-    }
-
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
     struct Rpc {
         /// The alias of the RPC URL.
@@ -622,17 +608,9 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
-    /// Record the gas used to be returned by `getRecordedGas` and `getLastRecordedGas`.
+    /// Gets the gas used in the last call.
     #[cheatcode(group = Evm, safety = Safe)]
-    function recordGas() external;
-
-    /// Gets the last recorded gas.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function getLastRecordedGas() external returns (Gas memory gasUsed);
-
-    /// Gets all the recorded gas.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function getRecordedGas() external returns (Gas[] memory gasUsed);
+    function lastGasUsed() external returns (uint64);
 
     // ======== Test Assertions and Utilities ========
 
