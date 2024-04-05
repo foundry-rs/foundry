@@ -9,14 +9,16 @@ contract RecordGasTest is DSTest {
 
     function testRecordGasA() public {
         _burn(1);
-
-        emit log_named_uint("gas A", vm.lastGasUsed());
+        uint64 gasUsed = vm.lastGasUsed();
+        emit log_named_uint("gas A", gasUsed);
 
         _burn(100);
-        emit log_named_uint("gas B", vm.lastGasUsed());
+        gasUsed = vm.lastGasUsed();
+        emit log_named_uint("gas B", gasUsed);
 
         _burn(10000);
-        emit log_named_uint("gas C", vm.lastGasUsed());
+        gasUsed = vm.lastGasUsed();
+        emit log_named_uint("gas C", gasUsed);
     }
 
     function _burn(uint256 x) internal pure {

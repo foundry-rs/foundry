@@ -962,6 +962,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
+            // Cache the gas usage of the call
+            // self.latest_gas_usage = outcome.gas().spend();
+
             // Clean up pranks
             if let Some(prank) = &self.prank {
                 if ecx.journaled_state.depth() == prank.depth {
@@ -1031,6 +1034,24 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     }
                 }
             }
+        }
+
+        if cheatcode_call {
+            warn!("before C: {}", self.latest_gas_usage);
+
+            self.latest_gas_usage += 1000;
+
+            warn!("after C: {}", self.latest_gas_usage);
+        } else {
+            warn!("before NC: {}", self.latest_gas_usage);
+
+            let foo = outcome.gas().spend();
+
+            self.latest_gas_usage = 5555;
+
+            warn!("gas: {}", foo);
+
+            warn!("after NC: {}", self.latest_gas_usage);
         }
 
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
@@ -1141,6 +1162,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If the depth is 0, then this is the root call terminating
         if ecx.journaled_state.depth() == 0 {
+            // Cache the gas usage of the call
+            // self.latest_gas_usage = outcome.gas().spend();
+
             // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
             // earlier error that happened first with unrelated information about
             // another error when using cheatcodes.
@@ -1215,11 +1239,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 return outcome;
             }
         }
-
-        // Cache the gas usage of the call
-        self.latest_gas_usage = outcome.result.gas.spend();
-
-        warn!("latest gas usage: {:?}", self.latest_gas_usage);
 
         outcome
     }

@@ -228,7 +228,7 @@ impl Cheatcode for lastGasUsedCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
 
-        warn!(target: "cheatcodes", "{:?}", state.latest_gas_usage);
+        warn!(target: "cheatcodes", "{:?}", state);
 
         Ok(state.latest_gas_usage.abi_encode())
     }
