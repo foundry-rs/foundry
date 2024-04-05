@@ -8,7 +8,7 @@ use crate::{
     mem::state::{state_merkle_trie_root, storage_trie_db, trie_hash_db},
     revm::primitives::AccountInfo,
 };
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
@@ -32,7 +32,11 @@ impl Db for MemDb {
         self.inner.block_hashes.insert(number, hash);
     }
 
-    fn dump_state(&self, at: BlockEnv) -> DatabaseResult<Option<SerializableState>> {
+    fn dump_state(
+        &self,
+        at: BlockEnv,
+        best_number: U64,
+    ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
             .accounts
@@ -57,7 +61,11 @@ impl Db for MemDb {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(Some(SerializableState { block: Some(at), accounts }))
+        Ok(Some(SerializableState {
+            block: Some(at),
+            accounts,
+            best_block_number: Some(best_number),
+        }))
     }
 
     /// Creates a new snapshot
@@ -160,7 +168,7 @@ mod tests {
 
         dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
-        let state = dump_db.dump_state(Default::default()).unwrap().unwrap();
+        let state = dump_db.dump_state(Default::default(), U64::ZERO).unwrap().unwrap();
 
         let mut load_db = MemDb::default();
 

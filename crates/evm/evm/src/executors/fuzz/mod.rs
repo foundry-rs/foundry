@@ -10,15 +10,12 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    strategies::{
-        build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
-        EvmFuzzState,
-    },
+    strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
     BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzTestResult,
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{borrow::Cow, cell::RefCell};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -82,22 +79,14 @@ impl FuzzedExecutor {
 
         let state = self.build_fuzz_state();
 
-        let mut weights = vec![];
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        if self.config.dictionary.dictionary_weight < 100 {
-            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone())));
-        }
-        if dictionary_weight > 0 {
-            weights.push((
-                self.config.dictionary.dictionary_weight,
-                fuzz_calldata_from_state(func.clone(), state.clone()),
-            ));
-        }
-
-        let strat = proptest::strategy::Union::new_weighted(weights);
+        let strat = proptest::prop_oneof![
+            100 - dictionary_weight => fuzz_calldata(func.clone()),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+        ];
         debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
-            let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata)?;
+            let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
@@ -203,27 +192,15 @@ impl FuzzedExecutor {
     /// or a `CounterExampleOutcome`
     pub fn single_fuzz(
         &self,
-        state: &EvmFuzzState,
         address: Address,
         should_fail: bool,
         calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
-        let call = self
+        let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
-        let state_changeset = call
-            .state_changeset
-            .as_ref()
-            .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
-
-        // Build fuzzer state
-        collect_state_from_call(
-            &call.logs,
-            state_changeset,
-            state.clone(),
-            &self.config.dictionary,
-        );
+        let state_changeset = call.state_changeset.take().unwrap();
 
         // When the `assume` cheatcode is called it returns a special string
         if call.result.as_ref() == MAGIC_ASSUME {
@@ -235,8 +212,12 @@ impl FuzzedExecutor {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success =
-            self.executor.is_raw_call_success(address, state_changeset.clone(), &call, should_fail);
+        let success = self.executor.is_raw_call_success(
+            address,
+            Cow::Owned(state_changeset),
+            &call,
+            should_fail,
+        );
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -259,9 +240,9 @@ impl FuzzedExecutor {
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend.active_fork_db() {
-            build_initial_state(fork_db, &self.config.dictionary)
+            build_initial_state(fork_db, self.config.dictionary)
         } else {
-            build_initial_state(self.executor.backend.mem_db(), &self.config.dictionary)
+            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary)
         }
     }
 }

@@ -1,6 +1,9 @@
 //! tests against local geth for local debug purposes
 
-use crate::abi::VENDING_MACHINE_CONTRACT;
+use crate::{
+    abi::VENDING_MACHINE_CONTRACT,
+    utils::{ContractInstanceCompat, DeploymentTxFactoryCompat},
+};
 use ethers::{
     abi::Address,
     contract::{Contract, ContractFactory},
@@ -9,7 +12,7 @@ use ethers::{
     types::U256,
     utils::WEI_IN_ETHER,
 };
-use ethers_solc::{project_util::TempProject, Artifact};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::time::timeout;
@@ -52,7 +55,7 @@ async fn test_geth_revert_transaction() {
 
     // deploy successfully
     let factory =
-        ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), Arc::clone(&client));
+        ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), Arc::clone(&client));
 
     let mut tx = factory.deploy(()).unwrap().tx;
     tx.set_from(account);
@@ -60,7 +63,7 @@ async fn test_geth_revert_transaction() {
     let resp = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let contract =
-        Contract::<Provider<_>>::new(resp.contract_address.unwrap(), abi.unwrap(), client);
+        Contract::<Provider<_>>::new_compat(resp.contract_address.unwrap(), abi.unwrap(), client);
 
     let ten = WEI_IN_ETHER.saturating_mul(10u64.into());
     let call = contract.method::<_, ()>("buyRevert", ten).unwrap().value(ten).from(account);

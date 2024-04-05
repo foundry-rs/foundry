@@ -5,7 +5,9 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{
+    artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput,
+};
 use foundry_evm::{
     backend::Backend,
     decode::RevertDecoder,
@@ -26,7 +28,15 @@ use std::{
     time::Instant,
 };
 
-pub type DeployableContracts = BTreeMap<ArtifactId, (JsonAbi, Bytes, Vec<Bytes>)>;
+#[derive(Debug, Clone)]
+pub struct TestContract {
+    pub abi: JsonAbi,
+    pub bytecode: Bytes,
+    pub libs_to_deploy: Vec<Bytes>,
+    pub libraries: Libraries,
+}
+
+pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
@@ -67,8 +77,10 @@ impl MultiContractRunner {
     pub fn matching_contracts<'a>(
         &'a self,
         filter: &'a dyn TestFilter,
-    ) -> impl Iterator<Item = (&ArtifactId, &(JsonAbi, Bytes, Vec<Bytes>))> {
-        self.contracts.iter().filter(|&(id, (abi, _, _))| matches_contract(id, abi, filter))
+    ) -> impl Iterator<Item = (&ArtifactId, &TestContract)> {
+        self.contracts
+            .iter()
+            .filter(|&(id, TestContract { abi, .. })| matches_contract(id, abi, filter))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -77,7 +89,7 @@ impl MultiContractRunner {
         filter: &'a dyn TestFilter,
     ) -> impl Iterator<Item = &Function> {
         self.matching_contracts(filter)
-            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .flat_map(|(_, TestContract { abi, .. })| abi.functions())
             .filter(|func| is_matching_test(func, filter))
     }
 
@@ -89,14 +101,14 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .flat_map(|(_, TestContract { abi, .. })| abi.functions())
             .filter(|func| func.is_test() || func.is_invariant_test())
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.matching_contracts(filter)
-            .map(|(id, (abi, _, _))| {
+            .map(|(id, TestContract { abi, .. })| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let tests = abi
@@ -169,22 +181,19 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, (abi, deploy_code, libs))| {
+        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
             let identifier = id.identifier();
             let executor = executor.clone();
-            let result = self.run_tests(&identifier, abi, executor, deploy_code, libs, filter);
+            let result = self.run_tests(&identifier, contract, executor, filter);
             let _ = tx.send((identifier, result));
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_tests(
         &self,
         name: &str,
-        contract: &JsonAbi,
+        contract: &TestContract,
         executor: Executor,
-        deploy_code: &Bytes,
-        libs: &[Bytes],
         filter: &dyn TestFilter,
     ) -> SuiteResult {
         let mut span_name = name;
@@ -199,11 +208,9 @@ impl MultiContractRunner {
             name,
             executor,
             contract,
-            deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
             &self.revert_decoder,
-            libs,
             self.debug,
         );
         let r = runner.run_tests(filter, &self.test_options, Some(&self.known_contracts));
@@ -307,14 +314,17 @@ impl MultiContractRunnerBuilder {
             .map(|(i, _)| (i.identifier(), root.join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
-        let linker = Linker::new(root, contracts);
+        let linker = Linker::new(
+            root,
+            contracts.iter().map(|(id, artifact)| (id.clone(), artifact)).collect(),
+        );
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         let mut known_contracts = ContractsByArtifact::default();
 
-        for (id, contract) in &linker.contracts.0 {
+        for (id, contract) in contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else {
                 continue;
             };
@@ -341,7 +351,10 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                 abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
             {
-                deployable_contracts.insert(id.clone(), (abi.clone(), bytecode, libs_to_deploy));
+                deployable_contracts.insert(
+                    id.clone(),
+                    TestContract { abi: abi.clone(), bytecode, libs_to_deploy, libraries },
+                );
             }
 
             if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
@@ -370,7 +383,7 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
+pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
     (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
         abi.functions().any(|func| is_matching_test(func, filter))
 }

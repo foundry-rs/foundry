@@ -1,11 +1,20 @@
-use crate::{execute::LinkedState, ScriptArgs, ScriptConfig};
+use crate::{
+    broadcast::BundledState,
+    execute::LinkedState,
+    multi_sequence::MultiChainSequence,
+    sequence::{ScriptSequence, ScriptSequenceKind},
+    ScriptArgs, ScriptConfig,
+};
 
 use alloy_primitives::{Address, Bytes};
+use ethers_providers::Middleware;
 use eyre::{Context, OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
+    provider::ethers::try_get_http_provider,
+    types::ToAlloy,
     ContractsByArtifact,
 };
 use foundry_compilers::{
@@ -13,22 +22,29 @@ use foundry_compilers::{
     cache::SolFilesCache,
     contracts::ArtifactContracts,
     info::ContractInfo,
-    ArtifactId,
+    ArtifactId, ProjectCompileOutput,
 };
 use foundry_linking::{LinkOutput, Linker};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
 pub struct BuildData {
+    /// Root of the project
+    pub project_root: PathBuf,
     /// Linker which can be used to link contracts, owns [ArtifactContracts] map.
-    pub linker: Linker,
+    pub output: ProjectCompileOutput,
     /// Id of target contract artifact.
     pub target: ArtifactId,
-    /// Source files of the contracts. Used by debugger.
-    pub sources: ContractSources,
+    /// Artifact ids of the contracts. Passed to cheatcodes to enable usage of
+    /// `vm.getDeployedCode`.
+    pub artifact_ids: Vec<ArtifactId>,
 }
 
 impl BuildData {
+    pub fn get_linker(&self) -> Linker {
+        Linker::new(self.project_root.clone(), self.output.artifact_ids().collect())
+    }
+
     /// Links the build data with given libraries, using sender and nonce to compute addresses of
     /// missing libraries.
     pub fn link(
@@ -37,8 +53,12 @@ impl BuildData {
         sender: Address,
         nonce: u64,
     ) -> Result<LinkedBuildData> {
-        let link_output =
-            self.linker.link_with_nonce_or_address(known_libraries, sender, nonce, &self.target)?;
+        let link_output = self.get_linker().link_with_nonce_or_address(
+            known_libraries,
+            sender,
+            nonce,
+            &self.target,
+        )?;
 
         LinkedBuildData::new(link_output, self)
     }
@@ -46,8 +66,12 @@ impl BuildData {
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
     /// to fully link target contract.
     pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        let link_output =
-            self.linker.link_with_nonce_or_address(libraries, Address::ZERO, 0, &self.target)?;
+        let link_output = self.get_linker().link_with_nonce_or_address(
+            libraries,
+            Address::ZERO,
+            0,
+            &self.target,
+        )?;
 
         if !link_output.libs_to_deploy.is_empty() {
             eyre::bail!("incomplete libraries set");
@@ -67,12 +91,20 @@ pub struct LinkedBuildData {
     pub libraries: Libraries,
     /// Libraries that need to be deployed by sender before script execution.
     pub predeploy_libraries: Vec<Bytes>,
+    /// Source files of the contracts. Used by debugger.
+    pub sources: ContractSources,
 }
 
 impl LinkedBuildData {
     pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
+        let sources = ContractSources::from_project_output(
+            &build_data.output,
+            &build_data.project_root,
+            &link_output.libraries,
+        )?;
+
         let highlevel_known_contracts = build_data
-            .linker
+            .get_linker()
             .get_linked_artifacts(&link_output.libraries)?
             .iter()
             .filter_map(|(id, contract)| {
@@ -88,6 +120,7 @@ impl LinkedBuildData {
             highlevel_known_contracts,
             libraries: link_output.libraries,
             predeploy_libraries: link_output.libs_to_deploy,
+            sources,
         })
     }
 
@@ -181,6 +214,8 @@ impl PreprocessedState {
 
         let mut target_id: Option<ArtifactId> = None;
 
+        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+
         // Find target artfifact id by name and path in compilation artifacts.
         for (id, contract) in output.artifact_ids().filter(|(id, _)| id.source == target_path) {
             if let Some(name) = &target_name {
@@ -211,16 +246,18 @@ impl PreprocessedState {
             target_id = Some(id);
         }
 
-        let sources = ContractSources::from_project_output(&output, project.root())?;
-        let contracts = output.into_artifacts().collect();
         let target = target_id.ok_or_eyre("Could not find target contract")?;
-        let linker = Linker::new(project.root(), contracts);
 
         Ok(CompiledState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData { linker, target, sources },
+            build_data: BuildData {
+                output,
+                target,
+                project_root: project.root().clone(),
+                artifact_ids,
+            },
         })
     }
 }
@@ -244,5 +281,104 @@ impl CompiledState {
         let build_data = build_data.link(known_libraries, sender, nonce)?;
 
         Ok(LinkedState { args, script_config, script_wallets, build_data })
+    }
+
+    /// Tries loading the resumed state from the cache files, skipping simulation stage.
+    pub async fn resume(self) -> Result<BundledState> {
+        let chain = if self.args.multi {
+            None
+        } else {
+            let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
+            let provider = Arc::new(try_get_http_provider(fork_url)?);
+            Some(provider.get_chainid().await?.as_u64())
+        };
+
+        let sequence = match self.try_load_sequence(chain, false) {
+            Ok(sequence) => sequence,
+            Err(_) => {
+                // If the script was simulated, but there was no attempt to broadcast yet,
+                // try to read the script sequence from the `dry-run/` folder
+                let mut sequence = self.try_load_sequence(chain, true)?;
+
+                // If sequence was in /dry-run, Update its paths so it is not saved into /dry-run
+                // this time as we are about to broadcast it.
+                sequence.update_paths_to_broadcasted(
+                    &self.script_config.config,
+                    &self.args.sig,
+                    &self.build_data.target,
+                )?;
+
+                sequence.save(true, true)?;
+                sequence
+            }
+        };
+
+        let (args, build_data, script_wallets, script_config) = if !self.args.unlocked {
+            let mut froms = sequence.sequences().iter().flat_map(|s| {
+                s.transactions
+                    .iter()
+                    .skip(s.receipts.len())
+                    .map(|t| t.transaction.from().expect("from is missing in script artifact"))
+            });
+
+            let available_signers = self
+                .script_wallets
+                .signers()
+                .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+
+            if !froms.all(|from| available_signers.contains(&from.to_alloy())) {
+                // IF we are missing required signers, execute script as we might need to collect
+                // private keys from the execution.
+                let executed = self.link()?.prepare_execution().await?.execute().await?;
+                (
+                    executed.args,
+                    executed.build_data.build_data,
+                    executed.script_wallets,
+                    executed.script_config,
+                )
+            } else {
+                (self.args, self.build_data, self.script_wallets, self.script_config)
+            }
+        } else {
+            (self.args, self.build_data, self.script_wallets, self.script_config)
+        };
+
+        // Collect libraries from sequence and link contracts with them.
+        let libraries = match sequence {
+            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.libraries)?,
+            // Library linking is not supported for multi-chain sequences
+            ScriptSequenceKind::Multi(_) => Libraries::default(),
+        };
+
+        let linked_build_data = build_data.link_with_libraries(libraries)?;
+
+        Ok(BundledState {
+            args,
+            script_config,
+            script_wallets,
+            build_data: linked_build_data,
+            sequence,
+        })
+    }
+
+    fn try_load_sequence(&self, chain: Option<u64>, dry_run: bool) -> Result<ScriptSequenceKind> {
+        if let Some(chain) = chain {
+            let sequence = ScriptSequence::load(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                chain,
+                dry_run,
+            )?;
+            Ok(ScriptSequenceKind::Single(sequence))
+        } else {
+            let sequence = MultiChainSequence::load(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                dry_run,
+            )?;
+            Ok(ScriptSequenceKind::Multi(sequence))
+        }
     }
 }

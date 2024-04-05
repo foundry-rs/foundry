@@ -249,6 +249,22 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` with signer provided to script using the secp256k1 curve.
+    ///
+    /// If `--sender` is provided, the signer with provided address is used, otherwise,
+    /// if exactly one signer is provided to the script, that signer is used.
+    ///
+    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
+    /// if `--sender` is not provided and not exactly one signer is passed to the script.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs `digest` with signer provided to script using the secp256k1 curve.
+    ///
+    /// Raises error if none of the signers passed into the script have provided address.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     #[cheatcode(group = Evm, safety = Safe)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
@@ -1381,11 +1397,13 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function writeLine(string calldata path, string calldata data) external;
 
-    /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.
+    /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
-    /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file.
+    /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
 
@@ -1398,6 +1416,16 @@ interface Vm {
     /// Performs a foreign function call via terminal and returns the exit code, stdout, and stderr.
     #[cheatcode(group = Filesystem)]
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
+
+    // -------- User Interaction --------
+
+    /// Prompts the user for a string value in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function prompt(string calldata promptText) external returns (string memory input);
+
+    /// Prompts the user for a hidden string value in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function promptSecret(string calldata promptText) external returns (string memory input);
 
     // ======== Environment Variables ========
 
@@ -1553,8 +1581,12 @@ interface Vm {
 
     // -------- Broadcasting Transactions --------
 
-    /// Using the address that calls the test contract, has the next call (at this call depth only)
-    /// create a transaction that can later be signed and sent onchain.
+    /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.
+    ///
+    /// Broadcasting address is determined by checking the following in order:
+    /// 1. If `--sender` argument was provided, that address is used.
+    /// 2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.
+    /// 3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.
     #[cheatcode(group = Scripting)]
     function broadcast() external;
 
@@ -1568,8 +1600,12 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function broadcast(uint256 privateKey) external;
 
-    /// Using the address that calls the test contract, has all subsequent calls
-    /// (at this call depth only) create transactions that can later be signed and sent onchain.
+    /// Has all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain.
+    ///
+    /// Broadcasting address is determined by checking the following in order:
+    /// 1. If `--sender` argument was provided, that address is used.
+    /// 2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.
+    /// 3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.
     #[cheatcode(group = Scripting)]
     function startBroadcast() external;
 
@@ -1644,6 +1680,11 @@ interface Vm {
     /// Splits the given `string` into an array of strings divided by the `delimiter`.
     #[cheatcode(group = String)]
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
+    /// Returns the index of the first occurrence of a `key` in an `input` string.
+    /// Returns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.
+    /// Returns 0 in case of an empty `key`.
+    #[cheatcode(group = String)]
+    function indexOf(string memory input, string memory key) external pure returns (uint256);
 
     // ======== JSON Parsing and Manipulation ========
 

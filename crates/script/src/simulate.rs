@@ -21,7 +21,7 @@ use foundry_common::{
     get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
 };
 use foundry_evm::traces::render_trace_arena;
-use futures::future::join_all;
+use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -66,7 +66,6 @@ impl PreSimulationState {
             script_config: self.script_config,
             script_wallets: self.script_wallets,
             build_data: self.build_data,
-            execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
         })
@@ -199,12 +198,7 @@ impl PreSimulationState {
                 if let Ok(Some((_, (abi, code)))) =
                     contracts.find_by_name_or_identifier(contract_name)
                 {
-                    let info = ArtifactInfo {
-                        contract_name: contract_name.to_string(),
-                        contract_id: contract_id.to_string(),
-                        abi,
-                        code,
-                    };
+                    let info = ArtifactInfo { contract_name: contract_name.to_string(), abi, code };
                     return Some((*addr, info));
                 }
                 None
@@ -213,7 +207,7 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<HashMap<RpcUrl, ScriptRunner>> {
+    async fn build_runners(&self) -> Result<Vec<(RpcUrl, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
         if !shell::verbosity().is_silent() {
             let n = rpcs.len();
@@ -221,17 +215,13 @@ impl PreSimulationState {
             println!("\n## Setting up {n} EVM{s}.");
         }
 
-        let futs = rpcs
-            .into_iter()
-            .map(|rpc| async move {
-                let mut script_config = self.script_config.clone();
-                script_config.evm_opts.fork_url = Some(rpc.clone());
-                let runner = script_config.get_runner().await?;
-                Ok((rpc.clone(), runner))
-            })
-            .collect::<Vec<_>>();
-
-        join_all(futs).await.into_iter().collect()
+        let futs = rpcs.into_iter().map(|rpc| async move {
+            let mut script_config = self.script_config.clone();
+            script_config.evm_opts.fork_url = Some(rpc.clone());
+            let runner = script_config.get_runner().await?;
+            Ok((rpc.clone(), runner))
+        });
+        try_join_all(futs).await
     }
 
     /// If simulation is disabled, converts transactions into [TransactionWithMetadata] type
@@ -259,7 +249,6 @@ pub struct FilledTransactionsState {
     pub script_config: ScriptConfig,
     pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata>,
 }
@@ -400,8 +389,6 @@ impl FilledTransactionsState {
             script_config: self.script_config,
             script_wallets: self.script_wallets,
             build_data: self.build_data,
-            execution_data: self.execution_data,
-            execution_artifacts: self.execution_artifacts,
             sequence,
         })
     }

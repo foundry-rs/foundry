@@ -15,6 +15,7 @@ pub mod constants;
 pub mod debug;
 pub mod decode;
 pub mod fork;
+pub mod opcodes;
 pub mod opts;
 pub mod snapshot;
 pub mod utils;

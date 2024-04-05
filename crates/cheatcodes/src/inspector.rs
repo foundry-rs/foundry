@@ -30,8 +30,9 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, TransactTo},
-    EvmContext, Inspector,
+    EvmContext, InnerEvmContext, Inspector,
 };
+use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -154,7 +155,7 @@ pub struct Cheatcodes {
     pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
-    pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
+    pub allowed_mem_writes: FxHashMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -221,14 +222,32 @@ impl Cheatcodes {
         call: &CallInputs,
     ) -> Result {
         // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input, false)?;
+        let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
+            if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
+                let msg = format!(
+                    "unknown cheatcode with selector {selector}; \
+                     you may have a mismatch between the `Vm` interface (likely in `forge-std`) \
+                     and the `forge` version"
+                );
+                return alloy_sol_types::Error::Other(std::borrow::Cow::Owned(msg));
+            }
+            e
+        })?;
         let caller = call.context.caller;
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
         ecx.db.ensure_cheatcode_access_forking_mode(&caller)?;
 
-        apply_dispatch(&decoded, &mut CheatsCtxt { state: self, ecx, caller })
+        apply_dispatch(
+            &decoded,
+            &mut CheatsCtxt {
+                state: self,
+                ecx: &mut ecx.inner,
+                precompiles: &mut ecx.precompiles,
+                caller,
+            },
+        )
     }
 
     /// Determines the address of the contract and marks it as allowed
@@ -238,7 +257,7 @@ impl Cheatcodes {
     /// automatically we need to determine the new address
     fn allow_cheatcodes_on_create<DB: DatabaseExt>(
         &self,
-        ecx: &mut EvmContext<DB>,
+        ecx: &mut InnerEvmContext<DB>,
         inputs: &CreateInputs,
     ) -> Address {
         let old_nonce = ecx
@@ -302,6 +321,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        let ecx = &mut ecx.inner;
         self.pc = interpreter.program_counter();
 
         // reset gas if gas metering is turned off
@@ -716,6 +736,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             };
         }
 
+        let ecx = &mut ecx.inner;
+
         if call.contract == HARDHAT_CONSOLE_ADDRESS {
             return None
         }
@@ -929,6 +951,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         call: &CallInputs,
         mut outcome: CallOutcome,
     ) -> CallOutcome {
+        let ecx = &mut ecx.inner;
         let cheatcode_call =
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1198,6 +1221,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         ecx: &mut EvmContext<DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
+        let ecx = &mut ecx.inner;
         let gas = Gas::new(call.gas_limit);
 
         // Apply our prank
@@ -1338,6 +1362,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         _call: &CreateInputs,
         mut outcome: CreateOutcome,
     ) -> CreateOutcome {
+        let ecx = &mut ecx.inner;
+
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if ecx.journaled_state.depth() == prank.depth {
@@ -1485,7 +1511,7 @@ fn disallowed_mem_write(
 /// Returns a `DatabaseError::MissingCreate2Deployer` if the `DEFAULT_CREATE2_DEPLOYER` account is
 /// not found or if it does not have any associated bytecode.
 fn apply_create2_deployer<DB: DatabaseExt>(
-    ecx: &mut EvmContext<DB>,
+    ecx: &mut InnerEvmContext<DB>,
     call: &mut CreateInputs,
     prank: Option<&Prank>,
     broadcast: Option<&Broadcast>,
@@ -1555,7 +1581,7 @@ fn apply_create2_deployer<DB: DatabaseExt>(
 fn process_broadcast_create<DB: DatabaseExt>(
     broadcast_sender: Address,
     bytecode: Bytes,
-    ecx: &mut EvmContext<DB>,
+    ecx: &mut InnerEvmContext<DB>,
     call: &mut CreateInputs,
 ) -> (Bytes, Option<Address>, u64) {
     call.caller = broadcast_sender;
@@ -1581,13 +1607,16 @@ fn process_broadcast_create<DB: DatabaseExt>(
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
 // not be overwritten by later estimations
-fn check_if_fixed_gas_limit<DB: DatabaseExt>(data: &EvmContext<DB>, call_gas_limit: u64) -> bool {
+fn check_if_fixed_gas_limit<DB: DatabaseExt>(
+    ecx: &InnerEvmContext<DB>,
+    call_gas_limit: u64,
+) -> bool {
     // If the gas limit was not set in the source code it is set to the estimated gas left at the
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination.
     // For example by generating it in the compilation or EVM simulation process
-    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
-        U256::from(call_gas_limit) <= data.env.block.gas_limit
+    U256::from(ecx.env.tx.gas_limit) > ecx.env.block.gas_limit &&
+        U256::from(call_gas_limit) <= ecx.env.block.gas_limit
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300

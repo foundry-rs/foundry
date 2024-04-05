@@ -111,6 +111,11 @@ impl ScriptWallets {
         self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
         Ok(Default::default())
     }
+
+    /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
+    pub fn signers(&self) -> Result<Vec<Address>> {
+        Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
+    }
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.

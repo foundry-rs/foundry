@@ -4,7 +4,10 @@ use crate::eth::{
     transaction::optimism::{DepositTransaction, DepositTransactionRequest},
     utils::eip_to_revm_access_list,
 };
-use alloy_consensus::{ReceiptWithBloom, TxEip1559, TxEip2930, TxLegacy};
+use alloy_consensus::{
+    BlobTransactionSidecar, ReceiptWithBloom, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant,
+    TxEip4844WithSidecar, TxLegacy,
+};
 use alloy_network::{Signed, Transaction, TxKind};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, B256, U128, U256, U64};
 use alloy_rlp::{Decodable, Encodable};
@@ -39,11 +42,14 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         gas_price,
         max_fee_per_gas,
         max_priority_fee_per_gas,
+        max_fee_per_blob_gas,
+        mut blob_versioned_hashes,
         gas,
         value,
         input,
         nonce,
         mut access_list,
+        sidecar,
         transaction_type,
         other,
         ..
@@ -70,9 +76,13 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
         max_fee_per_gas,
         max_priority_fee_per_gas,
         access_list.take(),
+        max_fee_per_blob_gas,
+        blob_versioned_hashes.take(),
+        sidecar,
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None) | (None, Some(_), None, None, None) => {
+        (Some(0), _, None, None, None, None, None, None) |
+        (None, Some(_), None, None, None, None, None, None) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 gas_price: gas_price.unwrap_or_default().to::<u128>(),
@@ -87,7 +97,8 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _) | (None, _, None, None, Some(_)) => {
+        (Some(1), _, None, None, _, None, None, None) |
+        (None, _, None, None, Some(_), None, None, None) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
                 gas_price: gas_price.unwrap_or_default().to(),
@@ -103,10 +114,10 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _) |
-        (None, None, Some(_), _, _) |
-        (None, None, _, Some(_), _) |
-        (None, None, None, None, None) => {
+        (Some(2), None, _, _, _, _, None, None) |
+        (None, None, Some(_), _, _, _, None, None) |
+        (None, None, _, Some(_), _, _, None, None) |
+        (None, None, None, None, None, _, None, None) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default().to::<u64>(),
@@ -123,6 +134,45 @@ pub fn transaction_request_to_typed(tx: TransactionRequest) -> Option<TypedTrans
                 access_list: to_eip_access_list(access_list.unwrap_or_default()),
             }))
         }
+        // EIP4844
+        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar)) => {
+            let tx = TxEip4844 {
+                nonce: nonce.unwrap_or_default().to::<u64>(),
+                max_fee_per_gas: max_fee_per_gas.unwrap_or_default().to::<u128>(),
+                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
+                max_fee_per_blob_gas: max_fee_per_blob_gas.unwrap_or_default().to::<u128>(),
+                gas_limit: gas.unwrap_or_default().to::<u64>(),
+                value: value.unwrap_or(U256::ZERO),
+                input: input.into_input().unwrap_or_default(),
+                to: match to {
+                    Some(to) => TxKind::Call(to),
+                    None => TxKind::Create,
+                },
+                chain_id: 0,
+                access_list: to_eip_access_list(access_list.unwrap_or_default()),
+                blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
+            };
+            let blob_sidecar = BlobTransactionSidecar {
+                blobs: sidecar
+                    .blobs
+                    .into_iter()
+                    .map(|b| c_kzg::Blob::from_bytes(b.as_slice()).unwrap())
+                    .collect(),
+                commitments: sidecar
+                    .commitments
+                    .into_iter()
+                    .map(|c| c_kzg::Bytes48::from_bytes(c.as_slice()).unwrap())
+                    .collect(),
+                proofs: sidecar
+                    .proofs
+                    .into_iter()
+                    .map(|p| c_kzg::Bytes48::from_bytes(p.as_slice()).unwrap())
+                    .collect(),
+            };
+            Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
+                TxEip4844WithSidecar::from_tx_and_sidecar(tx, blob_sidecar),
+            )))
+        }
         _ => None,
     }
 }
@@ -132,6 +182,7 @@ pub enum TypedTransactionRequest {
     Legacy(TxLegacy),
     EIP2930(TxEip2930),
     EIP1559(TxEip1559),
+    EIP4844(TxEip4844Variant),
     Deposit(DepositTransactionRequest),
 }
 
@@ -316,6 +367,33 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             blob_versioned_hashes: vec![],
             other: Default::default(),
         },
+        TypedTransaction::EIP4844(t) => RpcTransaction {
+            hash,
+            nonce: U64::from(t.tx().tx().nonce),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            from,
+            to: None,
+            value: t.tx().tx().value,
+            gas_price: Some(U128::from(t.tx().tx().max_fee_per_gas)),
+            max_fee_per_gas: Some(U128::from(t.tx().tx().max_fee_per_gas)),
+            max_priority_fee_per_gas: Some(U128::from(t.tx().tx().max_priority_fee_per_gas)),
+            gas: U256::from(t.tx().tx().gas_limit),
+            input: t.tx().tx().input.clone(),
+            chain_id: Some(U64::from(t.tx().tx().chain_id)),
+            signature: Some(RpcSignature {
+                r: t.signature().r(),
+                s: t.signature().s(),
+                v: U256::from(t.signature().v().y_parity_byte()),
+                y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
+            }),
+            access_list: Some(from_eip_to_alloy_access_list(t.tx().tx().access_list.clone()).0),
+            transaction_type: Some(U64::from(3)),
+            max_fee_per_blob_gas: Some(U128::from(t.tx().tx().max_fee_per_blob_gas)),
+            blob_versioned_hashes: t.tx().tx().blob_versioned_hashes.clone(),
+            other: Default::default(),
+        },
         TypedTransaction::Deposit(t) => RpcTransaction {
             hash,
             nonce: U64::from(t.nonce),
@@ -463,6 +541,37 @@ impl PendingTransaction {
                     ..Default::default()
                 }
             }
+            TypedTransaction::EIP4844(tx) => {
+                let TxEip4844 {
+                    chain_id,
+                    nonce,
+                    max_fee_per_blob_gas,
+                    max_fee_per_gas,
+                    max_priority_fee_per_gas,
+                    gas_limit,
+                    to,
+                    value,
+                    input,
+                    access_list,
+                    blob_versioned_hashes,
+                    ..
+                } = tx.tx().tx();
+                TxEnv {
+                    caller,
+                    transact_to: transact_to(to),
+                    data: alloy_primitives::Bytes(input.0.clone()),
+                    chain_id: Some(*chain_id),
+                    nonce: Some(*nonce),
+                    value: *value,
+                    gas_price: U256::from(*max_fee_per_gas),
+                    gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
+                    max_fee_per_blob_gas: Some(U256::from(*max_fee_per_blob_gas)),
+                    blob_hashes: blob_versioned_hashes.clone(),
+                    gas_limit: *gas_limit,
+                    access_list: eip_to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
+                }
+            }
             TypedTransaction::Deposit(tx) => {
                 let chain_id = tx.chain_id();
                 let DepositTransaction {
@@ -509,6 +618,8 @@ pub enum TypedTransaction {
     EIP2930(Signed<TxEip2930>),
     /// EIP-1559 transaction
     EIP1559(Signed<TxEip1559>),
+    /// EIP-4844 transaction
+    EIP4844(Signed<TxEip4844Variant>),
     /// op-stack deposit transaction
     Deposit(DepositTransaction),
 }
@@ -524,6 +635,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.gas_price,
             TypedTransaction::EIP2930(tx) => tx.gas_price,
             TypedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
+            TypedTransaction::EIP4844(tx) => tx.tx().tx().max_fee_per_blob_gas,
             TypedTransaction::Deposit(_) => 0,
         })
     }
@@ -533,6 +645,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.gas_limit,
             TypedTransaction::EIP2930(tx) => tx.gas_limit,
             TypedTransaction::EIP1559(tx) => tx.gas_limit,
+            TypedTransaction::EIP4844(tx) => tx.tx().tx().gas_limit,
             TypedTransaction::Deposit(tx) => tx.gas_limit.to::<u64>(),
         })
     }
@@ -542,6 +655,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.value,
             TypedTransaction::EIP2930(tx) => tx.value,
             TypedTransaction::EIP1559(tx) => tx.value,
+            TypedTransaction::EIP4844(tx) => tx.tx().tx().value,
             TypedTransaction::Deposit(tx) => tx.value,
         })
     }
@@ -551,6 +665,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => &tx.input,
             TypedTransaction::EIP2930(tx) => &tx.input,
             TypedTransaction::EIP1559(tx) => &tx.input,
+            TypedTransaction::EIP4844(tx) => &tx.tx().tx().input,
             TypedTransaction::Deposit(tx) => &tx.input,
         }
     }
@@ -561,6 +676,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(_) => None,
             TypedTransaction::EIP2930(_) => Some(1),
             TypedTransaction::EIP1559(_) => Some(2),
+            TypedTransaction::EIP4844(_) => Some(3),
             TypedTransaction::Deposit(_) => Some(0x7E),
         }
     }
@@ -581,6 +697,8 @@ impl TypedTransaction {
                 gas_price: Some(U256::from(t.tx().gas_price)),
                 max_fee_per_gas: None,
                 max_priority_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                blob_versioned_hashes: None,
                 value: t.value,
                 chain_id: t.tx().chain_id,
                 access_list: Default::default(),
@@ -593,6 +711,8 @@ impl TypedTransaction {
                 gas_price: Some(U256::from(t.tx().gas_price)),
                 max_fee_per_gas: None,
                 max_priority_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                blob_versioned_hashes: None,
                 value: t.value,
                 chain_id: Some(t.chain_id),
                 access_list: to_alloy_access_list(t.access_list.clone()),
@@ -605,9 +725,25 @@ impl TypedTransaction {
                 gas_price: None,
                 max_fee_per_gas: Some(U256::from(t.max_fee_per_gas)),
                 max_priority_fee_per_gas: Some(U256::from(t.max_priority_fee_per_gas)),
+                max_fee_per_blob_gas: None,
+                blob_versioned_hashes: None,
                 value: t.value,
                 chain_id: Some(t.chain_id),
                 access_list: to_alloy_access_list(t.access_list.clone()),
+            },
+            TypedTransaction::EIP4844(t) => TransactionEssentials {
+                kind: t.tx().tx().to,
+                input: t.tx().tx().input.clone(),
+                nonce: U256::from(t.tx().tx().nonce),
+                gas_limit: U256::from(t.tx().tx().gas_limit),
+                gas_price: Some(U256::from(t.tx().tx().max_fee_per_blob_gas)),
+                max_fee_per_gas: Some(U256::from(t.tx().tx().max_fee_per_gas)),
+                max_priority_fee_per_gas: Some(U256::from(t.tx().tx().max_priority_fee_per_gas)),
+                max_fee_per_blob_gas: Some(U256::from(t.tx().tx().max_fee_per_blob_gas)),
+                blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
+                value: t.tx().tx().value,
+                chain_id: Some(t.tx().tx().chain_id),
+                access_list: to_alloy_access_list(t.tx().tx().access_list.clone()),
             },
             TypedTransaction::Deposit(t) => TransactionEssentials {
                 kind: t.kind,
@@ -617,6 +753,8 @@ impl TypedTransaction {
                 gas_price: Some(U256::from(0)),
                 max_fee_per_gas: None,
                 max_priority_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                blob_versioned_hashes: None,
                 value: t.value,
                 chain_id: t.chain_id(),
                 access_list: Default::default(),
@@ -629,6 +767,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => U256::from(t.nonce),
             TypedTransaction::EIP2930(t) => U256::from(t.nonce),
             TypedTransaction::EIP1559(t) => U256::from(t.nonce),
+            TypedTransaction::EIP4844(t) => U256::from(t.tx().tx().nonce),
             TypedTransaction::Deposit(t) => U256::from(t.nonce),
         }
     }
@@ -638,6 +777,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => t.chain_id,
             TypedTransaction::EIP2930(t) => Some(t.chain_id),
             TypedTransaction::EIP1559(t) => Some(t.chain_id),
+            TypedTransaction::EIP4844(t) => Some(t.tx().tx().chain_id),
             TypedTransaction::Deposit(t) => t.chain_id(),
         }
     }
@@ -659,6 +799,16 @@ impl TypedTransaction {
         matches!(self, TypedTransaction::EIP1559(_))
     }
 
+    /// Returns true whether this tx is a EIP2930 transaction
+    pub fn is_eip2930(&self) -> bool {
+        matches!(self, TypedTransaction::EIP2930(_))
+    }
+
+    /// Returns true whether this tx is a EIP4844 transaction
+    pub fn is_eip4844(&self) -> bool {
+        matches!(self, TypedTransaction::EIP4844(_))
+    }
+
     /// Returns the hash of the transaction.
     ///
     /// Note: If this transaction has the Impersonated signature then this returns a modified unique
@@ -668,6 +818,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => *t.hash(),
             TypedTransaction::EIP2930(t) => *t.hash(),
             TypedTransaction::EIP1559(t) => *t.hash(),
+            TypedTransaction::EIP4844(t) => *t.hash(),
             TypedTransaction::Deposit(t) => t.hash(),
         }
     }
@@ -695,6 +846,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.recover_signer(),
             TypedTransaction::EIP2930(tx) => tx.recover_signer(),
             TypedTransaction::EIP1559(tx) => tx.recover_signer(),
+            TypedTransaction::EIP4844(tx) => tx.recover_signer(),
             TypedTransaction::Deposit(tx) => tx.recover(),
         }
     }
@@ -705,6 +857,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => &tx.to,
             TypedTransaction::EIP2930(tx) => &tx.to,
             TypedTransaction::EIP1559(tx) => &tx.to,
+            TypedTransaction::EIP4844(tx) => &tx.tx().tx().to,
             TypedTransaction::Deposit(tx) => &tx.kind,
         }
     }
@@ -720,6 +873,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => *tx.signature(),
             TypedTransaction::EIP2930(tx) => *tx.signature(),
             TypedTransaction::EIP1559(tx) => *tx.signature(),
+            TypedTransaction::EIP4844(tx) => *tx.signature(),
             TypedTransaction::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
@@ -736,6 +890,7 @@ impl Encodable for TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.encode(out),
             TypedTransaction::EIP2930(tx) => tx.encode(out),
             TypedTransaction::EIP1559(tx) => tx.encode(out),
+            TypedTransaction::EIP4844(tx) => tx.encode(out),
             TypedTransaction::Deposit(tx) => tx.encode(out),
         }
     }
@@ -774,6 +929,10 @@ impl Decodable for TypedTransaction {
                 } else if tx_type == 0x02 {
                     buf.advance(1);
                     <Signed<TxEip1559> as Decodable>::decode(buf).map(TypedTransaction::EIP1559)
+                } else if tx_type == 0x03 {
+                    buf.advance(1);
+                    <Signed<TxEip4844Variant> as Decodable>::decode(buf)
+                        .map(TypedTransaction::EIP4844)
                 } else if tx_type == 0x7E {
                     buf.advance(1);
                     <DepositTransaction as Decodable>::decode(buf).map(TypedTransaction::Deposit)
@@ -800,6 +959,8 @@ pub struct TransactionEssentials {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,
     pub max_priority_fee_per_gas: Option<U256>,
+    pub max_fee_per_blob_gas: Option<U256>,
+    pub blob_versioned_hashes: Option<Vec<B256>>,
     pub value: U256,
     pub chain_id: Option<u64>,
     pub access_list: AccessList,
@@ -826,6 +987,7 @@ pub enum TypedReceipt {
     Legacy(ReceiptWithBloom),
     EIP2930(ReceiptWithBloom),
     EIP1559(ReceiptWithBloom),
+    EIP4844(ReceiptWithBloom),
     Deposit(ReceiptWithBloom),
 }
 
@@ -835,6 +997,7 @@ impl TypedReceipt {
             TypedReceipt::Legacy(r) |
             TypedReceipt::EIP1559(r) |
             TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => U256::from(r.receipt.cumulative_gas_used),
         }
     }
@@ -844,7 +1007,18 @@ impl TypedReceipt {
             TypedReceipt::Legacy(r) |
             TypedReceipt::EIP1559(r) |
             TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => &r.bloom,
+        }
+    }
+
+    pub fn logs(&self) -> &Vec<Log> {
+        match self {
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
+            TypedReceipt::Deposit(r) => &r.receipt.logs,
         }
     }
 }
@@ -855,6 +1029,7 @@ impl From<TypedReceipt> for ReceiptWithBloom {
             TypedReceipt::Legacy(r) |
             TypedReceipt::EIP1559(r) |
             TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP4844(r) |
             TypedReceipt::Deposit(r) => r,
         }
     }
@@ -870,6 +1045,7 @@ impl Encodable for TypedReceipt {
                 let payload_len = match receipt {
                     TypedReceipt::EIP2930(r) => r.length() + 1,
                     TypedReceipt::EIP1559(r) => r.length() + 1,
+                    TypedReceipt::EIP4844(r) => r.length() + 1,
                     TypedReceipt::Deposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
@@ -883,6 +1059,11 @@ impl Encodable for TypedReceipt {
                     TypedReceipt::EIP1559(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         2u8.encode(out);
+                        r.encode(out);
+                    }
+                    TypedReceipt::EIP4844(r) => {
+                        Header { list: true, payload_length: payload_len }.encode(out);
+                        3u8.encode(out);
                         r.encode(out);
                     }
                     TypedReceipt::Deposit(r) => {
@@ -923,6 +1104,9 @@ impl Decodable for TypedReceipt {
                 } else if receipt_type == 0x02 {
                     buf.advance(1);
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP1559)
+                } else if receipt_type == 0x03 {
+                    buf.advance(1);
+                    <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP4844)
                 } else if receipt_type == 0x7E {
                     buf.advance(1);
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::Deposit)
@@ -1036,6 +1220,42 @@ mod tests {
             tx.recover_signer().unwrap(),
             "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse::<Address>().unwrap()
         );
+    }
+
+    // Test vector from https://sepolia.etherscan.io/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+    // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+    #[test]
+    fn test_decode_live_4844_tx() {
+        use alloy_primitives::{address, b256};
+
+        // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+        let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
+        let res = TypedTransaction::decode(&mut raw_tx.as_slice()).unwrap();
+        assert_eq!(res.r#type(), Some(3));
+
+        let tx = match res {
+            TypedTransaction::EIP4844(tx) => tx,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(
+            tx.tx().tx().to,
+            TxKind::Call(address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064"))
+        );
+
+        assert_eq!(
+            tx.tx().tx().blob_versioned_hashes,
+            vec![
+                b256!("012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
+                b256!("0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
+                b256!("013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
+                b256!("01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
+                b256!("011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
+            ]
+        );
+
+        let from = tx.recover_signer().unwrap();
+        assert_eq!(from, address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
     }
 
     #[test]

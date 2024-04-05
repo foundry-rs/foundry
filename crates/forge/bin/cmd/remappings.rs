@@ -2,8 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
-use foundry_evm::hashbrown::HashMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 /// CLI arguments for `forge remappings`.
 #[derive(Clone, Debug, Parser)]
@@ -25,7 +24,7 @@ impl RemappingArgs {
         let config = self.try_load_config_emit_warnings()?;
 
         if self.pretty {
-            let mut groups = HashMap::<_, Vec<_>>::with_capacity(config.remappings.len());
+            let mut groups = BTreeMap::<_, Vec<_>>::new();
             for remapping in config.remappings {
                 groups.entry(remapping.context.clone()).or_default().push(remapping);
             }
@@ -36,14 +35,14 @@ impl RemappingArgs {
                     println!("Global:");
                 }
 
-                for mut remapping in remappings.into_iter() {
+                for mut remapping in remappings {
                     remapping.context = None; // avoid writing context twice
                     println!("- {remapping}");
                 }
                 println!();
             }
         } else {
-            for remapping in config.remappings.into_iter() {
+            for remapping in config.remappings {
                 println!("{remapping}");
             }
         }
