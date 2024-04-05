@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
         CastSubcommand::AccessList(cmd) => cmd.run().await?,
         CastSubcommand::Age { block, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let account_addr = who.resolve(&provider).await?;
 
             match erc20 {
@@ -233,7 +233,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::BaseFee { block, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
@@ -241,7 +241,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Block { block, full, field, json, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
@@ -251,39 +251,39 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::BlockNumber { rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
         CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).chain().await?);
         }
         CastSubcommand::ChainId { rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
         CastSubcommand::Client { rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!("{}", provider.get_client_version().await?);
         }
         CastSubcommand::Code { block, who, disassemble, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).codesize(who, block).await?);
         }
         CastSubcommand::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
             let computed = Cast::new(provider).compute_address(address, nonce).await?;
@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
         CastSubcommand::FindBlock(cmd) => cmd.run().await?,
         CastSubcommand::GasPrice { rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).gas_price().await?);
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
@@ -326,25 +326,25 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).implementation(who, block).await?);
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).admin(who, block).await?);
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let address = address.resolve(&provider).await?;
             let value = provider.get_proof(address, slots.into_iter().collect(), block).await?;
             println!("{}", serde_json::to_string(&value)?);
@@ -358,7 +358,7 @@ async fn main() -> Result<()> {
         CastSubcommand::MakeTx(cmd) => cmd.run().await?,
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = pending_tx.inner().tx_hash();
@@ -372,7 +372,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
         CastSubcommand::Tx { tx_hash, field, raw, json, rpc } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
 
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
@@ -450,7 +450,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::LookupAddress { who, rpc, verify } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
             let name = provider.lookup_address(who).await?;
@@ -465,7 +465,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::ResolveName { who, rpc, verify } => {
             let config = Config::from(&rpc);
-            let provider = utils::get_alloy_provider(&config)?;
+            let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
             let address = provider.resolve_name(&who).await?;

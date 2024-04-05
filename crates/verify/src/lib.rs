@@ -185,7 +185,7 @@ impl VerifyArgs {
         // If RPC is not set, the default chain is used
         let chain = match config.get_rpc_url() {
             Some(_) => {
-                let provider = utils::get_alloy_provider(&config)?;
+                let provider = utils::get_provider(&config)?;
                 utils::get_chain(config.chain, provider).await?
             }
             None => config.chain.unwrap_or_default(),

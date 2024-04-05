@@ -22,7 +22,7 @@ impl FindBlockArgs {
 
         let ts_target = timestamp;
         let config = Config::from(&rpc);
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
 
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);

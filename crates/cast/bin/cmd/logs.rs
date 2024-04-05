@@ -75,7 +75,7 @@ impl LogsArgs {
         } = self;
 
         let config = Config::from(&eth);
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
 
         let cast = Cast::new(&provider);
 

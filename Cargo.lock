@@ -3501,10 +3501,10 @@ version = "0.2.0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-provider",
  "async-trait",
  "clap",
  "const-hex",
- "ethers-providers",
  "eyre",
  "foundry-block-explorers",
  "foundry-cli",
@@ -3939,8 +3939,7 @@ name = "foundry-test-utils"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
- "ethers-core",
- "ethers-providers",
+ "alloy-provider",
  "eyre",
  "fd-lock 4.0.2",
  "foundry-common",

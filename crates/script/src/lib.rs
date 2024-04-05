@@ -20,7 +20,7 @@ use foundry_common::{
     compile::SkipBuildFilter,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    provider::ethers::RpcUrl,
+    provider::alloy::RpcUrl,
     shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};

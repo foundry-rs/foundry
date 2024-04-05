@@ -4,7 +4,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use eyre::WrapErr;
-use foundry_common::{provider::alloy::ProviderBuilder, types::ToEthers};
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
 
@@ -252,16 +252,15 @@ impl Cheatcode for eth_getLogsCall {
         let provider = ProviderBuilder::new(&url).build()?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, topic) in topics.iter().enumerate() {
-            let topic = topic.to_ethers();
             // todo: needed because rust wants to convert FixedBytes<32> to U256 to convert it back
             // to FixedBytes<32> and then to Topic for some reason removing the
             // From<U256> impl in alloy does not fix the situation, and it is not possible to impl
             // From<FixedBytes<32>> either because of a conflicting impl
             match i {
-                0 => filter = filter.event_signature(U256::from_be_bytes(topic.to_fixed_bytes())),
-                1 => filter = filter.topic1(U256::from_be_bytes(topic.to_fixed_bytes())),
-                2 => filter = filter.topic2(U256::from_be_bytes(topic.to_fixed_bytes())),
-                3 => filter = filter.topic3(U256::from_be_bytes(topic.to_fixed_bytes())),
+                0 => filter = filter.event_signature(*topic),
+                1 => filter = filter.topic1(*topic),
+                2 => filter = filter.topic2(*topic),
+                3 => filter = filter.topic3(*topic),
                 _ => unreachable!(),
             };
         }

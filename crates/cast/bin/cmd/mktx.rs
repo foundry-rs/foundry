@@ -6,7 +6,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, get_alloy_provider},
+    utils::{self, get_provider},
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
@@ -77,7 +77,7 @@ impl MakeTxArgs {
         tx::validate_to_address(&code, &to)?;
 
         let config = Config::from(&eth);
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
@@ -91,7 +91,7 @@ impl MakeTxArgs {
             tx.nonce = Some(provider.get_transaction_count(from, None).await?);
         }
 
-        let provider = get_alloy_provider(&config)?;
+        let provider = get_provider(&config)?;
 
         let (tx, _) =
             tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key).await?;

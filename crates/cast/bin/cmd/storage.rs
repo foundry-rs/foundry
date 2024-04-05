@@ -80,7 +80,7 @@ impl StorageArgs {
         let config = Config::from(&self);
 
         let Self { address, slot, block, build, .. } = self;
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
         // Slot was provided, perform a simple RPC call

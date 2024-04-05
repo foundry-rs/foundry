@@ -111,7 +111,7 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = self.eth.try_load_config_emit_warnings()?;
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =

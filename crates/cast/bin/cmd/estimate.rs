@@ -83,7 +83,7 @@ impl EstimateArgs {
 
         let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
         let config = Config::try_from(figment)?;
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 

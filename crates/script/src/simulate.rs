@@ -18,7 +18,7 @@ use alloy_primitives::{utils::format_units, Address, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, provider::ethers::RpcUrl, shell, ContractsByArtifact};
+use foundry_common::{get_contract_name, provider::alloy::RpcUrl, shell, ContractsByArtifact};
 use foundry_evm::traces::render_trace_arena;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;

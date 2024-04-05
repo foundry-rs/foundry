@@ -111,7 +111,7 @@ impl CallArgs {
         } = self;
 
         let config = Config::from(&eth);
-        let provider = utils::get_alloy_provider(&config)?;
+        let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
