@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.76" # Remember to update clippy.toml as well
+rust-version = "1.76"                                       # Remember to update clippy.toml as well
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -139,13 +139,15 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.3", default-features = false }
+foundry-block-explorers = { version = "0.2.4", default-features = false }
 foundry-compilers = { version = "0.3.13", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
 revm = { version = "7.1", default-features = false, features = ["std"] }
-revm-primitives = { version = "3", default-features = false, features = ["std"] }
+revm-primitives = { version = "3", default-features = false, features = [
+    "std",
+] }
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "ba0b6ab", features = [
     "serde",
 ] }
@@ -189,7 +191,10 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"

@@ -23,7 +23,7 @@ use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    decode::{decode_console_logs, RevertDecoder},
+    decode::decode_console_logs,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
     traces::{
         identifier::{SignaturesIdentifier, TraceIdentifiers},
@@ -98,7 +98,11 @@ impl PreExecutionState {
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
             .script_config
-            .get_runner_with_cheatcodes(self.script_wallets.clone(), self.args.debug)
+            .get_runner_with_cheatcodes(
+                self.build_data.build_data.artifact_ids.clone(),
+                self.script_wallets.clone(),
+                self.args.debug,
+            )
             .await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
 
@@ -419,7 +423,7 @@ impl PreSimulationState {
         if !self.execution_result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                RevertDecoder::new().decode(&self.execution_result.returned[..], None)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 
@@ -500,7 +504,7 @@ impl PreSimulationState {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 
@@ -511,7 +515,7 @@ impl PreSimulationState {
         let mut debugger = Debugger::builder()
             .debug_arenas(self.execution_result.debug.as_deref().unwrap_or_default())
             .decoder(&self.execution_artifacts.decoder)
-            .sources(self.build_data.build_data.sources.clone())
+            .sources(self.build_data.sources.clone())
             .breakpoints(self.execution_result.breakpoints.clone())
             .build();
         debugger.try_run()?;

@@ -895,7 +895,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 write_chunk!(fmt, "{}", stringified.trim_start())
             })?;
             if !last.content.trim_start().is_empty() {
-                self.write_whitespace_separator(true)?;
+                self.indented(1, |fmt| fmt.write_whitespace_separator(true))?;
             }
             let last_chunk =
                 self.chunk_at(last.loc_before(), last.loc_next(), last.spaced, &last.content);
