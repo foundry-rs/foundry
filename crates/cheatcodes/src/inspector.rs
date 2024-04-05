@@ -517,10 +517,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     );
                 }
                 // Record account accesses via the EXT family of opcodes
-                opcode::EXTCODECOPY
-                | opcode::EXTCODESIZE
-                | opcode::EXTCODEHASH
-                | opcode::BALANCE => {
+                opcode::EXTCODECOPY |
+                opcode::EXTCODESIZE |
+                opcode::EXTCODEHASH |
+                opcode::BALANCE => {
                     let kind = match interpreter.current_opcode() {
                         opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                         opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
@@ -780,8 +780,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 mocks
                     .iter()
                     .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.map_or(true, |value| value == call.transfer.value)
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
+                            mock.value.map_or(true, |value| value == call.transfer.value)
                     })
                     .map(|(_, v)| v)
             }) {
@@ -798,8 +798,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if ecx.journaled_state.depth() >= prank.depth
-                && call.context.caller == prank.prank_caller
+            if ecx.journaled_state.depth() >= prank.depth &&
+                call.context.caller == prank.prank_caller
             {
                 let mut prank_applied = false;
 
@@ -831,8 +831,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             //
             // We do this because any subsequent contract calls *must* exist on chain and
             // we only want to grab *this* call, not internal ones
-            if ecx.journaled_state.depth() == broadcast.depth
-                && call.context.caller == broadcast.original_caller
+            if ecx.journaled_state.depth() == broadcast.depth &&
+                call.context.caller == broadcast.original_caller
             {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
@@ -1147,9 +1147,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let TransactTo::Call(test_contract) = ecx.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.db.is_forked_mode()
-                && outcome.result.result == InstructionResult::Stop
-                && call.contract != test_contract
+            if ecx.db.is_forked_mode() &&
+                outcome.result.result == InstructionResult::Stop &&
+                call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
                     ecx.db.diagnose_revert(call.contract, &ecx.journaled_state);
@@ -1261,8 +1261,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if ecx.journaled_state.depth() >= broadcast.depth
-                && call.caller == broadcast.original_caller
+            if ecx.journaled_state.depth() >= broadcast.depth &&
+                call.caller == broadcast.original_caller
             {
                 if let Err(err) =
                     ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
@@ -1410,8 +1410,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if ecx.journaled_state.depth() <= expected_revert.depth
-                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            if ecx.journaled_state.depth() <= expected_revert.depth &&
+                matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
@@ -1658,10 +1658,10 @@ fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
-        crate::Vm::AccountAccessKind::Call
-            | crate::Vm::AccountAccessKind::StaticCall
-            | crate::Vm::AccountAccessKind::CallCode
-            | crate::Vm::AccountAccessKind::DelegateCall
+        crate::Vm::AccountAccessKind::Call |
+            crate::Vm::AccountAccessKind::StaticCall |
+            crate::Vm::AccountAccessKind::CallCode |
+            crate::Vm::AccountAccessKind::DelegateCall
     )
 }
 

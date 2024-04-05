@@ -1,6 +1,9 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::Gas as GasRecord, Vm::*};
+use crate::{
+    Cheatcode, Cheatcodes, CheatsCtxt, Result,
+    Vm::{Gas as GasRecord, *},
+};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
@@ -99,13 +102,13 @@ impl Cheatcode for dumpStateCall {
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
-            key == &CHEATCODE_ADDRESS
-                || key == &CALLER
-                || key == &HARDHAT_CONSOLE_ADDRESS
-                || key == &TEST_CONTRACT_ADDRESS
-                || key == &ccx.caller
-                || key == &ccx.state.config.evm_opts.sender
-                || val.is_empty()
+            key == &CHEATCODE_ADDRESS ||
+                key == &CALLER ||
+                key == &HARDHAT_CONSOLE_ADDRESS ||
+                key == &TEST_CONTRACT_ADDRESS ||
+                key == &ccx.caller ||
+                key == &ccx.state.config.evm_opts.sender ||
+                val.is_empty()
         };
 
         let alloc = ccx
