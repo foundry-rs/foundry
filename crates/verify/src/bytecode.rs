@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Uint, U256};
+use alloy_primitives::{Address, Bytes, Uint, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -15,9 +15,9 @@ use foundry_common::{
     types::ToEthers,
 };
 use foundry_compilers::{
-    artifacts::{BytecodeHash, BytecodeObject},
+    artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
     info::ContractInfo,
-    Artifact, EvmVersion, ProjectCompileOutput,
+    Artifact, EvmVersion,
 };
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use foundry_evm::{
@@ -201,31 +201,6 @@ impl VerifyBytecodeArgs {
             );
         };
 
-        // Compile the project
-        let output = self.build_project(&config)?;
-        // let output = self.build_opts.run()?;
-        let artifact = output
-            .find_contract(&self.contract)
-            .ok_or_eyre("Contract artifact not found locally")?;
-
-        let local_bytecode = artifact
-            .get_bytecode_object()
-            .ok_or_eyre("Contract artifact does not have bytecode")?;
-
-        let local_bytecode = match local_bytecode.as_ref() {
-            BytecodeObject::Bytecode(bytes) => bytes,
-            BytecodeObject::Unlinked(_) => {
-                eyre::bail!("Unlinked bytecode is not supported for verification")
-            }
-        };
-
-        // Etherscan compilation metadata
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        // Append constructor args to the local_bytecode
-        let mut local_bytecode_vec = local_bytecode.to_vec();
-        local_bytecode_vec.extend_from_slice(&constructor_args);
-
         // If bytecode_hash is disabled then its always partial verification
         let (verification_type, has_metadata) =
             match (self.verification_type.as_str(), config.bytecode_hash) {
@@ -233,6 +208,20 @@ impl VerifyBytecodeArgs {
                 ("partial", BytecodeHash::None) => (String::from("partial"), false),
                 _ => (String::from("partial"), true),
             };
+
+        // Etherscan compilation metadata
+        let etherscan_metadata = source_code.items.first().unwrap();
+
+        let local_bytecode = if let Some(local_bytecode) = self.build_using_cache(&config) {
+            local_bytecode
+        } else {
+            self.build_project(&config)?
+        };
+
+        // Append constructor args to the local_bytecode
+        let mut local_bytecode_vec = local_bytecode.to_vec();
+        local_bytecode_vec.extend_from_slice(&constructor_args);
+
         // Cmp creation code with locally built bytecode and maybe_creation_code
         let res = try_match(
             local_bytecode_vec.as_slice(),
@@ -394,7 +383,7 @@ impl VerifyBytecodeArgs {
         Ok(())
     }
 
-    fn build_project(&self, config: &Config) -> Result<ProjectCompileOutput> {
+    fn build_project(&self, config: &Config) -> Result<Bytes> {
         let project = config.project()?;
         let mut compiler = ProjectCompiler::new();
 
@@ -405,7 +394,56 @@ impl VerifyBytecodeArgs {
         }
         let output = compiler.compile(&project)?;
 
-        Ok(output)
+        let artifact = output
+            .find_contract(&self.contract)
+            .ok_or_eyre("Build Error: Contract artifact not found locally")?;
+
+        let local_bytecode = artifact
+            .get_bytecode_object()
+            .ok_or_eyre("Contract artifact does not have bytecode")?;
+
+        let local_bytecode = match local_bytecode.as_ref() {
+            BytecodeObject::Bytecode(bytes) => bytes,
+            BytecodeObject::Unlinked(_) => {
+                eyre::bail!("Unlinked bytecode is not supported for verification")
+            }
+        };
+
+        Ok(local_bytecode.to_owned())
+    }
+
+    fn build_using_cache(&self, config: &Config) -> Option<Bytes> {
+        let project = config.project().ok()?;
+        let cache = project.read_cache_file().ok()?;
+        let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>().ok()?;
+
+        for (key, value) in cached_artifacts {
+            let name = self.contract.name.to_owned() + ".sol";
+            if key.ends_with(name.as_str()) {
+                if let Some(artifact) = value.into_iter().next() {
+                    let artifact = artifact.1.first().unwrap(); // Get the first artifact
+
+                    let local_bytecode = if let Some(local_bytecode) = &artifact.artifact.bytecode {
+                        match &local_bytecode.object {
+                            BytecodeObject::Bytecode(bytes) => Some(bytes),
+                            BytecodeObject::Unlinked(_) => {
+                                // eyre::bail!("Unlinked bytecode is not supported for
+                                // verification");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    let local_bytecode = local_bytecode.unwrap();
+
+                    return Some(local_bytecode.to_owned());
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -417,7 +455,6 @@ fn try_match(
     is_runtime: bool,
     has_metadata: bool,
 ) -> Result<(bool, Option<String>)> {
-    tracing::info!("has_metadata: {}", has_metadata);
     // 1. Try full match
     if match_type == "full" {
         if local_bytecode.starts_with(bytecode) {
@@ -461,11 +498,8 @@ fn try_partial_match(
 ) -> Result<bool> {
     // 1. Check length of constructor args
     if constructor_args.is_empty() {
-        tracing::info!("No constructor args found");
-
         // Assume metadata is at the end of the bytecode
         if has_metadata {
-            tracing::info!("Attempting to extract metadata hash");
             local_bytecode = extract_metadata_hash(local_bytecode)?;
             bytecode = extract_metadata_hash(bytecode)?;
         }
@@ -475,10 +509,7 @@ fn try_partial_match(
     }
 
     if is_runtime {
-        tracing::info!("Runtime code detected");
-
         if has_metadata {
-            tracing::info!("Attempting to extract metadata hash");
             local_bytecode = extract_metadata_hash(local_bytecode)?;
             bytecode = extract_metadata_hash(bytecode)?;
         }
@@ -491,8 +522,6 @@ fn try_partial_match(
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
-    tracing::info!("Removed constructor args from bytecode");
-    tracing::info!("Attempting to extract metadata hash");
     if has_metadata {
         local_bytecode = extract_metadata_hash(local_bytecode)?;
         bytecode = extract_metadata_hash(bytecode)?;
