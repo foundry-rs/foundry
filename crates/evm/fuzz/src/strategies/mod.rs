@@ -17,9 +17,7 @@ mod calldata;
 pub use calldata::{fuzz_calldata, fuzz_calldata_from_state};
 
 mod state;
-pub use state::{
-    build_initial_state, collect_created_contracts, collect_state_from_call, EvmFuzzState,
-};
+pub use state::{build_initial_state, collect_created_contracts, EvmFuzzState};
 
 mod string;
 pub use string::StringStrategy;

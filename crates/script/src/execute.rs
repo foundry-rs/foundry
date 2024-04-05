@@ -98,7 +98,11 @@ impl PreExecutionState {
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
             .script_config
-            .get_runner_with_cheatcodes(self.script_wallets.clone(), self.args.debug)
+            .get_runner_with_cheatcodes(
+                self.build_data.build_data.artifact_ids.clone(),
+                self.script_wallets.clone(),
+                self.args.debug,
+            )
             .await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
 
@@ -274,8 +278,6 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
 
 /// Container for data being collected after execution.
 pub struct ExecutionArtifacts {
-    /// Mapping from contract to its runtime code.
-    pub known_contracts: ContractsByArtifact,
     /// Trace decoder used to decode traces.
     pub decoder: CallTraceDecoder,
     /// Return values from the execution result.
@@ -327,7 +329,7 @@ impl ExecutedState {
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: self.execution_result,
-            execution_artifacts: ExecutionArtifacts { known_contracts, decoder, returns, rpc_data },
+            execution_artifacts: ExecutionArtifacts { decoder, returns, rpc_data },
         })
     }
 
@@ -513,7 +515,7 @@ impl PreSimulationState {
         let mut debugger = Debugger::builder()
             .debug_arenas(self.execution_result.debug.as_deref().unwrap_or_default())
             .decoder(&self.execution_artifacts.decoder)
-            .sources(self.build_data.build_data.sources.clone())
+            .sources(self.build_data.sources.clone())
             .breakpoints(self.execution_result.breakpoints.clone())
             .build();
         debugger.try_run()?;

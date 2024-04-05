@@ -3,7 +3,10 @@ use super::{
     StackSnapshotType, TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
-use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
+use foundry_evm_core::{
+    backend::{update_state, DatabaseExt},
+    debug::DebugArena,
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
@@ -11,7 +14,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
     },
-    primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, State, TransactTo},
+    primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo},
     DatabaseCommit, EvmContext, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -226,16 +229,6 @@ macro_rules! call_inspectors_adjust_depth {
             )+
         }
     };
-}
-
-/// Helper method which updates data in the state with the data from the database.
-fn update_state<DB: DatabaseExt>(state: &mut State, db: &mut DB) {
-    for (addr, acc) in state.iter_mut() {
-        acc.info = db.basic(*addr).unwrap().unwrap_or_default();
-        for (key, val) in acc.storage.iter_mut() {
-            val.present_value = db.storage(*addr, *key).unwrap();
-        }
-    }
 }
 
 /// The collected results of [`InspectorStack`].
@@ -500,8 +493,22 @@ impl InspectorStack {
         ecx.db.commit(res.state.clone());
 
         // Update both states with new DB data after commit.
-        update_state(&mut ecx.journaled_state.state, &mut ecx.db);
-        update_state(&mut res.state, &mut ecx.db);
+        if let Err(e) = update_state(&mut ecx.journaled_state.state, &mut ecx.db) {
+            let res = InterpreterResult {
+                result: InstructionResult::Revert,
+                output: Bytes::from(e.to_string()),
+                gas,
+            };
+            return (res, None)
+        }
+        if let Err(e) = update_state(&mut res.state, &mut ecx.db) {
+            let res = InterpreterResult {
+                result: InstructionResult::Revert,
+                output: Bytes::from(e.to_string()),
+                gas,
+            };
+            return (res, None)
+        }
 
         // Merge transaction journal into the active journal.
         for (addr, acc) in res.state {

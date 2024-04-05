@@ -264,6 +264,7 @@ pub enum ScriptOutcome {
     ScriptFailed,
     UnsupportedLibraries,
     ErrorSelectForkOnBroadcast,
+    OkRun,
 }
 
 impl ScriptOutcome {
@@ -279,6 +280,7 @@ impl ScriptOutcome {
             Self::ScriptFailed => "script failed: ",
             Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
+            Self::OkRun => "Script ran successfully",
         }
     }
 
@@ -287,7 +289,8 @@ impl ScriptOutcome {
             ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::WarnSpecifyDeployer |
+            ScriptOutcome::OkRun => false,
             ScriptOutcome::MissingSender |
             ScriptOutcome::MissingWallet |
             ScriptOutcome::StaticCallNotAllowed |

@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use alloy_primitives::Bytes;
 use foundry_compilers::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
-    primitives::SpecId,
+    primitives::{HashSet, SpecId},
 };
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -12,13 +14,20 @@ pub fn find_anchors(
     bytecode: &Bytes,
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
-    item_ids: &[usize],
     items: &[CoverageItem],
+    items_by_source_id: &HashMap<usize, Vec<usize>>,
 ) -> Vec<ItemAnchor> {
-    item_ids
+    // Prepare coverage items from all sources referenced in the source map
+    let potential_item_ids = source_map
         .iter()
+        .filter_map(|element| items_by_source_id.get(&(element.index? as usize)))
+        .flatten()
+        .collect::<HashSet<_>>();
+
+    potential_item_ids
+        .into_iter()
         .filter_map(|item_id| {
-            let item = items.get(*item_id)?;
+            let item = &items[*item_id];
 
             match item.kind {
                 CoverageItemKind::Branch { path_id, .. } => {

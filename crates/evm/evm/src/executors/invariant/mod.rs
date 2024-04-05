@@ -6,7 +6,7 @@ use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
+use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     utils::{get_function, StateChangeset},
@@ -17,8 +17,8 @@ use foundry_evm_fuzz::{
         RandomCallGenerator, SenderFilters, TargetedContracts,
     },
     strategies::{
-        build_initial_state, collect_created_contracts, collect_state_from_call, invariant_strat,
-        override_call_strat, EvmFuzzState,
+        build_initial_state, collect_created_contracts, invariant_strat, override_call_strat,
+        EvmFuzzState,
     },
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
@@ -243,13 +243,7 @@ impl<'a> InvariantExecutor<'a> {
                     let mut state_changeset =
                         call_result.state_changeset.to_owned().expect("no changesets");
 
-                    collect_data(
-                        &mut state_changeset,
-                        sender,
-                        &call_result,
-                        &fuzz_state,
-                        &self.config.dictionary,
-                    );
+                    collect_data(&mut state_changeset, sender, &call_result, &fuzz_state);
 
                     if let Err(error) = collect_created_contracts(
                         &state_changeset,
@@ -322,11 +316,14 @@ impl<'a> InvariantExecutor<'a> {
             }
             fuzz_cases.borrow_mut().push(FuzzedCases::new(fuzz_runs));
 
+            // Revert state to not persist values between runs.
+            fuzz_state.revert();
+
             Ok(())
         });
 
         trace!(target: "forge::test::invariant::fuzz_fixtures", "{:?}", fuzz_fixtures);
-        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().values().iter().map(hex::encode).collect::<Vec<_>>());
+        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, error) = failures.into_inner().into_inner();
 
@@ -359,7 +356,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
         let fuzz_state: EvmFuzzState =
-            build_initial_state(self.executor.backend.mem_db(), &self.config.dictionary);
+            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary);
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
@@ -663,7 +660,6 @@ fn collect_data(
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: &EvmFuzzState,
-    config: &FuzzDictionaryConfig,
 ) {
     // Verify it has no code.
     let mut has_code = false;
@@ -678,7 +674,7 @@ fn collect_data(
         sender_changeset = state_changeset.remove(sender);
     }
 
-    collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
+    fuzz_state.collect_state_from_call(&call_result.logs, &*state_changeset);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {

@@ -11,7 +11,7 @@ contract Issue2956Test is DSTest {
     uint256 fork2;
 
     function setUp() public {
-        fork1 = vm.createFork("https://goerli.infura.io/v3/b9794ad1ddf84dfb8c34d6bb5dca2001", 7475589);
+        fork1 = vm.createFork("rpcAliasSepolia", 5565573);
         fork2 = vm.createFork("https://api.avax-test.network/ext/bc/C/rpc", 12880747);
     }
 
@@ -28,7 +28,7 @@ contract Issue2956Test is DSTest {
         new Counter();
 
         vm.selectFork(fork1);
-        assertEq(vm.getNonce(user), 3);
+        assertEq(vm.getNonce(user), 1);
         vm.prank(user);
         new Counter();
     }

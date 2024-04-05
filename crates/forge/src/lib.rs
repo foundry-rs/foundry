@@ -15,7 +15,7 @@ pub mod coverage;
 
 pub mod gas_report;
 
-mod multi_runner;
+pub mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 mod runner;

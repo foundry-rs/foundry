@@ -257,19 +257,28 @@ impl CoverageArgs {
                 })?,
             )?
             .analyze()?;
-            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_analysis
-                .contract_items
+
+            // Build helper mapping used by `find_anchors`
+            let mut items_by_source_id: HashMap<_, Vec<_>> =
+                HashMap::with_capacity(source_analysis.items.len());
+
+            for (item_id, item) in source_analysis.items.iter().enumerate() {
+                items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
+            }
+
+            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
-                .filter_map(|(contract_id, item_ids)| {
+                .filter(|(contract_id, _)| contract_id.version == version)
+                .filter_map(|(contract_id, (_, deployed_source_map))| {
                     // TODO: Creation source map/bytecode as well
                     Some((
                         contract_id.clone(),
                         find_anchors(
                             &bytecodes.get(contract_id)?.1,
-                            &source_maps.get(contract_id)?.1,
+                            deployed_source_map,
                             &ic_pc_maps.get(contract_id)?.1,
-                            item_ids,
                             &source_analysis.items,
+                            &items_by_source_id,
                         ),
                     ))
                 })
@@ -294,6 +303,8 @@ impl CoverageArgs {
     ) -> Result<()> {
         let root = project.paths.root;
 
+        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
         let mut runner = MultiContractRunnerBuilder::default()
@@ -301,7 +312,12 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
+            .with_cheats_config(CheatsConfig::new(
+                &config,
+                evm_opts.clone(),
+                Some(artifact_ids),
+                None,
+            ))
             .with_test_options(TestOptions {
                 fuzz: config.fuzz,
                 invariant: config.invariant,

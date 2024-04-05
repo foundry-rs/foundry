@@ -12,7 +12,7 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_signers::Signer;
-use eyre::{ContextCompat, Result, WrapErr};
+use eyre::{ContextCompat, Result};
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
@@ -311,30 +311,38 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
-        let (func, data) = if let Ok(func) = get_func(&self.sig) {
-            (
-                abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
-                    format!("Function `{}` is not implemented in your script.", self.sig),
-                )?,
-                encode_function_args(&func, &self.args)?.into(),
-            )
-        } else {
-            let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
+        if let Ok(decoded) = hex::decode(&self.sig) {
             let selector = &decoded[..SELECTOR_LEN];
-            (
-                abi.functions().find(|&func| selector == &func.selector()[..]).ok_or_else(
-                    || {
-                        eyre::eyre!(
-                            "Function selector `{}` not found in the ABI",
-                            hex::encode(selector)
-                        )
-                    },
-                )?,
-                decoded.into(),
-            )
-        };
+            let func =
+                abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
+                    eyre::eyre!(
+                        "Function selector `{}` not found in the ABI",
+                        hex::encode(selector)
+                    )
+                })?;
+            return Ok((func.clone(), decoded.into()));
+        }
 
-        Ok((func.clone(), data))
+        let func = if self.sig.contains('(') {
+            let func = get_func(&self.sig)?;
+            abi.functions()
+                .find(|&abi_func| abi_func.selector() == func.selector())
+                .wrap_err(format!("Function `{}` is not implemented in your script.", self.sig))?
+        } else {
+            let matching_functions =
+                abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
+            match matching_functions.len() {
+                0 => eyre::bail!("Function `{}` not found in the ABI", self.sig),
+                1 => matching_functions[0],
+                2.. => eyre::bail!(
+                    "Multiple functions with the same name `{}` found in the ABI",
+                    self.sig
+                ),
+            }
+        };
+        let data = encode_function_args(func, &self.args)?;
+
+        Ok((func.clone(), data.into()))
     }
 
     /// Checks if the transaction is a deployment with either a size above the `CONTRACT_MAX_SIZE`
@@ -542,15 +550,16 @@ impl ScriptConfig {
 
     async fn get_runner_with_cheatcodes(
         &mut self,
+        artifact_ids: Vec<ArtifactId>,
         script_wallets: ScriptWallets,
         debug: bool,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some(script_wallets), debug).await
+        self._get_runner(Some((artifact_ids, script_wallets)), debug).await
     }
 
     async fn _get_runner(
         &mut self,
-        script_wallets: Option<ScriptWallets>,
+        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -579,7 +588,7 @@ impl ScriptConfig {
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
-        if let Some(script_wallets) = script_wallets {
+        if let Some((artifact_ids, script_wallets)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(debug)
@@ -587,6 +596,7 @@ impl ScriptConfig {
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
+                            Some(artifact_ids),
                             Some(script_wallets),
                         )
                         .into(),
