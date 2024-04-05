@@ -105,7 +105,6 @@ pub struct ScriptArgs {
 
     /// Broadcasts the transactions.
     #[arg(long)]
-
     pub broadcast: bool,
 
     /// Batch size of transactions.
