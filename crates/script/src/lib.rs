@@ -110,7 +110,7 @@ pub struct ScriptArgs {
     /// Batch size of transactions.
     /// --batch-size
     #[arg(long, default_value = "100")]
-    pub batch_size: i32,
+    pub batch_size: usize,
 
     /// Skips on-chain simulation.
     #[arg(long)]
