@@ -146,7 +146,7 @@ pub struct Cheatcodes {
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
     /// Recorded gas usage
-    pub gas_usage: Option<Vec<Gas>>,
+    pub gas_usage: Option<Vec<crate::Vm::Gas>>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -959,8 +959,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS;
 
         // Record the gas used in the call if `gasUsed` has been called
-        if let Some(storage_gas_used) = &mut self.gas_used {
-            storage_gas_used.push(outcome.gas());
+        if let Some(storage_gas_used) = &mut self.gas_usage {
+            let CallOutcome::Gas { limit, used, memory, refunded, all_used_gas } =
+                outcome.result.gas();
+
+            storage_gas_used.push(crate::Vm::Gas {
+                initialGasLimit: limit.as_u64(),
+                totalUsedGas: all_used_gas.as_u64(),
+                usedGas: used.as_u64(),
+                memoryGas: memory.as_u64(),
+                refundedGas: refunded.as_i64(),
+            })
         }
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do

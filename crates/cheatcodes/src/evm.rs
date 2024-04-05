@@ -227,7 +227,9 @@ impl Cheatcode for resumeGasMeteringCall {
 impl Cheatcode for lastGasUsedCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        Ok(state.gas_usage.as_slice().last().copied().unwrap_or_default().abi_encode())
+
+        let last_gas_used = state.gas_usage.as_slice().last().copied().unwrap_or_default();
+        Ok(last_gas_used.abi_encode())
     }
 }
 
