@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract Target {
-    uint256 public a;
+    uint256 public slot0;
 
     function expandMemory() public pure returns (uint256) {
         uint256[] memory arr = new uint256[](1000);
@@ -17,8 +17,12 @@ contract Target {
         return arr.length;
     }
 
-    function set(uint256 _a) public {
-        a = _a;
+    function set(uint256 value) public {
+        slot0 = value;
+    }
+
+    function reset() public {
+        slot0 = 0;
     }
 }
 
@@ -55,7 +59,7 @@ contract RecordGasTest is DSTest {
     function testRecordGasRefund() public {
         target = new Target();
         target.set(1);
-        target.set(0);
+        target.reset();
         _logGasRecord();
     }
 
