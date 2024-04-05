@@ -20,7 +20,7 @@ use foundry_common::{
     evm::EvmArgs,
     shell,
 };
-use foundry_compilers::artifacts::output_selection::OutputSelection;
+use foundry_compilers::{artifacts::output_selection::OutputSelection, utils::source_files_iter};
 use foundry_config::{
     figment,
     figment::{
@@ -166,13 +166,13 @@ impl TestArgs {
             .collect::<BTreeMap<_, _>>();
 
         // Filter sources by their abis and contract names.
-        let sources = abis
+        let mut test_sources = abis
             .iter()
             .filter(|(id, abi)| matches_contract(id, abi, filter))
             .map(|(id, _)| id.source.clone())
             .collect::<BTreeSet<_>>();
 
-        if sources.is_empty() {
+        if test_sources.is_empty() {
             if filter.is_empty() {
                 println!(
                     "No tests found in project! \
@@ -201,7 +201,10 @@ impl TestArgs {
             eyre::bail!("No tests to run");
         }
 
-        Ok(sources)
+        // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
+        test_sources.extend(source_files_iter(project.paths.sources));
+
+        Ok(test_sources)
     }
 
     /// Executes all the tests in the project.
