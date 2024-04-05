@@ -24,7 +24,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -60,7 +60,7 @@ pub struct VerifyBytecodeArgs {
 
     /// Verfication Type: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
     #[clap(long, default_value = "full", value_name = "TYPE")]
-    pub verification_type: String,
+    pub verification_type: VerificationType,
 
     #[clap(flatten)]
     pub etherscan_opts: EtherscanOpts,
@@ -92,9 +92,6 @@ impl figment::Provider for VerifyBytecodeArgs {
         }
         dict.insert("verification_type".into(), self.verification_type.to_string().into());
 
-        // if let Some(root) = self.root.as_ref() {
-        //     dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
-        // }
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -103,6 +100,7 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
+        tracing::info!("Verification type: {}", self.verification_type);
         // Setup
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
@@ -203,10 +201,12 @@ impl VerifyBytecodeArgs {
 
         // If bytecode_hash is disabled then its always partial verification
         let (verification_type, has_metadata) =
-            match (self.verification_type.as_str(), config.bytecode_hash) {
-                ("full", BytecodeHash::None) => (String::from("partial"), false),
-                ("partial", BytecodeHash::None) => (String::from("partial"), false),
-                _ => (String::from("partial"), true),
+            match (&self.verification_type, config.bytecode_hash) {
+                (VerificationType::Full, BytecodeHash::None) => (VerificationType::Partial, false),
+                (VerificationType::Partial, BytecodeHash::None) => {
+                    (VerificationType::Partial, false)
+                }
+                _ => (VerificationType::Partial, true),
             };
 
         // Etherscan compilation metadata
@@ -424,21 +424,12 @@ impl VerifyBytecodeArgs {
                     let artifact = artifact.1.first().unwrap(); // Get the first artifact
 
                     let local_bytecode = if let Some(local_bytecode) = &artifact.artifact.bytecode {
-                        match &local_bytecode.object {
-                            BytecodeObject::Bytecode(bytes) => Some(bytes),
-                            BytecodeObject::Unlinked(_) => {
-                                // eyre::bail!("Unlinked bytecode is not supported for
-                                // verification");
-                                None
-                            }
-                        }
+                        local_bytecode.bytes()
                     } else {
                         None
                     };
 
-                    let local_bytecode = local_bytecode.unwrap();
-
-                    return Some(local_bytecode.to_owned());
+                    return local_bytecode.map(|bytes| bytes.to_owned());
                 }
             }
         }
@@ -447,16 +438,53 @@ impl VerifyBytecodeArgs {
     }
 }
 
+#[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq)]
+pub enum VerificationType {
+    #[default]
+    Full,
+    Partial,
+}
+
+impl FromStr for VerificationType {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "full" => Ok(VerificationType::Full),
+            "partial" => Ok(VerificationType::Partial),
+            _ => eyre::bail!("Invalid verification type"),
+        }
+    }
+}
+
+impl From<VerificationType> for String {
+    fn from(v: VerificationType) -> Self {
+        match v {
+            VerificationType::Full => "full".to_string(),
+            VerificationType::Partial => "partial".to_string(),
+        }
+    }
+}
+
+impl fmt::Display for VerificationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VerificationType::Full => write!(f, "full"),
+            VerificationType::Partial => write!(f, "partial"),
+        }
+    }
+}
+
 fn try_match(
     local_bytecode: &[u8],
     bytecode: &[u8],
     constructor_args: &[u8],
-    match_type: &String,
+    match_type: &VerificationType,
     is_runtime: bool,
     has_metadata: bool,
 ) -> Result<(bool, Option<String>)> {
     // 1. Try full match
-    if match_type == "full" {
+    if *match_type == VerificationType::Full {
         if local_bytecode.starts_with(bytecode) {
             // Success => Full match
             Ok((true, Some("full".to_string())))
