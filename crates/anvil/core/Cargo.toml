@@ -20,9 +20,9 @@ alloy-rpc-trace-types.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-network = { workspace = true, features = ["k256"] }
-alloy-consensus = { workspace = true, features = ["k256", "kzg"]}
+alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-trie = "0.3"
+alloy-trie.workspace = true
 
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
