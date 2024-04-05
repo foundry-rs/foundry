@@ -486,7 +486,7 @@ impl InspectorStack {
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
-            return (result, None);
+            return (result, None)
         };
 
         // Commit changes after transaction
@@ -499,7 +499,7 @@ impl InspectorStack {
                 output: Bytes::from(e.to_string()),
                 gas,
             };
-            return (res, None);
+            return (res, None)
         }
         if let Err(e) = update_state(&mut res.state, &mut ecx.db) {
             let res = InterpreterResult {
@@ -507,7 +507,7 @@ impl InspectorStack {
                 output: Bytes::from(e.to_string()),
                 gas,
             };
-            return (res, None);
+            return (res, None)
         }
 
         // Merge transaction journal into the active journal.
@@ -664,7 +664,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 call.gas_limit,
                 call.transfer.value,
             );
-            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() });
+            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() })
         }
 
         None
@@ -679,7 +679,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome;
+            return outcome
         }
 
         let outcome = self.do_call_end(ecx, inputs, outcome);
@@ -721,7 +721,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 create.gas_limit,
                 create.value,
             );
-            return Some(CreateOutcome { result, address });
+            return Some(CreateOutcome { result, address })
         }
 
         None
@@ -736,7 +736,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome;
+            return outcome
         }
 
         let result = outcome.result.result;
