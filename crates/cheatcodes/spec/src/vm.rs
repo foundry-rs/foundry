@@ -623,7 +623,7 @@ interface Vm {
 
     /// Gets the gas used in the last call.
     #[cheatcode(group = Evm, safety = Safe)]
-    function lastGasUsed() external returns (Gas memory gas);
+    function lastGasUsed() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 
