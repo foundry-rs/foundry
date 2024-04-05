@@ -235,23 +235,19 @@ impl Cheatcode for recordGasCall {
 impl Cheatcode for getLastRecordedGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-
-        // let last_gas_used =
-        //     state.recorded_gas_usage.as_ref().map(|gas| gas.last().copied()).flatten();
-
-        // // let last_gas_used = state.recorded_gas_usage.as_slice().last().copied().unwrap_or_default();
-        // Ok(last_gas_used.abi_encode())
-
-        Ok(Default::default())
+        Ok(state
+            .recorded_gas_usage
+            .replace(Default::default())
+            .unwrap_or_default()
+            .last()
+            .map_or_else(|| Vec::default(), |usage| usage.abi_encode()))
     }
 }
 
 impl Cheatcode for getRecordedGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        // Ok(state.recorded_gas_usage.abi_encode())
-
-        Ok(Default::default())
+        Ok(state.recorded_gas_usage.replace(Default::default()).unwrap_or_default().abi_encode())
     }
 }
 
