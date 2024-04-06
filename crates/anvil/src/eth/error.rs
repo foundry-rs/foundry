@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_primitives::{Bytes, SignatureError as AlloySignatureError};
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
@@ -180,7 +180,7 @@ pub enum InvalidTransactionError {
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required exceeds allowance: {0:?}")]
-    BasicOutOfGas(U256),
+    BasicOutOfGas(u128),
     /// Thrown if executing a transaction failed during estimate/call
     #[error("execution reverted: {0:?}")]
     Revert(Option<Bytes>),

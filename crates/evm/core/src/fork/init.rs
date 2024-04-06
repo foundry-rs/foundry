@@ -50,7 +50,7 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     };
 
     let mut cfg = CfgEnv::default();
-    cfg.chain_id = override_chain_id.unwrap_or(rpc_chain_id.to::<u64>());
+    cfg.chain_id = override_chain_id.unwrap_or(rpc_chain_id);
     cfg.memory_limit = memory_limit;
     cfg.limit_contract_code_size = Some(usize::MAX);
     // EIP-3607 rejects transactions from senders with deployed code.
@@ -73,8 +73,8 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
         },
         tx: TxEnv {
             caller: origin,
-            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price),
-            chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.to::<u64>())),
+            gas_price: gas_price.map(U256::from).unwrap_or(U256::from(fork_gas_price)),
+            chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id)),
             gas_limit: block.header.gas_limit.to::<u64>(),
             ..Default::default()
         },

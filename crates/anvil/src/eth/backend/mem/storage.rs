@@ -225,12 +225,12 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
-            base_fee: base_fee.map(|b| b.to::<u64>()),
-            gas_limit: env.block.gas_limit.to::<u64>(),
+            base_fee,
+            gas_limit: env.block.gas_limit.to::<u128>(),
             beneficiary: env.block.coinbase,
             difficulty: env.block.difficulty,
             ..Default::default()
@@ -336,7 +336,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
@@ -405,7 +405,7 @@ impl MinedTransaction {
         )
         .into_localized_transaction_traces(RethTransactionInfo {
             hash: Some(self.info.transaction_hash),
-            index: Some(self.info.transaction_index as u64),
+            index: Some(self.info.transaction_index),
             block_hash: Some(self.block_hash),
             block_number: Some(self.block_number),
             base_fee: None,

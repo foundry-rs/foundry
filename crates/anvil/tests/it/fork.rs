@@ -4,7 +4,7 @@ use crate::{
     abi::*,
     utils::{self, ethers_http_provider},
 };
-use alloy_primitives::{address, U256 as rU256, U64 as rU64};
+use alloy_primitives::{address, U256 as rU256};
 use alloy_provider::Provider as AlloyProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest as CallRequest},
@@ -289,7 +289,7 @@ async fn test_fork_snapshotting() {
     let provider = handle.http_provider();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU64::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -328,7 +328,7 @@ async fn test_fork_snapshotting_repeated() {
     let _ = tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU64::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -382,7 +382,7 @@ async fn test_fork_snapshotting_blocks() {
     assert_eq!(block_number_after, block_number + 1);
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU64::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -396,12 +396,12 @@ async fn test_fork_snapshotting_blocks() {
     // repeat transaction
     let _ = tx_provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU64::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
 
     // revert again: nothing to revert since snapshot gone
     assert!(!api.evm_revert(snapshot).await.unwrap());
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU64::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
 }
@@ -470,20 +470,14 @@ async fn can_reset_properly() {
     let origin_nonce = 1u64;
     origin_api.anvil_set_nonce(account, rU256::from(origin_nonce)).await.unwrap();
 
-    assert_eq!(
-        origin_nonce,
-        origin_provider.get_transaction_count(account, None).await.unwrap().to::<u64>()
-    );
+    assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
 
     let (fork_api, fork_handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.http_provider();
     let fork_tx_provider = ethers_http_provider(&fork_handle.http_endpoint());
-    assert_eq!(
-        origin_nonce,
-        fork_provider.get_transaction_count(account, None).await.unwrap().to::<u64>()
-    );
+    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
 
     let to = Address::random();
     let to_balance = fork_provider.get_balance(to.to_alloy(), None).await.unwrap();
@@ -491,19 +485,13 @@ async fn can_reset_properly() {
     let tx = fork_tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     // nonce incremented by 1
-    assert_eq!(
-        origin_nonce + rU256::from(1).to::<u64>(),
-        fork_provider.get_transaction_count(account, None).await.unwrap().to::<u64>()
-    );
+    assert_eq!(origin_nonce + 1, fork_provider.get_transaction_count(account, None).await.unwrap());
 
     // resetting to origin state
     fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     // nonce reset to origin
-    assert_eq!(
-        origin_nonce,
-        fork_provider.get_transaction_count(account, None).await.unwrap().to::<u64>()
-    );
+    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
 
     // balance is reset
     assert_eq!(to_balance, fork_provider.get_balance(to.to_alloy(), None).await.unwrap());

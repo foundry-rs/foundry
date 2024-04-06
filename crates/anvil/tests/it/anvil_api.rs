@@ -445,10 +445,10 @@ async fn can_get_node_info() {
         hard_fork: SpecId::CANCUN,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
-            base_fee: U256::from_str("0x3b9aca00").unwrap().to_alloy(),
+            base_fee: alloy_primitives::U256::from_str("0x3b9aca00").unwrap().to(),
             chain_id: 0x7a69,
-            gas_limit: U256::from_str("0x1c9c380").unwrap().to_alloy(),
-            gas_price: U256::from_str("0x77359400").unwrap().to_alloy(),
+            gas_limit: alloy_primitives::U256::from_str("0x1c9c380").unwrap().to(),
+            gas_price: alloy_primitives::U256::from_str("0x77359400").unwrap().to(),
         },
         fork_config: NodeForkConfig {
             fork_url: None,

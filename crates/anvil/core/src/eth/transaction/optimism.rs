@@ -12,7 +12,7 @@ pub struct DepositTransactionRequest {
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
-    pub gas_limit: U256,
+    pub gas_limit: u128,
     pub is_system_tx: bool,
     pub input: Bytes,
 }
@@ -171,12 +171,12 @@ impl Transaction for DepositTransactionRequest {
     }
 
     /// Get `gas_limit`.
-    fn gas_limit(&self) -> u64 {
-        self.gas_limit.to()
+    fn gas_limit(&self) -> u128 {
+        self.gas_limit
     }
 
     /// Get `gas_price`.
-    fn gas_price(&self) -> Option<U256> {
+    fn gas_price(&self) -> Option<u128> {
         None
     }
 }
@@ -236,7 +236,7 @@ pub struct DepositTransaction {
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
-    pub gas_limit: U256,
+    pub gas_limit: u128,
     pub is_system_tx: bool,
     pub input: Bytes,
 }

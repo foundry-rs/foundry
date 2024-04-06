@@ -3,7 +3,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, TxHash, B256, I256, U256, U64,
+    Address, Keccak256, TxHash, B256, I256, U256,
 };
 use alloy_provider::{
     network::{
@@ -424,15 +424,15 @@ where
         })
     }
 
-    pub async fn chain_id(&self) -> Result<U256> {
-        Ok(U256::from(self.provider.get_chain_id().await?))
+    pub async fn chain_id(&self) -> Result<u64> {
+        Ok(self.provider.get_chain_id().await?)
     }
 
-    pub async fn block_number(&self) -> Result<U64> {
-        Ok(U64::from(self.provider.get_block_number().await?))
+    pub async fn block_number(&self) -> Result<u64> {
+        Ok(self.provider.get_block_number().await?)
     }
 
-    pub async fn gas_price(&self) -> Result<U256> {
+    pub async fn gas_price(&self) -> Result<u128> {
         Ok(self.provider.get_gas_price().await?)
     }
 
@@ -454,7 +454,7 @@ where
     /// # }
     /// ```
     pub async fn nonce(&self, who: Address, block: Option<BlockId>) -> Result<u64> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to())
+        Ok(self.provider.get_transaction_count(who, block).await?)
     }
 
     /// # Example

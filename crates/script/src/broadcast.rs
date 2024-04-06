@@ -6,7 +6,7 @@ use crate::{
 use alloy_chains::Chain;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{utils::format_units, Address, TxHash, U256};
+use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
@@ -46,8 +46,8 @@ where
 
     tx.set_gas_limit(
         provider.estimate_gas(tx, None).await.wrap_err("Failed to estimate gas for tx")? *
-            U256::from(estimate_multiplier) /
-            U256::from(100),
+            estimate_multiplier as u128 /
+            100,
     );
     Ok(())
 }
@@ -55,8 +55,7 @@ where
 pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    let res = provider.get_transaction_count(caller, None).await?;
-    res.try_into().map_err(Into::into)
+    Ok(provider.get_transaction_count(caller, None).await?)
 }
 
 pub async fn send_transaction(
@@ -74,7 +73,7 @@ pub async fn send_transaction(
         let nonce = provider.get_transaction_count(from, None).await?;
 
         let tx_nonce = tx.nonce.expect("no nonce");
-        if nonce.to::<u64>() != tx_nonce {
+        if nonce != tx_nonce {
             bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
         }
     }
@@ -246,11 +245,14 @@ impl BundledState {
                     self.args.with_gas_price,
                     self.args.priority_gas_price,
                 ) {
-                    (true, Some(gas_price), _) => (Some(gas_price), None),
+                    (true, Some(gas_price), _) => (Some(gas_price.to()), None),
                     (true, None, _) => (Some(provider.get_gas_price().await?), None),
                     (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => (
                         None,
-                        Some(Eip1559Estimation { max_fee_per_gas, max_priority_fee_per_gas }),
+                        Some(Eip1559Estimation {
+                            max_fee_per_gas: max_fee_per_gas.to(),
+                            max_priority_fee_per_gas: max_priority_fee_per_gas.to(),
+                        }),
                     ),
                     (false, _, _) => {
                         let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
@@ -258,11 +260,11 @@ impl BundledState {
                             .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         if let Some(gas_price) = self.args.with_gas_price {
-                            fees.max_fee_per_gas = gas_price;
+                            fees.max_fee_per_gas = gas_price.to();
                         }
 
                         if let Some(priority_gas_price) = self.args.priority_gas_price {
-                            fees.max_priority_fee_per_gas = priority_gas_price;
+                            fees.max_priority_fee_per_gas = priority_gas_price.to();
                         }
 
                         (None, Some(fees))

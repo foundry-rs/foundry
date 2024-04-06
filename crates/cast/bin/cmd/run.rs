@@ -109,19 +109,15 @@ impl RunArgs {
             .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
-            tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
-        {
+        if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 tx.hash
             ));
         }
 
-        let tx_block_number = tx
-            .block_number
-            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
-            .to::<u64>();
+        let tx_block_number =
+            tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // fetch the block the transaction was mined in
         let block = provider.get_block(tx_block_number.into(), true).await?;
@@ -174,8 +170,7 @@ impl RunArgs {
                     // we skip them otherwise this would cause
                     // reverts
                     if is_known_system_sender(tx.from) ||
-                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                            Some(SYSTEM_TRANSACTION_TYPE)
+                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
                         continue;

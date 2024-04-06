@@ -863,11 +863,11 @@ impl Backend {
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
-            let block = fork.db.db.get_full_block(tx_block.to::<u64>())?;
+            let block = fork.db.db.get_full_block(tx_block)?;
 
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
-            let fork_block = tx_block.to::<u64>() - 1;
+            let fork_block = tx_block - 1;
             Ok((U64::from(fork_block), block))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
@@ -904,7 +904,7 @@ impl Backend {
                 // System transactions such as on L2s don't contain any pricing info so we skip them
                 // otherwise this would cause reverts
                 if is_known_system_sender(tx.from) ||
-                    tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
+                    tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                 {
                     trace!(tx=?tx.hash, "skipping system transaction");
                     continue;

@@ -1,6 +1,6 @@
 use crate::tx;
 use alloy_network::{Ethereum, EthereumSigner};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U64};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_signer::Signer;
 use alloy_transport::Transport;
@@ -124,7 +124,7 @@ impl SendTxArgs {
         if unlocked {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
-                let current_chain_id: u64 = provider.get_chain_id().await?.to();
+                let current_chain_id = provider.get_chain_id().await?;
                 let config_chain_id = config_chain.id();
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
@@ -142,7 +142,8 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                tx.nonce =
+                    Some(U64::from(provider.get_transaction_count(config.sender, None).await?));
             }
 
             cast_send(
@@ -172,7 +173,7 @@ impl SendTxArgs {
             tx::validate_from_address(eth.wallet.from, from)?;
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(from, None).await?);
+                tx.nonce = Some(U64::from(provider.get_transaction_count(from, None).await?));
             }
 
             let signer = EthereumSigner::from(signer);

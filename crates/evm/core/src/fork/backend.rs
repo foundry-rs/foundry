@@ -3,7 +3,7 @@ use crate::{
     backend::{DatabaseError, DatabaseResult},
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockId, Transaction};
 use alloy_transport::Transport;
@@ -33,7 +33,7 @@ use std::{
 // Various future/request type aliases
 
 type AccountFuture<Err> =
-    Pin<Box<dyn Future<Output = (Result<(U256, U64, Bytes), Err>, Address)> + Send>>;
+    Pin<Box<dyn Future<Output = (Result<(U256, u64, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<B256, Err>, u64)> + Send>>;
 type FullBlockFuture<Err> =
@@ -349,7 +349,7 @@ where
 
                             // update the cache
                             let acc = AccountInfo {
-                                nonce: nonce.to(),
+                                nonce,
                                 balance,
                                 code: Some(Bytecode::new_raw(code).to_checked()),
                                 code_hash,

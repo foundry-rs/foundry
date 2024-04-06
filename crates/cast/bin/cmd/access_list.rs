@@ -111,7 +111,7 @@ async fn access_list<P: Provider<T>, T: Transport + Clone>(
         .with_chain_id(chain.id());
 
     if let Some(gas_limit) = tx.gas_limit {
-        req.set_gas_limit(gas_limit);
+        req.set_gas_limit(gas_limit.to());
     }
 
     if let Some(nonce) = tx.nonce {

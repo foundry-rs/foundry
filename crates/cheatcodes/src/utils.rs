@@ -284,7 +284,7 @@ mod tests {
     use alloy_primitives::FixedBytes;
     use hex::FromHex;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {

@@ -74,6 +74,12 @@ impl UIfmt for u64 {
     }
 }
 
+impl UIfmt for u128 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl UIfmt for bool {
     fn pretty(&self) -> String {
         self.to_string()

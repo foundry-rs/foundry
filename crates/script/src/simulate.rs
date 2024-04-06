@@ -131,9 +131,8 @@ impl PreSimulationState {
                     }
                     // We inflate the gas used by the user specified percentage
                     None => {
-                        let gas =
-                            U256::from(result.gas_used * self.args.gas_estimate_multiplier / 100);
-                        tx.gas = Some(gas);
+                        let gas = result.gas_used * self.args.gas_estimate_multiplier / 100;
+                        tx.gas = Some(gas as u128);
                     }
                 }
                 let tx = TransactionWithMetadata::new(
@@ -265,7 +264,7 @@ impl FilledTransactionsState {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
         }
 
-        let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<RpcUrl, u128> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -312,7 +311,7 @@ impl FilledTransactionsState {
                     }
                 }
 
-                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::ZERO);
+                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(0);
                 *total_gas += tx.gas.expect("gas is set");
             }
 
@@ -341,7 +340,7 @@ impl FilledTransactionsState {
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
-                    gas_price
+                    gas_price.to()
                 } else {
                     provider_info.gas_price()?
                 };

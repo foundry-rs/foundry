@@ -1,4 +1,3 @@
-use alloy_primitives::U256;
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use eyre::{Result, WrapErr};
 use foundry_common::provider::alloy::{get_http_provider, RetryProvider, RpcUrl};
@@ -51,14 +50,14 @@ pub struct ProviderInfo {
 /// Represents the outcome of a gas price request
 #[derive(Debug)]
 pub enum GasPrice {
-    Legacy(Result<U256>),
+    Legacy(Result<u128>),
     EIP1559(Result<Eip1559Estimation>),
 }
 
 impl ProviderInfo {
     pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<ProviderInfo> {
         let provider = Arc::new(get_http_provider(rpc));
-        let chain = provider.get_chain_id().await?.to::<u64>();
+        let chain = provider.get_chain_id().await?;
 
         if let Some(chain) = Chain::from(chain).named() {
             is_legacy |= chain.is_legacy();
@@ -78,7 +77,7 @@ impl ProviderInfo {
     }
 
     /// Returns the gas price to use
-    pub fn gas_price(&self) -> Result<U256> {
+    pub fn gas_price(&self) -> Result<u128> {
         let res = match &self.gas_price {
             GasPrice::Legacy(res) => res.as_ref(),
             GasPrice::EIP1559(res) => res.as_ref().map(|res| &res.max_fee_per_gas),

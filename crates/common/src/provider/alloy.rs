@@ -28,7 +28,7 @@ use super::{
 };
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = RootProvider<RetryBackoffService<RuntimeTransport>>;
+pub type RetryProvider<N = Ethereum> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -262,7 +262,7 @@ pub async fn estimate_eip1559_fees<P: Provider<T>, T: Transport + Clone>(
     let chain = if let Some(chain) = chain {
         chain
     } else {
-        provider.get_chain_id().await.wrap_err("Failed to get chain id")?.to()
+        provider.get_chain_id().await.wrap_err("Failed to get chain id")?
     };
 
     if let Ok(chain) = NamedChain::try_from(chain) {
@@ -279,8 +279,8 @@ pub async fn estimate_eip1559_fees<P: Provider<T>, T: Transport + Clone>(
                 let (a, b) = estimator.estimate_eip1559_fees().await?;
 
                 let estimation = Eip1559Estimation {
-                    max_fee_per_gas: a.to_alloy(),
-                    max_priority_fee_per_gas: b.to_alloy(),
+                    max_fee_per_gas: a.to_alloy().to(),
+                    max_priority_fee_per_gas: b.to_alloy().to(),
                 };
                 return Ok(estimation)
             }

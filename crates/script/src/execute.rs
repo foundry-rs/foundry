@@ -253,8 +253,7 @@ impl RpcData {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
             let provider = get_http_provider(rpc);
             let id = provider.get_chain_id().await.ok()?;
-            let id_u64: u64 = id.try_into().ok()?;
-            NamedChain::try_from(id_u64).ok()
+            NamedChain::try_from(id).ok()
         });
 
         let chains = join_all(chain_ids).await;

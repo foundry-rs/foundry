@@ -527,7 +527,7 @@ async fn can_call_ots_search_transactions_before() {
             assert_eq!(hashes.pop(), Some(tx.hash.to_ethers()));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap().to::<u64>() - 1;
+        block = result.txs.last().unwrap().block_number.unwrap() - 1;
     }
 
     assert!(hashes.is_empty());
@@ -563,7 +563,7 @@ async fn can_call_ots_search_transactions_after() {
             assert_eq!(hashes.pop_back(), Some(tx.hash.to_ethers()));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap().to::<u64>() + 1;
+        block = result.txs.last().unwrap().block_number.unwrap() + 1;
     }
 
     assert!(hashes.is_empty());

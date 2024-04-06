@@ -868,7 +868,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             input: TransactionInput::new(call.input.clone()),
                             nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
-                                Some(U256::from(call.gas_limit))
+                                Some(call.gas_limit as u128)
                             } else {
                                 None
                             },
@@ -1277,7 +1277,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             input: TransactionInput::new(bytecode),
                             nonce: Some(nonce),
                             gas: if is_fixed_gas_limit {
-                                Some(U256::from(call.gas_limit))
+                                Some(call.gas_limit as u128)
                             } else {
                                 None
                             },

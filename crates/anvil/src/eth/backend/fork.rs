@@ -67,7 +67,7 @@ impl ClientFork {
             let chain_id = if let Some(chain_id) = override_chain_id {
                 chain_id
             } else {
-                self.provider().get_chain_id().await?.to::<u64>()
+                self.provider().get_chain_id().await?
             };
             self.config.write().chain_id = chain_id;
         }
@@ -148,7 +148,7 @@ impl ClientFork {
     /// Returns the fee history  `eth_feeHistory`
     pub async fn fee_history(
         &self,
-        block_count: U256,
+        block_count: u64,
         newest_block: BlockNumber,
         reward_percentiles: &[f64],
     ) -> Result<FeeHistory, TransportError> {
@@ -182,7 +182,7 @@ impl ClientFork {
         &self,
         request: &TransactionRequest,
         block: Option<BlockNumber>,
-    ) -> Result<U256, TransportError> {
+    ) -> Result<u128, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
         let res = self.provider().estimate_gas(request, Some(block.into())).await?;
 
@@ -248,13 +248,9 @@ impl ClientFork {
         self.provider().get_balance(address, Some(blocknumber.into())).await
     }
 
-    pub async fn get_nonce(
-        &self,
-        address: Address,
-        blocknumber: u64,
-    ) -> Result<U64, TransportError> {
+    pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
-        self.provider().get_transaction_count(address, Some(blocknumber.into())).await
+        self.provider().get_transaction_count(address, Some(block.into())).await
     }
 
     pub async fn transaction_by_block_number_and_index(

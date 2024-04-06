@@ -60,8 +60,8 @@ impl Block {
                 logs_bloom: partial_header.logs_bloom,
                 difficulty: partial_header.difficulty,
                 number: partial_header.number,
-                gas_limit: partial_header.gas_limit,
-                gas_used: partial_header.gas_used,
+                gas_limit: partial_header.gas_limit as u64,
+                gas_used: partial_header.gas_used as u64,
                 timestamp: partial_header.timestamp,
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
@@ -70,7 +70,7 @@ impl Block {
                 excess_blob_gas: None,
                 parent_beacon_block_root: None,
                 nonce: partial_header.nonce,
-                base_fee_per_gas: partial_header.base_fee,
+                base_fee_per_gas: partial_header.base_fee.map(|v| v as u64),
             },
             transactions,
             ommers,
@@ -88,13 +88,13 @@ pub struct PartialHeader {
     pub logs_bloom: Bloom,
     pub difficulty: U256,
     pub number: u64,
-    pub gas_limit: u64,
-    pub gas_used: u64,
+    pub gas_limit: u128,
+    pub gas_used: u128,
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: B256,
     pub nonce: u64,
-    pub base_fee: Option<u64>,
+    pub base_fee: Option<u128>,
 }
 
 impl From<Header> for PartialHeader {
@@ -107,13 +107,13 @@ impl From<Header> for PartialHeader {
             logs_bloom: value.logs_bloom,
             difficulty: value.difficulty,
             number: value.number,
-            gas_limit: value.gas_limit,
-            gas_used: value.gas_used,
+            gas_limit: value.gas_limit as u128,
+            gas_used: value.gas_used as u128,
             timestamp: value.timestamp,
             extra_data: value.extra_data,
             mix_hash: value.mix_hash,
             nonce: value.nonce,
-            base_fee: value.base_fee_per_gas,
+            base_fee: value.base_fee_per_gas.map(|v| v as u128),
         }
     }
 }

@@ -1,6 +1,6 @@
 use alloy_json_abi::Function;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
@@ -64,18 +64,15 @@ pub async fn build_tx<
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
 
-    req.set_nonce(
-        if let Some(nonce) = tx.nonce {
-            nonce
-        } else {
-            provider.get_transaction_count(from, None).await?
-        }
-        .to(),
-    );
+    req.set_nonce(if let Some(nonce) = tx.nonce {
+        nonce.to()
+    } else {
+        provider.get_transaction_count(from, None).await?
+    });
 
     if tx.legacy || chain.is_legacy() {
         req.set_gas_price(if let Some(gas_price) = tx.gas_price {
-            gas_price
+            gas_price.to()
         } else {
             provider.get_gas_price().await?
         });
@@ -85,14 +82,14 @@ pub async fn build_tx<
             (_, _) => {
                 let estimate = provider.estimate_eip1559_fees(None).await?;
                 (
-                    tx.gas_price.unwrap_or(estimate.max_fee_per_gas),
-                    tx.priority_gas_price.unwrap_or(estimate.max_priority_fee_per_gas),
+                    tx.gas_price.unwrap_or(U256::from(estimate.max_fee_per_gas)),
+                    tx.priority_gas_price.unwrap_or(U256::from(estimate.max_priority_fee_per_gas)),
                 )
             }
         };
 
-        req.set_max_fee_per_gas(max_fee);
-        req.set_max_priority_fee_per_gas(priority_fee);
+        req.set_max_fee_per_gas(max_fee.to());
+        req.set_max_priority_fee_per_gas(priority_fee.to());
     }
 
     let params = sig.as_deref().map(|sig| (sig, args));
@@ -116,7 +113,7 @@ pub async fn build_tx<
     req.set_input(data.into());
 
     req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
-        gas_limit
+        gas_limit.to()
     } else {
         provider.estimate_gas(&req, None).await?
     });

@@ -117,7 +117,7 @@ where
 {
     match chain {
         Some(chain) => Ok(chain),
-        None => Ok(Chain::from_id(provider.get_chain_id().await?.to())),
+        None => Ok(Chain::from_id(provider.get_chain_id().await?)),
     }
 }
 

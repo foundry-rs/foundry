@@ -1,5 +1,5 @@
 use crate::{init_tracing, TestCommand};
-use alloy_primitives::{Address, U64};
+use alloy_primitives::Address;
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_common::provider::alloy::{get_http_provider, RetryProvider};
@@ -13,8 +13,8 @@ pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
     pub provider: Option<RetryProvider>,
-    pub nonces: BTreeMap<u32, U64>,
-    pub address_nonces: BTreeMap<Address, U64>,
+    pub nonces: BTreeMap<u32, u64>,
+    pub address_nonces: BTreeMap<Address, u64>,
     pub cmd: TestCommand,
 }
 
@@ -175,7 +175,7 @@ impl ScriptTester {
 
             assert_eq!(
                 nonce,
-                (prev_nonce + U64::from(expected_increment)),
+                (*prev_nonce + expected_increment as u64),
                 "nonce not incremented correctly for {addr}: \
                  {prev_nonce} + {expected_increment} != {nonce}"
             );
@@ -198,7 +198,7 @@ impl ScriptTester {
                 .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U64::from(*expected_increment)));
+            assert_eq!(nonce, *prev_nonce + *expected_increment as u64);
         }
         self
     }

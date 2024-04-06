@@ -129,7 +129,7 @@ impl CreateArgs {
         let chain_id = if let Some(chain_id) = self.chain_id() {
             chain_id
         } else {
-            provider.get_chain_id().await?.to()
+            provider.get_chain_id().await?
         };
         if self.unlocked {
             // Deploy with unlocked account
@@ -230,17 +230,14 @@ impl CreateArgs {
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);
 
-        deployer.tx.set_nonce(
-            if let Some(nonce) = self.tx.nonce {
-                Ok(nonce)
-            } else {
-                provider.get_transaction_count(deployer_address, None).await
-            }?
-            .to(),
-        );
+        deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
+            Ok(nonce.to())
+        } else {
+            provider.get_transaction_count(deployer_address, None).await
+        }?);
 
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
-            Ok(gas_limit)
+            Ok(gas_limit.to())
         } else {
             provider.estimate_gas(&deployer.tx, None).await
         }?);
@@ -252,7 +249,7 @@ impl CreateArgs {
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {
-                gas_price
+                gas_price.to()
             } else {
                 provider.get_gas_price().await?
             };
@@ -262,12 +259,12 @@ impl CreateArgs {
                 .await
                 .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
-                priority_fee
+                priority_fee.to()
             } else {
                 estimate.max_priority_fee_per_gas
             };
             let max_fee = if let Some(max_fee) = self.tx.gas_price {
-                max_fee
+                max_fee.to()
             } else {
                 estimate.max_fee_per_gas
             };

@@ -1007,10 +1007,7 @@ async fn test_estimate_gas() {
         .expect("Failed to estimate gas with state override");
 
     // Assert the gas estimate meets the expected minimum.
-    assert!(
-        gas_estimate >= alloy_primitives::U256::from(21000),
-        "Gas estimate is lower than expected minimum"
-    );
+    assert!(gas_estimate >= 21000, "Gas estimate is lower than expected minimum");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1036,8 +1033,7 @@ async fn test_reject_gas_too_low() {
 // <https://github.com/foundry-rs/foundry/issues/3783>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_high_gas_limit() {
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000).to_alloy()))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(100_000_000))).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
     let wallet = handle.dev_wallets().next().unwrap().to_ethers();

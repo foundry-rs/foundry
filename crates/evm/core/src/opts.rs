@@ -205,7 +205,7 @@ impl EvmOpts {
                 .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chain_id()) {
-                return Some(Chain::from(id.to::<u64>()));
+                return Some(Chain::from(id));
             }
         }
 

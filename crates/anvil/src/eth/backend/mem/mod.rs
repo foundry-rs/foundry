@@ -97,9 +97,9 @@ pub mod state;
 pub mod storage;
 
 // Gas per transaction not creating a contract.
-pub const MIN_TRANSACTION_GAS: U256 = U256::from_limbs([21_000, 0, 0, 0]);
+pub const MIN_TRANSACTION_GAS: u128 = 21000;
 // Gas per transaction creating a contract.
-pub const MIN_CREATE_GAS: U256 = U256::from_limbs([53_000, 0, 0, 0]);
+pub const MIN_CREATE_GAS: u128 = 53000;
 
 pub type State = foundry_evm::utils::StateChangeset;
 
@@ -425,12 +425,12 @@ impl Backend {
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                    fork_block.header.gas_used,
-                    fork_block.header.gas_limit,
-                    fork_block.header.base_fee_per_gas.unwrap_or_default(),
+                    fork_block.header.gas_used.to(),
+                    fork_block.header.gas_limit.to(),
+                    fork_block.header.base_fee_per_gas.unwrap_or_default().to(),
                 );
 
-                self.fees.set_base_fee(U256::from(next_block_base_fee));
+                self.fees.set_base_fee(next_block_base_fee);
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -619,37 +619,37 @@ impl Backend {
     }
 
     /// Returns the block gas limit
-    pub fn gas_limit(&self) -> U256 {
-        self.env.read().block.gas_limit
+    pub fn gas_limit(&self) -> u128 {
+        self.env.read().block.gas_limit.to()
     }
 
     /// Sets the block gas limit
-    pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env.write().block.gas_limit = gas_limit;
+    pub fn set_gas_limit(&self, gas_limit: u128) {
+        self.env.write().block.gas_limit = U256::from(gas_limit);
     }
 
     /// Returns the current base fee
-    pub fn base_fee(&self) -> U256 {
+    pub fn base_fee(&self) -> u128 {
         self.fees.base_fee()
     }
 
     /// Sets the current basefee
-    pub fn set_base_fee(&self, basefee: U256) {
+    pub fn set_base_fee(&self, basefee: u128) {
         self.fees.set_base_fee(basefee)
     }
 
     /// Returns the current gas price
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         self.fees.gas_price()
     }
 
     /// Returns the suggested fee cap
-    pub fn max_priority_fee_per_gas(&self) -> U256 {
+    pub fn max_priority_fee_per_gas(&self) -> u128 {
         self.fees.max_priority_fee_per_gas()
     }
 
     /// Sets the gas price
-    pub fn set_gas_price(&self, price: U256) {
+    pub fn set_gas_price(&self, price: u128) {
         self.fees.set_gas_price(price)
     }
 
@@ -795,9 +795,9 @@ impl Backend {
     fn next_env(&self) -> EnvWithHandlerCfg {
         let mut env = self.env.read().clone();
         // increase block number for this block
-        env.block.number = env.block.number.saturating_add(rU256::from(1));
-        env.block.basefee = self.base_fee();
-        env.block.timestamp = rU256::from(self.time.current_call_timestamp());
+        env.block.number = env.block.number.saturating_add(U256::from(1));
+        env.block.basefee = U256::from(self.base_fee());
+        env.block.timestamp = U256::from(self.time.current_call_timestamp());
         env
     }
 
@@ -864,7 +864,7 @@ impl Backend {
             block_env: env.block.clone(),
             cfg_env,
             parent_hash: storage.best_hash,
-            gas_used: U256::ZERO,
+            gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
         };
 
@@ -903,7 +903,7 @@ impl Backend {
 
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(rU256::from(1));
-            env.block.basefee = current_base_fee;
+            env.block.basefee = U256::from(current_base_fee);
             env.block.timestamp = rU256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
@@ -923,7 +923,7 @@ impl Backend {
                     block_env: env.block.clone(),
                     cfg_env: CfgEnvWithHandlerCfg::new(env.cfg.clone(), env.handler_cfg),
                     parent_hash: best_hash,
-                    gas_used: U256::ZERO,
+                    gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                 };
                 let executed_tx = executor.execute();
@@ -1018,16 +1018,16 @@ impl Backend {
             (outcome, header, block_hash)
         };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            U256::from(header.gas_used),
-            U256::from(header.gas_limit),
-            U256::from(header.base_fee_per_gas.unwrap_or_default()),
+            header.gas_used as u128,
+            header.gas_limit as u128,
+            header.base_fee_per_gas.unwrap_or_default() as u128,
         );
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
 
         // update next base fee
-        self.fees.set_base_fee(U256::from(next_block_base_fee));
+        self.fees.set_base_fee(next_block_base_fee);
 
         outcome
     }
@@ -1043,7 +1043,7 @@ impl Backend {
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         overrides: Option<StateOverride>,
-    ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number.to::<u64>();
             let (exit, out, gas, state) = match overrides {
@@ -1071,7 +1071,7 @@ impl Backend {
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit);
+        let gas_limit = gas.unwrap_or(block_env.gas_limit.to());
         let mut env = self.env.read().clone();
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
@@ -1079,7 +1079,7 @@ impl Backend {
         env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
-            env.block.basefee = base;
+            env.block.basefee = U256::from(base);
         }
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
@@ -1087,9 +1087,9 @@ impl Backend {
 
         env.tx = TxEnv {
             caller,
-            gas_limit: gas_limit.to::<u64>(),
-            gas_price,
-            gas_priority_fee: max_priority_fee_per_gas,
+            gas_limit: gas_limit as u64,
+            gas_price: U256::from(gas_price),
+            gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr),
                 None => TransactTo::Create(CreateScheme::Create),
@@ -1117,7 +1117,7 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError>
+    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
@@ -1136,7 +1136,7 @@ impl Backend {
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
         inspector.print_logs();
-        Ok((exit_reason, out, gas_used, state))
+        Ok((exit_reason, out, gas_used as u128, state))
     }
 
     pub async fn call_with_tracing(
@@ -1280,7 +1280,7 @@ impl Backend {
                         block_number: Some(block.header.number),
                         block_timestamp: Some(block.header.timestamp),
                         transaction_hash: Some(transaction_hash),
-                        transaction_index: Some(tx.info.transaction_index as u64),
+                        transaction_index: Some(tx.info.transaction_index),
                         log_index: Some(block_log_index as u64),
                         removed: false,
                     };
@@ -1408,7 +1408,7 @@ impl Backend {
                 tx,
                 Some(block),
                 Some(info),
-                base_fee.map(|f| f.to_alloy()),
+                base_fee.map(|f| f as u128),
             );
             transactions.push(tx);
         }
@@ -1782,10 +1782,10 @@ impl Backend {
         &self,
         address: Address,
         block_request: BlockRequest,
-    ) -> Result<U256, BlockchainError> {
+    ) -> Result<u64, BlockchainError> {
         if let BlockRequest::Pending(pool_transactions) = &block_request {
             if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
-                return Ok(U256::from(value));
+                return Ok(value);
             }
         }
         let final_block_request = match block_request {
@@ -1795,7 +1795,7 @@ impl Backend {
 
         self.with_database_at(Some(final_block_request), |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(U256::from(db.basic_ref(address)?.unwrap_or_default().nonce))
+            Ok(db.basic_ref(address)?.unwrap_or_default().nonce)
         })
         .await?
     }
@@ -1949,15 +1949,13 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee().to::<u128>(), |b| b as u128)
-                .checked_add(t.tx().max_priority_fee_per_gas)
-                .unwrap_or(u128::MAX),
+                .map_or(self.base_fee(), |b| b as u128)
+                .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::EIP4844(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee().to::<u128>(), |b| b as u128)
-                .checked_add(t.tx().tx().max_priority_fee_per_gas)
-                .unwrap_or(u128::MAX),
+                .map_or(self.base_fee(), |b| b as u128)
+                .saturating_add(t.tx().tx().max_priority_fee_per_gas),
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
@@ -1978,7 +1976,7 @@ impl Backend {
                     block_number: Some(block.header.number),
                     block_timestamp: Some(block.header.timestamp),
                     transaction_hash: Some(info.transaction_hash),
-                    transaction_index: Some(info.transaction_index as u64),
+                    transaction_index: Some(info.transaction_index),
                     log_index: Some((next_log_index + index) as u64),
                     removed: false,
                 })
@@ -2002,7 +2000,7 @@ impl Backend {
         let inner = TransactionReceipt {
             inner,
             transaction_hash: info.transaction_hash,
-            transaction_index: info.transaction_index as u64,
+            transaction_index: info.transaction_index,
             block_number: Some(block.header.number),
             gas_used: Some(info.gas_used),
             contract_address: info.contract_address,
@@ -2097,7 +2095,7 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            block.header.base_fee_per_gas.map(|g| g.to_alloy()),
+            block.header.base_fee_per_gas.map(|g| g as u128),
         ))
     }
 
@@ -2132,7 +2130,7 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            block.header.base_fee_per_gas.map(|g| g.to_alloy()),
+            block.header.base_fee_per_gas.map(|g| g as u128),
         ))
     }
 
@@ -2303,7 +2301,7 @@ impl TransactionValidator for Backend {
         }
 
         // Check gas limit, iff block gas limit is set.
-        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit {
+        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.to() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                 detail: String::from("tx.gas_limit > env.block.gas_limit"),
@@ -2320,7 +2318,7 @@ impl TransactionValidator for Backend {
         }
 
         if (env.handler_cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee && !is_deposit_tx {
+            if tx.gas_price() < env.block.basefee.to() && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
             }
@@ -2338,12 +2336,12 @@ impl TransactionValidator for Backend {
         let max_cost = tx.max_cost();
         let value = tx.value();
         // check sufficient funds: `gas * price + value`
-        let req_funds = max_cost.checked_add(value).ok_or_else(|| {
+        let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
             warn!(target: "backend", "[{:?}] cost too high",
             tx.hash());
             InvalidTransactionError::InsufficientFunds
         })?;
-        if account.balance < req_funds {
+        if account.balance < U256::from(req_funds) {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::InsufficientFunds);
         }
@@ -2371,10 +2369,10 @@ pub fn transaction_build(
     eth_transaction: MaybeImpersonatedTransaction,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
-    base_fee: Option<U256>,
+    base_fee: Option<u128>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
-    if info.is_some() && transaction.transaction_type.unwrap_or_default().to::<u64>() == 0x7E {
+    if info.is_some() && transaction.transaction_type == Some(0x7E) {
         transaction.nonce = info.as_ref().unwrap().nonce;
     }
 
@@ -2385,11 +2383,9 @@ pub fn transaction_build(
         } else {
             // if transaction is already mined, gas price is considered base fee + priority fee: the
             // effective gas price.
-            let base_fee = base_fee.unwrap_or(U256::ZERO);
-            let max_priority_fee_per_gas =
-                transaction.max_priority_fee_per_gas.map(|g| g.to::<U256>()).unwrap_or(U256::ZERO);
-            transaction.gas_price =
-                Some(base_fee.checked_add(max_priority_fee_per_gas).unwrap_or(U256::MAX));
+            let base_fee = base_fee.unwrap_or(0);
+            let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
+            transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
         }
     } else {
         transaction.max_fee_per_gas = None;
@@ -2399,10 +2395,9 @@ pub fn transaction_build(
     transaction.block_hash =
         block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
 
-    transaction.block_number = block.as_ref().map(|block| U256::from(block.header.number));
+    transaction.block_number = block.as_ref().map(|block| block.header.number);
 
-    transaction.transaction_index =
-        info.as_ref().map(|status| U256::from(status.transaction_index));
+    transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
 
     // need to check if the signature of the transaction is impersonated, if so then we
     // can't recover the sender, instead we use the sender from the executed transaction and set the

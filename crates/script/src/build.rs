@@ -289,7 +289,7 @@ impl CompiledState {
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
             let provider = Arc::new(try_get_http_provider(fork_url)?);
-            Some(provider.get_chain_id().await?.to::<u64>())
+            Some(provider.get_chain_id().await?)
         };
 
         let sequence = match self.try_load_sequence(chain, false) {
