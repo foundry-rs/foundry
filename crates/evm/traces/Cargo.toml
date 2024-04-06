@@ -25,7 +25,6 @@ revm-inspectors.workspace = true
 
 eyre = "0.6"
 futures = "0.3"
-hashbrown = "0.14"
 hex.workspace = true
 itertools.workspace = true
 once_cell = "1"

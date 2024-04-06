@@ -1,8 +1,9 @@
 use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
+use rustc_hash::FxHashMap;
 use semver::Version;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone, Debug)]
@@ -22,36 +23,14 @@ pub struct ContractVisitor<'a> {
 
     /// Coverage items
     pub items: Vec<CoverageItem>,
-
-    /// Node IDs of this contract's base contracts, as well as IDs for referenced contracts such as
-    /// libraries
-    pub base_contract_node_ids: HashSet<usize>,
 }
 
 impl<'a> ContractVisitor<'a> {
     pub fn new(source_id: usize, source: &'a str, contract_name: String) -> Self {
-        Self {
-            source_id,
-            source,
-            contract_name,
-            branch_id: 0,
-            last_line: 0,
-            items: Vec::new(),
-            base_contract_node_ids: HashSet::new(),
-        }
+        Self { source_id, source, contract_name, branch_id: 0, last_line: 0, items: Vec::new() }
     }
 
     pub fn visit(mut self, contract_ast: Node) -> eyre::Result<Self> {
-        let linearized_base_contracts: Vec<usize> =
-            contract_ast.attribute("linearizedBaseContracts").ok_or_else(|| {
-                eyre::eyre!(
-                    "The contract's AST node is missing a list of linearized base contracts"
-                )
-            })?;
-
-        // We skip the first ID because that's the ID of the contract itself
-        self.base_contract_node_ids.extend(&linearized_base_contracts[1..]);
-
         // Find all functions and walk their AST
         for node in contract_ast.nodes {
             if node.node_type == NodeType::FunctionDefinition {
@@ -317,25 +296,13 @@ impl<'a> ContractVisitor<'a> {
                 });
 
                 let expr: Option<Node> = node.attribute("expression");
-                match expr.as_ref().map(|expr| &expr.node_type) {
+                if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
                     // Might be a require/assert call
-                    Some(NodeType::Identifier) => {
-                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                        if let Some("assert" | "require") = name.as_deref() {
-                            self.push_branches(&node.src, self.branch_id);
-                            self.branch_id += 1;
-                        }
+                    let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
+                    if let Some("assert" | "require") = name.as_deref() {
+                        self.push_branches(&node.src, self.branch_id);
+                        self.branch_id += 1;
                     }
-                    // Might be a call to a library
-                    Some(NodeType::MemberAccess) => {
-                        let referenced_declaration_id = expr
-                            .and_then(|expr| expr.attribute("expression"))
-                            .and_then(|subexpr: Node| subexpr.attribute("referencedDeclaration"));
-                        if let Some(id) = referenced_declaration_id {
-                            self.base_contract_node_ids.insert(id);
-                        }
-                    }
-                    _ => (),
                 }
 
                 Ok(())
@@ -434,26 +401,17 @@ impl<'a> ContractVisitor<'a> {
 pub struct SourceAnalysis {
     /// A collection of coverage items.
     pub items: Vec<CoverageItem>,
-    /// A mapping of contract IDs to item IDs relevant to the contract (including items in base
-    /// contracts).
-    pub contract_items: HashMap<ContractId, Vec<usize>>,
 }
 
 /// Analyzes a set of sources to find coverage items.
 #[derive(Clone, Debug, Default)]
 pub struct SourceAnalyzer {
     /// A map of source IDs to their source code
-    sources: HashMap<usize, String>,
-    /// A map of AST node IDs of contracts to their contract IDs.
-    contract_ids: HashMap<usize, ContractId>,
+    sources: FxHashMap<usize, String>,
     /// A map of contract IDs to their AST nodes.
     contracts: HashMap<ContractId, Node>,
     /// A collection of coverage items.
     items: Vec<CoverageItem>,
-    /// A map of contract IDs to item IDs.
-    contract_items: HashMap<ContractId, Vec<usize>>,
-    /// A map of contracts to their base contracts
-    contract_bases: HashMap<ContractId, Vec<ContractId>>,
 }
 
 impl SourceAnalyzer {
@@ -463,8 +421,8 @@ impl SourceAnalyzer {
     /// (defined by `version`).
     pub fn new(
         version: Version,
-        asts: HashMap<usize, Ast>,
-        sources: HashMap<usize, String>,
+        asts: FxHashMap<usize, Ast>,
+        sources: FxHashMap<usize, String>,
     ) -> eyre::Result<Self> {
         let mut analyzer = SourceAnalyzer { sources, ..Default::default() };
 
@@ -475,8 +433,6 @@ impl SourceAnalyzer {
                     continue
                 }
 
-                let node_id =
-                    child.id.ok_or_else(|| eyre::eyre!("The contract's AST node has no ID"))?;
                 let contract_id = ContractId {
                     version: version.clone(),
                     source_id,
@@ -484,7 +440,6 @@ impl SourceAnalyzer {
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?,
                 };
-                analyzer.contract_ids.insert(node_id, contract_id.clone());
                 analyzer.contracts.insert(contract_id, child);
             }
         }
@@ -496,11 +451,7 @@ impl SourceAnalyzer {
     ///
     /// Coverage items are found by:
     /// - Walking the AST of each contract (except interfaces)
-    /// - Recording the items and base contracts of each contract
-    ///
-    /// Finally, the item IDs of each contract and its base contracts are flattened, and the return
-    /// value represents all coverage items in the project, along with a mapping of contract IDs to
-    /// item IDs.
+    /// - Recording the items of each contract
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
     /// source ID the item is in, the source code range of the item, and the contract name the item
@@ -510,127 +461,32 @@ impl SourceAnalyzer {
     /// two different solc versions will produce overlapping source IDs if the compiler version is
     /// not taken into account.
     pub fn analyze(mut self) -> eyre::Result<SourceAnalysis> {
-        // Analyze the contracts
-        self.analyze_contracts()?;
+        for (contract_id, ast) in self.contracts {
+            let ContractVisitor { items, .. } = ContractVisitor::new(
+                contract_id.source_id,
+                self.sources.get(&contract_id.source_id).ok_or_else(|| {
+                    eyre::eyre!(
+                        "We should have the source code for source ID {}",
+                        contract_id.source_id
+                    )
+                })?,
+                contract_id.contract_name.clone(),
+            )
+            .visit(ast)?;
 
-        // Flatten the data
-        let mut flattened: HashMap<ContractId, Vec<usize>> = HashMap::new();
-        for contract_id in self.contract_items.keys() {
-            let mut item_ids: Vec<usize> = Vec::new();
-
-            //
-            // for a specific contract (id == contract_id):
-            //
-            // self.contract_bases.get(contract_id) includes the following contracts:
-            //   1. all the ancestors of this contract (including parent, grandparent, ...
-            //      contracts)
-            //   2. the libraries **directly** used by this contract
-            //
-            // The missing contracts are:
-            //   1. libraries used in ancestors of this contracts
-            //   2. libraries used in libraries (i.e libs indirectly used by this contract)
-            //
-            // We want to find out all the above contracts and libraries related to this contract.
-
-            for contract_or_lib in {
-                // A set of contracts and libraries related to this contract (will include "this"
-                // contract itself)
-                let mut contracts_libraries: HashSet<&ContractId> = HashSet::new();
-
-                // we use a stack for depth-first search.
-                let mut stack: Vec<&ContractId> = Vec::new();
-
-                // push "this" contract onto the stack
-                stack.push(contract_id);
-
-                while let Some(contract_or_lib) = stack.pop() {
-                    // whenever a contract_or_lib is removed from the stack, it is added to the set
-                    contracts_libraries.insert(contract_or_lib);
-
-                    // push all ancestors of contract_or_lib and libraries used by contract_or_lib
-                    // onto the stack
-                    if let Some(bases) = self.contract_bases.get(contract_or_lib) {
-                        stack.extend(
-                            bases.iter().filter(|base| !contracts_libraries.contains(base)),
-                        );
-                    }
-                }
-
-                contracts_libraries
-            } {
-                // get items of each contract or library
-                if let Some(items) = self.contract_items.get(contract_or_lib) {
-                    item_ids.extend(items.iter());
-                }
-            }
-
-            // If there are no items for this contract, then it was most likely filtered
-            if !item_ids.is_empty() {
-                flattened.insert(contract_id.clone(), item_ids);
-            }
-        }
-
-        Ok(SourceAnalysis { items: self.items.clone(), contract_items: flattened })
-    }
-
-    fn analyze_contracts(&mut self) -> eyre::Result<()> {
-        for contract_id in self.contracts.keys() {
-            // Find this contract's coverage items if we haven't already
-            if !self.contract_items.contains_key(contract_id) {
-                let ContractVisitor { items, base_contract_node_ids, .. } = ContractVisitor::new(
-                    contract_id.source_id,
-                    self.sources.get(&contract_id.source_id).unwrap_or_else(|| {
-                        panic!(
-                            "We should have the source code for source ID {}",
-                            contract_id.source_id
-                        )
-                    }),
-                    contract_id.contract_name.clone(),
-                )
-                .visit(
-                    self.contracts
-                        .get(contract_id)
-                        .unwrap_or_else(|| {
-                            panic!("We should have the AST of contract: {contract_id:?}")
-                        })
-                        .clone(),
-                )?;
-
-                let is_test = items.iter().any(|item| {
-                    if let CoverageItemKind::Function { name } = &item.kind {
-                        name.is_test()
-                    } else {
-                        false
-                    }
-                });
-
-                // Record this contract's base contracts
-                // We don't do this for test contracts because we don't care about them
-                if !is_test {
-                    self.contract_bases.insert(
-                        contract_id.clone(),
-                        base_contract_node_ids
-                            .iter()
-                            .filter_map(|base_contract_node_id| {
-                                self.contract_ids.get(base_contract_node_id).cloned()
-                            })
-                            .collect(),
-                    );
-                }
-
-                // For tests and contracts with no items we still record an empty Vec so we don't
-                // end up here again
-                if items.is_empty() || is_test {
-                    self.contract_items.insert(contract_id.clone(), Vec::new());
+            let is_test = items.iter().any(|item| {
+                if let CoverageItemKind::Function { name } = &item.kind {
+                    name.is_test()
                 } else {
-                    let item_ids: Vec<usize> =
-                        (self.items.len()..self.items.len() + items.len()).collect();
-                    self.items.extend(items);
-                    self.contract_items.insert(contract_id.clone(), item_ids.clone());
+                    false
                 }
+            });
+
+            if !is_test {
+                self.items.extend(items);
             }
         }
 
-        Ok(())
+        Ok(SourceAnalysis { items: self.items })
     }
 }

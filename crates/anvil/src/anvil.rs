@@ -4,6 +4,12 @@ use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use foundry_cli::utils;
 
+// TODO: parity dependencies are not compatible with a different global allocator.
+#[cfg(any())]
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// A fast local Ethereum development node.
 #[derive(Parser)]
 #[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
@@ -30,7 +36,7 @@ pub enum AnvilSubcommand {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> eyre::Result<()> {
     utils::load_dotenv();
 
     let mut app = Anvil::parse();

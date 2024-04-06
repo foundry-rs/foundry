@@ -107,6 +107,7 @@ impl Signer for DevSigner {
             TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::Deposit(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
         }
     }
@@ -133,6 +134,10 @@ pub fn build_typed_transaction(
         TypedTransactionRequest::EIP1559(tx) => {
             let sighash = tx.signature_hash();
             TypedTransaction::EIP1559(Signed::new_unchecked(tx, signature, sighash))
+        }
+        TypedTransactionRequest::EIP4844(tx) => {
+            let sighash = tx.signature_hash();
+            TypedTransaction::EIP4844(Signed::new_unchecked(tx, signature, sighash))
         }
         TypedTransactionRequest::Deposit(tx) => {
             let DepositTransactionRequest {

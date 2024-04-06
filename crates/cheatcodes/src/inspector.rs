@@ -32,6 +32,7 @@ use revm::{
     primitives::{BlockEnv, CreateScheme, TransactTo},
     EvmContext, InnerEvmContext, Inspector,
 };
+use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -154,7 +155,7 @@ pub struct Cheatcodes {
     pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
-    pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
+    pub allowed_mem_writes: FxHashMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -221,7 +222,17 @@ impl Cheatcodes {
         call: &CallInputs,
     ) -> Result {
         // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input, false)?;
+        let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
+            if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
+                let msg = format!(
+                    "unknown cheatcode with selector {selector}; \
+                     you may have a mismatch between the `Vm` interface (likely in `forge-std`) \
+                     and the `forge` version"
+                );
+                return alloy_sol_types::Error::Other(std::borrow::Cow::Owned(msg));
+            }
+            e
+        })?;
         let caller = call.context.caller;
 
         // ensure the caller is allowed to execute cheatcodes,

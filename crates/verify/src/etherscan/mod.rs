@@ -18,12 +18,13 @@ use foundry_compilers::{
     Artifact, Project, Solc,
 };
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, hashbrown::HashSet};
+use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::{
+    collections::HashSet,
     fmt::Debug,
     path::{Path, PathBuf},
 };
@@ -303,7 +304,10 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-            builder.with_api_url(api_url)?.with_url(base_url.unwrap_or(api_url))?
+            builder
+                .with_chain_id(chain)
+                .with_api_url(api_url)?
+                .with_url(base_url.unwrap_or(api_url))?
         } else {
             builder.chain(chain)?
         };

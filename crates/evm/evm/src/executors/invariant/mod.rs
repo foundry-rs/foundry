@@ -2,12 +2,11 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_dyn_abi::DynSolValue;
-use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, FixedBytes, U256};
+use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
+use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     utils::{get_function, StateChangeset},
@@ -18,8 +17,8 @@ use foundry_evm_fuzz::{
         RandomCallGenerator, SenderFilters, TargetedContracts,
     },
     strategies::{
-        build_initial_state, collect_created_contracts, collect_state_from_call, invariant_strat,
-        override_call_strat, EvmFuzzState,
+        build_initial_state, collect_created_contracts, invariant_strat, override_call_strat,
+        CalldataFuzzDictionary, EvmFuzzState,
     },
     FuzzCase, FuzzedCases,
 };
@@ -30,16 +29,63 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{primitives::HashMap, DatabaseCommit};
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
+use self::error::FailedInvariantCaseData;
 pub use error::{InvariantFailures, InvariantFuzzError, InvariantFuzzTestResult};
-use foundry_evm_fuzz::strategies::CalldataFuzzDictionary;
 
 mod funcs;
 pub use funcs::{assert_invariants, replay_run};
 
-use self::error::FailedInvariantCaseData;
+sol! {
+    interface IInvariantTest {
+        #[derive(Default)]
+        struct FuzzSelector {
+            address addr;
+            bytes4[] selectors;
+        }
+
+        #[derive(Default)]
+        struct FuzzAbiSelector {
+            string contract_abi;
+            bytes4[] selectors;
+        }
+
+        #[derive(Default)]
+        struct FuzzInterface {
+            address addr;
+            string[] artifacts;
+        }
+
+        #[derive(Default)]
+        function excludeArtifacts() public view returns (string[] memory excludedArtifacts);
+
+        #[derive(Default)]
+        function excludeContracts() public view returns (address[] memory excludedContracts);
+
+        #[derive(Default)]
+        function excludeSenders() public view returns (address[] memory excludedSenders);
+
+        #[derive(Default)]
+        function targetArtifacts() public view returns (string[] memory targetedArtifacts);
+
+        #[derive(Default)]
+        function targetArtifactSelectors() public view returns (FuzzAbiSelector[] memory targetedArtifactSelectors);
+
+        #[derive(Default)]
+        function targetContracts() public view returns (address[] memory targetedContracts);
+
+        #[derive(Default)]
+        function targetSelectors() public view returns (FuzzSelector[] memory targetedSelectors);
+
+        #[derive(Default)]
+        function targetSenders() public view returns (address[] memory targetedSenders);
+
+        #[derive(Default)]
+        function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces);
+    }
+}
 
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation = (
@@ -138,7 +184,7 @@ impl<'a> InvariantExecutor<'a> {
             &mut failures.borrow_mut(),
             self.config.shrink_sequence,
             self.config.shrink_run_limit,
-        ));
+        )?);
 
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
@@ -200,13 +246,7 @@ impl<'a> InvariantExecutor<'a> {
                     let mut state_changeset =
                         call_result.state_changeset.to_owned().expect("no changesets");
 
-                    collect_data(
-                        &mut state_changeset,
-                        sender,
-                        &call_result,
-                        fuzz_state.clone(),
-                        &self.config.dictionary,
-                    );
+                    collect_data(&mut state_changeset, sender, &call_result, &fuzz_state);
 
                     if let Err(error) = collect_created_contracts(
                         &state_changeset,
@@ -236,12 +276,13 @@ impl<'a> InvariantExecutor<'a> {
                             &inputs,
                             &mut failures.borrow_mut(),
                             &targeted_contracts,
-                            state_changeset,
+                            &state_changeset,
                             self.config.fail_on_revert,
                             self.config.shrink_sequence,
                             self.config.shrink_run_limit,
                             &mut run_traces,
-                        );
+                        )
+                        .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                     if !can_continue || current_run == self.config.depth - 1 {
                         last_run_calldata.borrow_mut().clone_from(&inputs);
@@ -278,11 +319,14 @@ impl<'a> InvariantExecutor<'a> {
             }
             fuzz_cases.borrow_mut().push(FuzzedCases::new(fuzz_runs));
 
+            // Revert state to not persist values between runs.
+            fuzz_state.revert();
+
             Ok(())
         });
 
         trace!(target: "forge::test::invariant::calldata_address_fuzz_dictionary", "{:?}", calldata_fuzz_dictionary.inner.addresses);
-        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().values().iter().map(hex::encode).collect::<Vec<_>>());
+        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, error) = failures.into_inner().into_inner();
 
@@ -304,9 +348,9 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
     ) -> eyre::Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
-        self.select_contract_artifacts(invariant_contract.address, invariant_contract.abi)?;
+        self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
-            self.select_contracts_and_senders(invariant_contract.address, invariant_contract.abi)?;
+            self.select_contracts_and_senders(invariant_contract.address)?;
 
         if targeted_contracts.is_empty() {
             eyre::bail!("No contracts to fuzz.");
@@ -314,7 +358,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
         let fuzz_state: EvmFuzzState =
-            build_initial_state(self.executor.backend.mem_db(), &self.config.dictionary);
+            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary);
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
@@ -322,7 +366,7 @@ impl<'a> InvariantExecutor<'a> {
             Arc::new(Mutex::new(targeted_contracts));
 
         let calldata_fuzz_config =
-            CalldataFuzzDictionary::new(&self.config.dictionary, fuzz_state.clone());
+            CalldataFuzzDictionary::new(&self.config.dictionary, &fuzz_state);
 
         // Creates the invariant strategy.
         let strat = invariant_strat(
@@ -369,68 +413,25 @@ impl<'a> InvariantExecutor<'a> {
     /// Priority:
     ///
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
-    pub fn select_contract_artifacts(
-        &mut self,
-        invariant_address: Address,
-        abi: &JsonAbi,
-    ) -> eyre::Result<()> {
-        // targetArtifactSelectors -> (string, bytes4[])[].
-        let targeted_abi = self
-            .get_list::<(String, Vec<FixedBytes<4>>)>(
-                invariant_address,
-                abi,
-                "targetArtifactSelectors",
-                |v| {
-                    if let Some(list) = v.as_array() {
-                        list.iter().map(|val| {
-                            if let Some((_, _str, elements)) = val.as_custom_struct() {
-                                let name = elements[0].as_str().unwrap().to_string();
-                                let selectors = elements[1]
-                                    .as_array()
-                                    .unwrap()
-                                    .iter()
-                                    .map(|selector| {
-                                        FixedBytes::<4>::from_slice(&selector.as_fixed_bytes().unwrap().0[0..4])
-                                    })
-                                    .collect::<Vec<_>>();
-                                (name, selectors)
-                            } else {
-                                panic!("Could not decode inner value of targetArtifactSelectors. This is a bug.")
-                            }
-                        }).collect::<Vec<_>>()
-                    } else {
-                        panic!("Could not decode targetArtifactSelectors as array. This is a bug.")
-                    }
-                },
-            )
-            .into_iter()
-            .collect::<BTreeMap<_, _>>();
+    pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> eyre::Result<()> {
+        let result = self
+            .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
-        for (contract, selectors) in targeted_abi {
-            let identifier = self.validate_selected_contract(contract, &selectors.to_vec())?;
-
-            self.artifact_filters
-                .targeted
-                .entry(identifier)
-                .or_default()
-                .extend(selectors.to_vec());
+        for IInvariantTest::FuzzAbiSelector { contract_abi, selectors } in
+            result.targetedArtifactSelectors
+        {
+            let identifier = self.validate_selected_contract(contract_abi, &selectors)?;
+            self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 
-        // targetArtifacts -> string[]
-        // excludeArtifacts -> string[].
-        let [selected_abi, excluded_abi] = ["targetArtifacts", "excludeArtifacts"].map(|method| {
-            self.get_list::<String>(invariant_address, abi, method, |v| {
-                if let Some(list) = v.as_array() {
-                    list.iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>()
-                } else {
-                    panic!("targetArtifacts should be an array")
-                }
-            })
-        });
+        let selected =
+            self.call_sol_default(invariant_address, &IInvariantTest::targetArtifactsCall {});
+        let excluded =
+            self.call_sol_default(invariant_address, &IInvariantTest::excludeArtifactsCall {});
 
         // Insert `excludeArtifacts` into the executor `excluded_abi`.
-        for contract in excluded_abi {
+        for contract in excluded.excludedArtifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
             if !self.artifact_filters.excluded.contains(&identifier) {
@@ -459,7 +460,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // Insert `targetArtifacts` into the executor `targeted_abi`, if they have not been seen
         // before.
-        for contract in selected_abi {
+        for contract in selected.targetedArtifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
             if !self.artifact_filters.targeted.contains_key(&identifier) &&
@@ -497,28 +498,23 @@ impl<'a> InvariantExecutor<'a> {
     /// `targetContracts() -> address[]` and `excludeContracts() -> address[]`.
     pub fn select_contracts_and_senders(
         &self,
-        invariant_address: Address,
-        abi: &JsonAbi,
+        to: Address,
     ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
-        let [targeted_senders, excluded_senders, selected, excluded] =
-            ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"].map(
-                |method| {
-                    self.get_list::<Address>(invariant_address, abi, method, |v| {
-                        if let Some(list) = v.as_array() {
-                            list.iter().map(|v| v.as_address().unwrap()).collect::<Vec<_>>()
-                        } else {
-                            panic!("targetSenders should be an array")
-                        }
-                    })
-                },
-            );
+        let targeted_senders =
+            self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
+        let excluded_senders =
+            self.call_sol_default(to, &IInvariantTest::excludeSendersCall {}).excludedSenders;
+        let selected =
+            self.call_sol_default(to, &IInvariantTest::targetContractsCall {}).targetedContracts;
+        let excluded =
+            self.call_sol_default(to, &IInvariantTest::excludeContractsCall {}).excludedContracts;
 
         let mut contracts: TargetedContracts = self
             .setup_contracts
             .clone()
             .into_iter()
             .filter(|(addr, (identifier, _))| {
-                *addr != invariant_address &&
+                *addr != to &&
                     *addr != CHEATCODE_ADDRESS &&
                     *addr != HARDHAT_CONSOLE_ADDRESS &&
                     (selected.is_empty() || selected.contains(addr)) &&
@@ -531,9 +527,9 @@ impl<'a> InvariantExecutor<'a> {
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();
 
-        self.target_interfaces(invariant_address, abi, &mut contracts)?;
+        self.target_interfaces(to, &mut contracts)?;
 
-        self.select_selectors(invariant_address, abi, &mut contracts)?;
+        self.select_selectors(to, &mut contracts)?;
 
         Ok((SenderFilters::new(targeted_senders, excluded_senders), contracts))
     }
@@ -545,36 +541,11 @@ impl<'a> InvariantExecutor<'a> {
     pub fn target_interfaces(
         &self,
         invariant_address: Address,
-        abi: &JsonAbi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        let interfaces = self.get_list::<(Address, Vec<String>)>(
-            invariant_address,
-            abi,
-            "targetInterfaces",
-            |v| {
-                if let Some(l) = v.as_array() {
-                    l.iter()
-                        .map(|v| {
-                            if let Some((_, _names, elements)) = v.as_custom_struct() {
-                                let addr = elements[0].as_address().unwrap();
-                                let interfaces = elements[1]
-                                    .as_array()
-                                    .unwrap()
-                                    .iter()
-                                    .map(|v| v.as_str().unwrap().to_string())
-                                    .collect::<Vec<_>>();
-                                (addr, interfaces)
-                            } else {
-                                panic!("targetInterfaces should be a tuple array")
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    panic!("targetInterfaces should be a tuple array")
-                }
-            },
-        );
+        let interfaces = self
+            .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {})
+            .targetedInterfaces;
 
         // Since `targetInterfaces` returns a tuple array there is no guarantee
         // that the addresses are unique this map is used to merge functions of
@@ -585,9 +556,9 @@ impl<'a> InvariantExecutor<'a> {
 
         // Loop through each address and its associated artifact identifiers.
         // We're borrowing here to avoid taking full ownership.
-        for (addr, identifiers) in &interfaces {
+        for IInvariantTest::FuzzInterface { addr, artifacts } in &interfaces {
             // Identifiers are specified as an array, so we loop through them.
-            for identifier in identifiers {
+            for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
                 if let Some((_, (abi, _))) =
                     self.project_contracts.find_by_name_or_identifier(identifier)?
@@ -618,10 +589,8 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_selectors(
         &self,
         address: Address,
-        abi: &JsonAbi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        // `targetArtifactSelectors() -> (string, bytes4[])[]`.
         let some_abi_selectors = self
             .artifact_filters
             .targeted
@@ -639,37 +608,9 @@ impl<'a> InvariantExecutor<'a> {
             }
         }
 
-        // `targetSelectors() -> (address, bytes4[])[]`.
-        let selectors =
-            self.get_list::<(Address, Vec<FixedBytes<4>>)>(address, abi, "targetSelectors", |v| {
-                if let Some(l) = v.as_array() {
-                    l.iter()
-                        .map(|val| {
-                            if let Some((_, _str, elements)) = val.as_custom_struct() {
-                                let name = elements[0].as_address().unwrap();
-                                let selectors = elements[1]
-                                    .as_array()
-                                    .unwrap()
-                                    .iter()
-                                    .map(|selector| {
-                                        FixedBytes::<4>::from_slice(
-                                            &selector.as_fixed_bytes().unwrap().0[0..4],
-                                        )
-                                    })
-                                    .collect::<Vec<_>>();
-                                (name, selectors)
-                            } else {
-                                panic!("targetSelectors should be a tuple array2")
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    panic!("targetSelectors should be a tuple array")
-                }
-            });
-
-        for (address, bytes4_array) in selectors.into_iter() {
-            self.add_address_with_functions(address, bytes4_array, targeted_contracts)?;
+        let selectors = self.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
+            self.add_address_with_functions(addr, selectors, targeted_contracts)?;
         }
         Ok(())
     }
@@ -704,29 +645,15 @@ impl<'a> InvariantExecutor<'a> {
         Ok(())
     }
 
-    /// Get the function output by calling the contract `method_name` function, encoded as a
-    /// [DynSolValue].
-    fn get_list<T>(
-        &self,
-        address: Address,
-        abi: &JsonAbi,
-        method_name: &str,
-        f: fn(DynSolValue) -> Vec<T>,
-    ) -> Vec<T> {
-        if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-            if let Ok(call_result) =
-                self.executor.call::<_, _>(CALLER, address, func.clone(), vec![], U256::ZERO, None)
-            {
-                return f(call_result.result)
-            } else {
-                warn!(
-                    "The function {} was found but there was an error querying its data.",
-                    method_name
-                );
-            }
-        };
-
-        Vec::new()
+    fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
+    where
+        C::Return: Default,
+    {
+        self.executor
+            .call_sol(CALLER, to, args, U256::ZERO, None)
+            .map(|c| c.decoded_result)
+            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
+            .unwrap_or_default()
     }
 }
 
@@ -737,8 +664,7 @@ fn collect_data(
     state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
-    fuzz_state: EvmFuzzState,
-    config: &FuzzDictionaryConfig,
+    fuzz_state: &EvmFuzzState,
 ) {
     // Verify it has no code.
     let mut has_code = false;
@@ -753,7 +679,7 @@ fn collect_data(
         sender_changeset = state_changeset.remove(sender);
     }
 
-    collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
+    fuzz_state.collect_state_from_call(&call_result.logs, &*state_changeset);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
@@ -772,19 +698,18 @@ fn can_continue(
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     targeted_contracts: &FuzzRunIdentifiedContracts,
-    state_changeset: StateChangeset,
+    state_changeset: &StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
     shrink_run_limit: usize,
     run_traces: &mut Vec<CallTraceArena>,
-) -> RichInvariantResults {
+) -> eyre::Result<RichInvariantResults> {
     let mut call_results = None;
 
     // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts
-        .lock()
-        .iter()
-        .any(|contract| !executor.is_success(*contract.0, false, state_changeset.clone(), false));
+    let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
+        !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
+    });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
@@ -799,9 +724,9 @@ fn can_continue(
             failures,
             shrink_sequence,
             shrink_run_limit,
-        );
+        )?;
         if call_results.is_none() {
-            return RichInvariantResults::new(false, None)
+            return Ok(RichInvariantResults::new(false, None));
         }
     } else {
         // Increase the amount of reverts.
@@ -821,8 +746,8 @@ fn can_continue(
             let error = InvariantFuzzError::Revert(case_data);
             failures.error = Some(error);
 
-            return RichInvariantResults::new(false, None)
+            return Ok(RichInvariantResults::new(false, None));
         }
     }
-    RichInvariantResults::new(true, call_results)
+    Ok(RichInvariantResults::new(true, call_results))
 }

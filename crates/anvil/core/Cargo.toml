@@ -20,12 +20,13 @@ alloy-rpc-trace-types.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-network = { workspace = true, features = ["k256"] }
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["k256", "kzg"]}
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = "1.4"
+c-kzg = { version = "0.4.2", features = ["serde"] }
 
 # trie
 hash-db = { version = "0.15", default-features = false }

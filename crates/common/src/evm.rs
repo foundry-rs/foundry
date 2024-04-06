@@ -11,11 +11,11 @@ use foundry_config::{
     },
     Chain, Config,
 };
+use rustc_hash::FxHashMap;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
-pub type Breakpoints = HashMap<char, (Address, usize)>;
+pub type Breakpoints = FxHashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 /// All vars are opt-in, their default values are expected to be set by the
@@ -118,13 +118,7 @@ pub struct EvmArgs {
     /// default value: 330
     ///
     /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[arg(
-        long,
-        requires = "fork_url",
-        alias = "cups",
-        value_name = "CUPS",
-        help_heading = "Fork config"
-    )]
+    #[arg(long, alias = "cups", value_name = "CUPS", help_heading = "Fork config")]
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting for this node's provider.
@@ -132,7 +126,6 @@ pub struct EvmArgs {
     /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(
         long,
-        requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
         help_heading = "Fork config",
         visible_alias = "no-rate-limit"

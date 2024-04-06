@@ -172,6 +172,8 @@ pub struct NodeConfig {
     pub enable_optimism: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
+    /// The memory limit per EVM execution in bytes.
+    pub memory_limit: Option<u64>,
 }
 
 impl NodeConfig {
@@ -407,11 +409,18 @@ impl Default for NodeConfig {
             disable_default_create2_deployer: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
+            memory_limit: None,
         }
     }
 }
 
 impl NodeConfig {
+    /// Returns the memory limit of the node
+    #[must_use]
+    pub fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
+        self.memory_limit = mems_value;
+        self
+    }
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee
@@ -831,6 +840,10 @@ impl NodeConfig {
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
         cfg.handler_cfg.is_optimism = self.enable_optimism;
 
+        if let Some(value) = self.memory_limit {
+            cfg.memory_limit = value;
+        }
+
         let env = revm::primitives::Env {
             cfg: cfg.cfg_env,
             block: BlockEnv {
@@ -1026,9 +1039,6 @@ latest block number: {latest_block}"
             ..Default::default()
         };
 
-        // apply changes such as difficulty -> prevrandao
-        apply_chain_and_block_specific_env_changes(env, &block);
-
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.header.base_fee_per_gas {
@@ -1072,6 +1082,8 @@ latest block number: {latest_block}"
             chain_id
         };
         let override_chain_id = self.chain_id;
+        // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
+        apply_chain_and_block_specific_env_changes(env, &block);
 
         let meta = BlockchainDbMeta::new(*env.env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {

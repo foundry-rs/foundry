@@ -397,7 +397,7 @@ pub mod wrapper {
         pub cumulative_gas_used: U256,
         /// Gas used by this transaction alone.
         ///
-        /// Gas used is `None` if the the client is running in light client mode.
+        /// Gas used is `None` if the client is running in light client mode.
         #[serde(rename = "gasUsed")]
         pub gas_used: Option<U256>,
         /// Contract address created, or `None` if not a deployment.

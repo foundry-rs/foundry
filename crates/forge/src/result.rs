@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, Log};
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_compilers::artifacts::Libraries;
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -193,6 +194,8 @@ pub struct SuiteResult {
     pub test_results: BTreeMap<String, TestResult>,
     /// Generated warnings.
     pub warnings: Vec<String>,
+    /// Libraries used to link test contract.
+    pub libraries: Libraries,
 }
 
 impl SuiteResult {
@@ -200,8 +203,9 @@ impl SuiteResult {
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
+        libraries: Libraries,
     ) -> Self {
-        Self { duration, test_results, warnings }
+        Self { duration, test_results, warnings, libraries }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -534,9 +538,9 @@ impl TestSetup {
         match error {
             EvmError::Execution(err) => {
                 // force the tracekind to be setup so a trace is shown.
-                traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
-                logs.extend(err.logs);
-                labeled_addresses.extend(err.labels);
+                traces.extend(err.raw.traces.map(|traces| (TraceKind::Setup, traces)));
+                logs.extend(err.raw.logs);
+                labeled_addresses.extend(err.raw.labels);
                 Self::failed_with(logs, traces, labeled_addresses, err.reason)
             }
             e => Self::failed_with(

@@ -14,8 +14,7 @@ pub use calldata::{
 
 mod state;
 pub use state::{
-    build_initial_state, collect_created_contracts, collect_state_from_call,
-    fuzz_calldata_from_state, EvmFuzzState,
+    build_initial_state, collect_created_contracts, fuzz_calldata_from_state, EvmFuzzState,
 };
 
 mod invariants;
