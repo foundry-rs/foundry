@@ -108,6 +108,8 @@ pub struct ScriptArgs {
     pub broadcast: bool,
 
     /// Batch size of transactions.
+    ///
+    /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
     #[arg(long, default_value = "100")]
     pub batch_size: usize,
 
