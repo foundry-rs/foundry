@@ -107,6 +107,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
+    /// Batch size of transactions.
+    #[arg(long, default_value = "100")]
+    pub batch_size: usize,
+
     /// Skips on-chain simulation.
     #[arg(long)]
     pub skip_simulation: bool,
