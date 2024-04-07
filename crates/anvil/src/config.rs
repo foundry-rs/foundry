@@ -86,7 +86,10 @@ const BANNER: &str = r"
      \__,_| |_| |_|   \_/   |_| |_|
 ";
 
+/// Object-safe trait that enables injecting extra precompiles when using
+/// `anvil` as a library.
 pub trait PrecompileFactory {
+    /// Returns a set of precompiles to extend the EVM with.
     fn precompiles(&self) -> Vec<(Address, Precompile)>;
 }
 
@@ -179,6 +182,7 @@ pub struct NodeConfig {
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
+    /// Set of precompiles to extend the EVM with. Empty by default.
     pub extra_precompiles: Vec<(Address, Precompile)>,
 }
 
