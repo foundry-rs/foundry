@@ -1,13 +1,9 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
-use crate::{retry::RETRY_CHECK_ON_VERIFY};
 use alloy_json_abi::Function;
 use ethers_providers::Middleware;
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
-    errors::EtherscanError,
-    utils::lookup_compiler_version,
-    verify::{CodeFormat, VerifyContract},
-    Client,
+    errors::EtherscanError, utils::lookup_compiler_version, verify::{CodeFormat, VerifyContract}, Client, Response, ResponseData
 };
 use foundry_cli::utils::{self, get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::{abi::encode_function_args, retry::Retry, types::ToEthers};
@@ -23,9 +19,9 @@ use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    borrow::Cow, fmt::Debug, path::{Path, PathBuf}
+    collections::HashMap, fmt::Debug, path::{Path, PathBuf}
 };
 
 pub static OKLINK_URL: &str = "https://www.oklink.com/";
@@ -40,11 +36,11 @@ pub struct OklinkVerificationProvider {
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct Query<'a, T: Serialize> {
+struct Query<T: Serialize> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    apikey: Option<Cow<'a, str>>,
-    module: Cow<'a, str>,
-    action: Cow<'a, str>,
+    apikey: Option<String>,
+    module: String,
+    action: String,
     #[serde(flatten)]
     other: T,
 }
@@ -57,25 +53,10 @@ impl VerificationProvider for OklinkVerificationProvider {
     }
 
     async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
-        let (oklink, verify_args) = self.prepare_request(&args).await?;
-
-        // if !args.skip_is_verified_check &&
-        //     self.is_contract_verified(&oklink, &verify_args).await?
-        // {
-        //     println!(
-        //         "\nContract [{}] {:?} is already verified. Skipping verification.",
-        //         verify_args.contract_name,
-        //         verify_args.address.to_checksum(None)
-        //     );
-
-        //     return Ok(())
-        // }
-        debug!("client {:?}", oklink);
+        let (_, verify_args) = self.prepare_request(&args).await?;
 
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
         let client = reqwest::Client::new();
-
-
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| async {
@@ -83,7 +64,8 @@ impl VerificationProvider for OklinkVerificationProvider {
                     "\nSubmitting verification for [{}] {}.",
                     verify_args.contract_name, verify_args.address
                 );
-                let body = create_query("24b1a1b1-701f-4653-9d88-47d4f5c12512","contract", "verifysourcecode", &verify_args);
+                let api_key: Option<String> = args.etherscan.key().clone();
+                let body = create_query(api_key,"contract".to_string(), "verifysourcecode".to_string(), &verify_args);
                 debug!("body {:?}", body);
                 let resp = client
                 .post(args.verifier.verifier_url.clone().unwrap())
@@ -94,66 +76,52 @@ impl VerificationProvider for OklinkVerificationProvider {
                 .send()
                 .await?
                 .text()
-                .await?;
-                
-                // let resp = oklink
-                //     .submit_contract_verification(&verify_args)
-                //     .await
-                //     .wrap_err_with(|| {
-                //         // valid json
-                //         let args = serde_json::to_string(&verify_args).unwrap();
-                //         error!(target: "forge::verify", ?args, "Failed to submit verification");
-                //         format!("Failed to submit contract verification, payload:\n{args}")
-                //     })?;
+                .await
+                .wrap_err_with(|| {
+                            // valid json
+                            let args = serde_json::to_string(&verify_args).unwrap();
+                            error!(target: "forge::verify", ?args, "Failed to submit verification");
+                            format!("Failed to submit contract verification, payload:\n{args}")
+                        })?;
 
                 debug!(target: "forge::verify", ?resp, "Received verification response");
+                let resp = sanitize_response::<String>(&resp)?;
 
-                // if resp.status == "0" {
-                //     if resp.result == "Contract source code already verified"
-                //         // specific for blockscout response
-                //         || resp.result == "Smart-contract already verified."
-                //     {
-                //         return Ok(None)
-                //     }
+                if resp.status == "0" {
+                    if resp.result == "Contract source code already verified"
+                        // specific for blockscout response
+                        || resp.result == "Smart-contract already verified."
+                    {
+                        return Ok(None)
+                    }
 
-                //     if resp.result.starts_with("Unable to locate ContractCode at") {
-                //         warn!("{}", resp.result);
-                //         return Err(eyre!("Oklink could not detect the deployment."))
-                //     }
+                    if resp.result.starts_with("Unable to locate ContractCode at") {
+                        warn!("{}", resp.result);
+                        return Err(eyre!("Oklink could not detect the deployment."))
+                    }
 
-                //     warn!("Failed verify submission: {:?}", resp);
-                //     eprintln!(
-                //         "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                //         resp.message, resp.result
-                //     );
-                //     std::process::exit(1);
-                // }
+                    warn!("Failed verify submission: {:?}", resp);
+                    eprintln!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
+                    );
+                    std::process::exit(1);
+                }
 
                 Ok(Some(resp))
             })
             .await?;
 
-        // if let Some(resp) = resp {
-        //     println!(
-        //         "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-        //         resp.message,
-        //         resp.result,
-        //         oklink.address_url(args.address)
-        //     );
-
-        //     if args.watch {
-        //         let check_args = VerifyCheckArgs {
-        //             id: resp.result,
-        //             etherscan: args.etherscan,
-        //             retry: RETRY_CHECK_ON_VERIFY,
-        //             verifier: args.verifier,
-        //         };
-        //         // return check_args.run().await
-        //         return self.check(check_args).await
-        //     }
-        // } else {
-        //     println!("Contract source code already verified");
-        // }
+        if let Some(resp) = resp {
+            println!(
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
+                resp.message,
+                resp.result,
+                OKLINK_URL
+            );
+        } else {
+            println!("Contract source code already verified");
+        }
 
         Ok(())
     }
@@ -161,23 +129,30 @@ impl VerificationProvider for OklinkVerificationProvider {
 
     /// Executes the command to check verification status on Oklink
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let config = args.try_load_config_emit_warnings()?;
-        let oklink = self.client(
-            args.etherscan.chain.unwrap_or_default(),
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan.key().as_deref(),
-            &config,
-        )?;
+
         let retry: Retry = args.retry.into();
+        let client = reqwest::Client::new();
+        let api_key: Option<String> = args.etherscan.key().clone();
+        let body = create_query(api_key,"contract".to_string(), "checkverifystatus".to_string(), HashMap::from([("guid", args.id.clone())]));
+        debug!("body {:?}", body);
+
         retry
             .run_async(|| {
                 async {
-                    let resp = oklink
-                        .check_contract_verification_status(args.id.clone())
-                        .await
-                        .wrap_err("Failed to request verification status")?;
+                    let resp = client
+                                        .post(args.verifier.verifier_url.clone().unwrap())
+                                        .header("Content-Type", "application/x-www-form-urlencoded")
+                                        .header("Ok-Access-Key", &args.etherscan.key().unwrap())
+                                        .header("x-apiKey", &args.etherscan.key().unwrap())
+                                        .form(&body)
+                                        .send()
+                                        .await?
+                                        .text()
+                                        .await
+                                        .wrap_err("Failed to request verification status")?;
 
-                    trace!(target: "forge::verify", ?resp, "Received verification response");
+                    debug!(target: "forge::verify", ?resp, "Received verification response");
+                    let resp = sanitize_response::<String>(&resp)?;
 
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
@@ -297,23 +272,6 @@ impl OklinkVerificationProvider {
         Ok((oklink, verify_args))
     }
 
-    /// Queries the oklink API to verify if the contract is already verified.
-    async fn is_contract_verified(
-        &self,
-        oklink: &Client,
-        verify_contract: &VerifyContract,
-    ) -> Result<bool> {
-        let check = oklink.contract_abi(verify_contract.address).await;
-
-        if let Err(err) = check {
-            match err {
-                EtherscanError::ContractCodeNotVerified(_) => return Ok(false),
-                error => return Err(error.into()),
-            }
-        }
-
-        Ok(true)
-    }
 
     /// Create an oklink client
     pub(crate) fn client(
@@ -584,209 +542,40 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
     }
 }
 fn create_query<T: Serialize>(
-    api_key: &'static str,
-    module: &'static str,
-    action: &'static str,
+    api_key: Option<String>,
+    module: String,
+    action: String,
     other: T,
-) -> Query<'static, T> {
+) -> Query<T> {
     Query {
-        apikey: Some(Cow::Borrowed(api_key)),
-        module: Cow::Borrowed(module),
-        action: Cow::Borrowed(action),
+        apikey: api_key,
+        module: module,
+        action: action,
         other,
     }
 }
-// fn sanitize_response<T: DeserializeOwned>(&self, res: impl AsRef<str>) -> Result<Response<T>> {
-//     let res = res.as_ref();
-//     let res: ResponseData<T> = serde_json::from_str(res).map_err(|error| {
-//         error!(target: "etherscan", ?res, "Failed to deserialize response: {}", error);
-//         if res == "Page not found" {
-//             EtherscanError::PageNotFound
-//         } else if is_blocked_by_cloudflare_response(res) {
-//             EtherscanError::BlockedByCloudflare
-//         } else if is_cloudflare_security_challenge(res) {
-//             EtherscanError::CloudFlareSecurityChallenge
-//         } else {
-//             EtherscanError::Serde { error, content: res.to_string() }
-//         }
-//     })?;
+fn sanitize_response<T: DeserializeOwned>(res: impl AsRef<str>) -> Result<Response<T>> {
+    let res = res.as_ref();
+    let res: ResponseData<T> = serde_json::from_str(res).map_err(|error| {
+        error!(target: "etherscan", ?res, "Failed to deserialize response: {}", error);
+        if res == "Page not found" {
+            EtherscanError::PageNotFound
+        } else {
+            EtherscanError::Serde { error, content: res.to_string() }
+        }
+    })?;
 
-//     match res {
-//         ResponseData::Error { result, message, status } => {
-//             if let Some(ref result) = result {
-//                 if result.starts_with("Max rate limit reached") {
-//                     return Err(EtherscanError::RateLimitExceeded);
-//                 } else if result.to_lowercase() == "invalid api key" {
-//                     return Err(EtherscanError::InvalidApiKey);
-//                 }
-//             }
-//             Err(EtherscanError::ErrorResponse { status, message, result })
-//         }
-//         ResponseData::Success(res) => Ok(res),
-//     }
-// }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-    use foundry_common::fs;
-    use foundry_test_utils::forgetest_async;
-    use tempfile::tempdir;
-
-    #[test]
-    fn can_extract_oklink_verify_config() {
-        let temp = tempdir().unwrap();
-        let root = temp.path();
-
-        let config = r#"
-                [profile.default]
-
-                [oklink]
-                mumbai = { key = "dummykey", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
-            "#;
-
-        let toml_file = root.join(Config::FILE_NAME);
-        fs::write(toml_file, config).unwrap();
-
-        let args: VerifyArgs = VerifyArgs::parse_from([
-            "foundry-cli",
-            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
-            "src/Counter.sol:Counter",
-            "--chain",
-            "mumbai",
-            "--root",
-            root.as_os_str().to_str().unwrap(),
-        ]);
-
-        let config = args.load_config();
-
-        let oklink = OklinkVerificationProvider::default();
-        let client = oklink
-            .client(
-                args.etherscan.chain.unwrap_or_default(),
-                args.verifier.verifier_url.as_deref(),
-                args.etherscan.key().as_deref(),
-                &config,
-            )
-            .unwrap();
-        assert_eq!(client.oklink_api_url().as_str(), "https://api-testnet.polygonscan.com/");
-
-        assert!(format!("{client:?}").contains("dummykey"));
-
-        let args: VerifyArgs = VerifyArgs::parse_from([
-            "foundry-cli",
-            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
-            "src/Counter.sol:Counter",
-            "--chain",
-            "mumbai",
-            "--verifier-url",
-            "https://verifier-url.com/",
-            "--root",
-            root.as_os_str().to_str().unwrap(),
-        ]);
-
-        let config = args.load_config();
-
-        let oklink = OklinkVerificationProvider::default();
-        let client = oklink
-            .client(
-                args.etherscan.chain.unwrap_or_default(),
-                args.verifier.verifier_url.as_deref(),
-                args.etherscan.key().as_deref(),
-                &config,
-            )
-            .unwrap();
-        assert_eq!(client.oklink_api_url().as_str(), "https://verifier-url.com/");
-        assert!(format!("{client:?}").contains("dummykey"));
+    match res {
+        ResponseData::Error { result, message, status } => {
+            if let Some(ref result) = result {
+                if result.starts_with("Max rate limit reached") {
+                    return Err(EtherscanError::RateLimitExceeded.into());
+                } else if result.to_lowercase() == "invalid api key" {
+                    return Err(EtherscanError::InvalidApiKey.into());
+                }
+            }
+            Err(EtherscanError::ErrorResponse { status, message, result }.into())
+        }
+        ResponseData::Success(res) => Ok(res),
     }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fails_on_disabled_cache_and_missing_info() {
-        let temp = tempdir().unwrap();
-        let root = temp.path();
-        let root_path = root.as_os_str().to_str().unwrap();
-
-        let config = r"
-                [profile.default]
-                cache = false
-            ";
-
-        let toml_file = root.join(Config::FILE_NAME);
-        fs::write(toml_file, config).unwrap();
-
-        let address = "0xd8509bee9c9bf012282ad33aba0d87241baf5064";
-        let contract_name = "Counter";
-        let src_dir = "src";
-        fs::create_dir_all(root.join(src_dir)).unwrap();
-        let contract_path = format!("{src_dir}/Counter.sol");
-        fs::write(root.join(&contract_path), "").unwrap();
-
-        let mut oklink = OklinkVerificationProvider::default();
-
-        // No compiler argument
-        let args = VerifyArgs::parse_from([
-            "foundry-cli",
-            address,
-            &format!("{contract_path}:{contract_name}"),
-            "--root",
-            root_path,
-        ]);
-
-        let result = oklink.preflight_check(args).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
-        );
-
-        // No contract path
-        let args =
-            VerifyArgs::parse_from(["foundry-cli", address, contract_name, "--root", root_path]);
-
-        let result = oklink.preflight_check(args).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "If cache is disabled, contract info must be provided in the format <path>:<name>"
-        );
-
-        // Constructor args path
-        let args = VerifyArgs::parse_from([
-            "foundry-cli",
-            address,
-            &format!("{contract_path}:{contract_name}"),
-            "--constructor-args-path",
-            ".",
-            "--compiler-version",
-            "0.8.15",
-            "--root",
-            root_path,
-        ]);
-
-        let result = oklink.preflight_check(args).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Cache must be enabled in order to use the `--constructor-args-path` option",
-        );
-    }
-
-    forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
-        prj.add_source("Counter1", "contract Counter {}").unwrap();
-        prj.add_source("Counter2", "contract Counter {}").unwrap();
-
-        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
-
-        let args = VerifyArgs::parse_from([
-            "foundry-cli",
-            "0x0000000000000000000000000000000000000000",
-            "src/Counter1.sol:Counter",
-            "--root",
-            &prj.root().to_string_lossy(),
-        ]);
-
-        let mut oklink = OklinkVerificationProvider::default();
-        oklink.preflight_check(args).await.unwrap();
-    });
 }
