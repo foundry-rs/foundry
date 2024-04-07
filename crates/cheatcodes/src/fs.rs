@@ -486,7 +486,7 @@ mod tests {
     use super::*;
     use crate::CheatsConfig;
     use alloy_primitives::Bytes;
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
