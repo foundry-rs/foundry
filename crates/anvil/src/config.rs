@@ -833,6 +833,7 @@ impl NodeConfig {
         self
     }
 
+    /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
     pub fn with_extra_precompiles(mut self, factory: impl PrecompileFactory) -> Self {
         self.extra_precompiles.extend(factory.precompiles());
