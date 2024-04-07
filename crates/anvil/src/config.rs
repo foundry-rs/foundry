@@ -826,7 +826,7 @@ impl NodeConfig {
 
     /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
-    pub fn with_extra_precompiles(mut self, factory: impl PrecompileFactory + 'static) -> Self {
+    pub fn with_precompile_factory(mut self, factory: impl PrecompileFactory + 'static) -> Self {
         self.precompile_factory = Some(Arc::new(factory));
         self
     }
