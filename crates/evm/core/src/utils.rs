@@ -156,6 +156,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use revm::primitives::{address, Address, Bytes, Precompile, PrecompileResult};
 
     #[test]
     fn build_evm() {
@@ -169,6 +170,33 @@ mod tests {
         let mut inspector = revm::inspectors::NoOpInspector;
 
         let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector, vec![]);
+        let result = evm.transact().unwrap();
+        assert!(result.result.is_success());
+    }
+
+    #[test]
+    fn build_evm_with_extra_precompiles() {
+        const PRECOMPILE_ADDR: Address = address!("0000000000000000000000000000000000000071");
+        fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
+            Ok((0, Bytes::new()))
+        }
+
+        let mut db = revm::db::EmptyDB::default();
+        let env = Box::<revm::primitives::Env>::default();
+        let spec = SpecId::LATEST;
+        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
+        let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
+
+        let mut inspector = revm::inspectors::NoOpInspector;
+        let extra_precompiles = vec![(PRECOMPILE_ADDR, Precompile::Standard(my_precompile))];
+        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector, extra_precompiles);
+        assert!(evm
+            .handler
+            .pre_execution()
+            .load_precompiles()
+            .addresses()
+            .any(|&addr| addr == PRECOMPILE_ADDR));
+
         let result = evm.transact().unwrap();
         assert!(result.result.is_success());
     }
