@@ -555,6 +555,10 @@ fn sanitize_response<T: DeserializeOwned>(res: impl AsRef<str>) -> Result<Respon
         error!(target: "etherscan", ?res, "Failed to deserialize response: {}", error);
         if res == "Page not found" {
             EtherscanError::PageNotFound
+        } else if is_blocked_by_cloudflare_response(res) {
+            EtherscanError::BlockedByCloudflare
+        } else if is_cloudflare_security_challenge(res) {
+            EtherscanError::CloudFlareSecurityChallenge
         } else {
             EtherscanError::Serde { error, content: res.to_string() }
         }
@@ -573,4 +577,18 @@ fn sanitize_response<T: DeserializeOwned>(res: impl AsRef<str>) -> Result<Respon
         }
         ResponseData::Success(res) => Ok(res),
     }
+}
+
+/// etherscan/polyscan is protected by cloudflare, which can lead to html responses like `Sorry, you have been blocked` See also <https://community.cloudflare.com/t/sorry-you-have-been-blocked/110790>
+///
+/// This returns true if the `txt` is a cloudflare error response
+pub(crate) fn is_blocked_by_cloudflare_response(txt: &str) -> bool {
+    txt.to_lowercase().contains("sorry, you have been blocked")
+}
+
+/// etherscan/polyscan is protected by cloudflare, which can require captchas to "review the
+/// security of your connection before proceeding"
+pub(crate) fn is_cloudflare_security_challenge(txt: &str) -> bool {
+    txt.contains("https://www.cloudflare.com?utm_source=challenge")
+        || txt.to_lowercase().contains("checking if the site connection is secure")
 }
