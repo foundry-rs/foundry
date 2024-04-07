@@ -786,7 +786,7 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector, vec![]);
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
@@ -838,7 +838,7 @@ impl Backend {
                 // created account takes precedence: for example contract creation in setups
                 if init_account.is_created() {
                     trace!(?loaded_account, "skipping created account");
-                    continue
+                    continue;
                 }
 
                 // otherwise we need to replace the account's info with the one from the fork's
@@ -912,7 +912,7 @@ impl Backend {
 
                 if tx.hash == tx_hash {
                     // found the target transaction
-                    return Ok(Some(tx))
+                    return Ok(Some(tx));
                 }
                 trace!(tx=?tx.hash, "committing transaction");
 
@@ -1882,7 +1882,7 @@ fn commit_transaction<I: Inspector<Backend>>(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        crate::utils::new_evm_with_inspector(db, env, inspector)
+        crate::utils::new_evm_with_inspector(db, env, inspector, vec![])
             .transact()
             .wrap_err("backend: failed committing transaction")?
     };

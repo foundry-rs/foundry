@@ -814,9 +814,10 @@ impl Backend {
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
+        let extra_precompiles = self.node_config.read().await.extra_precompiles.clone();
 
         let ResultAndState { result, state } =
-            new_evm_with_inspector_ref(&*db, env, &mut inspector).transact()?;
+            new_evm_with_inspector_ref(&*db, env, &mut inspector, extra_precompiles).transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -1122,8 +1123,9 @@ impl Backend {
         let mut inspector = Inspector::default();
 
         let env = self.build_call_env(request, fee_details, block_env);
+        let extra_precompiles = self.node_config.try_read().unwrap().extra_precompiles.clone();
         let ResultAndState { result, state } =
-            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+            new_evm_with_inspector_ref(state, env, &mut inspector, extra_precompiles).transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1149,8 +1151,10 @@ impl Backend {
             let block_number = block.number;
 
             let env = self.build_call_env(request, fee_details, block);
+            let extra_precompiles = self.node_config.try_read().unwrap().extra_precompiles.clone();
             let ResultAndState { result, state: _ } =
-                new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+                new_evm_with_inspector_ref(state, env, &mut inspector, extra_precompiles)
+                    .transact()?;
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
                     (reason.into(), gas_used, Some(output))
@@ -1195,8 +1199,9 @@ impl Backend {
         );
 
         let env = self.build_call_env(request, fee_details, block_env);
+        let extra_precompiles = self.node_config.try_read().unwrap().extra_precompiles.clone();
         let ResultAndState { result, state: _ } =
-            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+            new_evm_with_inspector_ref(state, env, &mut inspector, extra_precompiles).transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))

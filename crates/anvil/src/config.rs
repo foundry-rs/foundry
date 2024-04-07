@@ -16,7 +16,7 @@ use crate::{
     FeeManager, Hardfork,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{hex, utils::Unit, U256};
+use alloy_primitives::{hex, utils::Unit, Address, U256};
 use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::{
@@ -39,6 +39,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use rand::thread_rng;
+use revm::primitives::Precompile;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -84,6 +85,10 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
+
+pub trait PrecompileFactory {
+    fn precompiles(&self) -> Vec<(Address, Precompile)>;
+}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
@@ -174,6 +179,7 @@ pub struct NodeConfig {
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
+    pub extra_precompiles: Vec<(Address, Precompile)>,
 }
 
 impl NodeConfig {
@@ -410,6 +416,7 @@ impl Default for NodeConfig {
             enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
+            extra_precompiles: vec![],
         }
     }
 }
@@ -819,6 +826,12 @@ impl NodeConfig {
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
         self.disable_default_create2_deployer = yes;
+        self
+    }
+
+    #[must_use]
+    pub fn with_extra_precompiles(mut self, factory: impl PrecompileFactory) -> Self {
+        self.extra_precompiles.extend(factory.precompiles());
         self
     }
 
