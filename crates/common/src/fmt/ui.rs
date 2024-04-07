@@ -208,7 +208,7 @@ blobGasUsed             {}",
             status.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),
-            transaction_type),
+            transaction_type,
             blob_gas_price.pretty(),
             blob_gas_used.pretty(),
         );
