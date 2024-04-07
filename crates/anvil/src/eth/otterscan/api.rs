@@ -8,7 +8,9 @@ use crate::eth::{
     EthApi,
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
+use alloy_rpc_types::{
+    Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction, WithOtherFields,
+};
 use alloy_rpc_types_trace::parity::{
     Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,
 };
@@ -238,7 +240,7 @@ impl EthApi {
         &self,
         address: Address,
         nonce: U256,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("ots_getTransactionBySenderAndNonce");
 
         let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();

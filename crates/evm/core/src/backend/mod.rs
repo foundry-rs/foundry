@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction, WithOtherFields};
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
@@ -917,7 +917,7 @@ impl Backend {
                 trace!(tx=?tx.hash, "committing transaction");
 
                 commit_transaction(
-                    tx,
+                    WithOtherFields::new(tx),
                     env.clone(),
                     journaled_state,
                     fork,
@@ -1868,7 +1868,7 @@ fn update_env_block(env: &mut Env, fork_block: U64, block: &Block) {
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an optional inspector
 fn commit_transaction<I: Inspector<Backend>>(
-    tx: Transaction,
+    tx: WithOtherFields<Transaction>,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,

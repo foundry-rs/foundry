@@ -1,5 +1,5 @@
 use crate::tx;
-use alloy_network::{Ethereum, EthereumSigner};
+use alloy_network::{AnyNetwork, EthereumSigner};
 use alloy_primitives::{Address, U64};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_signer::Signer;
@@ -177,7 +177,8 @@ impl SendTxArgs {
             }
 
             let signer = EthereumSigner::from(signer);
-            let provider = ProviderBuilder::<_, Ethereum>::new().signer(signer).provider(provider);
+            let provider =
+                ProviderBuilder::<_, AnyNetwork>::default().signer(signer).provider(provider);
 
             cast_send(
                 provider,
@@ -199,7 +200,7 @@ impl SendTxArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cast_send<P: Provider<T>, T: Transport + Clone>(
+async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: P,
     from: Address,
     to: Option<Address>,

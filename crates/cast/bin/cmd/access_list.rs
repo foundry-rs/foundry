@@ -1,7 +1,7 @@
-use alloy_network::TransactionBuilder;
+use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
@@ -91,7 +91,7 @@ impl AccessListArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<P: Provider<T>, T: Transport + Clone>(
+async fn access_list<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: P,
     etherscan_api_key: Option<&str>,
     from: Address,
@@ -104,7 +104,7 @@ async fn access_list<P: Provider<T>, T: Transport + Clone>(
     block: Option<BlockId>,
     to_json: bool,
 ) -> Result<()> {
-    let mut req = TransactionRequest::default()
+    let mut req = WithOtherFields::<TransactionRequest>::default()
         .with_to(to.into())
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())

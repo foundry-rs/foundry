@@ -1007,7 +1007,7 @@ async fn test_estimate_gas() {
         .expect("Failed to estimate gas with state override");
 
     // Assert the gas estimate meets the expected minimum.
-    assert!(gas_estimate >= 21000, "Gas estimate is lower than expected minimum");
+    assert!(gas_estimate >= rU256::from(21000), "Gas estimate is lower than expected minimum");
 }
 
 #[tokio::test(flavor = "multi_thread")]

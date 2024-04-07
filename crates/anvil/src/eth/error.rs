@@ -37,6 +37,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode receipt")]
+    FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in th EVM's environment after merge")]
@@ -347,6 +349,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
+                }
+                BlockchainError::FailedToDecodeReceipt => {
+                    RpcError::invalid_params("Failed to decode receipt")
                 }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")

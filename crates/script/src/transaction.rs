@@ -1,7 +1,7 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, Bytes, B256};
-use alloy_rpc_types::request::TransactionRequest;
+use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, provider::alloy::RpcUrl, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
@@ -35,7 +35,7 @@ pub struct TransactionWithMetadata {
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
     pub rpc: RpcUrl,
-    pub transaction: TransactionRequest,
+    pub transaction: WithOtherFields<TransactionRequest>,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
 }
@@ -54,7 +54,7 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 
 impl TransactionWithMetadata {
     pub fn from_tx_request(transaction: TransactionRequest) -> Self {
-        Self { transaction, ..Default::default() }
+        Self { transaction: WithOtherFields::new(transaction), ..Default::default() }
     }
 
     pub fn new(
@@ -208,11 +208,11 @@ impl TransactionWithMetadata {
         Ok(())
     }
 
-    pub fn tx(&self) -> &TransactionRequest {
+    pub fn tx(&self) -> &WithOtherFields<TransactionRequest> {
         &self.transaction
     }
 
-    pub fn tx_mut(&mut self) -> &mut TransactionRequest {
+    pub fn tx_mut(&mut self) -> &mut WithOtherFields<TransactionRequest> {
         &mut self.transaction
     }
 

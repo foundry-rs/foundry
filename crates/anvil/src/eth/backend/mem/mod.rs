@@ -1387,7 +1387,7 @@ impl Backend {
     pub(crate) async fn mined_transactions_by_block_number(
         &self,
         number: BlockNumber,
-    ) -> Option<Vec<Transaction>> {
+    ) -> Option<Vec<WithOtherFields<Transaction>>> {
         if let Some(block) = self.get_block(number) {
             return self.mined_transactions_in_block(&block);
         }
@@ -1395,7 +1395,10 @@ impl Backend {
     }
 
     /// Returns all transactions given a block
-    pub(crate) fn mined_transactions_in_block(&self, block: &Block) -> Option<Vec<Transaction>> {
+    pub(crate) fn mined_transactions_in_block(
+        &self,
+        block: &Block,
+    ) -> Option<Vec<WithOtherFields<Transaction>>> {
         let mut transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
@@ -1501,7 +1504,7 @@ impl Backend {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
         let block = self.convert_block(block);
-        Some(block.into_full_block(transactions))
+        Some(block.into_full_block(transactions.into_iter().map(|t| t.inner).collect()))
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
@@ -2029,10 +2032,7 @@ impl Backend {
             let number = self.convert_block_number(Some(number));
 
             if fork.predates_fork_inclusive(number) {
-                let receipts = fork
-                    .block_receipts(number)
-                    .await
-                    .map_err(BlockchainError::AlloyForkProvider)?;
+                let receipts = fork.block_receipts(number).await?;
 
                 return Ok(receipts);
             }
@@ -2045,7 +2045,7 @@ impl Backend {
         &self,
         number: BlockNumber,
         index: Index,
-    ) -> Result<Option<Transaction>, BlockchainError> {
+    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
         if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.header.hash) {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index));
         }
@@ -2064,7 +2064,7 @@ impl Backend {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<Transaction>, BlockchainError> {
+    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
         if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
             return Ok(tx);
         }
@@ -2080,7 +2080,7 @@ impl Backend {
         &self,
         block_hash: B256,
         index: Index,
-    ) -> Option<Transaction> {
+    ) -> Option<WithOtherFields<Transaction>> {
         let (info, block, tx) = {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
@@ -2102,7 +2102,7 @@ impl Backend {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<Transaction>, BlockchainError> {
+    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
         trace!(target: "backend", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
             return Ok(tx);
@@ -2115,7 +2115,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_transaction_by_hash(&self, hash: B256) -> Option<Transaction> {
+    fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
@@ -2370,7 +2370,7 @@ pub fn transaction_build(
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     base_fee: Option<u128>,
-) -> Transaction {
+) -> WithOtherFields<Transaction> {
     let mut transaction: Transaction = eth_transaction.clone().into();
     if info.is_some() && transaction.transaction_type == Some(0x7E) {
         transaction.nonce = info.as_ref().unwrap().nonce;
@@ -2419,7 +2419,7 @@ pub fn transaction_build(
     }
 
     transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
-    transaction
+    WithOtherFields::new(transaction)
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage

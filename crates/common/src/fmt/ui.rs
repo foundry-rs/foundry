@@ -1,10 +1,11 @@
 //! Helper trait and functions to format Ethereum types.
 
 use crate::TransactionReceiptWithRevertReason;
-use alloy_consensus::{Receipt, ReceiptWithBloom, TxType};
+use alloy_consensus::{AnyReceiptEnvelope, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::*;
 use alloy_rpc_types::{
-    other::OtherFields, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
+    other::OtherFields, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
+    TransactionReceipt,
 };
 use serde::Deserialize;
 
@@ -146,36 +147,35 @@ impl UIfmt for [u8] {
     }
 }
 
-impl UIfmt for TransactionReceipt {
+impl UIfmt for AnyTransactionReceipt {
     fn pretty(&self) -> String {
-        let transaction_type = self.transaction_type();
         let Self {
-            transaction_hash,
-            transaction_index,
-            block_hash,
-            block_number,
-            from,
-            to,
-            gas_used,
-            contract_address,
-            state_root,
-            effective_gas_price,
-            inner,
-            blob_gas_price,
-            blob_gas_used,
+            inner:
+                TransactionReceipt {
+                    transaction_hash,
+                    transaction_index,
+                    block_hash,
+                    block_number,
+                    from,
+                    to,
+                    gas_used,
+                    contract_address,
+                    state_root,
+                    effective_gas_price,
+                    inner:
+                        AnyReceiptEnvelope {
+                            r#type: transaction_type,
+                            inner:
+                                ReceiptWithBloom {
+                                    receipt: Receipt { status, cumulative_gas_used, logs },
+                                    logs_bloom,
+                                },
+                        },
+                    blob_gas_price,
+                    blob_gas_used,
+                },
+            other,
         } = self;
-
-        let (logs_bloom, status, cumulative_gas_used, logs) =
-            if let Some(receipt) = inner.as_receipt_with_bloom() {
-                let ReceiptWithBloom {
-                    logs_bloom,
-                    receipt: Receipt { status, cumulative_gas_used, logs },
-                } = receipt;
-
-                (Some(logs_bloom), Some(status), Some(cumulative_gas_used), Some(logs))
-            } else {
-                Default::default()
-            };
 
         let mut pretty = format!(
             "
@@ -208,7 +208,7 @@ blobGasUsed             {}",
             status.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),
-            transaction_type.pretty(),
+            transaction_type),
             blob_gas_price.pretty(),
             blob_gas_used.pretty(),
         );
@@ -218,9 +218,9 @@ blobGasUsed             {}",
         }
 
         // additional captured fields
-        // for (key, val) in other.iter() {
-        //    pretty.push_str(&format!("\n{}             {}", key, val));
-        // }
+        for (key, val) in other.iter() {
+            pretty.push_str(&format!("\n{}             {}", key, val));
+        }
 
         pretty
     }
@@ -435,23 +435,23 @@ pub fn get_pretty_tx_receipt_attr(
         "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
         "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
         "cumulativeGasUsed" | "cumulative_gas_used" => {
-            Some(receipt.receipt.inner.as_receipt().map(|r| r.cumulative_gas_used).pretty())
+            Some(receipt.receipt.inner.inner.inner.receipt.cumulative_gas_used.pretty())
         }
         "effectiveGasPrice" | "effective_gas_price" => {
             Some(receipt.receipt.effective_gas_price.to_string())
         }
         "gasUsed" | "gas_used" => receipt.receipt.gas_used.map(|g| g.to_string()),
-        "logs" => receipt.receipt.inner.as_receipt().map(|r| r.logs.as_slice().pretty()),
-        "logsBloom" | "logs_bloom" => {
-            Some(receipt.receipt.inner.as_receipt_with_bloom().map(|r| r.logs_bloom).pretty())
-        }
+        "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
         "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
-        "status" | "statusCode" | "status_code" => Some(receipt.receipt.status().pretty()),
+        "status" | "statusCode" | "status_code" => {
+            Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
+        }
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
             Some(receipt.receipt.transaction_index.to_string())
         }
-        "type" | "transaction_type" => Some(receipt.receipt.transaction_type().pretty()),
+        "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
         "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
         _ => None,
     }

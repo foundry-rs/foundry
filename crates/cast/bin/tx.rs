@@ -1,8 +1,8 @@
 use alloy_json_abi::Function;
-use alloy_network::TransactionBuilder;
+use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::Result;
 use foundry_cli::{opts::TransactionOpts, utils::parse_function_args};
@@ -38,7 +38,7 @@ pub fn validate_to_address(code: &Option<String>, to: &Option<NameOrAddress>) ->
 
 #[allow(clippy::too_many_arguments)]
 pub async fn build_tx<
-    P: Provider<T>,
+    P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
     F: Into<NameOrAddress>,
     TO: Into<NameOrAddress>,
@@ -52,13 +52,13 @@ pub async fn build_tx<
     tx: TransactionOpts,
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
-) -> Result<(TransactionRequest, Option<Function>)> {
+) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
     let chain = chain.into();
 
     let from = from.into().resolve(provider).await?;
     let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
 
-    let mut req = TransactionRequest::default()
+    let mut req = WithOtherFields::new(TransactionRequest::default())
         .with_to(to.into())
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())

@@ -1,6 +1,6 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
@@ -121,7 +121,7 @@ impl CallArgs {
             None => None,
         };
 
-        let mut req = TransactionRequest::default()
+        let mut req = WithOtherFields::<TransactionRequest>::default()
             .with_to(to.into())
             .with_from(sender)
             .with_value(tx.value.unwrap_or_default());

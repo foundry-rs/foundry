@@ -5,14 +5,15 @@ use crate::eth::{
     utils::eip_to_revm_access_list,
 };
 use alloy_consensus::{
-    BlobTransactionSidecar, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559,
-    TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TxReceipt,
+    AnyReceiptEnvelope, BlobTransactionSidecar, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed,
+    TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy,
+    TxReceipt,
 };
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    request::TransactionRequest, AccessList, Signature as RpcSignature,
+    request::TransactionRequest, AccessList, AnyTransactionReceipt, Signature as RpcSignature,
     Transaction as RpcTransaction, TransactionReceipt, WithOtherFields,
 };
 use bytes::BufMut;
@@ -1229,22 +1230,53 @@ impl Decodable for TypedReceipt {
 
 pub type ReceiptResponse = TransactionReceipt<TypedReceipt<alloy_rpc_types::Log>>;
 
-pub fn convert_to_anvil_receipt(receipt: TransactionReceipt) -> ReceiptResponse {
-    TransactionReceipt {
-        transaction_hash: receipt.transaction_hash,
-        transaction_index: receipt.transaction_index,
-        block_hash: receipt.block_hash,
-        block_number: receipt.block_number,
-        gas_used: receipt.gas_used,
-        contract_address: receipt.contract_address,
-        effective_gas_price: receipt.effective_gas_price,
-        from: receipt.from,
-        to: receipt.to,
-        blob_gas_price: receipt.blob_gas_price,
-        blob_gas_used: receipt.blob_gas_used,
-        state_root: receipt.state_root,
-        inner: receipt.inner.into(),
-    }
+pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
+    let WithOtherFields {
+        inner:
+            TransactionReceipt {
+                transaction_hash,
+                transaction_index,
+                block_hash,
+                block_number,
+                gas_used,
+                contract_address,
+                effective_gas_price,
+                from,
+                to,
+                blob_gas_price,
+                blob_gas_used,
+                state_root,
+                inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
+            },
+        other,
+    } = receipt;
+
+    Some(TransactionReceipt {
+        transaction_hash,
+        transaction_index,
+        block_hash,
+        block_number,
+        gas_used,
+        contract_address,
+        effective_gas_price,
+        from,
+        to,
+        blob_gas_price,
+        blob_gas_used,
+        state_root,
+        inner: match r#type {
+            0x00 => TypedReceipt::Legacy(receipt_with_bloom),
+            0x01 => TypedReceipt::EIP2930(receipt_with_bloom),
+            0x02 => TypedReceipt::EIP1559(receipt_with_bloom),
+            0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
+            0x7E => TypedReceipt::Deposit(DepositReceipt {
+                inner: receipt_with_bloom,
+                deposit_nonce: other.get("depositNonce").and_then(|v| v.as_u64()),
+                deposit_nonce_version: other.get("depositNonceVersion").and_then(|v| v.as_u64()),
+            }),
+            _ => return None,
+        },
+    })
 }
 
 #[cfg(test)]

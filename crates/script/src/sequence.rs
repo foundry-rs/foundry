@@ -4,7 +4,7 @@ use crate::{
     verify::VerifyBundle,
 };
 use alloy_primitives::{Address, TxHash};
-use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
@@ -87,7 +87,7 @@ pub const DRY_RUN_DIR: &str = "dry-run";
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
-    pub receipts: Vec<TransactionReceipt>,
+    pub receipts: Vec<AnyTransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
     #[serde(skip)]
@@ -196,7 +196,7 @@ impl ScriptSequence {
         Ok(())
     }
 
-    pub fn add_receipt(&mut self, receipt: TransactionReceipt) {
+    pub fn add_receipt(&mut self, receipt: AnyTransactionReceipt) {
         self.receipts.push(receipt);
     }
 
@@ -352,7 +352,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &TransactionRequest> {
+    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionRequest>> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

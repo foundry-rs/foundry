@@ -1,6 +1,6 @@
 //! wrappers for transactions
-use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionReceipt};
+use alloy_provider::{network::AnyNetwork, Provider};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct TransactionReceiptWithRevertReason {
     /// The underlying transaction receipt
     #[serde(flatten)]
-    pub receipt: TransactionReceipt,
+    pub receipt: AnyTransactionReceipt,
 
     /// The revert reason string if the transaction status is failed
     #[serde(skip_serializing_if = "Option::is_none", rename = "revertReason")]
@@ -20,12 +20,12 @@ pub struct TransactionReceiptWithRevertReason {
 impl TransactionReceiptWithRevertReason {
     /// Returns if the status of the transaction is 0 (failure)
     pub fn is_failure(&self) -> bool {
-        !self.receipt.status()
+        self.receipt.inner.inner.inner.receipt.status
     }
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<T>>(
+    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -33,7 +33,7 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<T>>(
+    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
@@ -47,7 +47,13 @@ impl TransactionReceiptWithRevertReason {
             .map_err(|_| eyre::eyre!("unable to fetch transaction"))?;
 
         if let Some(block_hash) = self.receipt.block_hash {
-            match provider.call(&transaction.into(), Some(BlockId::Hash(block_hash.into()))).await {
+            match provider
+                .call(
+                    &WithOtherFields::new(transaction.inner.into()),
+                    Some(BlockId::Hash(block_hash.into())),
+                )
+                .await
+            {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }
@@ -56,13 +62,13 @@ impl TransactionReceiptWithRevertReason {
     }
 }
 
-impl From<TransactionReceipt> for TransactionReceiptWithRevertReason {
-    fn from(receipt: TransactionReceipt) -> Self {
+impl From<AnyTransactionReceipt> for TransactionReceiptWithRevertReason {
+    fn from(receipt: AnyTransactionReceipt) -> Self {
         Self { receipt, revert_reason: None }
     }
 }
 
-impl From<TransactionReceiptWithRevertReason> for TransactionReceipt {
+impl From<TransactionReceiptWithRevertReason> for AnyTransactionReceipt {
     fn from(receipt_with_reason: TransactionReceiptWithRevertReason) -> Self {
         receipt_with_reason.receipt
     }

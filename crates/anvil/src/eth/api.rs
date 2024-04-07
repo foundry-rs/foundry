@@ -853,7 +853,7 @@ impl EthApi {
         if request.gas.is_none() {
             // estimate if not provided
             if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
-                request.gas = Some(gas);
+                request.gas = Some(gas.to());
             }
         }
 
@@ -882,7 +882,7 @@ impl EthApi {
         if request.gas.is_none() {
             // estimate if not provided
             if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
-                request.gas = Some(gas);
+                request.gas = Some(gas.to());
             }
         }
 
@@ -1056,7 +1056,7 @@ impl EthApi {
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
-    ) -> Result<u128> {
+    ) -> Result<U256> {
         node_info!("eth_estimateGas");
         self.do_estimate_gas(
             request,
@@ -1064,6 +1064,7 @@ impl EthApi {
             overrides,
         )
         .await
+        .map(U256::from)
     }
 
     /// Get transaction by its hash.
@@ -1072,7 +1073,10 @@ impl EthApi {
     /// this will also scan the mempool for a matching pending transaction
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<Transaction>> {
+    pub async fn transaction_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
@@ -1102,7 +1106,7 @@ impl EthApi {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("eth_getTransactionByBlockHashAndIndex");
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
@@ -1114,7 +1118,7 @@ impl EthApi {
         &self,
         block: BlockNumber,
         idx: Index,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
     }
@@ -2056,7 +2060,7 @@ impl EthApi {
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
             tx.from = from;
-            tx
+            tx.inner
         }
 
         for pending in self.pool.ready_transactions() {
@@ -2377,7 +2381,7 @@ impl EthApi {
                 Some(info),
                 Some(base_fee),
             );
-            block_transactions.push(tx);
+            block_transactions.push(tx.inner);
         }
 
         Some(partial_block.into_full_block(block_transactions))

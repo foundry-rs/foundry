@@ -1,10 +1,10 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -139,7 +139,7 @@ impl CreateArgs {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
-            let provider = ProviderBuilder::<_, Ethereum>::default()
+            let provider = ProviderBuilder::<_, AnyNetwork>::default()
                 .signer(EthereumSigner::new(signer))
                 .provider(provider);
             self.deploy(abi, bin, params, provider, chain_id, deployer).await
@@ -201,7 +201,7 @@ impl CreateArgs {
     }
 
     /// Deploys the contract
-    async fn deploy<P: Provider<T>, T: Transport + Clone>(
+    async fn deploy<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
         self,
         abi: JsonAbi,
         bin: BytecodeObject,
@@ -403,7 +403,7 @@ impl<B, P, T, C> From<Deployer<B, P, T>> for ContractDeploymentTx<B, P, T, C> {
 #[must_use = "Deployer does nothing unless you `send` it"]
 pub struct Deployer<B, P, T> {
     /// The deployer's transaction, exposed for overriding the defaults
-    pub tx: TransactionRequest,
+    pub tx: WithOtherFields<TransactionRequest>,
     abi: JsonAbi,
     client: B,
     confs: usize,
@@ -430,16 +430,16 @@ where
 impl<B, P, T> Deployer<B, P, T>
 where
     B: Borrow<P> + Clone,
-    P: Provider<T>,
+    P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
     /// Broadcasts the contract deployment transaction and after waiting for it to
     /// be sufficiently confirmed (default: 1), it returns a tuple with
     /// the [`Contract`](crate::Contract) struct at the deployed contract's address
-    /// and the corresponding [`TransactionReceipt`].
+    /// and the corresponding [`AnyReceipt`].
     pub async fn send_with_receipt(
         self,
-    ) -> Result<(Address, TransactionReceipt), ContractDeploymentError> {
+    ) -> Result<(Address, AnyTransactionReceipt), ContractDeploymentError> {
         let receipt = self
             .client
             .borrow()
@@ -519,7 +519,7 @@ where
 impl<P, T, B> DeploymentTxFactory<B, P, T>
 where
     B: Borrow<P> + Clone,
-    P: Provider<T>,
+    P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
     /// Creates a factory for deployment of the Contract with bytecode, and the
@@ -553,7 +553,7 @@ where
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        let tx = TransactionRequest::default().input(data.into()).to(None);
+        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()).to(None));
 
         Ok(Deployer {
             client: self.client.clone(),

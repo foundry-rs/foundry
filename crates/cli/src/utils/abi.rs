@@ -1,7 +1,7 @@
 use alloy_chains::Chain;
 use alloy_json_abi::Function;
 use alloy_primitives::Address;
-use alloy_provider::Provider;
+use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{OptionExt, Result};
 use foundry_common::{
@@ -10,7 +10,7 @@ use foundry_common::{
 };
 use futures::future::join_all;
 
-async fn resolve_name_args<T: Transport + Clone, P: Provider<T>>(
+async fn resolve_name_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
     args: &[String],
     provider: &P,
 ) -> Vec<String> {
@@ -28,7 +28,7 @@ async fn resolve_name_args<T: Transport + Clone, P: Provider<T>>(
     .await
 }
 
-pub async fn parse_function_args<T: Transport + Clone, P: Provider<T>>(
+pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
     sig: &str,
     args: Vec<String>,
     to: Option<Address>,

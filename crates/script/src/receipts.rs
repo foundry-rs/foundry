@@ -2,7 +2,7 @@ use super::sequence::ScriptSequence;
 use alloy_chains::Chain;
 use alloy_primitives::{utils::format_units, TxHash, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
-use alloy_rpc_types::TransactionReceipt;
+use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress};
 use foundry_common::provider::alloy::RetryProvider;
@@ -12,13 +12,13 @@ use std::sync::Arc;
 /// Convenience enum for internal signalling of transaction status
 enum TxStatus {
     Dropped,
-    Success(TransactionReceipt),
-    Revert(TransactionReceipt),
+    Success(AnyTransactionReceipt),
+    Revert(AnyTransactionReceipt),
 }
 
-impl From<TransactionReceipt> for TxStatus {
-    fn from(receipt: TransactionReceipt) -> Self {
-        if !receipt.status() {
+impl From<AnyTransactionReceipt> for TxStatus {
+    fn from(receipt: AnyTransactionReceipt) -> Self {
+        if !receipt.inner.inner.inner.receipt.status {
             TxStatus::Revert(receipt)
         } else {
             TxStatus::Success(receipt)
@@ -65,7 +65,7 @@ pub async fn clear_pendings(
     let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
 
     let mut errors: Vec<String> = vec![];
-    let mut receipts = Vec::<TransactionReceipt>::with_capacity(count);
+    let mut receipts = Vec::<AnyTransactionReceipt>::with_capacity(count);
 
     // set up progress bar
     let mut pos = 0;
@@ -151,12 +151,16 @@ async fn check_tx_status(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
+pub fn print_receipt(chain: Chain, receipt: &AnyTransactionReceipt) {
     let gas_used = receipt.gas_used.unwrap_or_default();
     let gas_price = receipt.effective_gas_price;
     foundry_common::shell::println(format!(
         "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
-        status = if !receipt.status() { "❌  [Failed]" } else { "✅  [Success]" },
+        status = if !receipt.inner.inner.inner.receipt.status {
+            "❌  [Failed]"
+        } else {
+            "✅  [Success]"
+        },
         tx_hash = receipt.transaction_hash,
         caddr = if let Some(addr) = &receipt.contract_address {
             format!("\nContract Address: {}", addr.to_checksum(None))

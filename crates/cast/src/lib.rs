@@ -1,19 +1,17 @@
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
+use alloy_network::AnyNetwork;
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
     Address, Keccak256, TxHash, B256, I256, U256,
 };
 use alloy_provider::{
-    network::{
-        eip2718::{Decodable2718, Encodable2718},
-        Ethereum,
-    },
+    network::eip2718::{Decodable2718, Encodable2718},
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
@@ -66,7 +64,7 @@ pub struct Cast<P, T> {
 impl<T, P> Cast<P, T>
 where
     T: Transport + Clone,
-    P: Provider<T>,
+    P: Provider<T, AnyNetwork>,
 {
     /// Creates a new Cast instance from the provided client
     ///
@@ -115,7 +113,7 @@ where
     /// ```
     pub async fn call<'a>(
         &self,
-        req: &TransactionRequest,
+        req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
@@ -184,7 +182,7 @@ where
     /// ```
     pub async fn access_list(
         &self,
-        req: &TransactionRequest,
+        req: &WithOtherFields<TransactionRequest>,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
@@ -243,8 +241,8 @@ where
     /// ```
     pub async fn send(
         &self,
-        tx: TransactionRequest,
-    ) -> Result<PendingTransactionBuilder<'_, T, Ethereum>> {
+        tx: WithOtherFields<TransactionRequest>,
+    ) -> Result<PendingTransactionBuilder<'_, T, AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -269,7 +267,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<T, Ethereum>> {
+    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -608,7 +606,7 @@ where
         let tx = self.provider.get_transaction_by_hash(tx_hash).await?;
 
         Ok(if raw {
-            format!("0x{}", hex::encode(TxEnvelope::try_from(tx)?.encoded_2718()))
+            format!("0x{}", hex::encode(TxEnvelope::try_from(tx.inner)?.encoded_2718()))
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?

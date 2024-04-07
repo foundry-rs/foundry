@@ -1,7 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -93,7 +93,7 @@ impl EstimateArgs {
             None => None,
         };
 
-        let mut req = TransactionRequest::default()
+        let mut req = WithOtherFields::<TransactionRequest>::default()
             .with_to(to.into())
             .with_from(from)
             .with_value(value.unwrap_or_default());

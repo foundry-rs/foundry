@@ -3,7 +3,7 @@ use crate::eth::{
     error::{BlockchainError, Result},
 };
 use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
-use alloy_rpc_types::{Block, BlockTransactions, Transaction};
+use alloy_rpc_types::{Block, BlockTransactions, Transaction, WithOtherFields};
 use alloy_rpc_types_trace::parity::{Action, CallType, LocalizedTransactionTrace};
 use anvil_core::eth::transaction::ReceiptResponse;
 use foundry_evm::{revm::interpreter::InstructionResult, traces::CallKind};
@@ -64,7 +64,7 @@ pub struct OtsContractCreator {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsSearchTransactions {
-    pub txs: Vec<Transaction>,
+    pub txs: Vec<WithOtherFields<Transaction>>,
     pub receipts: Vec<OtsTransactionReceipt>,
     pub first_page: bool,
     pub last_page: bool,
@@ -226,7 +226,7 @@ impl OtsSearchTransactions {
     ) -> Result<Self> {
         let txs_futs = hashes.iter().map(|hash| async { backend.transaction_by_hash(*hash).await });
 
-        let txs: Vec<Transaction> = join_all(txs_futs)
+        let txs: Vec<_> = join_all(txs_futs)
             .await
             .into_iter()
             .map(|t| match t {

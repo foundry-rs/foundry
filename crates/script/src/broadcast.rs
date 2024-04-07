@@ -5,10 +5,10 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
@@ -32,12 +32,12 @@ use std::{
 };
 
 pub async fn estimate_gas<P, T>(
-    tx: &mut TransactionRequest,
+    tx: &mut WithOtherFields<TransactionRequest>,
     provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()>
 where
-    P: Provider<T>,
+    P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
     // if already set, some RPC endpoints might simply return the gas value that is already
@@ -60,7 +60,7 @@ pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64
 
 pub async fn send_transaction(
     provider: Arc<RetryProvider>,
-    mut tx: TransactionRequest,
+    mut tx: WithOtherFields<TransactionRequest>,
     kind: SendTransactionKind<'_>,
     sequential_broadcast: bool,
     is_fixed_gas_limit: bool,
