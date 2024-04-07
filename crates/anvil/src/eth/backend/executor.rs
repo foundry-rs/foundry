@@ -292,12 +292,8 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         }
 
         let exec_result = {
-            let mut evm = foundry_evm::utils::new_evm_with_inspector(
-                &mut *self.db,
-                env,
-                &mut inspector,
-                vec![],
-            );
+            let mut evm =
+                foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction

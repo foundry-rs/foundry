@@ -786,7 +786,7 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector, vec![]);
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
@@ -1882,7 +1882,7 @@ fn commit_transaction<I: Inspector<Backend>>(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        crate::utils::new_evm_with_inspector(db, env, inspector, vec![])
+        crate::utils::new_evm_with_inspector(db, env, inspector)
             .transact()
             .wrap_err("backend: failed committing transaction")?
     };

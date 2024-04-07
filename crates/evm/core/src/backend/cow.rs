@@ -67,7 +67,7 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.is_initialized = false;
         self.spec_id = env.handler_cfg.spec_id;
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector, vec![]);
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 

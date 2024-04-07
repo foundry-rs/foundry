@@ -11,12 +11,11 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
-    mem,
-    mem::in_memory_db::MemDb,
-    FeeManager, Hardfork,
+    mem::{self, in_memory_db::MemDb},
+    FeeManager, Hardfork, PrecompileFactory,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{hex, utils::Unit, Address, U256};
+use alloy_primitives::{hex, utils::Unit, U256};
 use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::{
@@ -39,7 +38,6 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use rand::thread_rng;
-use revm::primitives::Precompile;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -85,13 +83,6 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
-
-/// Object-safe trait that enables injecting extra precompiles when using
-/// `anvil` as a library.
-pub trait PrecompileFactory {
-    /// Returns a set of precompiles to extend the EVM with.
-    fn precompiles(&self) -> Vec<(Address, Precompile)>;
-}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
@@ -183,7 +174,7 @@ pub struct NodeConfig {
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
     /// Set of precompiles to extend the EVM with. Empty by default.
-    pub extra_precompiles: Vec<(Address, Precompile)>,
+    pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
 impl NodeConfig {
@@ -420,7 +411,7 @@ impl Default for NodeConfig {
             enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
-            extra_precompiles: vec![],
+            precompile_factory: None,
         }
     }
 }
@@ -835,8 +826,8 @@ impl NodeConfig {
 
     /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
-    pub fn with_extra_precompiles(mut self, factory: impl PrecompileFactory) -> Self {
-        self.extra_precompiles.extend(factory.precompiles());
+    pub fn with_extra_precompiles(mut self, factory: impl PrecompileFactory + 'static) -> Self {
+        self.precompile_factory = Some(Arc::new(factory));
         self
     }
 

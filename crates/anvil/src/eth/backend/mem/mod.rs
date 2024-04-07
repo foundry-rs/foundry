@@ -19,6 +19,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         util::get_precompiles_for,
     },
+    inject_precompiles,
     mem::{
         inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -814,10 +815,14 @@ impl Backend {
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
-        let extra_precompiles = self.node_config.read().await.extra_precompiles.clone();
+        let mut evm = new_evm_with_inspector_ref(&*db, env, &mut inspector);
 
-        let ResultAndState { result, state } =
-            new_evm_with_inspector_ref(&*db, env, &mut inspector, extra_precompiles).transact()?;
+        let cfg = self.node_config.read().await;
+        if let Some(ref factory) = cfg.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+
+        let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -828,6 +833,7 @@ impl Backend {
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
         };
 
+        drop(evm);
         inspector.print_logs();
 
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
@@ -1123,9 +1129,14 @@ impl Backend {
         let mut inspector = Inspector::default();
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let extra_precompiles = self.node_config.try_read().unwrap().extra_precompiles.clone();
-        let ResultAndState { result, state } =
-            new_evm_with_inspector_ref(state, env, &mut inspector, extra_precompiles).transact()?;
+        let mut evm = new_evm_with_inspector_ref(state, env, &mut inspector);
+
+        let cfg = self.node_config.try_read().unwrap();
+        if let Some(ref factory) = cfg.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+
+        let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1135,6 +1146,7 @@ impl Backend {
             }
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
+        drop(evm);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used, state))
     }
@@ -1151,10 +1163,15 @@ impl Backend {
             let block_number = block.number;
 
             let env = self.build_call_env(request, fee_details, block);
-            let extra_precompiles = self.node_config.try_read().unwrap().extra_precompiles.clone();
-            let ResultAndState { result, state: _ } =
-                new_evm_with_inspector_ref(state, env, &mut inspector, extra_precompiles)
-                    .transact()?;
+            let mut evm = new_evm_with_inspector_ref(state, env, &mut inspector);
+
+            let cfg = self.node_config.try_read().unwrap();
+            if let Some(ref factory) = cfg.precompile_factory {
+                inject_precompiles(&mut evm, factory.precompiles());
+            }
+
+            let ResultAndState { result, state: _ } = evm.transact()?;
+
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
                     (reason.into(), gas_used, Some(output))
@@ -1164,6 +1181,8 @@ impl Backend {
                 }
                 ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
             };
+
+            drop(evm);
             let tracer = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
             let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
@@ -1199,9 +1218,14 @@ impl Backend {
         );
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let extra_precompiles = self.node_config.try_read().unwrap().extra_precompiles.clone();
-        let ResultAndState { result, state: _ } =
-            new_evm_with_inspector_ref(state, env, &mut inspector, extra_precompiles).transact()?;
+        let mut evm = new_evm_with_inspector_ref(state, env, &mut inspector);
+
+        let cfg = self.node_config.try_read().unwrap();
+        if let Some(ref factory) = cfg.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+
+        let ResultAndState { result, state: _ } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1211,6 +1235,7 @@ impl Backend {
             }
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
+        drop(evm);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }

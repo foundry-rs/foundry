@@ -1,15 +1,11 @@
-use std::sync::Arc;
-
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, FixedBytes, U256};
+use alloy_primitives::{FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
 use foundry_config::NamedChain;
 use revm::{
     db::WrapDatabaseRef,
-    precompile::Precompile,
     primitives::{SpecId, TransactTo},
-    ContextPrecompile, ContextPrecompiles, Handler,
 };
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
@@ -107,7 +103,6 @@ pub fn new_evm_with_inspector<'a, DB, I>(
     db: DB,
     env: revm::primitives::EnvWithHandlerCfg,
     inspector: I,
-    precompiles: Vec<(Address, Precompile)>,
 ) -> revm::Evm<'a, I, DB>
 where
     DB: revm::Database,
@@ -119,23 +114,6 @@ where
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    handler.append_handler_register_box(Box::new(move |handler: &mut Handler<'_, _, _, DB>| {
-        let precompiles = precompiles.clone();
-        let loaded_precompiles = handler.pre_execution().load_precompiles();
-        handler.pre_execution.load_precompiles = Arc::new(move || {
-            let mut loaded_precompiles = loaded_precompiles.clone();
-            loaded_precompiles.extend(
-                precompiles
-                    .clone()
-                    .into_iter()
-                    .map(|(addr, p)| (addr, ContextPrecompile::Ordinary(p))),
-            );
-            let mut default_precompiles = ContextPrecompiles::default();
-            default_precompiles.extend(loaded_precompiles);
-            default_precompiles
-        });
-    }));
-
     revm::Evm::new(context, handler)
 }
 
@@ -144,19 +122,17 @@ pub fn new_evm_with_inspector_ref<'a, DB, I>(
     db: DB,
     env: revm::primitives::EnvWithHandlerCfg,
     inspector: I,
-    precompiles: Vec<(Address, Precompile)>,
 ) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
 where
     DB: revm::DatabaseRef,
     I: revm::Inspector<WrapDatabaseRef<DB>>,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, precompiles)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm::primitives::{address, Address, Bytes, Precompile, PrecompileResult};
 
     #[test]
     fn build_evm() {
@@ -169,34 +145,7 @@ mod tests {
 
         let mut inspector = revm::inspectors::NoOpInspector;
 
-        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector, vec![]);
-        let result = evm.transact().unwrap();
-        assert!(result.result.is_success());
-    }
-
-    #[test]
-    fn build_evm_with_extra_precompiles() {
-        const PRECOMPILE_ADDR: Address = address!("0000000000000000000000000000000000000071");
-        fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
-            Ok((0, Bytes::new()))
-        }
-
-        let mut db = revm::db::EmptyDB::default();
-        let env = Box::<revm::primitives::Env>::default();
-        let spec = SpecId::LATEST;
-        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
-        let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
-
-        let mut inspector = revm::inspectors::NoOpInspector;
-        let extra_precompiles = vec![(PRECOMPILE_ADDR, Precompile::Standard(my_precompile))];
-        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector, extra_precompiles);
-        assert!(evm
-            .handler
-            .pre_execution()
-            .load_precompiles()
-            .addresses()
-            .any(|&addr| addr == PRECOMPILE_ADDR));
-
+        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector);
         let result = evm.transact().unwrap();
         assert!(result.result.is_success());
     }

@@ -40,7 +40,7 @@ use tokio::{
 mod service;
 
 mod config;
-pub use config::{AccountGenerator, NodeConfig, PrecompileFactory, CHAIN_ID, VERSION_MESSAGE};
+pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 mod hardfork;
 use crate::server::{
     error::{NodeError, NodeResult},
@@ -50,6 +50,9 @@ pub use hardfork::Hardfork;
 
 /// ethereum related implementations
 pub mod eth;
+/// Evm related abstractions
+mod evm;
+pub use evm::{inject_precompiles, PrecompileFactory};
 /// support for polling filters
 pub mod filter;
 /// commandline output
