@@ -3,7 +3,10 @@ use alloy_json_abi::Function;
 use ethers_providers::Middleware;
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
-    errors::EtherscanError, utils::lookup_compiler_version, verify::{CodeFormat, VerifyContract}, Client, Response, ResponseData
+    errors::EtherscanError,
+    utils::lookup_compiler_version,
+    verify::{CodeFormat, VerifyContract},
+    Client, Response, ResponseData,
 };
 use foundry_cli::utils::{self, get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::{abi::encode_function_args, retry::Retry, types::ToEthers};
@@ -21,7 +24,9 @@ use regex::Regex;
 use semver::{BuildMetadata, Version};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    collections::HashMap, fmt::Debug, path::{Path, PathBuf}
+    collections::HashMap,
+    fmt::Debug,
+    path::{Path, PathBuf},
 };
 
 pub static OKLINK_URL: &str = "https://www.oklink.com/";
@@ -115,9 +120,7 @@ impl VerificationProvider for OklinkVerificationProvider {
         if let Some(resp) = resp {
             println!(
                 "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-                resp.message,
-                resp.result,
-                OKLINK_URL
+                resp.message, resp.result, OKLINK_URL
             );
         } else {
             println!("Contract source code already verified");
@@ -125,31 +128,34 @@ impl VerificationProvider for OklinkVerificationProvider {
 
         Ok(())
     }
-    
 
     /// Executes the command to check verification status on Oklink
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-
         let retry: Retry = args.retry.into();
         let client = reqwest::Client::new();
         let api_key: Option<String> = args.etherscan.key().clone();
-        let body = create_query(api_key,"contract".to_string(), "checkverifystatus".to_string(), HashMap::from([("guid", args.id.clone())]));
+        let body = create_query(
+            api_key,
+            "contract".to_string(),
+            "checkverifystatus".to_string(),
+            HashMap::from([("guid", args.id.clone())]),
+        );
         debug!("body {:?}", body);
 
         retry
             .run_async(|| {
                 async {
                     let resp = client
-                                        .post(args.verifier.verifier_url.clone().unwrap())
-                                        .header("Content-Type", "application/x-www-form-urlencoded")
-                                        .header("Ok-Access-Key", &args.etherscan.key().unwrap())
-                                        .header("x-apiKey", &args.etherscan.key().unwrap())
-                                        .form(&body)
-                                        .send()
-                                        .await?
-                                        .text()
-                                        .await
-                                        .wrap_err("Failed to request verification status")?;
+                        .post(args.verifier.verifier_url.clone().unwrap())
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .header("Ok-Access-Key", &args.etherscan.key().unwrap())
+                        .header("x-apiKey", &args.etherscan.key().unwrap())
+                        .form(&body)
+                        .send()
+                        .await?
+                        .text()
+                        .await
+                        .wrap_err("Failed to request verification status")?;
 
                     debug!(target: "forge::verify", ?resp, "Received verification response");
                     let resp = sanitize_response::<String>(&resp)?;
@@ -160,16 +166,16 @@ impl VerificationProvider for OklinkVerificationProvider {
                     );
 
                     if resp.result == "Pending in queue" {
-                        return Err(eyre!("Verification is still pending...",))
+                        return Err(eyre!("Verification is still pending...",));
                     }
 
                     if resp.result == "Unable to verify" {
-                        return Err(eyre!("Unable to verify.",))
+                        return Err(eyre!("Unable to verify.",));
                     }
 
                     if resp.result == "Already Verified" {
                         println!("Contract source code already verified");
-                        return Ok(())
+                        return Ok(());
                     }
 
                     if resp.status == "0" {
@@ -191,7 +197,6 @@ impl VerificationProvider for OklinkVerificationProvider {
 }
 
 impl OklinkVerificationProvider {
-    
     fn source(
         &self,
         args: &VerifyArgs,
@@ -236,7 +241,7 @@ impl OklinkVerificationProvider {
         contract: &ContractInfo,
     ) -> Result<&(PathBuf, CacheEntry, CompactContract)> {
         if let Some(ref entry) = self.cached_entry {
-            return Ok(entry)
+            return Ok(entry);
         }
 
         let cache = project.read_cache_file()?;
@@ -272,7 +277,6 @@ impl OklinkVerificationProvider {
         Ok((oklink, verify_args))
     }
 
-
     /// Create an oklink client
     pub(crate) fn client(
         &self,
@@ -281,7 +285,6 @@ impl OklinkVerificationProvider {
         oklink_key: Option<&str>,
         config: &Config,
     ) -> Result<Client> {
-
         let oklink_key = oklink_key.unwrap();
 
         let mut builder = Client::builder();
@@ -294,10 +297,7 @@ impl OklinkVerificationProvider {
         };
         debug!("{:?}", builder);
 
-        builder
-            .with_api_key(oklink_key)
-            .build()
-            .wrap_err("Failed to create oklink client")
+        builder.with_api_key(oklink_key).build().wrap_err("Failed to create oklink client")
     }
 
     /// Creates the `VerifyContract` oklink request in order to verify the contract
@@ -381,7 +381,7 @@ impl OklinkVerificationProvider {
         project: &Project,
     ) -> Result<Version> {
         if let Some(ref version) = args.compiler_version {
-            return Ok(version.trim_start_matches('v').parse()?)
+            return Ok(version.trim_start_matches('v').parse()?);
         }
 
         if let Some(ref solc) = config.solc {
@@ -389,7 +389,7 @@ impl OklinkVerificationProvider {
                 SolcReq::Version(version) => return Ok(version.to_owned()),
                 SolcReq::Local(solc) => {
                     if solc.is_file() {
-                        return Ok(Solc::new(solc).version()?)
+                        return Ok(Solc::new(solc).version()?);
                     }
                 }
             }
@@ -452,10 +452,10 @@ impl OklinkVerificationProvider {
                 read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
-            return Ok(Some(encoded_args[8..].into()))
+            return Ok(Some(encoded_args[8..].into()));
         }
         if args.guess_constructor_args {
-            return Ok(Some(self.guess_constructor_args(args, project, config).await?))
+            return Ok(Some(self.guess_constructor_args(args, project, config).await?));
         }
 
         Ok(args.constructor_args.clone())
@@ -547,12 +547,7 @@ fn create_query<T: Serialize>(
     action: String,
     other: T,
 ) -> Query<T> {
-    Query {
-        apikey: api_key,
-        module: module,
-        action: action,
-        other,
-    }
+    Query { apikey: api_key, module, action, other }
 }
 fn sanitize_response<T: DeserializeOwned>(res: impl AsRef<str>) -> Result<Response<T>> {
     let res = res.as_ref();
