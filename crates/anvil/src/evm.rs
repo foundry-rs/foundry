@@ -1,5 +1,4 @@
-use std::fmt::Debug;
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::Address;
 use foundry_evm::revm::{self, precompile::Precompile, ContextPrecompile, ContextPrecompiles};
