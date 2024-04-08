@@ -4601,7 +4601,7 @@
     {
       "func": {
         "id": "getBlobBaseFee",
-        "description": "Gets the current `block.blobbasefee`.\nYou should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "description": "Gets the current `block.blobbasefee`.\nYou should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.",
         "declaration": "function getBlobBaseFee() external view returns (uint256 blobBaseFee);",
         "visibility": "external",
         "mutability": "view",
