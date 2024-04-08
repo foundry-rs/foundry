@@ -189,11 +189,11 @@ impl ForgeTestData {
         let mut config = self.config.clone();
         config.fs_permissions =
             FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
-        self.runner_with_config(config, false)
+        self.runner_with_config(config)
     }
 
     /// Builds a non-tracing runner
-    pub fn runner_with_config(&self, mut config: Config, isolated: bool) -> MultiContractRunner {
+    pub fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
         config.rpc_endpoints = rpc_endpoints();
         config.allow_paths.push(manifest_root().to_path_buf());
 
@@ -203,7 +203,7 @@ impl ForgeTestData {
         let root = self.project.root();
         let mut opts = self.evm_opts.clone();
 
-        if isolated {
+        if config.isolate {
             opts.isolate = true;
         }
 

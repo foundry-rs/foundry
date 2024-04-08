@@ -68,7 +68,7 @@ async fn repro_config(
         config.sender = sender;
     }
 
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config, false);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
     TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
 
