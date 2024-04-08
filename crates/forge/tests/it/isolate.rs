@@ -8,6 +8,6 @@ async fn test_isolate_record_gas() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.isolate = true;
     let runner = TEST_DATA_DEFAULT.runner_with_config(config);
-    let filter = Filter::new(".*", ".*", "isolate/RecordGas.t.sol");
+    let filter = Filter::new(".*", "LastCallGas", ".*cheats");
     TestConfig::with_filter(runner, filter).run().await;
 }

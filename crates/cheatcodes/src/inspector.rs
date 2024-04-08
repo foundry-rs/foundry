@@ -1040,23 +1040,21 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             return outcome
         }
 
-        if self.config.evm_opts.isolate {
-            // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
-            // retrieve the gas usage of the last call.
-            let gas = outcome.result.gas;
-            self.last_call_gas = Some(crate::Vm::Gas {
-                // The gas limit of the call.
-                gasLimit: gas.limit(),
-                // The total gas used.
-                gasTotalUsed: gas.spend(),
-                // The amount of gas used for memory expansion.
-                gasMemoryUsed: gas.memory(),
-                // The amount of gas refunded.
-                gasRefunded: gas.refunded(),
-                // The amount of gas remaining.
-                gasRemaining: gas.remaining(),
-            })
-        }
+        // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
+        // retrieve the gas usage of the last call.
+        let gas = outcome.result.gas;
+        self.last_call_gas = Some(crate::Vm::Gas {
+            // The gas limit of the call.
+            gasLimit: gas.limit(),
+            // The total gas used.
+            gasTotalUsed: gas.spend(),
+            // The amount of gas used for memory expansion.
+            gasMemoryUsed: gas.memory(),
+            // The amount of gas refunded.
+            gasRefunded: gas.refunded(),
+            // The amount of gas remaining.
+            gasRemaining: gas.remaining(),
+        });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any

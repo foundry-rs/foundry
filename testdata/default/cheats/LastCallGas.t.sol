@@ -24,50 +24,64 @@ contract Target {
     function reset() public {
         slot0 = 0;
     }
+
+    fallback() external {}
 }
 
-contract RecordGasTest is DSTest {
+contract LastCallGasTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     Target public target;
 
     function testRevertNoCachedLastCallGas() public {
         vm.expectRevert();
-        Vm.Gas memory record = vm.lastCallGas();
+        vm.lastCallGas();
+    }
+
+    function testRecordLastCallGasIsolated() public {
+        _setup();
+        _performCall();
+        _logGasRecord();
+
+        _performCall();
+        _logGasRecord();
+
+        _performCall();
+        _logGasRecord();
     }
 
     function testRecordLastCallGas() public {
-        target = new Target();
-
-        _performCall();
-        _logGasRecord();
-
-        _performCall();
-        _logGasRecord();
-
-        _performCall();
+        _setup();
+        target.expandMemory();
         _logGasRecord();
     }
 
     function testRecordGasMemory() public {
-        target = new Target();
+        _setup();
         target.expandMemory();
         _logGasRecord();
     }
 
     function testRecordGasRefund() public {
-        target = new Target();
+        _setup();
         target.set(1);
         target.reset();
         _logGasRecord();
     }
 
     function testRecordGasSingleField() public {
+        _setup();
         _performCall();
         _logGasTotalUsed();
     }
 
+    function _setup() internal {
+        // Cannot be set in `setUp` due to `testRevertNoCachedLastCallGas`
+        // relying on no calls being made before `lastCallGas` is called.
+        target = new Target();
+    }
+
     function _performCall() internal returns (bool success) {
-        (success,) = address(0).call("");
+        (success,) = address(target).call("");
     }
 
     function _logGasTotalUsed() internal {
