@@ -24,6 +24,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
@@ -79,6 +80,15 @@ pub struct VerifyBytecodeArgs {
     /// Suppress logs and emit json results to stdout
     #[clap(long, default_value = "false")]
     pub json: bool,
+
+    /// The solc version of the cached artifact to use for verification in case of multiple
+    /// versions being present.
+    ///
+    /// If not provided, the most recent version is used.
+    ///
+    /// Can be specified in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    #[clap(long, value_name = "CACHE_SOLC_VERSION")]
+    pub cache_version: Option<String>,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -412,10 +422,24 @@ impl VerifyBytecodeArgs {
 
         for (key, value) in cached_artifacts {
             let name = self.contract.name.to_owned() + ".sol";
+            let version = self.cache_version.to_owned();
             if key.ends_with(name.as_str()) {
                 if let Some(artifact) = value.into_iter().next() {
+                    if let Ok(version) = Version::parse(&version.unwrap_or_default()) {
+                        if let Some(artifact) = artifact.1.iter().find(|a| {
+                            a.version.major == version.major &&
+                                a.version.minor == version.minor &&
+                                a.version.patch == version.patch
+                        }) {
+                            return artifact
+                                .artifact
+                                .bytecode
+                                .as_ref()
+                                .and_then(|bytes| bytes.bytes().to_owned())
+                                .cloned();
+                        }
+                    }
                     let artifact = artifact.1.first().unwrap(); // Get the first artifact
-
                     let local_bytecode = if let Some(local_bytecode) = &artifact.artifact.bytecode {
                         local_bytecode.bytes()
                     } else {
