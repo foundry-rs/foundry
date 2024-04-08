@@ -271,7 +271,7 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 /// Returns the path to the json artifact depending on the input
-/// 
+///
 /// Can parse following input formats:
 /// - `path/to/artifact.json`
 /// - `path/to/contract.sol`
@@ -294,7 +294,7 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
         if path_or_name.ends_with(".sol") {
             file = Some(PathBuf::from(path_or_name));
             if let Some(name_or_version) = parts.next() {
-                if name_or_version.contains(".") {
+                if name_or_version.contains('.') {
                     version = Some(name_or_version);
                 } else {
                     contract_name = Some(name_or_version);
@@ -365,19 +365,18 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
 
             Ok(artifact.path.clone())
         } else {
-            let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
-                (Some(file), Some(contract_name)) => {
-                    Ok(format!("{file}/{contract_name}.json"))
-                }
-                (None, Some(contract_name)) => {
-                    Ok(format!("{contract_name}.sol/{contract_name}.json"))
-                }
-                (Some(file), None) => {
-                    let name = file.replace(".sol", "");
-                    Ok(format!("{file}/{name}.json"))
-                }
-                _ => Err(fmt_err!("Invalid artifact path")),
-            }?;
+            let path_in_artifacts =
+                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                    (Some(file), Some(contract_name)) => Ok(format!("{file}/{contract_name}.json")),
+                    (None, Some(contract_name)) => {
+                        Ok(format!("{contract_name}.sol/{contract_name}.json"))
+                    }
+                    (Some(file), None) => {
+                        let name = file.replace(".sol", "");
+                        Ok(format!("{file}/{name}.json"))
+                    }
+                    _ => Err(fmt_err!("Invalid artifact path")),
+                }?;
             Ok(state.config.paths.artifacts.join(path_in_artifacts))
         }
     }
