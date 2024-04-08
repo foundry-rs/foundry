@@ -10,7 +10,10 @@ contract GetCodeTest is DSTest {
 
     function testGetCodeMultiVersion() public {
         assertEq(vm.getCode("Counter.sol"), type(Counter).creationCode);
-        require(keccak256(vm.getCode("Counter.sol")) != keccak256(vm.getCode("Counter.sol:Counter:0.8.17")), "Invalid artifact");
+        require(
+            keccak256(vm.getCode("Counter.sol")) != keccak256(vm.getCode("Counter.sol:Counter:0.8.17")),
+            "Invalid artifact"
+        );
         assertEq(vm.getCode("Counter.sol"), vm.getCode("Counter.sol:Counter:0.8.18"));
     }
 }
