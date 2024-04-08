@@ -92,7 +92,7 @@ impl<'a> CowBackend<'a> {
             let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), self.spec_id);
             backend.initialize(&env);
             self.is_initialized = true;
-            return backend;
+            return backend
         }
         self.backend.to_mut()
     }
@@ -100,7 +100,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend if it is initialized.
     fn initialized_backend_mut(&mut self) -> Option<&mut Backend> {
         if self.is_initialized {
-            return Some(self.backend.to_mut());
+            return Some(self.backend.to_mut())
         }
         None
     }
@@ -124,7 +124,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn delete_snapshot(&mut self, id: U256) -> bool {
         // delete snapshot requires a previous snapshot to be initialized
         if let Some(backend) = self.initialized_backend_mut() {
-            return backend.delete_snapshot(id);
+            return backend.delete_snapshot(id)
         }
         false
     }
