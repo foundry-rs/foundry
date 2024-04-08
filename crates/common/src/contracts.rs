@@ -5,13 +5,12 @@ use alloy_primitives::{hex, Address, Selector, B256};
 use eyre::Result;
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
-    ArtifactId, ProjectPathsConfig,
+    ArtifactId,
 };
 use std::{
     collections::BTreeMap,
     fmt,
     ops::{Deref, DerefMut},
-    path::PathBuf,
 };
 
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a (JsonAbi, Vec<u8>));
@@ -168,19 +167,6 @@ pub fn get_contract_name(id: &str) -> &str {
 /// ```
 pub fn get_file_name(id: &str) -> &str {
     id.split(':').next().unwrap_or(id)
-}
-
-/// Returns the path to the json artifact depending on the input
-pub fn get_artifact_path(paths: &ProjectPathsConfig, path: &str) -> PathBuf {
-    if path.ends_with(".json") {
-        PathBuf::from(path)
-    } else {
-        let parts: Vec<&str> = path.split(':').collect();
-        let file = parts[0];
-        let contract_name =
-            if parts.len() == 1 { parts[0].replace(".sol", "") } else { parts[1].to_string() };
-        paths.artifacts.join(format!("{file}/{contract_name}.json"))
-    }
 }
 
 /// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome

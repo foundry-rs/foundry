@@ -204,8 +204,9 @@ impl ForgeTestData {
         let opts = self.evm_opts.clone();
         let env = opts.local_evm_env();
         let output = self.output.clone();
+        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
         self.base_runner()
-            .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
+            .with_cheats_config(CheatsConfig::new(&config, opts.clone(), Some(artifact_ids), None))
             .sender(config.sender)
             .with_test_options(self.test_opts.clone())
             .build(root, output, env, opts.clone())
