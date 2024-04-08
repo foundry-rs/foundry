@@ -30,12 +30,12 @@ contract RecordGasTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     Target public target;
 
-    function testNoGasRecord() public {
+    function testRevertNoCachedLastCallGas() public {
         vm.expectRevert();
         Vm.Gas memory record = vm.lastCallGas();
     }
 
-    function testRecordGas() public {
+    function testRecordLastCallGas() public {
         target = new Target();
 
         _performCall();
