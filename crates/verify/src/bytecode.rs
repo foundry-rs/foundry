@@ -242,7 +242,7 @@ impl VerifyBytecodeArgs {
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
         // Cmp creation code with locally built bytecode and maybe_creation_code
-        let res = try_match(
+        let (did_match, with_status) = try_match(
             local_bytecode_vec.as_slice(),
             maybe_creation_code,
             &constructor_args,
@@ -253,7 +253,7 @@ impl VerifyBytecodeArgs {
 
         let mut json_results: Vec<JsonResult> = vec![];
         self.print_result(
-            res,
+            (did_match, with_status),
             BytecodeType::Creation,
             &mut json_results,
             etherscan_metadata,
@@ -261,25 +261,16 @@ impl VerifyBytecodeArgs {
         );
 
         // Get contract creation block
-        let simulation_block = if let Some(block) = self.block {
-            match block {
-                BlockId::Number(BlockNumberOrTag::Number(block)) => block,
-                _ => {
-                    eyre::bail!("Invalid block number");
-                }
-            }
-        } else {
-            let provider = utils::get_provider(&config)?;
-            let creation_block =
-                provider.get_transaction(creation_data.transaction_hash.to_ethers()).await?;
-            match creation_block {
-                Some(tx) => tx.block_number.unwrap().as_u64(),
-                None => {
-                    eyre::bail!(
-                        "Failed to get block number of the contract creation tx, specify using
-        the --block flag"
-                    );
-                }
+        let simulation_block = match self.block {
+            Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
+            Some(_) => eyre::bail!("Invalid block number"),
+            None => {
+                let provider = utils::get_provider(&config)?;
+                provider.get_transaction(creation_data.transaction_hash.to_ethers()).await?
+                    .ok_or_else(|| eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag"))?
+                    .block_number
+                    .ok_or_else(|| eyre::eyre!("Transaction does not have a block number"))?
+                    .as_u64()
             }
         };
 
@@ -336,24 +327,22 @@ impl VerifyBytecodeArgs {
         };
 
         // State commited using deploy_with_env, now get the runtime bytecode from the db.
-        let fork_runtime_code = match executor.backend.basic(contract_address)? {
-            Some(account) => {
-                if let Some(code) = account.code {
-                    code
-                } else {
-                    eyre::bail!(
-                        "Bytecode does not exist for contract deployed on fork at address {}",
-                        contract_address
-                    );
-                }
-            }
-            None => {
-                eyre::bail!(
+        let fork_runtime_code = executor
+            .backend
+            .basic(contract_address)?
+            .ok_or_else(|| {
+                eyre::eyre!(
                     "Failed to get runtime code for contract deployed on fork at address {}",
                     contract_address
-                );
-            }
-        };
+                )
+            })?
+            .code
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "Bytecode does not exist for contract deployed on fork at address {}",
+                    contract_address
+                )
+            })?;
 
         let onchain_runtime_code = provider
             .get_code_at(
@@ -363,7 +352,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
         // Compare the runtime bytecode with the locally built bytecode
-        let res = try_match(
+        let (did_match, with_status) = try_match(
             &fork_runtime_code.bytecode,
             &onchain_runtime_code,
             &constructor_args,
@@ -373,7 +362,7 @@ impl VerifyBytecodeArgs {
         )?;
 
         self.print_result(
-            res,
+            (did_match, with_status),
             BytecodeType::Runtime,
             &mut json_results,
             etherscan_metadata,
@@ -573,36 +562,11 @@ fn try_match(
     has_metadata: bool,
 ) -> Result<(bool, Option<VerificationType>)> {
     // 1. Try full match
-    if *match_type == VerificationType::Full {
-        if local_bytecode.starts_with(bytecode) {
-            // Success => Full match
-            Ok((true, Some(VerificationType::Full)))
-        } else {
-            // Failure => Try partial match
-            match try_partial_match(
-                local_bytecode,
-                bytecode,
-                constructor_args,
-                is_runtime,
-                has_metadata,
-            ) {
-                Ok(true) => Ok((true, Some(VerificationType::Partial))),
-                Ok(false) => Ok((false, None)),
-                Err(e) => Err(e),
-            }
-        }
+    if *match_type == VerificationType::Full && local_bytecode.starts_with(bytecode) {
+        Ok((true, Some(VerificationType::Full)))
     } else {
-        match try_partial_match(
-            local_bytecode,
-            bytecode,
-            constructor_args,
-            is_runtime,
-            has_metadata,
-        ) {
-            Ok(true) => Ok((true, Some(VerificationType::Partial))),
-            Ok(false) => Ok((false, None)),
-            Err(e) => Err(e),
-        }
+        try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
+            .map(|matched| (matched, matched.then_some(VerificationType::Partial)))
     }
 }
 
