@@ -145,6 +145,10 @@ async fn test_invariant() {
                 "default/fuzz/invariant/common/InvariantAssume.t.sol:InvariantAssume",
                 vec![("invariant_dummy()", true, None, None, None)],
             ),
+            (
+                "default/fuzz/invariant/common/InvariantCustomError.t.sol:InvariantCustomError",
+                vec![("invariant_decode_error()", true, None, None, None)],
+            ),
         ]),
     );
 }
@@ -405,6 +409,27 @@ async fn test_invariant_assume_respects_restrictions() {
                 "invariant_dummy()",
                 false,
                 Some("The `vm.assume` cheatcode rejected too many inputs (1 allowed)".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_decode_custom_error() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantCustomError.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantCustomError.t.sol:InvariantCustomError",
+            vec![(
+                "invariant_decode_error()",
+                false,
+                Some("InvariantCustomError(111, \"custom\")".into()),
                 None,
                 None,
             )],
