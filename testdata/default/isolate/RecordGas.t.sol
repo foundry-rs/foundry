@@ -67,7 +67,7 @@ contract RecordGasTest is DSTest {
     }
 
     function _performCall() internal returns (bool success) {
-        (success, ) = address(0).call("");
+        (success,) = address(0).call("");
     }
 
     function _logGasTotalUsed() internal {
