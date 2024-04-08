@@ -23,7 +23,7 @@ use foundry_evm_fuzz::{
     FuzzCase, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
@@ -248,17 +248,20 @@ impl<'a> InvariantExecutor<'a> {
 
                     collect_data(&mut state_changeset, sender, &call_result, &fuzz_state);
 
-                    if let Err(error) = collect_created_contracts(
-                        &state_changeset,
-                        self.project_contracts,
-                        self.setup_contracts,
-                        &self.artifact_filters,
-                        targeted_contracts.clone(),
-                        &mut created_contracts,
-                    ) {
-                        warn!(target: "forge::test", "{error}");
+                    // Collect created contracts and add to fuzz targets only if targeted contracts
+                    // are updatable.
+                    if targeted_contracts.is_updatable {
+                        if let Err(error) = collect_created_contracts(
+                            &state_changeset,
+                            self.project_contracts,
+                            self.setup_contracts,
+                            &self.artifact_filters,
+                            &targeted_contracts,
+                            &mut created_contracts,
+                        ) {
+                            warn!(target: "forge::test", "{error}");
+                        }
                     }
-
                     // Commit changes to the database.
                     executor.backend.commit(state_changeset.clone());
 
@@ -308,7 +311,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // We clear all the targeted contracts created during this run.
             if !created_contracts.is_empty() {
-                let mut writable_targeted = targeted_contracts.lock();
+                let mut writable_targeted = targeted_contracts.targets.lock();
                 for addr in created_contracts.iter() {
                     writable_targeted.remove(addr);
                 }
@@ -352,18 +355,9 @@ impl<'a> InvariantExecutor<'a> {
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address)?;
 
-        if targeted_contracts.is_empty() {
-            eyre::bail!("No contracts to fuzz.");
-        }
-
         // Stores fuzz state for use with [fuzz_calldata_from_state].
         let fuzz_state: EvmFuzzState =
             build_initial_state(self.executor.backend.mem_db(), self.config.dictionary);
-
-        // During execution, any newly created contract is added here and used through the rest of
-        // the fuzz run.
-        let targeted_contracts: FuzzRunIdentifiedContracts =
-            Arc::new(Mutex::new(targeted_contracts));
 
         let calldata_fuzz_config =
             CalldataFuzzDictionary::new(&self.config.dictionary, &fuzz_state);
@@ -499,7 +493,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_contracts_and_senders(
         &self,
         to: Address,
-    ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
+    ) -> eyre::Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
         let targeted_senders =
             self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
         let excluded_senders =
@@ -527,11 +521,18 @@ impl<'a> InvariantExecutor<'a> {
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();
 
+        if contracts.is_empty() {
+            eyre::bail!("No contracts to fuzz.");
+        }
+
         self.target_interfaces(to, &mut contracts)?;
 
         self.select_selectors(to, &mut contracts)?;
 
-        Ok((SenderFilters::new(targeted_senders, excluded_senders), contracts))
+        Ok((
+            SenderFilters::new(targeted_senders, excluded_senders),
+            FuzzRunIdentifiedContracts::new(contracts, selected.is_empty()),
+        ))
     }
 
     /// Extends the contracts and selectors to fuzz with the addresses and ABIs specified in
@@ -707,7 +708,7 @@ fn can_continue(
     let mut call_results = None;
 
     // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
+    let handlers_failed = targeted_contracts.targets.lock().iter().any(|contract| {
         !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
     });
 
