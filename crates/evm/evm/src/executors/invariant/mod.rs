@@ -521,13 +521,14 @@ impl<'a> InvariantExecutor<'a> {
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();
 
-        if contracts.is_empty() {
-            eyre::bail!("No contracts to fuzz.");
-        }
-
         self.target_interfaces(to, &mut contracts)?;
 
         self.select_selectors(to, &mut contracts)?;
+
+        // There should be at least one contract identified as target for fuzz runs.
+        if contracts.is_empty() {
+            eyre::bail!("No contracts to fuzz.");
+        }
 
         Ok((
             SenderFilters::new(targeted_senders, excluded_senders),
