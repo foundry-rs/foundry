@@ -403,8 +403,8 @@ impl Display for SizeReport {
         table.load_preset(ASCII_MARKDOWN);
         table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
         // filters out non dev contracts (Test or Script)
@@ -419,8 +419,8 @@ impl Display for SizeReport {
 
             table.add_row([
                 Cell::new(name).fg(color),
-                Cell::new(contract.size as f64 / 1000.0).fg(color),
-                Cell::new(margin as f64 / 1000.0).fg(color),
+                Cell::new(contract.size).fg(color),
+                Cell::new(margin).fg(color),
             ]);
         }
 
