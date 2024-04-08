@@ -209,7 +209,7 @@ fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{B256, U160, U256 as rU256};
+    use alloy_primitives::{U160, U256 as rU256};
     use alloy_rpc_types::ValueOrArray;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
