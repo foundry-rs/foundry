@@ -154,9 +154,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
     // Only parse the inputs with arguments
     let indexed_tokens = with_args
         .iter()
-        .map(|(_, (kind, arg))| {
-            DynSolType::coerce_str(kind, arg)
-        })
+        .map(|(_, (kind, arg))| DynSolType::coerce_str(kind, arg))
         .collect::<Result<Vec<DynSolValue>, _>>()?;
 
     // Merge the inputs restoring the original ordering
