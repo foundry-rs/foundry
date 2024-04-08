@@ -173,7 +173,7 @@ pub struct NodeConfig {
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
-    /// Set of precompiles to extend the EVM with. Empty by default.
+    /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
