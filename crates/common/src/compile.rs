@@ -419,8 +419,8 @@ impl Display for SizeReport {
 
             table.add_row([
                 Cell::new(name).fg(color),
-                Cell::new(contract.size as f64).fg(color),
-                Cell::new(margin as f64).fg(color),
+                Cell::new(contract.size).fg(color),
+                Cell::new(margin).fg(color),
             ]);
         }
 
