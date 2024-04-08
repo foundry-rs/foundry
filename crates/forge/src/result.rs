@@ -424,6 +424,8 @@ impl TestResult {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
+    pub fn is_fork(&self) -> bool {}
+
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })

@@ -522,6 +522,11 @@ impl Backend {
         }
     }
 
+    /// Returns whether the backend has any active forks
+    pub fn has_forks(&self) -> bool {
+        !self.inner.has_forks()
+    }
+
     /// Returns all snapshots created in this backend
     pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots
@@ -1539,7 +1544,7 @@ pub struct BackendInner {
     /// issued _local_ numeric identifier, that remains constant, even if the underlying fork
     /// backend changes.
     pub issued_local_fork_ids: HashMap<LocalForkId, ForkId>,
-    /// tracks all the created forks
+    /// Tracks all the created forks
     /// Contains the index of the corresponding `ForkDB` in the `forks` vec
     pub created_forks: HashMap<ForkId, ForkLookupIndex>,
     /// Holds all created fork databases
@@ -1596,6 +1601,15 @@ impl BackendInner {
 
     pub fn ensure_fork_index_by_local_id(&self, id: LocalForkId) -> eyre::Result<ForkLookupIndex> {
         self.ensure_fork_index(self.ensure_fork_id(id)?)
+    }
+
+    /// Returns whether there are any active forks
+    pub fn has_forks(&self) -> bool {
+        if !self.created_forks.is_empty() {
+            return true;
+        }
+
+        self.forks.iter().any(|fork| fork.is_some())
     }
 
     /// Returns the underlying fork mapped to the index

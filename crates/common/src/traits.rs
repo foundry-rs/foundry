@@ -19,6 +19,9 @@ pub trait TestFilter: Send + Sync {
 
 /// Extension trait for `Function`.
 pub trait TestFunctionExt {
+    /// Returns whether this function should be executed as a fork test.
+    fn is_fork_test(&self) -> bool;
+
     /// Returns whether this function should be executed as invariant test.
     fn is_invariant_test(&self) -> bool;
 
@@ -36,6 +39,11 @@ pub trait TestFunctionExt {
 }
 
 impl TestFunctionExt for Function {
+    fn is_fork_test(&self) -> bool {
+        // ?
+        false
+    }
+
     fn is_invariant_test(&self) -> bool {
         self.name.is_invariant_test()
     }
@@ -59,6 +67,10 @@ impl TestFunctionExt for Function {
 }
 
 impl TestFunctionExt for String {
+    fn is_fork_test(&self) -> bool {
+        self.as_str().is_fork_test()
+    }
+
     fn is_invariant_test(&self) -> bool {
         self.as_str().is_invariant_test()
     }
@@ -81,6 +93,10 @@ impl TestFunctionExt for String {
 }
 
 impl TestFunctionExt for str {
+    fn is_fork_test(&self) -> bool {
+        unimplemented!("no naming convention for fork tests")
+    }
+
     fn is_invariant_test(&self) -> bool {
         self.starts_with("invariant") || self.starts_with("statefulFuzz")
     }

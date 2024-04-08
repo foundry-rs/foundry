@@ -211,6 +211,7 @@ impl<'a> ContractRunner<'a> {
         }
 
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
+        let has_forks = self.executor.backend.has_forks();
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && needs_setup;
