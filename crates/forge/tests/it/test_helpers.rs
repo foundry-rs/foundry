@@ -203,7 +203,12 @@ impl ForgeTestData {
         config.prompt_timeout = 0;
 
         let root = self.project.root();
-        let opts = self.evm_opts.clone();
+        let mut opts = self.evm_opts.clone();
+
+        if config.isolate {
+            opts.isolate = true;
+        }
+
         let env = opts.local_evm_env();
         let output = self.output.clone();
         let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
@@ -215,6 +220,7 @@ impl ForgeTestData {
                 None,
                 None,
             ))
+            .enable_isolation(opts.isolate)
             .sender(config.sender)
             .with_test_options(self.test_opts.clone())
             .build(root, output, env, opts.clone())
