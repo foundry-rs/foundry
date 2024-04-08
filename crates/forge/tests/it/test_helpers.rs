@@ -32,6 +32,7 @@ const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 pub enum ForgeTestProfile {
     Default,
     Cancun,
+    MultiVersion,
 }
 
 impl fmt::Display for ForgeTestProfile {
@@ -39,6 +40,7 @@ impl fmt::Display for ForgeTestProfile {
         match self {
             ForgeTestProfile::Default => write!(f, "default"),
             ForgeTestProfile::Cancun => write!(f, "cancun"),
+            ForgeTestProfile::MultiVersion => write!(f, "multi-version"),
         }
     }
 }
@@ -279,6 +281,10 @@ pub static TEST_DATA_DEFAULT: Lazy<ForgeTestData> =
 /// Data for tests requiring Cancun support on Solc and EVM level.
 pub static TEST_DATA_CANCUN: Lazy<ForgeTestData> =
     Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Cancun));
+
+/// Data for tests requiring Cancun support on Solc and EVM level.
+pub static TEST_DATA_MULTI_VERSION: Lazy<ForgeTestData> =
+    Lazy::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 
 pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
