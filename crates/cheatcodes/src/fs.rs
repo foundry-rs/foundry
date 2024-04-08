@@ -310,7 +310,7 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
                             return false;
                         }
                     }
-                    return true;
+                    true
                 })
                 .collect::<Vec<_>>();
 
@@ -331,7 +331,7 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
 
                             (filtered.len() == 1).then_some(filtered[0])
                         })
-                        .ok_or_else(|| fmt_err!("Multiple artifacts found for the same version"))
+                        .ok_or_else(|| fmt_err!("Multiple matching artifacts found"))
                 }
             }?;
 
