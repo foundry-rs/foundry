@@ -14,6 +14,7 @@ use foundry_compilers::{
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
 use rustc_hash::FxHashMap;
+use solang_parser::pt::SourceUnitPart;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
@@ -463,6 +464,40 @@ pub struct ContractInfo {
     pub is_dev_contract: bool,
 }
 
+/// Finds the path of the contract with the given name.
+/// Throws error if multiple or no contracts with the same name are found.
+pub fn find_contract_path(target_name: &str, project: &Project) -> Result<PathBuf> {
+    let graph = Graph::resolve(&project.paths)?;
+    let mut target = None;
+
+    for file in graph.files().keys() {
+        let src = std::fs::read_to_string(file)?;
+        let (parsed, _) = solang_parser::parse(&src, 0)
+            .map_err(|_| eyre::eyre!("Failed to parse {}.", file.display()))?;
+
+        for part in parsed.0 {
+            match part {
+                SourceUnitPart::ContractDefinition(contract) => {
+                    if let Some(name) = contract.name {
+                        if name.name == target_name {
+                            if target.is_some() {
+                                eyre::bail!(
+                                    "Found multiple matching contracts with the name `{}`",
+                                    target_name
+                                );
+                            }
+                            target = Some(file);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    target.cloned().ok_or_else(|| eyre::eyre!("No contract found with the name `{}`", target_name))
+}
+
 /// Compiles target file path.
 ///
 /// If `quiet` no solc related output will be emitted to stdout.
@@ -470,27 +505,12 @@ pub struct ContractInfo {
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target_with_filter(
+pub fn compile_target(
     target_path: &Path,
     project: &Project,
     quiet: bool,
-    verify: bool,
-    skip: Vec<SkipBuildFilter>,
 ) -> Result<ProjectCompileOutput> {
-    let graph = Graph::resolve(&project.paths)?;
-
-    // Checking if it's a standalone script, or part of a project.
-    let mut compiler = ProjectCompiler::new().quiet(quiet);
-    if !skip.is_empty() {
-        compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
-    }
-    if !graph.files().contains_key(target_path) {
-        if verify {
-            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
-        }
-        compiler = compiler.files([target_path.into()]);
-    }
-    compiler.compile(project)
+    ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
 /// Compiles an Etherscan source from metadata by creating a project.

@@ -6,7 +6,7 @@ use foundry_cli::{
     utils::FoundryPathExt,
 };
 use foundry_common::{
-    compile::ProjectCompiler,
+    compile::{compile_target, find_contract_path, ProjectCompiler},
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
@@ -71,7 +71,12 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let output = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let output = if let Some(name) = &contract {
+                    let target_path = find_contract_path(name, &project)?;
+                    compile_target(&target_path, &project, false)?
+                } else {
+                    ProjectCompiler::new().compile(&project)?
+                };
                 let artifacts = if all {
                     output
                         .into_artifacts_with_files()

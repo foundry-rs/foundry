@@ -69,6 +69,7 @@ walkdir = "2"
 yansi = "0.5"
 rustc-hash.workspace = true
 num-format.workspace = true
+solang-parser.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true

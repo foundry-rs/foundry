@@ -3767,6 +3767,7 @@ dependencies = [
  "semver 1.0.22",
  "serde",
  "serde_json",
+ "solang-parser",
  "tempfile",
  "thiserror",
  "tokio",

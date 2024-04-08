@@ -15,9 +15,10 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    compile::ProjectCompiler, fmt::parse_tokens, provider::alloy::estimate_eip1559_fees,
+    fmt::parse_tokens, provider::alloy::estimate_eip1559_fees,
+    compile::{self, find_contract_path},
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
@@ -84,15 +85,17 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
+
+        let target_path = if let Some(ref mut path) = self.contract.path {
+            dunce::canonicalize(path)?
+        } else {
+            find_contract_path(&self.contract.name, &project)?
+        };
+
         let mut output =
-            ProjectCompiler::new().quiet_if(self.json || self.opts.silent).compile(&project)?;
+            compile::compile_target(&target_path, &project, self.json || self.opts.silent)?;
 
-        if let Some(ref mut path) = self.contract.path {
-            // paths are absolute in the project's output
-            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
-        }
-
-        let (abi, bin, _) = remove_contract(&mut output, &self.contract)?;
+        let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
