@@ -145,8 +145,9 @@ pub struct Cheatcodes {
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
-    /// Latest gas usage
-    pub latest_gas_usage: Option<crate::Vm::Gas>,
+    /// Cache of the amount of gas used in previous call.
+    /// This is used by the `lastCallGas` cheatcode.
+    pub last_call_gas: Option<crate::Vm::Gas>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -1040,9 +1041,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         if self.config.isolate {
-            // Record the gas usage of the call
+            // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
+            // retrieve the gas usage of the last call.
             let gas = outcome.result.gas;
-            self.latest_gas_usage = Some(crate::Vm::Gas {
+            self.last_call_gas = Some(crate::Vm::Gas {
                 // The gas limit of the call.
                 gasLimit: gas.limit(),
                 // The total gas used.

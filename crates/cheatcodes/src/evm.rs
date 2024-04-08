@@ -1,9 +1,6 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use crate::{
-    Cheatcode, Cheatcodes, CheatsCtxt, Result,
-    Vm::{Gas as GasRecord, *},
-};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_signer::Signer;
@@ -227,25 +224,21 @@ impl Cheatcode for resumeGasMeteringCall {
     }
 }
 
-impl Cheatcode for lastGasUsedCall {
+impl Cheatcode for lastCallGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         ensure!(
             state.config.isolate,
-            "`lastGasUsed` is only available in isolated mode (`--isolate`)"
+            "`lastCallGas` is only available in isolated mode (`--isolate`)"
         );
-        if let Some(latest_gas_usage) = &state.latest_gas_usage {
-            Ok(latest_gas_usage.abi_encode())
-        } else {
-            Ok(GasRecord {
-                gasLimit: 0,
-                gasTotalUsed: 0,
-                gasMemoryUsed: 0,
-                gasRefunded: 0,
-                gasRemaining: 0,
-            }
+        ensure!(state.last_call_gas.is_some(), "`lastCallGas` is only available after a call");
+
+        Ok(state
+            .last_call_gas
+            .as_ref()
+            // This should never happen, but we need to handle it to satisfy the compiler.
+            .expect("`lastCallGas` is only available after a call")
             .abi_encode())
-        }
     }
 }
 

@@ -31,22 +31,20 @@ contract RecordGasTest is DSTest {
     Target public target;
 
     function testNoGasRecord() public {
-        Vm.Gas memory record = vm.lastGasUsed();
-        assertEq(record.gasLimit, 0);
-        assertEq(record.gasTotalUsed, 0);
-        assertEq(record.gasMemoryUsed, 0);
-        assertEq(record.gasRefunded, 0);
-        assertEq(record.gasRemaining, 0);
+        vm.expectRevert();
+        Vm.Gas memory record = vm.lastCallGas();
     }
 
     function testRecordGas() public {
-        address(0).call("");
+        target = new Target();
+
+        _performCall();
         _logGasRecord();
 
-        address(0).call("");
+        _performCall();
         _logGasRecord();
 
-        address(0).call("");
+        _performCall();
         _logGasRecord();
     }
 
@@ -64,17 +62,21 @@ contract RecordGasTest is DSTest {
     }
 
     function testRecordGasSingleField() public {
-        address(0).call("");
+        _performCall();
         _logGasTotalUsed();
     }
 
+    function _performCall() internal returns (bool success) {
+        (success, ) = address(0).call("");
+    }
+
     function _logGasTotalUsed() internal {
-        uint256 gasTotalUsed = vm.lastGasUsed().gasTotalUsed;
+        uint256 gasTotalUsed = vm.lastCallGas().gasTotalUsed;
         emit log_named_uint("gasTotalUsed", gasTotalUsed);
     }
 
     function _logGasRecord() internal {
-        Vm.Gas memory record = vm.lastGasUsed();
+        Vm.Gas memory record = vm.lastCallGas();
         emit log_named_uint("gasLimit", record.gasLimit);
         emit log_named_uint("gasTotalUsed", record.gasTotalUsed);
         emit log_named_uint("gasMemoryUsed", record.gasMemoryUsed);
