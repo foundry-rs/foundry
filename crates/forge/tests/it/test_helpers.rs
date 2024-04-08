@@ -189,11 +189,11 @@ impl ForgeTestData {
         let mut config = self.config.clone();
         config.fs_permissions =
             FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
-        self.runner_with_config(config)
+        self.runner_with_config(config, false)
     }
 
     /// Builds a non-tracing runner
-    pub fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
+    pub fn runner_with_config(&self, mut config: Config, isolated: bool) -> MultiContractRunner {
         config.rpc_endpoints = rpc_endpoints();
         config.allow_paths.push(manifest_root().to_path_buf());
 
@@ -201,7 +201,12 @@ impl ForgeTestData {
         config.prompt_timeout = 0;
 
         let root = self.project.root();
-        let opts = self.evm_opts.clone();
+        let mut opts = self.evm_opts.clone();
+
+        if isolated {
+            opts.isolate = true;
+        }
+
         let env = opts.local_evm_env();
         let output = self.output.clone();
         let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
@@ -209,7 +214,6 @@ impl ForgeTestData {
             .with_cheats_config(CheatsConfig::new(&config, opts.clone(), Some(artifact_ids), None))
             .sender(config.sender)
             .with_test_options(self.test_opts.clone())
-            .enable_isolation(config.isolate)
             .build(root, output, env, opts.clone())
             .unwrap()
     }

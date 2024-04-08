@@ -35,7 +35,7 @@ async fn test_cheats_fork_revert() {
 async fn test_cheats_fork() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config, false);
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -46,7 +46,7 @@ async fn test_cheats_fork() {
 async fn test_get_logs_fork() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config, false);
     let filter = Filter::new("testEthGetLogs", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -57,7 +57,7 @@ async fn test_get_logs_fork() {
 async fn test_rpc_fork() {
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config, false);
     let filter = Filter::new("testRpc", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;

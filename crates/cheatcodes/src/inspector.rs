@@ -1040,7 +1040,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             return outcome
         }
 
-        if self.config.isolate {
+        if self.config.evm_opts.isolate {
             // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
             // retrieve the gas usage of the last call.
             let gas = outcome.result.gas;

@@ -228,7 +228,7 @@ impl Cheatcode for lastCallGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         ensure!(
-            state.config.isolate,
+            state.config.evm_opts.isolate,
             "`lastCallGas` is only available in isolated mode (`--isolate`)"
         );
         ensure!(state.last_call_gas.is_some(), "`lastCallGas` is only available after a call");
