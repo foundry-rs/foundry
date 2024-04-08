@@ -288,35 +288,53 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
 
         // Use available artifacts list if available
         if let Some(available_ids) = &state.config.available_artifacts {
-            let mut artifact = None;
+            let filtered = available_ids
+                .iter()
+                .filter(|id| {
+                    // name might be in the form of "Counter.0.8.23"
+                    let id_name = id.name.split('.').next().unwrap();
 
-            for id in available_ids.iter() {
-                // name might be in the form of "Counter.0.8.23"
-                let id_name = id.name.split('.').next().unwrap();
-
-                if !id.source.ends_with(&file) {
-                    continue;
-                }
-                if let Some(name) = contract_name {
-                    if id_name != name {
-                        continue;
+                    if !id.source.ends_with(&file) {
+                        return false;
                     }
-                }
-                if let Some(ref version) = version {
-                    if id.version.minor != version.minor ||
-                        id.version.major != version.major ||
-                        id.version.patch != version.patch
-                    {
-                        continue;
+                    if let Some(name) = contract_name {
+                        if id_name != name {
+                            return false;
+                        }
                     }
-                }
-                if artifact.is_some() {
-                    return Err(fmt_err!("Multiple matching artifacts found"));
-                }
-                artifact = Some(id);
-            }
+                    if let Some(ref version) = version {
+                        if id.version.minor != version.minor ||
+                            id.version.major != version.major ||
+                            id.version.patch != version.patch
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                })
+                .collect::<Vec<_>>();
 
-            let artifact = artifact.ok_or_else(|| fmt_err!("No matching artifact found"))?;
+            let artifact = match filtered.len() {
+                0 => Err(fmt_err!("No matching artifact found")),
+                1 => Ok(filtered[0]),
+                _ => {
+                    // If we know the current script/test contract solc version, try to filter by it
+                    state
+                        .config
+                        .running_version
+                        .as_ref()
+                        .and_then(|version| {
+                            let filtered = filtered
+                                .into_iter()
+                                .filter(|id| id.version == *version)
+                                .collect::<Vec<_>>();
+
+                            (filtered.len() == 1).then_some(filtered[0])
+                        })
+                        .ok_or_else(|| fmt_err!("Multiple artifacts found for the same version"))
+                }
+            }?;
+
             Ok(artifact.path.clone())
         } else {
             let file = file.to_string_lossy();

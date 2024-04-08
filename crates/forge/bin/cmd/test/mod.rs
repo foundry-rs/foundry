@@ -287,6 +287,7 @@ impl TestArgs {
                 evm_opts.clone(),
                 Some(artifact_ids),
                 None,
+                None, // populated separately for each test contract
             ))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)

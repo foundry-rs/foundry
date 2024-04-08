@@ -8,6 +8,7 @@ use foundry_config::{
     ResolvedRpcEndpoints,
 };
 use foundry_evm_core::opts::EvmOpts;
+use semver::Version;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -47,6 +48,8 @@ pub struct CheatsConfig {
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<Vec<ArtifactId>>,
+    /// Version of the script/test contract which is currently running.
+    pub running_version: Option<Version>,
 }
 
 impl CheatsConfig {
@@ -56,6 +59,7 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<Vec<ArtifactId>>,
         script_wallets: Option<ScriptWallets>,
+        running_version: Option<Version>,
     ) -> Self {
         let mut allowed_paths = vec![config.__root.0.clone()];
         allowed_paths.extend(config.libs.clone());
@@ -82,6 +86,7 @@ impl CheatsConfig {
             labels: config.labels.clone(),
             script_wallets,
             available_artifacts,
+            running_version,
         }
     }
 
@@ -200,6 +205,7 @@ impl Default for CheatsConfig {
             labels: Default::default(),
             script_wallets: None,
             available_artifacts: Default::default(),
+            running_version: Default::default(),
         }
     }
 }
