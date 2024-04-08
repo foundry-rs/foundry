@@ -7,13 +7,14 @@ use crate::{
 use foundry_config::{fs_permissions::PathPermission, FsPermissions};
 use foundry_test_utils::Filter;
 
-/// Executes all cheat code tests but not fork cheat codes
+/// Executes all cheat code tests but not fork cheat codes or tests that require isolation mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local() {
-    let mut filter =
-        Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*")).exclude_paths("Fork");
+    let mut filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
+        .exclude_paths("Fork")
+        .exclude_contracts("Isolated");
 
-    // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file paths
+    // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file path
     if cfg!(windows) {
         filter = filter.exclude_tests("(Ffi|File|Line|Root)");
     }
@@ -28,7 +29,8 @@ async fn test_cheats_local() {
 /// Executes subset of all cheat code tests in isolation mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local_isolated() {
-    let filter = Filter::new(".*", ".*(LastCallGasTest)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+    let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
+        .exclude_paths("Fork");
 
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.isolate = true;

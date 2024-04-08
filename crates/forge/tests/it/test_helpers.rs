@@ -212,6 +212,7 @@ impl ForgeTestData {
         let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
         self.base_runner()
             .with_cheats_config(CheatsConfig::new(&config, opts.clone(), Some(artifact_ids), None))
+            .enable_isolation(opts.isolate)
             .sender(config.sender)
             .with_test_options(self.test_opts.clone())
             .build(root, output, env, opts.clone())
