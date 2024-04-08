@@ -9,13 +9,8 @@ use foundry_compilers::{
     artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_evm::{
-    backend::Backend,
-    decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder},
-    fork::CreateFork,
-    inspectors::CheatsConfig,
-    opts::EvmOpts,
-    revm,
+    backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
+    inspectors::CheatsConfig, opts::EvmOpts, revm,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -158,18 +153,6 @@ impl MultiContractRunner {
 
         // The DB backend that serves all the data.
         let db = Backend::spawn(self.fork.take());
-        let executor = ExecutorBuilder::new()
-            .inspectors(|stack| {
-                stack
-                    .cheatcodes(self.cheats_config.clone())
-                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
-                    .debug(self.debug)
-                    .coverage(self.coverage)
-                    .enable_isolation(self.isolation)
-            })
-            .spec(self.evm_spec)
-            .gas_limit(self.evm_opts.gas_limit())
-            .build(self.env.clone(), db);
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -182,30 +165,46 @@ impl MultiContractRunner {
         );
 
         contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
-            let identifier = id.identifier();
-            let executor = executor.clone();
-            let result = self.run_tests(&identifier, contract, executor, filter);
-            let _ = tx.send((identifier, result));
+            let result = self.run_tests(id, contract, db.clone(), filter);
+            let _ = tx.send((id.identifier(), result));
         })
     }
 
     fn run_tests(
         &self,
-        name: &str,
+        artifact_id: &ArtifactId,
         contract: &TestContract,
-        executor: Executor,
+        db: Backend,
         filter: &dyn TestFilter,
     ) -> SuiteResult {
-        let mut span_name = name;
+        let identifier = artifact_id.identifier();
+        let mut span_name = identifier.as_str();
+
+        let mut cheats_config = self.cheats_config.as_ref().clone();
+        cheats_config.running_version = Some(artifact_id.version.clone());
+
+        let executor = ExecutorBuilder::new()
+            .inspectors(|stack| {
+                stack
+                    .cheatcodes(Arc::new(cheats_config))
+                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                    .debug(self.debug)
+                    .coverage(self.coverage)
+                    .enable_isolation(self.isolation)
+            })
+            .spec(self.evm_spec)
+            .gas_limit(self.evm_opts.gas_limit())
+            .build(self.env.clone(), db);
+
         if !enabled!(tracing::Level::TRACE) {
-            span_name = get_contract_name(span_name);
+            span_name = get_contract_name(&identifier);
         }
         let _guard = info_span!("run_tests", name = span_name).entered();
 
         debug!("start executing all tests in contract");
 
         let runner = ContractRunner::new(
-            name,
+            &identifier,
             executor,
             contract,
             self.evm_opts.initial_balance,
