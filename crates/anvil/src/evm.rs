@@ -16,7 +16,6 @@ pub fn inject_precompiles<DB, I>(
     precompiles: Vec<(Address, Precompile)>,
 ) where
     DB: revm::Database,
-    I: revm::Inspector<DB>,
 {
     evm.handler.append_handler_register_box(Box::new(move |handler| {
         let precompiles = precompiles.clone();
