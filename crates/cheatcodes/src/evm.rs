@@ -236,7 +236,7 @@ impl Cheatcode for lastCallGasCall {
         Ok(state
             .last_call_gas
             .as_ref()
-            // This should never happen, but we need to handle it to satisfy the compiler.
+            // This should never happen, as we ensure `last_call_gas` is `Some` above.
             .expect("`lastCallGas` is only available after a call")
             .abi_encode())
     }
