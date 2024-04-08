@@ -24,3 +24,15 @@ async fn test_cheats_local() {
 
     TestConfig::with_filter(runner, filter).run().await;
 }
+
+/// Executes subset of all cheat code tests in isolation mode
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cheats_local_isolated() {
+    let filter = Filter::new(".*", ".*(LastCallGasTest)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.isolate = true;
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+
+    TestConfig::with_filter(runner, filter).run().await;
+}
