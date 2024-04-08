@@ -27,7 +27,9 @@ use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
+
 impl_figment_convert!(VerifyBytecodeArgs);
+
 /// CLI arguments for `forge verify-bytecode`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyBytecodeArgs {
