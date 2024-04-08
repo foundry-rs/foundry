@@ -36,10 +36,7 @@ contract ExplicitTargetContract is DSTest {
     function setUp() public {
         Target target = new Target();
         bytes memory targetCode = address(target).code;
-        vm.etch(
-            address(0x6B175474E89094C44Da98b954EedeAC495271d0F),
-            targetCode
-        );
+        vm.etch(address(0x6B175474E89094C44Da98b954EedeAC495271d0F), targetCode);
 
         handler = new Handler();
     }
@@ -60,14 +57,10 @@ contract DynamicTargetContract is DSTest {
     function setUp() public {
         Target target = new Target();
         bytes memory targetCode = address(target).code;
-        vm.etch(
-            address(0x6B175474E89094C44Da98b954EedeAC495271d0F),
-            targetCode
-        );
+        vm.etch(address(0x6B175474E89094C44Da98b954EedeAC495271d0F), targetCode);
 
         handler = new Handler();
     }
 
     function invariant_dynamic_targets() public {}
 }
-
