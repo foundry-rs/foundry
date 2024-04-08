@@ -1,17 +1,12 @@
-use alloy_primitives::Address;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
+use alloy_json_abi::Event;
+use alloy_primitives::{Address, B256};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use cast::Cast;
 use clap::Parser;
-use ethers_core::{
-    abi::{
-        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
-    },
-    types::{H256, U256},
-};
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
-use foundry_common::{ens::NameOrAddress, types::ToAlloy};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};
@@ -115,40 +110,29 @@ fn build_filter(
     topics_or_args: Vec<String>,
 ) -> Result<Filter, eyre::Error> {
     let block_option = FilterBlockOption::Range { from_block, to_block };
-    let topic_filter = match sig_or_topic {
+    let filter = match sig_or_topic {
         // Try and parse the signature as an event signature
-        Some(sig_or_topic) => match HumanReadableParser::parse_event(sig_or_topic.as_str()) {
+        Some(sig_or_topic) => match foundry_common::abi::get_event(sig_or_topic.as_str()) {
             Ok(event) => build_filter_event_sig(event, topics_or_args)?,
             Err(_) => {
                 let topics = [vec![sig_or_topic], topics_or_args].concat();
                 build_filter_topics(topics)?
             }
         },
-        None => TopicFilter::default(),
+        None => Filter::default(),
     };
-    // Convert from TopicFilter to Filter
-    let topics =
-        vec![topic_filter.topic0, topic_filter.topic1, topic_filter.topic2, topic_filter.topic3]
-            .into_iter()
-            .map(|topic| match topic {
-                Topic::Any => vec![],
-                Topic::This(topic) => vec![topic.to_alloy()],
-                _ => unreachable!(),
-            })
-            .map(FilterSet::from)
-            .collect::<Vec<_>>();
 
-    let filter = Filter {
-        block_option,
-        address: address.map(|a| vec![a]).unwrap_or_default().into(),
-        topics: [topics[0].clone(), topics[1].clone(), topics[2].clone(), topics[3].clone()],
-    };
+    let mut filter = filter.select(block_option);
+
+    if let Some(address) = address {
+        filter = filter.address(address)
+    }
 
     Ok(filter)
 }
 
 /// Creates a TopicFilter from the given event signature and arguments.
-fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter, eyre::Error> {
+fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
     // Match the args to indexed inputs. Enumerate so that the ordering can be restored
@@ -158,122 +142,70 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter
         .iter()
         .zip(args)
         .filter(|(input, _)| input.indexed)
-        .map(|(input, arg)| (&input.kind, arg))
+        .map(|(input, arg)| {
+            let kind = input.resolve()?;
+            Ok((kind, arg))
+        })
+        .collect::<Result<Vec<(DynSolType, &str)>>>()?
+        .into_iter()
         .enumerate()
         .partition(|(_, (_, arg))| !arg.is_empty());
 
     // Only parse the inputs with arguments
-    let indexed_tokens = parse_params(with_args.iter().map(|(_, p)| *p), true)?;
+    let indexed_tokens = with_args
+        .iter()
+        .map(|(_, (kind, arg))| {
+            DynSolType::coerce_str(kind, arg)
+        })
+        .collect::<Result<Vec<DynSolValue>, _>>()?;
 
     // Merge the inputs restoring the original ordering
-    let mut tokens = with_args
+    let mut topics = with_args
         .into_iter()
         .zip(indexed_tokens)
         .map(|((i, _), t)| (i, Some(t)))
         .chain(without_args.into_iter().map(|(i, _)| (i, None)))
         .sorted_by(|(i1, _), (i2, _)| i1.cmp(i2))
-        .map(|(_, token)| token)
-        .collect::<Vec<_>>();
+        .map(|(_, token)| {
+            token
+                .map(|token| Topic::from(B256::from_slice(token.abi_encode().as_slice())))
+                .unwrap_or(Topic::default())
+        })
+        .collect::<Vec<Topic>>();
 
-    tokens.resize(3, None);
+    topics.resize(3, Topic::default());
 
-    let raw = RawTopicFilter {
-        topic0: tokens[0].clone().map_or(Topic::Any, Topic::This),
-        topic1: tokens[1].clone().map_or(Topic::Any, Topic::This),
-        topic2: tokens[2].clone().map_or(Topic::Any, Topic::This),
-    };
+    let filter = Filter::new()
+        .event_signature(event.selector())
+        .topic1(topics[0].clone())
+        .topic2(topics[1].clone())
+        .topic3(topics[2].clone());
 
-    // Let filter do the hardwork of converting arguments to topics
-    Ok(event.filter(raw)?)
+    Ok(filter)
 }
 
 /// Creates a TopicFilter from raw topic hashes.
-fn build_filter_topics(topics: Vec<String>) -> Result<TopicFilter, eyre::Error> {
+fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
     let mut topics = topics
         .into_iter()
-        .map(|topic| if topic.is_empty() { Ok(None) } else { H256::from_str(&topic).map(Some) })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    topics.resize(4, None);
-
-    Ok(TopicFilter {
-        topic0: topics[0].map_or(Topic::Any, Topic::This),
-        topic1: topics[1].map_or(Topic::Any, Topic::This),
-        topic2: topics[2].map_or(Topic::Any, Topic::This),
-        topic3: topics[3].map_or(Topic::Any, Topic::This),
-    })
-}
-
-fn parse_params<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
-    params: I,
-    lenient: bool,
-) -> eyre::Result<Vec<Token>> {
-    let mut tokens = Vec::new();
-
-    for (param, value) in params {
-        let mut token = if lenient {
-            LenientTokenizer::tokenize(param, value)
-        } else {
-            StrictTokenizer::tokenize(param, value)
-        };
-        if token.is_err() && value.starts_with("0x") {
-            match param {
-                ParamType::FixedBytes(32) => {
-                    if value.len() < 66 {
-                        let padded_value = [value, &"0".repeat(66 - value.len())].concat();
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &padded_value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &padded_value)
-                        };
-                    }
-                }
-                ParamType::Uint(_) => {
-                    // try again if value is hex
-                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &value)
-                        };
-                    }
-                }
-                // TODO: Not sure what to do here. Put the no effect in for now, but that is not
-                // ideal. We could attempt massage for every value type?
-                _ => {}
+        .map(|topic| {
+            if topic.is_empty() {
+                Ok(Topic::default())
+            } else {
+                Ok(Topic::from(B256::from_str(topic.as_str())?))
             }
-        }
+        })
+        .collect::<Result<Vec<FilterSet<_>>>>()?;
 
-        let token = token.map(sanitize_token).wrap_err_with(|| {
-            format!("Failed to parse `{value}`, expected value of type: {param}")
-        })?;
-        tokens.push(token);
-    }
-    Ok(tokens)
-}
+    topics.resize(4, Topic::default());
 
-pub fn sanitize_token(token: Token) -> Token {
-    match token {
-        Token::Array(tokens) => {
-            let mut sanitized = Vec::with_capacity(tokens.len());
-            for token in tokens {
-                let token = match token {
-                    Token::String(val) => {
-                        let val = match val.as_str() {
-                            // this is supposed to be an empty string
-                            "\"\"" | "''" => String::new(),
-                            _ => val,
-                        };
-                        Token::String(val)
-                    }
-                    _ => sanitize_token(token),
-                };
-                sanitized.push(token)
-            }
-            Token::Array(sanitized)
-        }
-        _ => token,
-    }
+    let filter = Filter::new()
+        .event_signature(topics[0].clone())
+        .topic1(topics[1].clone())
+        .topic2(topics[2].clone())
+        .topic3(topics[3].clone());
+
+    Ok(filter)
 }
 
 #[cfg(test)]
@@ -452,7 +384,7 @@ mod tests {
         .unwrap()
         .to_string();
 
-        assert_eq!(err, "Failed to parse `1234`, expected value of type: address");
+        assert_eq!(err, "parser error:\n1234\n^\nInvalid string length");
     }
 
     #[test]
@@ -462,7 +394,7 @@ mod tests {
             .unwrap()
             .to_string();
 
-        assert_eq!(err, "Invalid character 's' at position 1");
+        assert_eq!(err, "Odd number of digits");
     }
 
     #[test]
@@ -472,7 +404,7 @@ mod tests {
             .unwrap()
             .to_string();
 
-        assert_eq!(err, "Invalid input length");
+        assert_eq!(err, "Invalid string length");
     }
 
     #[test]
@@ -488,6 +420,6 @@ mod tests {
         .unwrap()
         .to_string();
 
-        assert_eq!(err, "Invalid input length");
+        assert_eq!(err, "Invalid string length");
     }
 }
