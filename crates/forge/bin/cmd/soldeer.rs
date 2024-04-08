@@ -18,7 +18,10 @@ pub struct SoldeerArgs {
 
 impl SoldeerArgs {
     pub fn run(self) -> Result<()> {
-        soldeer::run(self.command).wrap_err("Failed to run soldeer")
+        match soldeer::run(self.command) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(eyre::eyre!("Failed to run soldeer {}", err.message)),
+        }
     }
 }
 

@@ -29,10 +29,9 @@ use regex::Regex;
 use revm_primitives::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use toml::Table;
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -97,6 +96,9 @@ use providers::remappings::RemappingsProvider;
 mod inline;
 use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
+
+pub mod soldeer;
+use soldeer::SoldeerDependency;
 
 /// Foundry configuration
 ///
@@ -389,7 +391,7 @@ pub struct Config {
     pub labels: HashMap<Address, String>,
 
     /// Soldeer dependencies
-    pub dependencies: Table,
+    pub dependencies: Option<BTreeMap<String, SoldeerDependency>>,
 
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
