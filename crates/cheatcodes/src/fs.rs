@@ -271,14 +271,40 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 /// Returns the path to the json artifact depending on the input
+/// 
+/// Can parse following input formats:
+/// - `path/to/artifact.json`
+/// - `path/to/contract.sol`
+/// - `path/to/contract.sol:ContractName`
+/// - `path/to/contract.sol:ContractName:0.8.23`
+/// - `path/to/contract.sol:0.8.23`
+/// - `ContractName`
+/// - `ContractName:0.8.23`
 fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
     if path.ends_with(".json") {
         Ok(PathBuf::from(path))
     } else {
         let mut parts = path.split(':');
-        let file = PathBuf::from(parts.next().unwrap());
-        let contract_name = parts.next();
-        let version = parts.next();
+
+        let mut file = None;
+        let mut contract_name = None;
+        let mut version = None;
+
+        let path_or_name = parts.next().unwrap();
+        if path_or_name.ends_with(".sol") {
+            file = Some(PathBuf::from(path_or_name));
+            if let Some(name_or_version) = parts.next() {
+                if name_or_version.contains(".") {
+                    version = Some(name_or_version);
+                } else {
+                    contract_name = Some(name_or_version);
+                    version = parts.next();
+                }
+            }
+        } else {
+            contract_name = Some(path_or_name);
+            version = parts.next();
+        }
 
         let version = if let Some(version) = version {
             Some(Version::parse(version).map_err(|_| fmt_err!("Error parsing version"))?)
@@ -294,8 +320,10 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
 
-                    if !id.source.ends_with(&file) {
-                        return false;
+                    if let Some(path) = &file {
+                        if !id.source.ends_with(path) {
+                            return false;
+                        }
                     }
                     if let Some(name) = contract_name {
                         if id_name != name {
@@ -337,13 +365,20 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
 
             Ok(artifact.path.clone())
         } else {
-            let file = file.to_string_lossy();
-            let contract_name = if let Some(contract_name) = contract_name {
-                contract_name.to_owned()
-            } else {
-                file.replace(".sol", "")
-            };
-            Ok(state.config.paths.artifacts.join(format!("{file}/{contract_name}.json")))
+            let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                (Some(file), Some(contract_name)) => {
+                    Ok(format!("{file}/{contract_name}.json"))
+                }
+                (None, Some(contract_name)) => {
+                    Ok(format!("{contract_name}.sol/{contract_name}.json"))
+                }
+                (Some(file), None) => {
+                    let name = file.replace(".sol", "");
+                    Ok(format!("{file}/{name}.json"))
+                }
+                _ => Err(fmt_err!("Invalid artifact path")),
+            }?;
+            Ok(state.config.paths.artifacts.join(path_in_artifacts))
         }
     }
 }
