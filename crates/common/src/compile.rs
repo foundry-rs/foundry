@@ -476,21 +476,18 @@ pub fn find_contract_path(target_name: &str, project: &Project) -> Result<PathBu
             .map_err(|_| eyre::eyre!("Failed to parse {}.", file.display()))?;
 
         for part in parsed.0 {
-            match part {
-                SourceUnitPart::ContractDefinition(contract) => {
-                    if let Some(name) = contract.name {
-                        if name.name == target_name {
-                            if target.is_some() {
-                                eyre::bail!(
-                                    "Found multiple matching contracts with the name `{}`",
-                                    target_name
-                                );
-                            }
-                            target = Some(file);
+            if let SourceUnitPart::ContractDefinition(contract) = part {
+                if let Some(name) = contract.name {
+                    if name.name == target_name {
+                        if target.is_some() {
+                            eyre::bail!(
+                                "Found multiple matching contracts with the name `{}`",
+                                target_name
+                            );
                         }
+                        target = Some(file);
                     }
                 }
-                _ => {}
             }
         }
     }

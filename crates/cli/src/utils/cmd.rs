@@ -39,7 +39,7 @@ pub fn remove_contract(
     } else {
         let mut err = format!("could not find artifact: `{}`", name);
         if let Some(suggestion) =
-            super::did_you_mean(&name, output.artifacts().map(|(name, _)| name)).pop()
+            super::did_you_mean(name, output.artifacts().map(|(name, _)| name)).pop()
         {
             if suggestion != name {
                 err = format!(
