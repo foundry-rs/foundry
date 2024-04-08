@@ -214,7 +214,8 @@ impl VerifyBytecodeArgs {
                 (VerificationType::Partial, BytecodeHash::None) => {
                     (VerificationType::Partial, false)
                 }
-                _ => (VerificationType::Partial, true),
+                (VerificationType::Full, _) => (VerificationType::Full, true),
+                (VerificationType::Partial, _) => (VerificationType::Partial, true),
             };
 
         // Etherscan compilation metadata
