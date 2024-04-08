@@ -14,7 +14,7 @@ async fn test_cheats_local() {
         .exclude_paths("Fork")
         .exclude_contracts("Isolated");
 
-    // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file path
+    // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file paths
     if cfg!(windows) {
         filter = filter.exclude_tests("(Ffi|File|Line|Root)");
     }
@@ -29,8 +29,7 @@ async fn test_cheats_local() {
 /// Executes subset of all cheat code tests in isolation mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local_isolated() {
-    let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
-        .exclude_paths("Fork");
+    let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
 
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.isolate = true;
