@@ -891,6 +891,7 @@ impl Backend {
             parent_hash: storage.best_hash,
             gas_used: U256::ZERO,
             enable_steps_tracing: self.enable_steps_tracing,
+            precompile_factory: self.precompile_factory.clone(),
         };
 
         // create a new pending block
@@ -950,6 +951,7 @@ impl Backend {
                     parent_hash: best_hash,
                     gas_used: U256::ZERO,
                     enable_steps_tracing: self.enable_steps_tracing,
+                    precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();
 

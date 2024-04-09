@@ -4,7 +4,9 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
+    inject_precompiles,
     mem::inspector::Inspector,
+    PrecompileFactory,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_primitives::{Bloom, BloomInput, Log, B256, U256};
@@ -123,6 +125,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
     pub enable_steps_tracing: bool,
+    /// Precompiles to inject to the EVM.
+    pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -294,6 +298,9 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let exec_result = {
             let mut evm =
                 foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
+            if let Some(ref factory) = self.precompile_factory {
+                inject_precompiles(&mut evm, factory.precompiles());
+            }
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
