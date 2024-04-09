@@ -722,7 +722,7 @@ impl<'a> ContractRunner<'a> {
         self.executor
             .backend
             .has_forks()
-            .then(|| TestEnvironment::Fork { block: 0 }) // TODO: get the block number
+            .then(|| TestEnvironment::Fork { block: self.executor.env.block.number })
             .unwrap_or(TestEnvironment::Standard)
     }
 }
