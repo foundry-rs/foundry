@@ -304,10 +304,10 @@ pub fn collect_created_contracts(
     project_contracts: &ContractsByArtifact,
     setup_contracts: &ContractsByAddress,
     artifact_filters: &ArtifactFilters,
-    targeted_contracts: FuzzRunIdentifiedContracts,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.lock();
+    let mut writable_targeted = targeted_contracts.targets.lock();
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
