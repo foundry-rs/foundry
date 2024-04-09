@@ -28,7 +28,7 @@ use crate::{
         db::DatabaseRef,
         primitives::{AccountInfo, U256 as rU256},
     },
-    NodeConfig,
+    NodeConfig, PrecompileFactory,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_network::Sealable;
@@ -79,7 +79,7 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use revm::primitives::ResultAndState;
+use revm::{db::WrapDatabaseRef, primitives::ResultAndState};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -171,6 +171,8 @@ pub struct Backend {
     node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
+    /// Precompiles to inject to the EVM.
+    precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
 impl Backend {
@@ -217,7 +219,10 @@ impl Backend {
             Default::default()
         };
 
-        let slots_in_an_epoch = node_config.read().await.slots_in_an_epoch;
+        let cfg = node_config.read().await;
+        let slots_in_an_epoch = cfg.slots_in_an_epoch;
+        let precompile_factory = cfg.precompile_factory.clone();
+        drop(cfg);
 
         let backend = Self {
             db,
@@ -236,6 +241,7 @@ impl Backend {
             transaction_block_keeper,
             node_config,
             slots_in_an_epoch,
+            precompile_factory,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -615,7 +621,7 @@ impl Backend {
     /// Returns an error if op-stack deposits are not active
     pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
-            return Ok(())
+            return Ok(());
         }
         Err(BlockchainError::DepositTransactionUnsupported)
     }
@@ -803,6 +809,23 @@ impl Backend {
         env
     }
 
+    fn new_evm_with_inspector_ref<DB, I>(
+        &self,
+        db: DB,
+        env: EnvWithHandlerCfg,
+        inspector: I,
+    ) -> revm::Evm<'_, I, WrapDatabaseRef<DB>>
+    where
+        DB: revm::DatabaseRef,
+        I: revm::Inspector<WrapDatabaseRef<DB>>,
+    {
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        if let Some(ref factory) = self.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+        evm
+    }
+
     /// executes the transactions without writing to the underlying database
     pub async fn inspect_tx(
         &self,
@@ -815,13 +838,7 @@ impl Backend {
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
-        let mut evm = new_evm_with_inspector_ref(&*db, env, &mut inspector);
-
-        let cfg = self.node_config.read().await;
-        if let Some(ref factory) = cfg.precompile_factory {
-            inject_precompiles(&mut evm, factory.precompiles());
-        }
-
+        let mut evm = self.new_evm_with_inspector_ref(&*db, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1129,13 +1146,7 @@ impl Backend {
         let mut inspector = Inspector::default();
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = new_evm_with_inspector_ref(state, env, &mut inspector);
-
-        let cfg = self.node_config.try_read().unwrap();
-        if let Some(ref factory) = cfg.precompile_factory {
-            inject_precompiles(&mut evm, factory.precompiles());
-        }
-
+        let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1163,13 +1174,7 @@ impl Backend {
             let block_number = block.number;
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = new_evm_with_inspector_ref(state, env, &mut inspector);
-
-            let cfg = self.node_config.try_read().unwrap();
-            if let Some(ref factory) = cfg.precompile_factory {
-                inject_precompiles(&mut evm, factory.precompiles());
-            }
-
+            let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1218,13 +1223,7 @@ impl Backend {
         );
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = new_evm_with_inspector_ref(state, env, &mut inspector);
-
-        let cfg = self.node_config.try_read().unwrap();
-        if let Some(ref factory) = cfg.precompile_factory {
-            inject_precompiles(&mut evm, factory.precompiles());
-        }
-
+        let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
         let ResultAndState { result, state: _ } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1411,7 +1410,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash_full(hash).await?)
+            return Ok(fork.block_by_hash_full(hash).await?);
         }
 
         Ok(None)
@@ -1465,7 +1464,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.block_by_number(number).await?)
+                return Ok(fork.block_by_number(number).await?);
             }
         }
 
@@ -1484,7 +1483,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.block_by_number_full(number).await?)
+                return Ok(fork.block_by_number_full(number).await?);
             }
         }
 
@@ -1848,7 +1847,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.trace_transaction(hash).await?)
+            return Ok(fork.trace_transaction(hash).await?);
         }
 
         Ok(vec![])
@@ -1892,7 +1891,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.debug_trace_transaction(hash, opts).await?)
+            return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
         Ok(GethTrace::Default(Default::default()))
@@ -1918,7 +1917,7 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return Ok(fork.trace_block(number).await?)
+                return Ok(fork.trace_block(number).await?);
             }
         }
 
@@ -2115,7 +2114,9 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
+                return Ok(fork
+                    .transaction_by_block_number_and_index(number, index.into())
+                    .await?);
             }
         }
 
@@ -2132,7 +2133,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
+            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?);
         }
 
         Ok(None)
@@ -2171,7 +2172,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider)
+            return fork
+                .transaction_by_hash(hash)
+                .await
+                .map_err(BlockchainError::AlloyForkProvider);
         }
 
         Ok(None)
@@ -2314,7 +2318,7 @@ fn get_pool_transactions_nonce(
         .max()
     {
         let tx_count = highest_nonce.saturating_add(U256::from(1));
-        return Some(tx_count)
+        return Some(tx_count);
     }
     None
 }
@@ -2344,8 +2348,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
+                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON
+                        && !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
