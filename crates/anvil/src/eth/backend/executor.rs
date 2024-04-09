@@ -51,12 +51,9 @@ impl ExecutedTransaction {
 
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
-        let receipt_with_bloom: ReceiptWithBloom = Receipt {
-            status: status_code == 1,
-            cumulative_gas_used: *cumulative_gas_used as u64,
-            logs,
-        }
-        .into();
+        let receipt_with_bloom: ReceiptWithBloom =
+            Receipt { status: status_code == 1, cumulative_gas_used: *cumulative_gas_used, logs }
+                .into();
 
         match &self.transaction.pending_transaction.transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
@@ -173,7 +170,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     _ => None,
                 },
                 nonce: tx.nonce,
-                gas_used: tx.gas_used as u64,
+                gas_used: tx.gas_used,
             };
 
             transaction_infos.push(info);

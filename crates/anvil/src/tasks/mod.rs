@@ -78,7 +78,7 @@ impl TaskManager {
                     let _ = api
                         .anvil_reset(Some(Forking {
                             json_rpc_url: None,
-                            block_number: block.header.number.map(|b| b.to()),
+                            block_number: block.header.number,
                         }))
                         .await;
                 }
@@ -136,7 +136,7 @@ impl TaskManager {
                 let _ = api
                     .anvil_reset(Some(Forking {
                         json_rpc_url: None,
-                        block_number: block.header.number.map(|b| b.to()),
+                        block_number: block.header.number,
                     }))
                     .await;
             }

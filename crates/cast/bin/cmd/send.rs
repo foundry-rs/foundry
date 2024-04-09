@@ -178,7 +178,7 @@ impl SendTxArgs {
 
             let signer = EthereumSigner::from(signer);
             let provider =
-                ProviderBuilder::<_, AnyNetwork>::default().signer(signer).provider(provider);
+                ProviderBuilder::<_, _, AnyNetwork>::default().signer(signer).on_provider(provider);
 
             cast_send(
                 provider,

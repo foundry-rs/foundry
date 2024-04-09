@@ -426,7 +426,7 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> u128 {
         self.base_fee
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(|b| b as u128)))
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
             .unwrap_or(INITIAL_BASE_FEE)
     }
 
@@ -1022,19 +1022,19 @@ latest block number: {latest_block}"
         // we only use the gas limit value of the block if it is non-zero and the block gas
         // limit is enabled, since there are networks where this is not used and is always
         // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-        let gas_limit = if self.disable_block_gas_limit || block.header.gas_limit.is_zero() {
-            U256::from(u64::MAX)
+        let gas_limit = if self.disable_block_gas_limit || block.header.gas_limit == 0 {
+            u128::MAX
         } else {
             block.header.gas_limit
         };
 
         env.block = BlockEnv {
             number: U256::from(fork_block_number),
-            timestamp: block.header.timestamp,
+            timestamp: U256::from(block.header.timestamp),
             difficulty: block.header.difficulty,
             // ensures prevrandao is set
             prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
-            gas_limit,
+            gas_limit: U256::from(gas_limit),
             // Keep previous `coinbase` and `basefee` value
             coinbase: env.block.coinbase,
             basefee: env.block.basefee,
@@ -1044,14 +1044,14 @@ latest block number: {latest_block}"
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.header.base_fee_per_gas {
-                self.base_fee = Some(base_fee.to());
-                env.block.basefee = base_fee;
+                self.base_fee = Some(base_fee);
+                env.block.basefee = U256::from(base_fee);
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used.to(),
-                    block.header.gas_limit.to(),
-                    block.header.base_fee_per_gas.unwrap_or_default().to(),
+                    block.header.gas_used,
+                    block.header.gas_limit,
+                    block.header.base_fee_per_gas.unwrap_or_default(),
                 );
                 // update next base fee
                 fees.set_base_fee(next_block_base_fee);
@@ -1109,7 +1109,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            timestamp: block.header.timestamp.to::<u64>(),
+            timestamp: block.header.timestamp,
             base_fee: block.header.base_fee_per_gas,
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,

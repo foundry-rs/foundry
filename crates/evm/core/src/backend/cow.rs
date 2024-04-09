@@ -159,7 +159,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {

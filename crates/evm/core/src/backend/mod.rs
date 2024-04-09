@@ -7,7 +7,7 @@ use crate::{
     utils::configure_tx_env,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
+use alloy_primitives::{b256, keccak256, Address, B256, U256};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction, WithOtherFields};
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
@@ -166,7 +166,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
@@ -857,7 +857,7 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(U64, Block)> {
+    ) -> eyre::Result<(u64, Block)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
@@ -868,7 +868,7 @@ impl Backend {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((U64::from(fork_block), block))
+            Ok((fork_block, block))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
@@ -877,7 +877,7 @@ impl Backend {
                 .number
                 .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
 
-            Ok((number.to::<U64>(), block))
+            Ok((number, block))
         }
     }
 
@@ -1147,14 +1147,14 @@ impl DatabaseExt for Backend {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
         let (fork_id, backend, fork_env) =
-            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.to())?;
+            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
 
@@ -1216,7 +1216,7 @@ impl DatabaseExt for Backend {
             self.get_block_number_and_block_for_transaction(id, transaction)?;
 
         // roll the fork to the transaction's block or latest if it's pending
-        self.roll_fork(Some(id), fork_block.to(), env, journaled_state)?;
+        self.roll_fork(Some(id), fork_block, env, journaled_state)?;
 
         update_env_block(env, fork_block, &block);
 
@@ -1855,14 +1855,14 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block(env: &mut Env, fork_block: U64, block: &Block) {
-    env.block.timestamp = block.header.timestamp;
+fn update_env_block(env: &mut Env, fork_block: u64, block: &Block) {
+    env.block.timestamp = U256::from(block.header.timestamp);
     env.block.coinbase = block.header.miner;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-    env.block.gas_limit = block.header.gas_limit;
-    env.block.number = block.header.number.map(|n| n.to()).unwrap_or(fork_block.to());
+    env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+    env.block.gas_limit = U256::from(block.header.gas_limit);
+    env.block.number = U256::from(block.header.number.unwrap_or(fork_block));
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled

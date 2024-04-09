@@ -139,9 +139,9 @@ impl CreateArgs {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
-            let provider = ProviderBuilder::<_, AnyNetwork>::default()
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .signer(EthereumSigner::new(signer))
-                .provider(provider);
+                .on_provider(provider);
             self.deploy(abi, bin, params, provider, chain_id, deployer).await
         }
     }

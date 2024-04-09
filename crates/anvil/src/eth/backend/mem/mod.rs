@@ -30,7 +30,7 @@ use crate::{
     NodeConfig,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, B64, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, U256, U64};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
@@ -410,8 +410,8 @@ impl Backend {
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),
-                    timestamp: fork_block.header.timestamp,
-                    gas_limit: fork_block.header.gas_limit,
+                    timestamp: U256::from(fork_block.header.timestamp),
+                    gas_limit: U256::from(fork_block.header.gas_limit),
                     difficulty: fork_block.header.difficulty,
                     prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
                     // Keep previous `coinbase` and `basefee` value
@@ -425,9 +425,9 @@ impl Backend {
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                    fork_block.header.gas_used.to(),
-                    fork_block.header.gas_limit.to(),
-                    fork_block.header.base_fee_per_gas.unwrap_or_default().to(),
+                    fork_block.header.gas_used,
+                    fork_block.header.gas_limit,
+                    fork_block.header.base_fee_per_gas.unwrap_or_default(),
                 );
 
                 self.fees.set_base_fee(next_block_base_fee);
@@ -705,17 +705,17 @@ impl Backend {
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-            let reset_time = block.header.timestamp.to::<u64>();
+            let reset_time = block.header.timestamp;
             self.time.reset(reset_time);
 
             let mut env = self.env.write();
             env.block = BlockEnv {
                 number: rU256::from(num),
-                timestamp: block.header.timestamp,
+                timestamp: U256::from(block.header.timestamp),
                 difficulty: block.header.difficulty,
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
-                gas_limit: block.header.gas_limit,
+                gas_limit: U256::from(block.header.gas_limit),
                 // Keep previous `coinbase` and `basefee` value
                 coinbase: env.block.coinbase,
                 basefee: env.block.basefee,
@@ -1018,9 +1018,9 @@ impl Backend {
             (outcome, header, block_hash)
         };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used as u128,
-            header.gas_limit as u128,
-            header.base_fee_per_gas.unwrap_or_default() as u128,
+            header.gas_used,
+            header.gas_limit,
+            header.base_fee_per_gas.unwrap_or_default(),
         );
 
         // notify all listeners
@@ -1406,13 +1406,7 @@ impl Backend {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(
-                Some(hash),
-                tx,
-                Some(block),
-                Some(info),
-                base_fee.map(|f| f as u128),
-            );
+            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
         }
         Some(transactions)
@@ -1546,17 +1540,17 @@ impl Backend {
                 state_root,
                 transactions_root,
                 receipts_root,
-                number: Some(number.to_alloy()),
-                gas_used: gas_used.to_alloy(),
-                gas_limit: gas_limit.to_alloy(),
+                number: Some(number),
+                gas_used,
+                gas_limit,
                 extra_data: extra_data.0.into(),
                 logs_bloom,
-                timestamp: U256::from(timestamp),
+                timestamp,
                 total_difficulty: Some(self.total_difficulty()),
                 difficulty,
                 mix_hash: Some(mix_hash),
-                nonce: Some(B64::from(nonce)),
-                base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
+                nonce: Some(nonce),
+                base_fee_per_gas,
                 withdrawals_root: None,
                 blob_gas_used: None,
                 excess_blob_gas: None,
@@ -1590,8 +1584,7 @@ impl Backend {
                     .ok_or(BlockchainError::BlockNotFound)?
                     .header
                     .number
-                    .ok_or(BlockchainError::BlockNotFound)?
-                    .to::<u64>(),
+                    .ok_or(BlockchainError::BlockNotFound)?,
                 BlockId::Number(num) => match num {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
@@ -1636,11 +1629,11 @@ impl Backend {
                         let block = BlockEnv {
                             number: block.header.number.to_alloy(),
                             coinbase: block.header.beneficiary,
-                            timestamp: rU256::from(block.header.timestamp),
+                            timestamp: U256::from(block.header.timestamp),
                             difficulty: block.header.difficulty,
                             prevrandao: Some(block.header.mix_hash),
-                            basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
-                            gas_limit: block.header.gas_limit.to_alloy(),
+                            basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                            gas_limit: U256::from(block.header.gas_limit),
                             ..Default::default()
                         };
                         f(state, block)
@@ -1667,8 +1660,8 @@ impl Backend {
                         timestamp: rU256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
                         prevrandao: Some(block.header.mix_hash),
-                        basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
-                        gas_limit: block.header.gas_limit.to_alloy(),
+                        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                        gas_limit: U256::from(block.header.gas_limit),
                         ..Default::default()
                     };
                     return Ok(f(Box::new(state), block));
@@ -1688,7 +1681,7 @@ impl Backend {
 
                     block.number = block_number;
                     block.timestamp = rU256::from(fork.timestamp());
-                    block.basefee = fork.base_fee().unwrap_or_default();
+                    block.basefee = rU256::from(fork.base_fee().unwrap_or_default());
 
                     return Ok(f(Box::new(&gen_db), block));
                 }
@@ -1952,12 +1945,12 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee(), |b| b as u128)
+                .unwrap_or_else(|| self.base_fee())
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::EIP4844(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee(), |b| b as u128)
+                .unwrap_or_else(|| self.base_fee())
                 .saturating_add(t.tx().tx().max_priority_fee_per_gas),
             TypedTransaction::Deposit(_) => 0_u128,
         };
@@ -2005,9 +1998,9 @@ impl Backend {
             transaction_hash: info.transaction_hash,
             transaction_index: info.transaction_index,
             block_number: Some(block.header.number),
-            gas_used: Some(info.gas_used),
+            gas_used: info.gas_used,
             contract_address: info.contract_address,
-            effective_gas_price: effective_gas_price as u64,
+            effective_gas_price,
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
@@ -2095,7 +2088,7 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            block.header.base_fee_per_gas.map(|g| g as u128),
+            block.header.base_fee_per_gas,
         ))
     }
 
@@ -2130,7 +2123,7 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            block.header.base_fee_per_gas.map(|g| g as u128),
+            block.header.base_fee_per_gas,
         ))
     }
 

@@ -228,7 +228,7 @@ impl FeeHistoryService {
             item.gas_used_ratio = gas_used / (gas_target * elasticity);
 
             // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(u64, u128)> = receipts
+            let mut transactions: Vec<(u128, u128)> = receipts
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
@@ -266,7 +266,7 @@ impl FeeHistoryService {
             item.rewards = reward_percentiles
                 .into_iter()
                 .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u64;
+                    let target_gas = (p * gas_used / 100f64) as u128;
                     let mut sum_gas = 0;
                     for (gas_used, effective_reward) in transactions.iter().cloned() {
                         sum_gas += gas_used;

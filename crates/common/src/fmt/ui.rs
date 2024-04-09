@@ -440,7 +440,7 @@ pub fn get_pretty_tx_receipt_attr(
         "effectiveGasPrice" | "effective_gas_price" => {
             Some(receipt.receipt.effective_gas_price.to_string())
         }
-        "gasUsed" | "gas_used" => receipt.receipt.gas_used.map(|g| g.to_string()),
+        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
         "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
         "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),

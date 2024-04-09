@@ -144,7 +144,7 @@ impl OtsBlockDetails {
 
         let total_fees = receipts
             .iter()
-            .fold(0, |acc, receipt| acc + receipt.gas_used.unwrap() * receipt.effective_gas_price);
+            .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
 
         Ok(Self {
             block: block.into(),

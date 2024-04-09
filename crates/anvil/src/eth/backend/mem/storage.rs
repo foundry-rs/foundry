@@ -415,7 +415,7 @@ impl MinedTransaction {
     pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
         GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
             .geth_traces(
-                self.receipt.cumulative_gas_used(),
+                self.receipt.cumulative_gas_used() as u64,
                 self.info.out.clone().unwrap_or_default().0.into(),
                 opts,
             )

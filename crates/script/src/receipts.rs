@@ -152,7 +152,7 @@ async fn check_tx_status(
 
 /// Prints parts of the receipt to stdout
 pub fn print_receipt(chain: Chain, receipt: &AnyTransactionReceipt) {
-    let gas_used = receipt.gas_used.unwrap_or_default();
+    let gas_used = receipt.gas_used;
     let gas_price = receipt.effective_gas_price;
     foundry_common::shell::println(format!(
         "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",

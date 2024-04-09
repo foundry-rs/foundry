@@ -20,7 +20,7 @@ pub struct TransactionReceiptWithRevertReason {
 impl TransactionReceiptWithRevertReason {
     /// Returns if the status of the transaction is 0 (failure)
     pub fn is_failure(&self) -> bool {
-        self.receipt.inner.inner.inner.receipt.status
+        !self.receipt.inner.inner.inner.receipt.status
     }
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert

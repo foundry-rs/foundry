@@ -14,7 +14,7 @@ use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     provider: &P,
     memory_limit: u64,
-    gas_price: Option<u64>,
+    gas_price: Option<u128>,
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Address,
@@ -62,20 +62,20 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     let mut env = Env {
         cfg,
         block: BlockEnv {
-            number: block.header.number.expect("block number not found"),
-            timestamp: block.header.timestamp,
+            number: U256::from(block.header.number.expect("block number not found")),
+            timestamp: U256::from(block.header.timestamp),
             coinbase: block.header.miner,
             difficulty: block.header.difficulty,
             prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
-            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-            gas_limit: block.header.gas_limit,
+            basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+            gas_limit: U256::from(block.header.gas_limit),
             ..Default::default()
         },
         tx: TxEnv {
             caller: origin,
-            gas_price: gas_price.map(U256::from).unwrap_or(U256::from(fork_gas_price)),
+            gas_price: U256::from(gas_price.unwrap_or(fork_gas_price)),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id)),
-            gas_limit: block.header.gas_limit.to::<u64>(),
+            gas_limit: block.header.gas_limit as u64,
             ..Default::default()
         },
     };

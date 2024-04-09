@@ -64,7 +64,12 @@ impl Cheatcode for createSelectFork_2Call {
 impl Cheatcode for rollFork_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber } = self;
-        ccx.ecx.db.roll_fork(None, *blockNumber, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
+        ccx.ecx.db.roll_fork(
+            None,
+            (*blockNumber).to(),
+            &mut ccx.ecx.env,
+            &mut ccx.ecx.journaled_state,
+        )?;
         Ok(Default::default())
     }
 }
@@ -87,7 +92,7 @@ impl Cheatcode for rollFork_2Call {
         let Self { forkId, blockNumber } = self;
         ccx.ecx.db.roll_fork(
             Some(*forkId),
-            *blockNumber,
+            (*blockNumber).to(),
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
         )?;

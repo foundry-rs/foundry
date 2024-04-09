@@ -795,9 +795,7 @@ where
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
                     let block = self.provider.get_block_by_hash(hash.block_hash, false).await?;
-                    Ok(block
-                        .map(|block| block.header.number.unwrap().to::<u64>())
-                        .map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
@@ -841,7 +839,7 @@ where
             None
         };
 
-        let to_block_number = filter.get_to_block().map(U256::from);
+        let to_block_number = filter.get_to_block();
 
         // If output should be JSON, start with an opening bracket
         if to_json {

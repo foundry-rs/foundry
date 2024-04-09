@@ -32,8 +32,8 @@ async fn can_call_erigon_get_header_by_number() {
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
     let res1 = api.erigon_get_header_by_number(1.into()).await.unwrap().unwrap();
 
-    assert_eq!(res0.header.number, Some(rU256::from(0)));
-    assert_eq!(res1.header.number, Some(rU256::from(1)));
+    assert_eq!(res0.header.number, Some(0));
+    assert_eq!(res1.header.number, Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]

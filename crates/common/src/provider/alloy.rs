@@ -242,8 +242,8 @@ impl ProviderBuilder {
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
-        let provider =
-            AlloyProviderBuilder::<_, AnyNetwork>::default().provider(RootProvider::new(client));
+        let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            .on_provider(RootProvider::new(client));
 
         Ok(provider)
     }

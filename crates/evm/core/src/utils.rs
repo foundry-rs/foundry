@@ -25,7 +25,7 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
         match chain {
             NamedChain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
-                if block_number.to::<u64>() >= 15_537_351u64 {
+                if block_number >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 

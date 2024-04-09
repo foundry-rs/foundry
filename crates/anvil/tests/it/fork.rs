@@ -812,7 +812,7 @@ async fn test_fork_block_timestamp() {
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert!(initial_block.header.timestamp.to::<u64>() < latest_block.header.timestamp.to::<u64>());
+    assert!(initial_block.header.timestamp < latest_block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -823,14 +823,11 @@ async fn test_fork_snapshot_block_timestamp() {
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     api.evm_revert(snapshot_id).await.unwrap();
-    api.evm_set_next_block_timestamp(initial_block.header.timestamp.to::<u64>()).unwrap();
+    api.evm_set_next_block_timestamp(initial_block.header.timestamp).unwrap();
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert_eq!(
-        initial_block.header.timestamp.to::<u64>(),
-        latest_block.header.timestamp.to::<u64>()
-    );
+    assert_eq!(initial_block.header.timestamp, latest_block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1094,7 +1091,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), rU256::from(59455969592u64));
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59455969592u128);
 
     // now reset to block 18835000 -1
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(18835000u64 - 1) }))
@@ -1105,7 +1102,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), rU256::from(59017001138u64));
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59017001138u128);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6795>

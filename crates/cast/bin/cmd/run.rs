@@ -132,12 +132,12 @@ impl RunArgs {
         env.block.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            env.block.timestamp = block.header.timestamp;
+            env.block.timestamp = U256::from(block.header.timestamp);
             env.block.coinbase = block.header.miner;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.header.gas_limit;
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains

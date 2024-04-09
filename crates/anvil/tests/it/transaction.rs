@@ -433,11 +433,11 @@ async fn get_blocktimestamp_works() {
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.header.timestamp.to_ethers());
+    assert_eq!(timestamp.as_u64(), latest_block.header.timestamp);
 
     // repeat call same result
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.header.timestamp.to_ethers());
+    assert_eq!(timestamp.as_u64(), latest_block.header.timestamp);
 
     // mock timestamp
     let next_timestamp = timestamp.as_u64() + 1337;

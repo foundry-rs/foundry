@@ -95,7 +95,7 @@ impl EvmOpts {
         environment(
             &provider,
             self.memory_limit,
-            self.env.gas_price,
+            self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
             self.fork_block_number,
             self.sender,

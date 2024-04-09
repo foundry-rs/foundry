@@ -51,6 +51,7 @@ impl RetryPolicy for RateLimitRetryPolicy {
             TransportError::ErrorResp(err) => should_retry_json_rpc_error(err),
             TransportError::NullResp => true,
             TransportError::UnsupportedFeature(_) => false,
+            TransportError::LocalUsageError(_) => false,
         }
     }
 

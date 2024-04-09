@@ -76,11 +76,11 @@ impl ClientFork {
         let block =
             provider.get_block(block_number, false).await?.ok_or(BlockchainError::BlockNotFound)?;
         let block_hash = block.header.hash.ok_or(BlockchainError::BlockNotFound)?;
-        let timestamp = block.header.timestamp.to::<u64>();
+        let timestamp = block.header.timestamp;
         let base_fee = block.header.base_fee_per_gas;
         let total_difficulty = block.header.total_difficulty.unwrap_or_default();
 
-        let number = block.header.number.ok_or(BlockchainError::BlockNotFound)?.to::<u64>();
+        let number = block.header.number.ok_or(BlockchainError::BlockNotFound)?;
         self.config.write().update_block(number, block_hash, timestamp, base_fee, total_difficulty);
 
         self.clear_cached_storage();
@@ -117,7 +117,7 @@ impl ClientFork {
         self.config.read().total_difficulty
     }
 
-    pub fn base_fee(&self) -> Option<U256> {
+    pub fn base_fee(&self) -> Option<u128> {
         self.config.read().base_fee
     }
 
@@ -478,7 +478,7 @@ impl ClientFork {
     ) -> Result<Option<Block>, TransportError> {
         if let Some(block) = self.provider().get_block(block_id.into(), true).await? {
             let hash = block.header.hash.unwrap();
-            let block_number = block.header.number.unwrap().to::<u64>();
+            let block_number = block.header.number.unwrap();
             let mut storage = self.storage_write();
             // also insert all transactions
             let block_txs = match block.clone().transactions {
@@ -531,14 +531,11 @@ impl ClientFork {
 
         let mut uncles = Vec::with_capacity(block.uncles.len());
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
-            let uncle = match self
-                .provider()
-                .get_uncle(block_number.to::<u64>().into(), U64::from(uncle_idx))
-                .await?
-            {
-                Some(u) => u,
-                None => return Ok(None),
-            };
+            let uncle =
+                match self.provider().get_uncle(block_number.into(), U64::from(uncle_idx)).await? {
+                    Some(u) => u,
+                    None => return Ok(None),
+                };
             uncles.push(uncle);
         }
         self.storage_write().uncles.insert(block_hash, uncles.clone());
@@ -580,7 +577,7 @@ pub struct ClientForkConfig {
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block
-    pub base_fee: Option<U256>,
+    pub base_fee: Option<u128>,
     /// request timeout
     pub timeout: Duration,
     /// request retries for spurious networks
@@ -623,7 +620,7 @@ impl ClientForkConfig {
         block_number: u64,
         block_hash: B256,
         timestamp: u64,
-        base_fee: Option<U256>,
+        base_fee: Option<u128>,
         total_difficulty: U256,
     ) {
         self.block_number = block_number;

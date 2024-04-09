@@ -990,7 +990,7 @@ pub struct TransactionInfo {
     pub exit: InstructionResult,
     pub out: Option<Bytes>,
     pub nonce: u64,
-    pub gas_used: u64,
+    pub gas_used: u128,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -1117,7 +1117,7 @@ impl<T> TypedReceipt<T> {
 }
 
 impl TypedReceipt {
-    pub fn cumulative_gas_used(&self) -> u64 {
+    pub fn cumulative_gas_used(&self) -> u128 {
         self.as_receipt_with_bloom().cumulative_gas_used()
     }
 
@@ -1412,7 +1412,7 @@ mod tests {
         let receipt = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false,
-                cumulative_gas_used: 0x1u64,
+                cumulative_gas_used: 0x1u128,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(
@@ -1447,7 +1447,7 @@ mod tests {
         let expected = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false,
-                cumulative_gas_used: 0x1u64,
+                cumulative_gas_used: 0x1u128,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(

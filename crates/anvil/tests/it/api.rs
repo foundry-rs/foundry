@@ -213,7 +213,7 @@ async fn can_call_on_pending_block() {
             .call()
             .await
             .unwrap();
-        assert_eq!(block.header.timestamp, block_timestamp.to_alloy());
+        assert_eq!(block.header.timestamp, block_timestamp.as_u64());
 
         let block_gas_limit = pending_contract
             .get_current_block_gas_limit()
@@ -221,7 +221,7 @@ async fn can_call_on_pending_block() {
             .call()
             .await
             .unwrap();
-        assert_eq!(block.header.gas_limit, block_gas_limit.to_alloy());
+        assert_eq!(block.header.gas_limit, block_gas_limit.as_u128());
 
         let block_coinbase = pending_contract
             .get_current_block_coinbase()
