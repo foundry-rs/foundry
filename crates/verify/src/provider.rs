@@ -1,7 +1,6 @@
 use super::{
-    etherscan::EtherscanVerificationProvider, sourcify::SourcifyVerificationProvider, VerifyArgs,
-    oklink::OklinkVerificationProvider,
-    VerifyCheckArgs,
+    etherscan::EtherscanVerificationProvider, oklink::OklinkVerificationProvider,
+    sourcify::SourcifyVerificationProvider, VerifyArgs, VerifyCheckArgs,
 };
 use async_trait::async_trait;
 use eyre::Result;
