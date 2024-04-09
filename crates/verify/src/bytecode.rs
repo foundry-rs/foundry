@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, Uint, U256, U64};
+use alloy_primitives::{Address, Bytes, U256, U64};
 use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
