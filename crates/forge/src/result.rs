@@ -434,7 +434,7 @@ impl TestResult {
 
     /// Returns `true` if this is the result of a forked test
     pub fn is_fork(&self) -> bool {
-        matches!(self.environment, TestEnvironment::Fork)
+        matches!(self.environment, TestEnvironment::Fork { .. })
     }
 
     /// Returns `true` if this is the result of a fuzz test
@@ -492,9 +492,15 @@ pub enum TestEnvironment {
     Standard,
     /// A forked test environment
     Fork {
-        /// The block number at which the fork was created
+        /// The block number at which the test was executed
         block: u64,
     },
+}
+
+impl Default for TestEnvironment {
+    fn default() -> Self {
+        Self::Standard
+    }
 }
 
 /// Various types of tests

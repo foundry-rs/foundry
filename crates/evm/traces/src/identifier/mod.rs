@@ -62,7 +62,7 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
             identities.extend(local.identify_addresses(addresses.clone()));
         }
         if let Some(etherscan) = &mut self.etherscan {
-            if self.etherscan.enabled {
+            if etherscan.enabled {
                 identities.extend(etherscan.identify_addresses(addresses));
             }
         }
