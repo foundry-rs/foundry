@@ -50,6 +50,9 @@ pub use hardfork::Hardfork;
 
 /// ethereum related implementations
 pub mod eth;
+/// Evm related abstractions
+mod evm;
+pub use evm::{inject_precompiles, PrecompileFactory};
 /// support for polling filters
 pub mod filter;
 /// commandline output

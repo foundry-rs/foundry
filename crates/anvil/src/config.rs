@@ -11,9 +11,8 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
-    mem,
-    mem::in_memory_db::MemDb,
-    FeeManager, Hardfork,
+    mem::{self, in_memory_db::MemDb},
+    FeeManager, Hardfork, PrecompileFactory,
 };
 use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
@@ -176,6 +175,8 @@ pub struct NodeConfig {
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
+    /// Factory used by `anvil` to extend the EVM's precompiles.
+    pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
 impl NodeConfig {
@@ -422,6 +423,7 @@ impl Default for NodeConfig {
             enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
+            precompile_factory: None,
         }
     }
 }
@@ -831,6 +833,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
         self.disable_default_create2_deployer = yes;
+        self
+    }
+
+    /// Injects precompiles to `anvil`'s EVM.
+    #[must_use]
+    pub fn with_precompile_factory(mut self, factory: impl PrecompileFactory + 'static) -> Self {
+        self.precompile_factory = Some(Arc::new(factory));
         self
     }
 

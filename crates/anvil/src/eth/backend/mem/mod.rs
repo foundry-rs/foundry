@@ -23,6 +23,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         util::get_precompiles_for,
     },
+    inject_precompiles,
     mem::{
         inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -31,7 +32,7 @@ use crate::{
         db::DatabaseRef,
         primitives::{AccountInfo, U256 as rU256},
     },
-    NodeConfig,
+    NodeConfig, PrecompileFactory,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, U256, U64};
@@ -78,7 +79,10 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
-use revm::primitives::{HashMap, ResultAndState};
+use revm::{
+    db::WrapDatabaseRef,
+    primitives::{HashMap, ResultAndState},
+};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -168,6 +172,8 @@ pub struct Backend {
     node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
+    /// Precompiles to inject to the EVM.
+    precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
 impl Backend {
@@ -214,7 +220,10 @@ impl Backend {
             Default::default()
         };
 
-        let slots_in_an_epoch = node_config.read().await.slots_in_an_epoch;
+        let (slots_in_an_epoch, precompile_factory) = {
+            let cfg = node_config.read().await;
+            (cfg.slots_in_an_epoch, cfg.precompile_factory.clone())
+        };
 
         let backend = Self {
             db,
@@ -233,6 +242,7 @@ impl Backend {
             transaction_block_keeper,
             node_config,
             slots_in_an_epoch,
+            precompile_factory,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -800,6 +810,24 @@ impl Backend {
         env
     }
 
+    /// Creates an EVM instance with optionally injected precompiles.
+    fn new_evm_with_inspector_ref<DB, I>(
+        &self,
+        db: DB,
+        env: EnvWithHandlerCfg,
+        inspector: I,
+    ) -> revm::Evm<'_, I, WrapDatabaseRef<DB>>
+    where
+        DB: revm::DatabaseRef,
+        I: revm::Inspector<WrapDatabaseRef<DB>>,
+    {
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        if let Some(ref factory) = self.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+        evm
+    }
+
     /// executes the transactions without writing to the underlying database
     pub async fn inspect_tx(
         &self,
@@ -812,9 +840,8 @@ impl Backend {
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
-
-        let ResultAndState { result, state } =
-            new_evm_with_inspector_ref(&*db, env, &mut inspector).transact()?;
+        let mut evm = self.new_evm_with_inspector_ref(&*db, env, &mut inspector);
+        let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -825,6 +852,7 @@ impl Backend {
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
         };
 
+        drop(evm);
         inspector.print_logs();
 
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
@@ -865,6 +893,7 @@ impl Backend {
             parent_hash: storage.best_hash,
             gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
+            precompile_factory: self.precompile_factory.clone(),
         };
 
         // create a new pending block
@@ -924,6 +953,7 @@ impl Backend {
                     parent_hash: best_hash,
                     gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
+                    precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();
 
@@ -1123,8 +1153,8 @@ impl Backend {
         let mut inspector = Inspector::default();
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let ResultAndState { result, state } =
-            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+        let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+        let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1134,6 +1164,7 @@ impl Backend {
             }
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
+        drop(evm);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used as u128, state))
     }
@@ -1150,8 +1181,9 @@ impl Backend {
             let block_number = block.number;
 
             let env = self.build_call_env(request, fee_details, block);
-            let ResultAndState { result, state: _ } =
-                new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+            let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+            let ResultAndState { result, state: _ } = evm.transact()?;
+
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
                     (reason.into(), gas_used, Some(output))
@@ -1161,6 +1193,8 @@ impl Backend {
                 }
                 ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
             };
+
+            drop(evm);
             let tracer = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
             let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
@@ -1196,8 +1230,8 @@ impl Backend {
         );
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let ResultAndState { result, state: _ } =
-            new_evm_with_inspector_ref(state, env, &mut inspector).transact()?;
+        let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+        let ResultAndState { result, state: _ } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1207,6 +1241,7 @@ impl Backend {
             }
             ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
         };
+        drop(evm);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
