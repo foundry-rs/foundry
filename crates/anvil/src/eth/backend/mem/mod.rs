@@ -54,7 +54,7 @@ use anvil_core::{
             DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
             TransactionInfo, TypedReceipt, TypedTransaction,
         },
-        utils::{alloy_to_revm_access_list, meets_eip155},
+        utils::meets_eip155,
     },
     types::{Forking, Index},
 };
@@ -1127,7 +1127,7 @@ impl Backend {
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
             nonce,
-            access_list: alloy_to_revm_access_list(access_list.unwrap_or_default().0),
+            access_list: access_list.unwrap_or_default().flattened(),
             ..Default::default()
         };
 

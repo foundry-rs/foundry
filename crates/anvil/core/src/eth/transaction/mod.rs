@@ -1,9 +1,6 @@
 //! Transaction related types
 
-use crate::eth::{
-    transaction::optimism::{DepositTransaction, DepositTransactionRequest},
-    utils::eip_to_revm_access_list,
-};
+use crate::eth::transaction::optimism::{DepositTransaction, DepositTransactionRequest};
 use alloy_consensus::{
     AnyReceiptEnvelope, BlobTransactionSidecar, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed,
     TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy,
@@ -24,8 +21,6 @@ use revm::{
 };
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
-
-use super::utils::from_eip_to_alloy_access_list;
 
 pub mod optimism;
 
@@ -393,7 +388,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 v: U256::from(t.signature().v().y_parity_byte()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
-            access_list: Some(from_eip_to_alloy_access_list(t.tx().tx().access_list.clone())),
+            access_list: Some(t.tx().tx().access_list.clone()),
             transaction_type: Some(3),
             max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
             blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
@@ -482,7 +477,7 @@ impl PendingTransaction {
                 TxEnv {
                     caller,
                     transact_to: transact_to(to),
-                    data: alloy_primitives::Bytes(input.0.clone()),
+                    data: input.clone(),
                     chain_id,
                     nonce: Some(*nonce),
                     value: (*value),
@@ -508,14 +503,14 @@ impl PendingTransaction {
                 TxEnv {
                     caller,
                     transact_to: transact_to(to),
-                    data: alloy_primitives::Bytes(input.0.clone()),
+                    data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),
                     value: *value,
                     gas_price: U256::from(*gas_price),
                     gas_priority_fee: None,
                     gas_limit: *gas_limit as u64,
-                    access_list: eip_to_revm_access_list(access_list.0.clone()),
+                    access_list: access_list.flattened(),
                     ..Default::default()
                 }
             }
@@ -535,14 +530,14 @@ impl PendingTransaction {
                 TxEnv {
                     caller,
                     transact_to: transact_to(to),
-                    data: alloy_primitives::Bytes(input.0.clone()),
+                    data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),
                     value: *value,
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
                     gas_limit: *gas_limit as u64,
-                    access_list: eip_to_revm_access_list(access_list.0.clone()),
+                    access_list: access_list.flattened(),
                     ..Default::default()
                 }
             }
@@ -564,7 +559,7 @@ impl PendingTransaction {
                 TxEnv {
                     caller,
                     transact_to: TransactTo::call(*to),
-                    data: alloy_primitives::Bytes(input.0.clone()),
+                    data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),
                     value: *value,
@@ -573,7 +568,7 @@ impl PendingTransaction {
                     max_fee_per_blob_gas: Some(U256::from(*max_fee_per_blob_gas)),
                     blob_hashes: blob_versioned_hashes.clone(),
                     gas_limit: *gas_limit as u64,
-                    access_list: eip_to_revm_access_list(access_list.0.clone()),
+                    access_list: access_list.flattened(),
                     ..Default::default()
                 }
             }
@@ -593,7 +588,7 @@ impl PendingTransaction {
                 TxEnv {
                     caller,
                     transact_to: transact_to(kind),
-                    data: alloy_primitives::Bytes(input.0.clone()),
+                    data: input.clone(),
                     chain_id,
                     nonce: Some(*nonce),
                     value: *value,
