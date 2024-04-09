@@ -94,15 +94,15 @@
         },
         {
           "name": "Test",
-          "description": "Forge standard test execution context."
+          "description": "`forge test` execution context."
         },
         {
           "name": "Coverage",
-          "description": "Forge coverage execution context."
+          "description": "`forge coverage` execution context."
         },
         {
           "name": "Snapshot",
-          "description": "Forge snapshot execution context."
+          "description": "`forge snapshot` execution context."
         },
         {
           "name": "ScriptGroup",
@@ -110,19 +110,19 @@
         },
         {
           "name": "ScriptDryRun",
-          "description": "Forge script dry run execution context."
+          "description": "`forge script` execution context."
         },
         {
           "name": "ScriptBroadcast",
-          "description": "Forge script broadcast execution context."
+          "description": "`forge script --broadcast` execution context."
         },
         {
           "name": "ScriptResume",
-          "description": "Forge script resume execution context."
+          "description": "`forge script --resume` execution context."
         },
         {
           "name": "Unknown",
-          "description": "Unknown forge execution context."
+          "description": "Unknown `forge` execution context."
         }
       ]
     }
@@ -4863,17 +4863,17 @@
     {
       "func": {
         "id": "isContext",
-        "description": "Returns true if current `forge` execution context.",
+        "description": "Returns true if `forge` command was executed in given context.",
         "declaration": "function isContext(ForgeContext context) external view returns (bool isContext);",
         "visibility": "external",
         "mutability": "view",
-        "signature": "isContext(ForgeContext context)",
-        "selector": "0x59b468d9",
+        "signature": "isContext(uint8)",
+        "selector": "0x64af255d",
         "selectorBytes": [
-          89,
-          180,
-          104,
-          217
+          100,
+          175,
+          37,
+          93
         ]
       },
       "group": "environment",

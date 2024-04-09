@@ -87,6 +87,7 @@ impl Cheatcodes<'static> {
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
                 Vm::AccountAccessKind::ENUM.clone(),
+                Vm::ForgeContext::ENUM.clone(),
             ]),
             errors: Vm::VM_ERRORS.iter().map(|&x| x.clone()).collect(),
             events: Cow::Borrowed(&[]),
