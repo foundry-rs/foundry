@@ -1,14 +1,18 @@
 //! In memory blockchain backend
+use self::state::trie_storage;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
         backend::{
             cheats::CheatsManager,
-            db::{AsHashDB, Db, MaybeHashDatabase, SerializableState},
+            db::{Db, MaybeFullDatabase, SerializableState},
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
-            mem::storage::MinedTransactionReceipt,
+            mem::{
+                state::{storage_root, trie_accounts},
+                storage::MinedTransactionReceipt,
+            },
             notifications::{NewBlockNotification, NewBlockNotifications},
             time::{utc_from_secs, TimeManager},
             validate::TransactionValidator,
@@ -45,12 +49,10 @@ use alloy_rpc_types_trace::{
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},
-        proof::BasicAccount,
         transaction::{
             DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
             TransactionInfo, TypedReceipt, TypedTransaction,
         },
-        trie::RefTrieDB,
         utils::{alloy_to_revm_access_list, meets_eip155},
     },
     types::{Forking, Index},
@@ -75,19 +77,16 @@ use foundry_evm::{
     utils::new_evm_with_inspector_ref,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use revm::primitives::ResultAndState;
+use revm::primitives::{HashMap, ResultAndState};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     io::{Read, Write},
-    ops::Deref,
     sync::Arc,
     time::Duration,
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-use trie_db::{Recorder, Trie};
 
 pub mod cache;
 pub mod fork_db;
@@ -847,7 +846,7 @@ impl Backend {
         f: F,
     ) -> T
     where
-        F: FnOnce(Box<dyn MaybeHashDatabase + '_>, BlockInfo) -> T,
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockInfo) -> T,
     {
         let db = self.db.read().await;
         let env = self.next_env();
@@ -1619,7 +1618,7 @@ impl Backend {
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        F: FnOnce(Box<dyn MaybeHashDatabase + '_>, BlockEnv) -> T,
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
     {
         let block_number = match block_request {
             Some(BlockRequest::Pending(pool_transactions)) => {
@@ -2136,74 +2135,41 @@ impl Backend {
         keys: Vec<B256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
-        let account_key = B256::from(alloy_primitives::utils::keccak256(address));
         let block_number = block_request.as_ref().map(|r| r.block_number());
 
         self.with_database_at(block_request, |block_db, _| {
             trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
-            let (db, root) = block_db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
+            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            let account = db.get(&address).cloned().unwrap_or_default();
 
-            let data: &dyn HashDB<_, _> = db.deref();
-            let mut recorder = Recorder::new();
-            let trie = RefTrieDB::new(&data, &root.0)
-                .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+            let mut builder = HashBuilder::default()
+                .with_proof_retainer(vec![Nibbles::unpack(keccak256(address))]);
 
-            let maybe_account: Option<BasicAccount> = {
-                let acc_decoder = |mut bytes: &[u8]| {
-                    BasicAccount::decode(&mut bytes).unwrap_or_else(|_| {
-                        panic!("prove_account_at, could not query trie for account={:?}", &address)
-                    })
-                };
-                let query = (&mut recorder, acc_decoder);
-                trie.get_with(account_key.as_slice(), query)
-                    .map_err(|err| BlockchainError::TrieError(err.to_string()))?
-            };
-            let account = maybe_account.unwrap_or_default();
+            for (key, account) in trie_accounts(db) {
+                builder.add_leaf(key, &account);
+            }
 
-            let proof = recorder
-                .drain()
-                .into_iter()
-                .map(|r| r.data)
-                .map(|record| {
-                    // proof is rlp encoded:
-                    // <https://github.com/foundry-rs/foundry/issues/5004>
-                    // <https://www.quicknode.com/docs/ethereum/eth_getProof>
-                    alloy_rlp::encode(record).to_vec().into()
-                })
-                .collect::<Vec<_>>();
+            let _ = builder.root();
 
-            let account_db =
-                block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
+            let proof = builder.take_proofs().values().cloned().collect::<Vec<_>>();
+            let storage_proofs = prove_storage(&account.storage, &keys);
 
             let account_proof = AccountProof {
                 address,
-                balance: account.balance,
-                nonce: account.nonce.to::<U64>(),
-                code_hash: account.code_hash,
-                storage_hash: account.storage_root,
+                balance: account.info.balance,
+                nonce: U64::from(account.info.nonce),
+                code_hash: account.info.code_hash,
+                storage_hash: storage_root(&account.storage),
                 account_proof: proof,
                 storage_proof: keys
                     .into_iter()
-                    .map(|storage_key| {
-                        // the key that should be proofed is the keccak256 of the storage key
-                        let key = B256::from(keccak256(storage_key));
-                        prove_storage(&account, &account_db.0, key).map(
-                            |(storage_proof, storage_value)| StorageProof {
-                                key: JsonStorageKey(storage_key),
-                                value: U256::from_be_bytes(storage_value.0),
-                                proof: storage_proof
-                                    .into_iter()
-                                    .map(|proof| {
-                                        // proof is rlp encoded:
-                                        // <https://github.com/foundry-rs/foundry/issues/5004>
-                                        // <https://www.quicknode.com/docs/ethereum/eth_getProof>
-                                        alloy_rlp::encode(proof).to_vec().into()
-                                    })
-                                    .collect(),
-                            },
-                        )
+                    .zip(storage_proofs)
+                    .map(|(key, proof)| {
+                        let storage_key: U256 = key.into();
+                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        StorageProof { key: JsonStorageKey(key), value, proof }
                     })
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .collect(),
             };
 
             Ok(account_proof)
@@ -2420,25 +2386,29 @@ pub fn transaction_build(
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)
-pub fn prove_storage(
-    acc: &BasicAccount,
-    data: &AsHashDB,
-    storage_key: B256,
-) -> Result<(Vec<Vec<u8>>, B256), BlockchainError> {
-    let data: &dyn HashDB<_, _> = data.deref();
-    let mut recorder = Recorder::new();
-    let trie = RefTrieDB::new(&data, &acc.storage_root.0)
-        .map_err(|err| BlockchainError::TrieError(err.to_string()))
-        .unwrap();
+pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
+    let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
-    let item: U256 = {
-        let decode_value =
-            |mut bytes: &[u8]| U256::decode(&mut bytes).expect("decoding db value failed");
-        let query = (&mut recorder, decode_value);
-        trie.get_with(storage_key.as_slice(), query)
-            .map_err(|err| BlockchainError::TrieError(err.to_string()))?
-            .unwrap_or(U256::ZERO)
-    };
+    let mut builder = HashBuilder::default().with_proof_retainer(keys.clone());
 
-    Ok((recorder.drain().into_iter().map(|r| r.data).collect(), B256::from(item)))
+    for (key, value) in trie_storage(storage) {
+        builder.add_leaf(key, &value);
+    }
+
+    let _ = builder.root();
+
+    let mut proofs = Vec::new();
+    let all_proof_nodes = builder.take_proofs();
+
+    for proof_key in keys {
+        // Iterate over all proof nodes and find the matching ones.
+        // The filtered results are guaranteed to be in order.
+        let matching_proof_nodes = all_proof_nodes
+            .iter()
+            .filter(|(path, _)| proof_key.starts_with(path))
+            .map(|(_, node)| node.clone());
+        proofs.push(matching_proof_nodes.collect());
+    }
+
+    proofs
 }

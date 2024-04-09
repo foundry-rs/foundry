@@ -105,6 +105,12 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
+    /// Batch size of transactions.
+    ///
+    /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
+    #[arg(long, default_value = "100")]
+    pub batch_size: usize,
+
     /// Skips on-chain simulation.
     #[arg(long)]
     pub skip_simulation: bool,
@@ -551,13 +557,14 @@ impl ScriptConfig {
         artifact_ids: Vec<ArtifactId>,
         script_wallets: ScriptWallets,
         debug: bool,
+        target: ArtifactId,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some((artifact_ids, script_wallets)), debug).await
+        self._get_runner(Some((artifact_ids, script_wallets, target)), debug).await
     }
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets)>,
+        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -586,7 +593,7 @@ impl ScriptConfig {
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
-        if let Some((artifact_ids, script_wallets)) = cheats_data {
+        if let Some((artifact_ids, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(debug)
@@ -596,6 +603,7 @@ impl ScriptConfig {
                             self.evm_opts.clone(),
                             Some(artifact_ids),
                             Some(script_wallets),
+                            Some(target.version),
                         )
                         .into(),
                     )

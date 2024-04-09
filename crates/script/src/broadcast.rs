@@ -314,14 +314,11 @@ impl BundledState {
 
                 let pb = init_progress!(transactions, "txes");
 
-                // We send transactions and wait for receipts in batches of 100, since some networks
-                // cannot handle more than that.
-                let batch_size = if sequential_broadcast { 1 } else { 100 };
+                // We send transactions and wait for receipts in batches.
+                let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
                 let mut index = already_broadcasted;
 
-                for (batch_number, batch) in
-                    transactions.chunks(batch_size).map(|f| f.to_vec()).enumerate()
-                {
+                for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     let mut pending_transactions = vec![];
 
                     shell::println(format!(
@@ -329,17 +326,17 @@ impl BundledState {
                         batch_number * batch_size,
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ))?;
-                    for (tx, kind, is_fixed_gas_limit) in batch.into_iter() {
-                        let tx_hash = send_transaction(
+                    for (tx, kind, is_fixed_gas_limit) in batch {
+                        let fut = send_transaction(
                             provider.clone(),
-                            tx,
-                            kind,
+                            tx.clone(),
+                            kind.clone(),
                             sequential_broadcast,
-                            is_fixed_gas_limit,
+                            *is_fixed_gas_limit,
                             estimate_via_rpc,
                             self.args.gas_estimate_multiplier,
                         );
-                        pending_transactions.push(tx_hash);
+                        pending_transactions.push(fut);
                     }
 
                     if !pending_transactions.is_empty() {

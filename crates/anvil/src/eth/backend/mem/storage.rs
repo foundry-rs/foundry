@@ -1,7 +1,7 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeHashDatabase, StateDb},
+        db::{MaybeFullDatabase, StateDb},
         mem::cache::DiskStateCache,
     },
     pool::transactions::PoolTransaction,

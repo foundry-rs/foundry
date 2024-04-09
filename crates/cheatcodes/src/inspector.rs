@@ -145,6 +145,10 @@ pub struct Cheatcodes {
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
+    /// Cache of the amount of gas used in previous call.
+    /// This is used by the `lastCallGas` cheatcode.
+    pub last_call_gas: Option<crate::Vm::Gas>,
+
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
     pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
@@ -1033,8 +1037,24 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
         // invocations
         if cheatcode_call {
-            return outcome;
+            return outcome
         }
+
+        // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
+        // retrieve the gas usage of the last call.
+        let gas = outcome.result.gas;
+        self.last_call_gas = Some(crate::Vm::Gas {
+            // The gas limit of the call.
+            gasLimit: gas.limit(),
+            // The total gas used.
+            gasTotalUsed: gas.spend(),
+            // The amount of gas used for memory expansion.
+            gasMemoryUsed: gas.memory(),
+            // The amount of gas refunded.
+            gasRefunded: gas.refunded(),
+            // The amount of gas remaining.
+            gasRemaining: gas.remaining(),
+        });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any

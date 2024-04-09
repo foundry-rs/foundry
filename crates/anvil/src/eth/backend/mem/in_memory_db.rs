@@ -2,17 +2,18 @@
 
 use crate::{
     eth::backend::db::{
-        AsHashDB, Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord,
-        SerializableState, StateDb,
+        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableState,
+        StateDb,
     },
-    mem::state::{state_merkle_trie_root, storage_trie_db, trie_hash_db},
-    revm::primitives::AccountInfo,
+    mem::state::state_root,
+    revm::{db::DbAccount, primitives::AccountInfo},
 };
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::BlockchainDb,
+    hashbrown::HashMap,
 };
 
 // reexport for convenience
@@ -90,7 +91,7 @@ impl Db for MemDb {
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
-        Some(state_merkle_trie_root(&self.inner.accounts))
+        Some(state_root(&self.inner.accounts))
     }
 
     fn current_state(&self) -> StateDb {
@@ -98,17 +99,9 @@ impl Db for MemDb {
     }
 }
 
-impl MaybeHashDatabase for MemDb {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
-        Some(trie_hash_db(&self.inner.accounts))
-    }
-
-    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, B256)> {
-        if let Some(acc) = self.inner.accounts.get(&addr) {
-            Some(storage_trie_db(&acc.storage))
-        } else {
-            Some(storage_trie_db(&Default::default()))
-        }
+impl MaybeFullDatabase for MemDb {
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.inner.accounts)
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
