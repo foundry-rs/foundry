@@ -358,6 +358,16 @@ impl NodeConfig {
     pub fn test() -> Self {
         Self { enable_tracing: true, silent: true, port: 0, ..Default::default() }
     }
+
+    /// Returns a new config which does not initialize any accounts on node startup.
+    pub fn empty_state() -> Self {
+        Self {
+            genesis_accounts: vec![],
+            signer_accounts: vec![],
+            disable_default_create2_deployer: true,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for NodeConfig {

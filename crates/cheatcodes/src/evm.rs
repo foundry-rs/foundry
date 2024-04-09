@@ -224,6 +224,19 @@ impl Cheatcode for resumeGasMeteringCall {
     }
 }
 
+impl Cheatcode for lastCallGasCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        ensure!(state.last_call_gas.is_some(), "`lastCallGas` is only available after a call");
+        Ok(state
+            .last_call_gas
+            .as_ref()
+            // This should never happen, as we ensure `last_call_gas` is `Some` above.
+            .expect("`lastCallGas` is only available after a call")
+            .abi_encode())
+    }
+}
+
 impl Cheatcode for chainIdCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newChainId } = self;

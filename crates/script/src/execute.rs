@@ -102,6 +102,7 @@ impl PreExecutionState {
                 self.build_data.build_data.artifact_ids.clone(),
                 self.script_wallets.clone(),
                 self.args.debug,
+                self.build_data.build_data.target.clone(),
             )
             .await?;
         let mut result = self.execute_with_runner(&mut runner).await?;

@@ -184,6 +184,7 @@ alloy-json-abi = "0.6.3"
 alloy-sol-types = "0.6.3"
 syn-solidity = "0.6.3"
 alloy-chains = "0.1"
+alloy-trie = "0.3"
 
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
