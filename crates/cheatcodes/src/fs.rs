@@ -379,14 +379,14 @@ impl Cheatcode for promptSecretCall {
 impl Cheatcode for promptAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
-        parse(prompt(state, text, prompt_input).unwrap().as_str(), &DynSolType::Address)
+        parse(&prompt(state, text, prompt_input)?, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for promptUintCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
-        parse(prompt(state, text, prompt_input).unwrap().as_str(), &DynSolType::Uint(256))
+        parse(&prompt(state, text, prompt_input)?, &DynSolType::Uint(256))
     }
 }
 

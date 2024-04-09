@@ -19,11 +19,11 @@ contract PromptTest is DSTest {
 
     function testPrompt_Address() public {
         address test = vm.promptAddress("test");
-        console.log(test);
+        assertEq(test, 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
     }
 
     function testPrompt_Uint() public {
         uint256 test = vm.promptUint("test");
-        console.log(test);
+        assertEq(test, 6969);
     }
 }
