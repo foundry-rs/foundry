@@ -2,6 +2,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::B256;
 use anvil_core::eth::transaction::TypedTransaction;
 use foundry_evm::revm::primitives::SpecId;
@@ -28,11 +29,8 @@ pub const INITIAL_GAS_PRICE: u128 = 1_875_000_000;
 /// Bounds the amount the base fee can change between blocks.
 pub const BASE_FEE_CHANGE_DENOMINATOR: u128 = 8;
 
-/// Elasticity multiplier as defined in [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559)
-pub const EIP1559_ELASTICITY_MULTIPLIER: u128 = 2;
-
 pub fn default_elasticity() -> f64 {
-    1f64 / BASE_FEE_CHANGE_DENOMINATOR as f64
+    1f64 / BaseFeeParams::ethereum().elasticity_multiplier as f64
 }
 
 /// Stores the fee related information
@@ -127,28 +125,7 @@ impl FeeManager {
         if self.base_fee() == 0 {
             return 0
         }
-        calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
-    }
-}
-
-/// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
-pub fn calculate_next_block_base_fee(gas_used: u128, gas_limit: u128, base_fee: u128) -> u128 {
-    let gas_target = gas_limit / EIP1559_ELASTICITY_MULTIPLIER;
-
-    if gas_used == gas_target {
-        return base_fee
-    }
-    if gas_used > gas_target {
-        let gas_used_delta = gas_used - gas_target;
-        let base_fee_delta =
-            std::cmp::max(1, base_fee * gas_used_delta / gas_target / BASE_FEE_CHANGE_DENOMINATOR);
-        base_fee + base_fee_delta
-    } else {
-        let gas_used_delta = gas_target - gas_used;
-        let base_fee_per_gas_delta =
-            base_fee * gas_used_delta / gas_target / BASE_FEE_CHANGE_DENOMINATOR;
-
-        base_fee.saturating_sub(base_fee_per_gas_delta)
+        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, BaseFeeParams::ethereum())
     }
 }
 
