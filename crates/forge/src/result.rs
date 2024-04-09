@@ -491,7 +491,10 @@ pub enum TestEnvironment {
     /// A standard test environment
     Standard,
     /// A forked test environment
-    Fork,
+    Fork {
+        /// The block number at which the fork was created
+        block: u64,
+    },
 }
 
 /// Various types of tests

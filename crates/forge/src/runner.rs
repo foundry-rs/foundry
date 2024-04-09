@@ -212,13 +212,6 @@ impl<'a> ContractRunner<'a> {
 
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
 
-        let environment = self
-            .executor
-            .backend
-            .has_forks()
-            .then(|| TestEnvironment::Forked)
-            .unwrap_or(TestEnvironment::Standard);
-
         // Invariant testing requires tracing to figure out what contracts were created.
         let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && needs_setup;
         if tmp_tracing {
@@ -242,7 +235,7 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
-                        environment,
+                        environment: self.get_environment(),
                         traces: setup.traces,
                         coverage: setup.coverage,
                         labeled_addresses: setup.labeled_addresses,
@@ -287,7 +280,6 @@ impl<'a> ContractRunner<'a> {
                     self.run_invariant_test(
                         runner,
                         setup,
-                        environment,
                         *invariant_config,
                         func,
                         known_contracts,
@@ -297,17 +289,10 @@ impl<'a> ContractRunner<'a> {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(
-                        func,
-                        should_fail,
-                        runner,
-                        setup,
-                        environment,
-                        fuzz_config.clone(),
-                    )
+                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
                 } else {
                     debug_assert!(func.is_test());
-                    self.run_test(func, should_fail, setup, environment)
+                    self.run_test(func, should_fail, setup)
                 };
 
                 (sig, res)
@@ -332,13 +317,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
-    pub fn run_test(
-        &self,
-        func: &Function,
-        should_fail: bool,
-        setup: TestSetup,
-        environment: TestEnvironment,
-    ) -> TestResult {
+    pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
         let span = info_span!("test", %should_fail);
         if !span.is_disabled() {
             let sig = &func.signature()[..];
@@ -415,7 +394,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
-                        environment,
+                        environment: self.get_environment(),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -428,7 +407,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
-                        environment,
+                        environment: self.get_environment(),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -456,7 +435,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
-            environment,
+            environment: self.get_environment(),
             traces,
             coverage,
             labeled_addresses,
@@ -472,7 +451,6 @@ impl<'a> ContractRunner<'a> {
         &self,
         runner: TestRunner,
         setup: TestSetup,
-        environment: TestEnvironment,
         invariant_config: InvariantConfig,
         func: &Function,
         known_contracts: Option<&ContractsByArtifact>,
@@ -500,7 +478,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
-                environment,
+                environment: self.get_environment(),
                 coverage,
                 duration: start.elapsed(),
                 ..Default::default()
@@ -531,7 +509,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
-                        environment,
+                        environment: self.get_environment(),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -598,7 +576,7 @@ impl<'a> ContractRunner<'a> {
                 calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
                 reverts,
             },
-            environment,
+            environment: self.get_environment(),
             coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
@@ -615,7 +593,6 @@ impl<'a> ContractRunner<'a> {
         should_fail: bool,
         runner: TestRunner,
         setup: TestSetup,
-        environment: TestEnvironment,
         fuzz_config: FuzzConfig,
     ) -> TestResult {
         let span = info_span!("fuzz_test", %should_fail);
@@ -656,7 +633,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
-                environment,
+                environment: self.get_environment(),
                 debug,
                 breakpoints,
                 coverage,
@@ -729,7 +706,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind,
-            environment,
+            environment: self.get_environment(),
             traces,
             coverage,
             labeled_addresses,
@@ -738,6 +715,15 @@ impl<'a> ContractRunner<'a> {
             duration,
             gas_report_traces: result.gas_report_traces.into_iter().map(|t| vec![t]).collect(),
         }
+    }
+
+    /// Returns the environment of the test runner
+    fn get_environment(&self) -> TestEnvironment {
+        self.executor
+            .backend
+            .has_forks()
+            .then(|| TestEnvironment::Fork { block: 0 }) // TODO: get the block number
+            .unwrap_or(TestEnvironment::Standard)
     }
 }
 
