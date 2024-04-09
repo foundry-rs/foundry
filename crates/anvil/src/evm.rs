@@ -11,6 +11,9 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
 }
 
 /// Appends a handler register to `evm` that injects the given `precompiles`.
+///
+/// This will add an additional handler that extends the default precompiles with the given set of
+/// precompiles.
 pub fn inject_precompiles<DB, I>(
     evm: &mut revm::Evm<'_, I, DB>,
     precompiles: Vec<(Address, Precompile)>,
@@ -37,13 +40,12 @@ pub fn inject_precompiles<DB, I>(
 
 #[cfg(test)]
 mod tests {
+    use crate::{evm::inject_precompiles, PrecompileFactory};
     use alloy_primitives::Address;
     use foundry_evm::revm::{
         self,
         primitives::{address, Bytes, Precompile, PrecompileResult, SpecId},
     };
-
-    use crate::{evm::inject_precompiles, PrecompileFactory};
 
     #[test]
     fn build_evm_with_extra_precompiles() {
