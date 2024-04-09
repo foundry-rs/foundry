@@ -65,7 +65,7 @@ forgetest!(can_set_forge_test_coverage_context, |prj, cmd| {
 });
 
 // tests that context properly set for `forge script` command
-forgetest_async!(can_set_forge_script_dry_run_context, |prj, cmd| {
+forgetest!(can_set_forge_script_dry_run_context, |prj, cmd| {
     prj.insert_ds_test();
     let script =
         prj.add_source("ForgeScriptContextTest.s.sol", FORGE_TEST_CONTEXT_CONTRACT).unwrap();
@@ -73,7 +73,7 @@ forgetest_async!(can_set_forge_script_dry_run_context, |prj, cmd| {
 });
 
 // tests that context properly set for `forge script --broadcast` command
-forgetest_async!(can_set_forge_script_broadcast_context, |prj, cmd| {
+forgetest!(can_set_forge_script_broadcast_context, |prj, cmd| {
     prj.insert_ds_test();
     let script =
         prj.add_source("ForgeScriptContextTest.s.sol", FORGE_TEST_CONTEXT_CONTRACT).unwrap();
