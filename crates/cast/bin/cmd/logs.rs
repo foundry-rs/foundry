@@ -8,6 +8,7 @@ use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
 use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
+use hex::FromHex;
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -131,7 +132,7 @@ fn build_filter(
     Ok(filter)
 }
 
-/// Creates a TopicFilter from the given event signature and arguments.
+/// Creates a Filter from the given event signature and arguments.
 fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
@@ -154,7 +155,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
     // Only parse the inputs with arguments
     let indexed_tokens = with_args
         .iter()
-        .map(|(_, (kind, arg))| DynSolType::coerce_str(kind, arg))
+        .map(|(_, (kind, arg))| kind.coerce_str(arg))
         .collect::<Result<Vec<DynSolValue>, _>>()?;
 
     // Merge the inputs restoring the original ordering
@@ -182,7 +183,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
     Ok(filter)
 }
 
-/// Creates a TopicFilter from raw topic hashes.
+/// Creates a Filter from raw topic hashes.
 fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
     let mut topics = topics
         .into_iter()
@@ -190,7 +191,7 @@ fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
             if topic.is_empty() {
                 Ok(Topic::default())
             } else {
-                Ok(Topic::from(B256::from_str(topic.as_str())?))
+                Ok(Topic::from(B256::from_hex(topic.as_str())?))
             }
         })
         .collect::<Result<Vec<FilterSet<_>>>>()?;
