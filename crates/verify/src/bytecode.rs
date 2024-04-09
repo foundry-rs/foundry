@@ -80,15 +80,6 @@ pub struct VerifyBytecodeArgs {
     /// Suppress logs and emit json results to stdout
     #[clap(long, default_value = "false")]
     pub json: bool,
-
-    /// The solc version of the cached artifact to use for verification in case of multiple
-    /// versions being present.
-    ///
-    /// If not provided, the most recent version is used.
-    ///
-    /// Can be specified in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[clap(long, value_name = "CACHE_SOLC_VERSION")]
-    pub cache_version: Option<String>,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -231,11 +222,12 @@ impl VerifyBytecodeArgs {
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
-        let local_bytecode = if let Some(local_bytecode) = self.build_using_cache(&config) {
-            local_bytecode
-        } else {
-            self.build_project(&config)?
-        };
+        let local_bytecode =
+            if let Some(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
+                local_bytecode
+            } else {
+                self.build_project(&config)?
+            };
 
         // Append constructor args to the local_bytecode
         let mut local_bytecode_vec = local_bytecode.to_vec();
@@ -404,17 +396,23 @@ impl VerifyBytecodeArgs {
         Ok(local_bytecode.to_owned())
     }
 
-    fn build_using_cache(&self, config: &Config) -> Option<Bytes> {
+    fn build_using_cache(&self, etherscan_settings: &Metadata, config: &Config) -> Option<Bytes> {
         let project = config.project().ok()?;
         let cache = project.read_cache_file().ok()?;
         let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>().ok()?;
 
         for (key, value) in cached_artifacts {
             let name = self.contract.name.to_owned() + ".sol";
-            let version = self.cache_version.to_owned();
+            let version = etherscan_settings.compiler_version.to_owned();
+            if version.starts_with("vyper:") {
+                return None;
+            }
+            // Parse etherscan version string
+            let version =
+                version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
             if key.ends_with(name.as_str()) {
                 if let Some(artifact) = value.into_iter().next() {
-                    if let Ok(version) = Version::parse(&version.unwrap_or_default()) {
+                    if let Ok(version) = Version::parse(&version) {
                         if let Some(artifact) = artifact.1.iter().find(|a| {
                             a.version.major == version.major &&
                                 a.version.minor == version.minor &&
