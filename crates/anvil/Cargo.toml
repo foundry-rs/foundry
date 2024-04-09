@@ -39,6 +39,7 @@ ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
+alloy-eips.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
