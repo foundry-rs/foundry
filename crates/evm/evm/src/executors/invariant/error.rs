@@ -118,7 +118,7 @@ impl FailedInvariantCaseData {
         };
 
         // Collect abis of fuzzed and invariant contracts to decode custom error.
-        let targets = targeted_contracts.lock();
+        let targets = targeted_contracts.targets.lock();
         let abis = targets
             .iter()
             .map(|contract| &contract.1 .1)

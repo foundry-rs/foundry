@@ -149,6 +149,14 @@ async fn test_invariant() {
                 "default/fuzz/invariant/common/InvariantCustomError.t.sol:InvariantCustomError",
                 vec![("invariant_decode_error()", true, None, None, None)],
             ),
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:ExplicitTargetContract",
+                vec![("invariant_explicit_target()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:DynamicTargetContract",
+                vec![("invariant_dynamic_targets()", true, None, None, None)],
+            ),
         ]),
     );
 }
@@ -434,5 +442,32 @@ async fn test_invariant_decode_custom_error() {
                 None,
             )],
         )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_fuzzed_selected_targets() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/target/FuzzedTargetContracts.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:ExplicitTargetContract",
+                vec![("invariant_explicit_target()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:DynamicTargetContract",
+                vec![(
+                    "invariant_dynamic_targets()",
+                    false,
+                    Some("revert: wrong target selector called".into()),
+                    None,
+                    None,
+                )],
+            ),
+        ]),
     );
 }
