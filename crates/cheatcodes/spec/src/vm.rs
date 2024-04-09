@@ -73,16 +73,17 @@ interface Vm {
         address emitter;
     }
 
+    /// Gas used. Returned by `lastCallGas`.
     struct Gas {
-        // The gas limit of the call.
+        /// The gas limit of the call.
         uint64 gasLimit;
-        // The total gas used.
+        /// The total gas used.
         uint64 gasTotalUsed;
-        // The amount of gas used for memory expansion.
+        /// The amount of gas used for memory expansion.
         uint64 gasMemoryUsed;
-        // The amount of gas refunded.
+        /// The amount of gas refunded.
         int64 gasRefunded;
-        // The amount of gas remaining.
+        /// The amount of gas remaining.
         uint64 gasRemaining;
     }
 
