@@ -147,18 +147,8 @@ impl UIfmt for [u8] {
     }
 }
 
-impl UIfmt for U64 {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-
 pub fn pretty_status(status: bool) -> String {
-    if status {
-        "1 (success)"
-    } else {
-        "0 (failed)"
-    }.to_string()
+    if status { "1 (success)" } else { "0 (failed)" }.to_string()
 }
 
 impl UIfmt for AnyTransactionReceipt {
@@ -459,7 +449,7 @@ pub fn get_pretty_tx_receipt_attr(
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
         "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
         "status" | "statusCode" | "status_code" => {
-            Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
+            Some(pretty_status(receipt.receipt.inner.inner.inner.receipt.status))
         }
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
