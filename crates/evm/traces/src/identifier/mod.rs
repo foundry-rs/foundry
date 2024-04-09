@@ -62,7 +62,9 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
             identities.extend(local.identify_addresses(addresses.clone()));
         }
         if let Some(etherscan) = &mut self.etherscan {
-            identities.extend(etherscan.identify_addresses(addresses));
+            if self.etherscan.enabled {
+                identities.extend(etherscan.identify_addresses(addresses));
+            }
         }
         identities
     }
@@ -84,6 +86,20 @@ impl<'a> TraceIdentifiers<'a> {
     pub fn with_etherscan(mut self, config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
         self.etherscan = EtherscanIdentifier::new(config, chain)?;
         Ok(self)
+    }
+
+    /// Enables the Etherscan identifier.
+    pub fn enable_etherscan(&mut self) {
+        if let Some(etherscan) = &mut self.etherscan {
+            etherscan.enable();
+        }
+    }
+
+    /// Disables the Etherscan identifier.
+    pub fn disable_etherscan(&mut self) {
+        if let Some(etherscan) = &mut self.etherscan {
+            etherscan.disable();
+        }
     }
 
     /// Returns `true` if there are no set identifiers.

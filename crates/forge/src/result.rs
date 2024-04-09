@@ -248,6 +248,11 @@ impl SuiteResult {
         self.test_results.is_empty()
     }
 
+    /// Whether this test suite has any forked tests.
+    pub fn has_fork(&self) -> bool {
+        self.test_results.values().any(|result| result.is_fork())
+    }
+
     /// The number of tests in this test suite.
     pub fn len(&self) -> usize {
         self.test_results.len()
@@ -362,6 +367,9 @@ pub struct TestResult {
     /// What kind of test this was
     pub kind: TestKind,
 
+    /// What kind of environment this test was run in
+    pub environment: TestEnvironment,
+
     /// Traces
     #[serde(skip)]
     pub traces: Traces,
@@ -424,7 +432,10 @@ impl TestResult {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
-    pub fn is_fork(&self) -> bool {}
+    /// Returns `true` if this is the result of a forked test
+    pub fn is_fork(&self) -> bool {
+        matches!(self.environment, TestEnvironment::Fork)
+    }
 
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
@@ -472,6 +483,15 @@ impl TestKindReport {
             TestKindReport::Invariant { .. } => 0,
         }
     }
+}
+
+/// Various types of test environments
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TestEnvironment {
+    /// A standard test environment
+    Standard,
+    /// A forked test environment
+    Fork,
 }
 
 /// Various types of tests

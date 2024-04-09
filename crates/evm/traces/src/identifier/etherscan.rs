@@ -35,6 +35,10 @@ pub struct EtherscanIdentifier {
     invalid_api_key: Arc<AtomicBool>,
     pub contracts: BTreeMap<Address, Metadata>,
     pub sources: BTreeMap<u32, String>,
+    // Tracks whether the Etherscan identifier is enabled
+    // Enabled for forking tests
+    // Disabled for local tests
+    pub enabled: bool,
 }
 
 impl EtherscanIdentifier {
@@ -53,7 +57,18 @@ impl EtherscanIdentifier {
             invalid_api_key: Arc::new(AtomicBool::new(false)),
             contracts: BTreeMap::new(),
             sources: BTreeMap::new(),
+            enabled: true,
         }))
+    }
+
+    /// Enables the Etherscan identifier.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+    }
+
+    /// Disables the Etherscan identifier.
+    pub fn disable(&mut self) {
+        self.enabled = false;
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
