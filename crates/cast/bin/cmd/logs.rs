@@ -132,7 +132,7 @@ fn build_filter(
     Ok(filter)
 }
 
-/// Creates a Filter from the given event signature and arguments.
+/// Creates a [Filter] from the given event signature and arguments.
 fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
@@ -183,7 +183,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
     Ok(filter)
 }
 
-/// Creates a Filter from raw topic hashes.
+/// Creates a [Filter] from raw topic hashes.
 fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
     let mut topics = topics
         .into_iter()
