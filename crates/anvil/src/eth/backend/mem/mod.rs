@@ -220,10 +220,10 @@ impl Backend {
             Default::default()
         };
 
-        let cfg = node_config.read().await;
-        let slots_in_an_epoch = cfg.slots_in_an_epoch;
-        let precompile_factory = cfg.precompile_factory.clone();
-        drop(cfg);
+        let (slots_in_an_epoch, precompile_factory) = {
+            let cfg = node_config.read().await;
+            (cfg.slots_in_an_epoch, cfg.precompile_factory.clone())
+        };
 
         let backend = Self {
             db,
