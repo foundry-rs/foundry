@@ -7,11 +7,13 @@ use crate::eth::{
     macros::node_info,
     EthApi,
 };
-use alloy_primitives::{Address, Bytes, B256, U256, U64};
-use alloy_rpc_trace_types::parity::{
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_rpc_types::{
+    Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction, WithOtherFields,
+};
+use alloy_rpc_types_trace::parity::{
     Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,
 };
-use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
 use itertools::Itertools;
 
 impl EthApi {
@@ -68,7 +70,7 @@ impl EthApi {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if receipt.inner.status_code == Some(U64::ZERO) {
+            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status {
                 return Ok(receipt.out.map(|b| b.0.into()))
             }
         }
@@ -238,7 +240,7 @@ impl EthApi {
         &self,
         address: Address,
         nonce: U256,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("ots_getTransactionBySenderAndNonce");
 
         let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();

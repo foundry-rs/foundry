@@ -89,7 +89,7 @@ pub fn fuzz_param_from_state(
         let state = state.clone();
         // Use `Index` instead of `Selector` to not iterate over the entire dictionary.
         any::<prop::sample::Index>().prop_map(move |index| {
-            let state = state.read();
+            let state = state.dictionary_read();
             let values = state.values();
             let index = index.index(values.len());
             *values.iter().nth(index).unwrap()
@@ -184,7 +184,7 @@ mod tests {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
+        let state = build_initial_state(&db, FuzzDictionaryConfig::default());
         let strat = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone()),
             40 => fuzz_calldata_from_state(func, &state),

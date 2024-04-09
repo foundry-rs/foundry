@@ -17,7 +17,7 @@ use crate::{
     tasks::TaskManager,
 };
 use alloy_primitives::{Address, U256};
-use alloy_signer::{LocalWallet, Signer as AlloySigner};
+use alloy_signer_wallet::LocalWallet;
 use eth::backend::fork::ClientFork;
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
@@ -237,6 +237,9 @@ impl NodeHandle {
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
         if !self.config.silent {
+            if let Some(ipc_path) = self.ipc_path() {
+                println!("IPC path: {}", ipc_path);
+            }
             println!(
                 "Listening on {}",
                 self.addresses
@@ -244,7 +247,7 @@ impl NodeHandle {
                     .map(|addr| { addr.to_string() })
                     .collect::<Vec<String>>()
                     .join(", ")
-            )
+            );
         }
     }
 
@@ -308,7 +311,7 @@ impl NodeHandle {
     }
 
     /// Default gas price for all txs
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         self.config.get_gas_price()
     }
 

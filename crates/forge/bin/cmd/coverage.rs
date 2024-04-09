@@ -268,6 +268,7 @@ impl CoverageArgs {
 
             let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
                 .iter()
+                .filter(|(contract_id, _)| contract_id.version == version)
                 .filter_map(|(contract_id, (_, deployed_source_map))| {
                     // TODO: Creation source map/bytecode as well
                     Some((
@@ -302,6 +303,8 @@ impl CoverageArgs {
     ) -> Result<()> {
         let root = project.paths.root;
 
+        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
         let mut runner = MultiContractRunnerBuilder::default()
@@ -309,7 +312,13 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone(), None))
+            .with_cheats_config(CheatsConfig::new(
+                &config,
+                evm_opts.clone(),
+                Some(artifact_ids),
+                None,
+                None,
+            ))
             .with_test_options(TestOptions {
                 fuzz: config.fuzz,
                 invariant: config.invariant,

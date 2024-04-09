@@ -32,6 +32,7 @@ const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 pub enum ForgeTestProfile {
     Default,
     Cancun,
+    MultiVersion,
 }
 
 impl fmt::Display for ForgeTestProfile {
@@ -39,6 +40,7 @@ impl fmt::Display for ForgeTestProfile {
         match self {
             ForgeTestProfile::Default => write!(f, "default"),
             ForgeTestProfile::Cancun => write!(f, "cancun"),
+            ForgeTestProfile::MultiVersion => write!(f, "multi-version"),
         }
     }
 }
@@ -201,11 +203,24 @@ impl ForgeTestData {
         config.prompt_timeout = 0;
 
         let root = self.project.root();
-        let opts = self.evm_opts.clone();
+        let mut opts = self.evm_opts.clone();
+
+        if config.isolate {
+            opts.isolate = true;
+        }
+
         let env = opts.local_evm_env();
         let output = self.output.clone();
+        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
         self.base_runner()
-            .with_cheats_config(CheatsConfig::new(&config, opts.clone(), None))
+            .with_cheats_config(CheatsConfig::new(
+                &config,
+                opts.clone(),
+                Some(artifact_ids),
+                None,
+                None,
+            ))
+            .enable_isolation(opts.isolate)
             .sender(config.sender)
             .with_test_options(self.test_opts.clone())
             .build(root, output, env, opts.clone())
@@ -272,6 +287,10 @@ pub static TEST_DATA_DEFAULT: Lazy<ForgeTestData> =
 /// Data for tests requiring Cancun support on Solc and EVM level.
 pub static TEST_DATA_CANCUN: Lazy<ForgeTestData> =
     Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Cancun));
+
+/// Data for tests requiring Cancun support on Solc and EVM level.
+pub static TEST_DATA_MULTI_VERSION: Lazy<ForgeTestData> =
+    Lazy::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 
 pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));

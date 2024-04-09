@@ -15,7 +15,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256, U64};
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
@@ -144,6 +144,10 @@ pub struct Cheatcodes {
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
+
+    /// Cache of the amount of gas used in previous call.
+    /// This is used by the `lastCallGas` cheatcode.
+    pub last_call_gas: Option<crate::Vm::Gas>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -443,9 +447,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     oldBalance: old_balance,
                     newBalance: old_balance + value,
                     value,
-                    data: vec![],
+                    data: Bytes::new(),
                     reverted: false,
-                    deployedCode: vec![],
+                    deployedCode: Bytes::new(),
                     storageAccesses: vec![],
                     depth: ecx.journaled_state.depth(),
                 };
@@ -550,9 +554,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         oldBalance: balance,
                         newBalance: balance,
                         value: U256::ZERO,
-                        data: vec![],
+                        data: Bytes::new(),
                         reverted: false,
-                        deployedCode: vec![],
+                        deployedCode: Bytes::new(),
                         storageAccesses: vec![],
                         depth: ecx.journaled_state.depth(),
                     };
@@ -706,7 +710,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs.push(Vm::Log {
                 topics: log.data.topics().to_vec(),
-                data: log.data.data.to_vec(),
+                data: log.data.data.clone(),
                 emitter: log.address,
             });
         }
@@ -866,9 +870,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             to: Some(call.contract),
                             value: Some(call.transfer.value),
                             input: TransactionInput::new(call.input.clone()),
-                            nonce: Some(U64::from(account.info.nonce)),
+                            nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
-                                Some(U256::from(call.gas_limit))
+                                Some(call.gas_limit as u128)
                             } else {
                                 None
                             },
@@ -934,9 +938,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
                 value: call.transfer.value,
-                data: call.input.to_vec(),
+                data: call.input.clone(),
                 reverted: false,
-                deployedCode: vec![],
+                deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
                 depth: ecx.journaled_state.depth(),
             }]);
@@ -1033,8 +1037,24 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
         // invocations
         if cheatcode_call {
-            return outcome;
+            return outcome
         }
+
+        // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
+        // retrieve the gas usage of the last call.
+        let gas = outcome.result.gas;
+        self.last_call_gas = Some(crate::Vm::Gas {
+            // The gas limit of the call.
+            gasLimit: gas.limit(),
+            // The total gas used.
+            gasTotalUsed: gas.spent(),
+            // The amount of gas used for memory expansion.
+            gasMemoryUsed: gas.memory(),
+            // The amount of gas refunded.
+            gasRefunded: gas.refunded(),
+            // The amount of gas remaining.
+            gasRemaining: gas.remaining(),
+        });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -1275,9 +1295,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             to,
                             value: Some(call.value),
                             input: TransactionInput::new(bytecode),
-                            nonce: Some(U64::from(nonce)),
+                            nonce: Some(nonce),
                             gas: if is_fixed_gas_limit {
-                                Some(U256::from(call.gas_limit))
+                                Some(call.gas_limit as u128)
                             } else {
                                 None
                             },
@@ -1345,10 +1365,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 oldBalance: U256::ZERO, // updated on create_end
                 newBalance: U256::ZERO, // updated on create_end
                 value: call.value,
-                data: call.init_code.to_vec(),
+                data: call.init_code.clone(),
                 reverted: false,
-                deployedCode: vec![],    // updated on create_end
-                storageAccesses: vec![], // updated on create_end
+                deployedCode: Bytes::new(), // updated on create_end
+                storageAccesses: vec![],    // updated on create_end
                 depth,
             }]);
         }
@@ -1448,13 +1468,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ecx.journaled_state.load_account(address, &mut ecx.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
-                            create_access.deployedCode = created_acc
-                                .info
-                                .code
-                                .clone()
-                                .unwrap_or_default()
-                                .original_bytes()
-                                .into();
+                            create_access.deployedCode =
+                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
                         }
                     }
                 }
@@ -1543,10 +1558,10 @@ fn apply_create2_deployer<DB: DatabaseExt>(
                     oldBalance: U256::ZERO, // updated on create_end
                     newBalance: U256::ZERO, // updated on create_end
                     value: call.value,
-                    data: calldata,
+                    data: calldata.into(),
                     reverted: false,
-                    deployedCode: vec![],    // updated on create_end
-                    storageAccesses: vec![], // updated on create_end
+                    deployedCode: Bytes::new(), // updated on create_end
+                    storageAccesses: vec![],    // updated on create_end
                     depth: ecx.journaled_state.depth(),
                 }])
             }
@@ -1682,8 +1697,8 @@ fn append_storage_access(
                         oldBalance: U256::ZERO,
                         newBalance: U256::ZERO,
                         value: U256::ZERO,
-                        data: vec![],
-                        deployedCode: vec![],
+                        data: Bytes::new(),
+                        deployedCode: Bytes::new(),
                         depth: entry.depth,
                     };
                     last.push(resume_record);

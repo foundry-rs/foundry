@@ -387,6 +387,10 @@ pub struct Config {
     /// Address labels
     pub labels: HashMap<Address, String>,
 
+    /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
+    /// If disabled, it is possible to access artifacts which were not recompiled or cached.
+    pub unchecked_cheatcode_artifacts: bool,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -662,7 +666,8 @@ impl Config {
         self.create_project(false, true)
     }
 
-    fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
+    /// Creates a [Project] with the given `cached` and `no_artifacts` flags
+    pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let mut project = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
@@ -1217,7 +1222,7 @@ impl Config {
     /// [Self::get_config_path()] and if the closure returns `true`.
     pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
     where
-        F: FnOnce(&Config, &mut toml_edit::Document) -> bool,
+        F: FnOnce(&Config, &mut toml_edit::DocumentMut) -> bool,
     {
         let config = Self::load_with_root(root).sanitized();
         config.update(|doc| f(&config, doc))
@@ -1229,14 +1234,14 @@ impl Config {
     /// [Self::get_config_path()] and if the closure returns `true`
     pub fn update<F>(&self, f: F) -> eyre::Result<()>
     where
-        F: FnOnce(&mut toml_edit::Document) -> bool,
+        F: FnOnce(&mut toml_edit::DocumentMut) -> bool,
     {
         let file_path = self.get_config_path();
         if !file_path.exists() {
             return Ok(())
         }
         let contents = fs::read_to_string(&file_path)?;
-        let mut doc = contents.parse::<toml_edit::Document>()?;
+        let mut doc = contents.parse::<toml_edit::DocumentMut>()?;
         if f(&mut doc) {
             fs::write(file_path, doc.to_string())?;
         }
@@ -1925,6 +1930,7 @@ impl Default for Config {
             fmt: Default::default(),
             doc: Default::default(),
             labels: Default::default(),
+            unchecked_cheatcode_artifacts: false,
             __non_exhaustive: (),
             __warnings: vec![],
         }

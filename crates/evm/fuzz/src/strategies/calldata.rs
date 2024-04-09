@@ -41,7 +41,7 @@ impl CalldataFuzzDictionaryConfig {
         if dict_size > 0 {
             addresses.extend(std::iter::repeat_with(Address::random).take(dict_size));
             // Add all addresses that already had their PUSH bytes collected.
-            addresses.extend(state.read().addresses());
+            addresses.extend(state.dictionary_read().addresses());
         }
 
         Self { addresses: addresses.into_iter().collect() }

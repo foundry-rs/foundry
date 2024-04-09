@@ -8,6 +8,7 @@ mod build;
 mod cache;
 mod cmd;
 mod config;
+mod context;
 mod coverage;
 mod create;
 mod debug;
