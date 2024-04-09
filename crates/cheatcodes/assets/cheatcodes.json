@@ -418,32 +418,32 @@
     },
     {
       "name": "Gas",
-      "description": "",
+      "description": "Gas used. Returned by `lastCallGas`.",
       "fields": [
         {
           "name": "gasLimit",
           "ty": "uint64",
-          "description": ""
+          "description": "The gas limit of the call."
         },
         {
           "name": "gasTotalUsed",
           "ty": "uint64",
-          "description": ""
+          "description": "The total gas used."
         },
         {
           "name": "gasMemoryUsed",
           "ty": "uint64",
-          "description": ""
+          "description": "The amount of gas used for memory expansion."
         },
         {
           "name": "gasRefunded",
           "ty": "int64",
-          "description": ""
+          "description": "The amount of gas refunded."
         },
         {
           "name": "gasRemaining",
           "ty": "uint64",
-          "description": ""
+          "description": "The amount of gas remaining."
         }
       ]
     }

@@ -59,6 +59,7 @@ url = "2"
 walkdir = "2"
 yansi = "0.5"
 rustc-hash.workspace = true
+num-format.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true
