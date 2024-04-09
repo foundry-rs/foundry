@@ -1,4 +1,8 @@
-use ethers_signers::{AwsSignerError, LedgerError, TrezorError, WalletError};
+use alloy_signer::k256::ecdsa;
+use alloy_signer_aws::AwsSignerError;
+use alloy_signer_ledger::LedgerError;
+use alloy_signer_trezor::TrezorError;
+use alloy_signer_wallet::WalletError;
 use hex::FromHexError;
 
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +27,8 @@ pub enum WalletSignerError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     InvalidHex(#[from] FromHexError),
+    #[error(transparent)]
+    Ecdsa(#[from] ecdsa::Error),
     #[error("{0} cannot sign raw hashes")]
     CannotSignRawHash(&'static str),
 }

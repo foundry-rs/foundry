@@ -17,7 +17,7 @@ use crate::{
     tasks::TaskManager,
 };
 use alloy_primitives::{Address, U256};
-use alloy_signer::{LocalWallet, Signer as AlloySigner};
+use alloy_signer_wallet::LocalWallet;
 use eth::backend::fork::ClientFork;
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
@@ -314,7 +314,7 @@ impl NodeHandle {
     }
 
     /// Default gas price for all txs
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         self.config.get_gas_price()
     }
 

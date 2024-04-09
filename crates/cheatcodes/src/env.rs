@@ -2,7 +2,6 @@
 
 use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
-use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
 use std::{env, sync::OnceLock};
 
@@ -233,7 +232,7 @@ impl Cheatcode for envOr_12Call {
 impl Cheatcode for envOr_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        let default = defaultValue.iter().map(|vec| vec.clone().into()).collect::<Vec<Bytes>>();
+        let default = defaultValue.to_vec();
         env_array_default(name, delim, &default, &DynSolType::Bytes)
     }
 }

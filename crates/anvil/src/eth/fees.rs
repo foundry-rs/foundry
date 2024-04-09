@@ -2,7 +2,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use anvil_core::eth::transaction::TypedTransaction;
 use foundry_evm::revm::primitives::SpecId;
 use futures::StreamExt;
@@ -20,16 +20,16 @@ use std::{
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
 
 /// Initial base fee for EIP-1559 blocks.
-pub const INITIAL_BASE_FEE: u64 = 1_000_000_000;
+pub const INITIAL_BASE_FEE: u128 = 1_000_000_000;
 
 /// Initial default gas price for the first block
-pub const INITIAL_GAS_PRICE: u64 = 1_875_000_000;
+pub const INITIAL_GAS_PRICE: u128 = 1_875_000_000;
 
 /// Bounds the amount the base fee can change between blocks.
-pub const BASE_FEE_CHANGE_DENOMINATOR: u64 = 8;
+pub const BASE_FEE_CHANGE_DENOMINATOR: u128 = 8;
 
 /// Elasticity multiplier as defined in [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559)
-pub const EIP1559_ELASTICITY_MULTIPLIER: u64 = 2;
+pub const EIP1559_ELASTICITY_MULTIPLIER: u128 = 2;
 
 pub fn default_elasticity() -> f64 {
     1f64 / BASE_FEE_CHANGE_DENOMINATOR as f64
@@ -43,18 +43,18 @@ pub struct FeeManager {
     /// Tracks the base fee for the next block post London
     ///
     /// This value will be updated after a new block was mined
-    base_fee: Arc<RwLock<U256>>,
+    base_fee: Arc<RwLock<u128>>,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
-    gas_price: Arc<RwLock<U256>>,
+    gas_price: Arc<RwLock<u128>>,
     elasticity: Arc<RwLock<f64>>,
 }
 
 // === impl FeeManager ===
 
 impl FeeManager {
-    pub fn new(spec_id: SpecId, base_fee: U256, gas_price: U256) -> Self {
+    pub fn new(spec_id: SpecId, base_fee: u128, gas_price: u128) -> Self {
         Self {
             spec_id,
             base_fee: Arc::new(RwLock::new(base_fee)),
@@ -73,7 +73,7 @@ impl FeeManager {
     }
 
     /// Calculates the current gas price
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         if self.is_eip1559() {
             self.base_fee().saturating_add(self.suggested_priority_fee())
         } else {
@@ -82,33 +82,33 @@ impl FeeManager {
     }
 
     /// Suggested priority fee to add to the base fee
-    pub fn suggested_priority_fee(&self) -> U256 {
-        U256::from(1e9 as u64)
+    pub fn suggested_priority_fee(&self) -> u128 {
+        1e9 as u128
     }
 
-    pub fn base_fee(&self) -> U256 {
+    pub fn base_fee(&self) -> u128 {
         if self.is_eip1559() {
             *self.base_fee.read()
         } else {
-            U256::ZERO
+            0
         }
     }
 
     /// Returns the suggested fee cap
     ///
     /// Note: This currently returns a constant value: [Self::suggested_priority_fee]
-    pub fn max_priority_fee_per_gas(&self) -> U256 {
+    pub fn max_priority_fee_per_gas(&self) -> u128 {
         self.suggested_priority_fee()
     }
 
     /// Returns the current gas price
-    pub fn set_gas_price(&self, price: U256) {
+    pub fn set_gas_price(&self, price: u128) {
         let mut gas = self.gas_price.write();
         *gas = price;
     }
 
     /// Returns the current base fee
-    pub fn set_base_fee(&self, fee: U256) {
+    pub fn set_base_fee(&self, fee: u128) {
         trace!(target: "backend::fees", "updated base fee {:?}", fee);
         let mut base = self.base_fee.write();
         *base = fee;
@@ -117,26 +117,22 @@ impl FeeManager {
     /// Calculates the base fee for the next block
     pub fn get_next_block_base_fee_per_gas(
         &self,
-        gas_used: U256,
-        gas_limit: U256,
-        last_fee_per_gas: U256,
-    ) -> u64 {
+        gas_used: u128,
+        gas_limit: u128,
+        last_fee_per_gas: u128,
+    ) -> u128 {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if self.base_fee().is_zero() {
+        if self.base_fee() == 0 {
             return 0
         }
-        calculate_next_block_base_fee(
-            gas_used.to::<u64>(),
-            gas_limit.to::<u64>(),
-            last_fee_per_gas.to::<u64>(),
-        )
+        calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
     }
 }
 
 /// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
-pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
+pub fn calculate_next_block_base_fee(gas_used: u128, gas_limit: u128, base_fee: u128) -> u128 {
     let gas_target = gas_limit / EIP1559_ELASTICITY_MULTIPLIER;
 
     if gas_used == gas_target {
@@ -144,20 +140,15 @@ pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u6
     }
     if gas_used > gas_target {
         let gas_used_delta = gas_used - gas_target;
-        let base_fee_delta = std::cmp::max(
-            1,
-            base_fee as u128 * gas_used_delta as u128 /
-                gas_target as u128 /
-                BASE_FEE_CHANGE_DENOMINATOR as u128,
-        );
-        base_fee + (base_fee_delta as u64)
+        let base_fee_delta =
+            std::cmp::max(1, base_fee * gas_used_delta / gas_target / BASE_FEE_CHANGE_DENOMINATOR);
+        base_fee + base_fee_delta
     } else {
         let gas_used_delta = gas_target - gas_used;
-        let base_fee_per_gas_delta = base_fee as u128 * gas_used_delta as u128 /
-            gas_target as u128 /
-            BASE_FEE_CHANGE_DENOMINATOR as u128;
+        let base_fee_per_gas_delta =
+            base_fee * gas_used_delta / gas_target / BASE_FEE_CHANGE_DENOMINATOR;
 
-        base_fee.saturating_sub(base_fee_per_gas_delta as u64)
+        base_fee.saturating_sub(base_fee_per_gas_delta)
     }
 }
 
@@ -222,11 +213,7 @@ impl FeeHistoryService {
 
         let mut block_number: Option<u64> = None;
         let base_fee = self.fees.base_fee();
-        let mut item = FeeHistoryCacheItem {
-            base_fee: base_fee.to::<u64>(),
-            gas_used_ratio: 0f64,
-            rewards: Vec::new(),
-        };
+        let mut item = FeeHistoryCacheItem { base_fee, gas_used_ratio: 0f64, rewards: Vec::new() };
 
         let current_block = self.storage_info.block(hash);
         let current_receipts = self.storage_info.receipts(hash);
@@ -241,38 +228,34 @@ impl FeeHistoryService {
             item.gas_used_ratio = gas_used / (gas_target * elasticity);
 
             // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(u64, u64)> = receipts
+            let mut transactions: Vec<(u128, u128)> = receipts
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
-                    let gas_used = receipt.gas_used();
+                    let gas_used = receipt.cumulative_gas_used();
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
                         Some(TypedTransaction::Legacy(t)) => {
-                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
+                            t.tx().gas_price.saturating_sub(base_fee)
                         }
                         Some(TypedTransaction::EIP2930(t)) => {
-                            U256::from(t.gas_price).saturating_sub(base_fee).to::<u64>()
+                            t.tx().gas_price.saturating_sub(base_fee)
                         }
-                        Some(TypedTransaction::EIP1559(t)) => {
-                            U256::from(t.max_priority_fee_per_gas)
-                                .min(U256::from(t.max_fee_per_gas).saturating_sub(base_fee))
-                                .to::<u64>()
-                        }
+                        Some(TypedTransaction::EIP1559(t)) => t
+                            .tx()
+                            .max_priority_fee_per_gas
+                            .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
                         // TODO: This probably needs to be extended to extract 4844 info.
-                        Some(TypedTransaction::EIP4844(t)) => {
-                            U256::from(t.tx().tx().max_priority_fee_per_gas)
-                                .min(
-                                    U256::from(t.tx().tx().max_fee_per_gas)
-                                        .saturating_sub(base_fee),
-                                )
-                                .to::<u64>()
-                        }
+                        Some(TypedTransaction::EIP4844(t)) => t
+                            .tx()
+                            .tx()
+                            .max_priority_fee_per_gas
+                            .min(t.tx().tx().max_fee_per_gas.saturating_sub(base_fee)),
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
 
-                    (gas_used.to::<u64>(), effective_reward)
+                    (gas_used, effective_reward)
                 })
                 .collect();
 
@@ -283,7 +266,7 @@ impl FeeHistoryService {
             item.rewards = reward_percentiles
                 .into_iter()
                 .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u64;
+                    let target_gas = (p * gas_used / 100f64) as u128;
                     let mut sum_gas = 0;
                     for (gas_used, effective_reward) in transactions.iter().cloned() {
                         sum_gas += gas_used;
@@ -341,26 +324,22 @@ pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 /// A single item in the whole fee history cache
 #[derive(Clone, Debug)]
 pub struct FeeHistoryCacheItem {
-    pub base_fee: u64,
+    pub base_fee: u128,
     pub gas_used_ratio: f64,
-    pub rewards: Vec<u64>,
+    pub rewards: Vec<u128>,
 }
 
 #[derive(Clone, Default)]
 pub struct FeeDetails {
-    pub gas_price: Option<U256>,
-    pub max_fee_per_gas: Option<U256>,
-    pub max_priority_fee_per_gas: Option<U256>,
+    pub gas_price: Option<u128>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
 }
 
 impl FeeDetails {
     /// All values zero
     pub fn zero() -> Self {
-        Self {
-            gas_price: Some(U256::ZERO),
-            max_fee_per_gas: Some(U256::ZERO),
-            max_priority_fee_per_gas: Some(U256::ZERO),
-        }
+        Self { gas_price: Some(0), max_fee_per_gas: Some(0), max_priority_fee_per_gas: Some(0) }
     }
 
     /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
@@ -368,23 +347,23 @@ impl FeeDetails {
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
 
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
-        let gas_price = if no_fees { Some(U256::ZERO) } else { gas_price };
-        let max_fee_per_gas = if no_fees { Some(U256::ZERO) } else { max_fee_per_gas };
+        let gas_price = if no_fees { Some(0) } else { gas_price };
+        let max_fee_per_gas = if no_fees { Some(0) } else { max_fee_per_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas }
     }
 
     /// Turns this type into a tuple
-    pub fn split(self) -> (Option<U256>, Option<U256>, Option<U256>) {
+    pub fn split(self) -> (Option<u128>, Option<u128>, Option<u128>) {
         let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
         (gas_price, max_fee_per_gas, max_priority_fee_per_gas)
     }
 
     /// Creates a new instance from the request's gas related values
     pub fn new(
-        request_gas_price: Option<U256>,
-        request_max_fee: Option<U256>,
-        request_priority: Option<U256>,
+        request_gas_price: Option<u128>,
+        request_max_fee: Option<u128>,
+        request_priority: Option<u128>,
     ) -> Result<FeeDetails, BlockchainError> {
         match (request_gas_price, request_max_fee, request_priority) {
             (gas_price, None, None) => {

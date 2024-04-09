@@ -16,7 +16,11 @@ path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # foundry internal
@@ -36,12 +40,13 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
 alloy-rlp.workspace = true
-alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types.workspace = true
-alloy-rpc-trace-types.workspace = true
-alloy-providers.workspace = true
+alloy-rpc-types-trace.workspace = true
+alloy-provider = { workspace = true, features = ["pubsub"] }
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
@@ -75,7 +80,11 @@ rand = "0.8"
 eyre.workspace = true
 
 # cli
-clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
+clap = { version = "4", features = [
+    "derive",
+    "env",
+    "wrap_help",
+], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono.workspace = true
 auto_impl = "1"
@@ -89,7 +98,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-json-abi.workspace = true
-ethers = { workspace = true, features = ["abigen"] }
+ethers = { workspace = true, features = ["abigen", "optimism"] }
 ethers-core = { workspace = true, features = ["optimism"] }
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
 

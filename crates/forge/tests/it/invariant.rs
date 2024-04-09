@@ -255,14 +255,14 @@ async fn test_invariant_shrink() {
                 let create_fren_sequence = sequence[0].clone();
                 assert_eq!(
                     create_fren_sequence.contract_name.unwrap(),
-                    "fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
+                    "default/fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
                 );
                 assert_eq!(create_fren_sequence.signature.unwrap(), "create_fren()");
 
                 let betray_sequence = sequence[1].clone();
                 assert_eq!(
                     betray_sequence.contract_name.unwrap(),
-                    "fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
+                    "default/fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
                 );
                 assert_eq!(betray_sequence.signature.unwrap(), "betray()");
             }

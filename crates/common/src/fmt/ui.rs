@@ -1,8 +1,12 @@
 //! Helper trait and functions to format Ethereum types.
 
 use crate::TransactionReceiptWithRevertReason;
+use alloy_consensus::{AnyReceiptEnvelope, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::*;
-use ethers_core::types::{Block, Log, OtherFields, Transaction, TransactionReceipt, TxHash};
+use alloy_rpc_types::{
+    other::OtherFields, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
+    TransactionReceipt,
+};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -23,6 +27,12 @@ pub trait UIfmt {
     fn pretty(&self) -> String;
 }
 
+impl<T: UIfmt> UIfmt for &T {
+    fn pretty(&self) -> String {
+        (*self).pretty()
+    }
+}
+
 impl<T: UIfmt> UIfmt for Option<T> {
     fn pretty(&self) -> String {
         if let Some(ref inner) = self {
@@ -33,7 +43,7 @@ impl<T: UIfmt> UIfmt for Option<T> {
     }
 }
 
-impl<T: UIfmt> UIfmt for Vec<T> {
+impl<T: UIfmt> UIfmt for [T] {
     fn pretty(&self) -> String {
         if !self.is_empty() {
             let mut s = String::with_capacity(self.len() * 64);
@@ -59,13 +69,25 @@ impl UIfmt for String {
     }
 }
 
+impl UIfmt for u64 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for u128 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl UIfmt for bool {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
 
-impl UIfmt for U256 {
+impl<const BITS: usize, const LIMBS: usize> UIfmt for Uint<BITS, LIMBS> {
     fn pretty(&self) -> String {
         self.to_string()
     }
@@ -86,6 +108,12 @@ impl UIfmt for Address {
 impl UIfmt for Bloom {
     fn pretty(&self) -> String {
         self.to_string()
+    }
+}
+
+impl UIfmt for TxType {
+    fn pretty(&self) -> String {
+        (*self as u8).to_string()
     }
 }
 
@@ -119,32 +147,34 @@ impl UIfmt for [u8] {
     }
 }
 
-impl UIfmt for U64 {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl UIfmt for TransactionReceipt {
+impl UIfmt for AnyTransactionReceipt {
     fn pretty(&self) -> String {
         let Self {
-            transaction_hash,
-            transaction_index,
-            block_hash,
-            block_number,
-            from,
-            to,
-            cumulative_gas_used,
-            gas_used,
-            contract_address,
-            logs,
-            status,
-            root,
-            logs_bloom,
-            transaction_type,
-            effective_gas_price,
+            inner:
+                TransactionReceipt {
+                    transaction_hash,
+                    transaction_index,
+                    block_hash,
+                    block_number,
+                    from,
+                    to,
+                    gas_used,
+                    contract_address,
+                    state_root,
+                    effective_gas_price,
+                    inner:
+                        AnyReceiptEnvelope {
+                            r#type: transaction_type,
+                            inner:
+                                ReceiptWithBloom {
+                                    receipt: Receipt { status, cumulative_gas_used, logs },
+                                    logs_bloom,
+                                },
+                        },
+                    blob_gas_price,
+                    blob_gas_used,
+                },
             other,
-            ..
         } = self;
 
         let mut pretty = format!(
@@ -162,7 +192,9 @@ root                    {}
 status                  {}
 transactionHash         {}
 transactionIndex        {}
-type                    {}",
+type                    {}
+blobGasPrice            {}
+blobGasUsed             {}",
             block_hash.pretty(),
             block_number.pretty(),
             contract_address.pretty(),
@@ -170,13 +202,15 @@ type                    {}",
             effective_gas_price.pretty(),
             from.pretty(),
             gas_used.pretty(),
-            serde_json::to_string(logs).unwrap(),
+            serde_json::to_string(&logs).unwrap(),
             logs_bloom.pretty(),
-            root.pretty(),
+            state_root.pretty(),
             status.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),
-            transaction_type.pretty()
+            transaction_type,
+            blob_gas_price.pretty(),
+            blob_gas_used.pretty(),
         );
 
         if let Some(to) = to {
@@ -205,32 +239,20 @@ removed: {}
 topics: {}
 transactionHash: {}
 transactionIndex: {}",
-            self.address.pretty(),
+            self.address().pretty(),
             self.block_hash.pretty(),
             self.block_number.pretty(),
-            self.data.pretty(),
+            self.data().data.pretty(),
             self.log_index.pretty(),
             self.removed.pretty(),
-            self.topics.pretty(),
+            self.topics().pretty(),
             self.transaction_hash.pretty(),
             self.transaction_index.pretty(),
         )
     }
 }
 
-impl UIfmt for Block<Transaction> {
-    fn pretty(&self) -> String {
-        format!(
-            "
-{}
-transactions         {}",
-            pretty_block_basics(self),
-            self.transactions.pretty()
-        )
-    }
-}
-
-impl UIfmt for Block<TxHash> {
+impl UIfmt for Block {
     fn pretty(&self) -> String {
         format!(
             "
@@ -239,6 +261,16 @@ transactions:        {}",
             pretty_block_basics(self),
             self.transactions.pretty()
         )
+    }
+}
+
+impl UIfmt for BlockTransactions {
+    fn pretty(&self) -> String {
+        match self {
+            BlockTransactions::Hashes(hashes) => hashes.pretty(),
+            BlockTransactions::Full(transactions) => transactions.pretty(),
+            BlockTransactions::Uncle => String::new(),
+        }
     }
 }
 
@@ -285,12 +317,12 @@ value                {}{}",
             self.gas_price.pretty(),
             self.hash.pretty(),
             self.input.pretty(),
-            self.nonce.pretty(),
-            to_bytes(self.r).pretty(),
-            to_bytes(self.s).pretty(),
+            self.nonce,
+            self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+            self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
             self.to.pretty(),
             self.transaction_index.pretty(),
-            self.v.pretty(),
+            self.signature.map(|s| s.v).pretty(),
             self.value.pretty(),
             self.other.pretty()
         )
@@ -367,13 +399,6 @@ mod temp_ethers {
     with_alloy!(Address, Bloom, H64, H256, I256, U256, U64);
 }
 
-/// Convert a U256 to bytes
-pub fn to_bytes(uint: ethers_core::types::U256) -> [u8; 32] {
-    let mut buffer: [u8; 32] = [0; 32];
-    uint.to_big_endian(&mut buffer);
-    buffer
-}
-
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
     match attr {
@@ -384,12 +409,12 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "gasPrice" | "gas_price" => Some(transaction.gas_price.pretty()),
         "hash" => Some(transaction.hash.pretty()),
         "input" => Some(transaction.input.pretty()),
-        "nonce" => Some(transaction.nonce.pretty()),
-        "s" => Some(to_bytes(transaction.s).pretty()),
-        "r" => Some(to_bytes(transaction.r).pretty()),
+        "nonce" => Some(transaction.nonce.to_string()),
+        "s" => transaction.signature.map(|s| B256::from(s.s).pretty()),
+        "r" => transaction.signature.map(|s| B256::from(s.r).pretty()),
         "to" => Some(transaction.to.pretty()),
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
-        "v" => Some(transaction.v.pretty()),
+        "v" => transaction.signature.map(|s| s.v.pretty()),
         "value" => Some(transaction.value.pretty()),
         other => {
             if let Some(value) = transaction.other.get(other) {
@@ -410,49 +435,50 @@ pub fn get_pretty_tx_receipt_attr(
         "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
         "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
         "cumulativeGasUsed" | "cumulative_gas_used" => {
-            Some(receipt.receipt.cumulative_gas_used.pretty())
+            Some(receipt.receipt.inner.inner.inner.receipt.cumulative_gas_used.pretty())
         }
         "effectiveGasPrice" | "effective_gas_price" => {
-            Some(receipt.receipt.effective_gas_price.pretty())
+            Some(receipt.receipt.effective_gas_price.to_string())
         }
-        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
-        "logs" => Some(receipt.receipt.logs.pretty()),
-        "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
-        "root" => Some(receipt.receipt.root.pretty()),
-        "status" => Some(receipt.receipt.status.pretty()),
+        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
+        "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
+        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
+        "status" | "statusCode" | "status_code" => {
+            Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
+        }
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
-            Some(receipt.receipt.transaction_index.pretty())
+            Some(receipt.receipt.transaction_index.to_string())
         }
-        "type" | "transaction_type" => Some(receipt.receipt.transaction_type.pretty()),
+        "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
         "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
         _ => None,
     }
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String> {
+pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
     match attr {
-        "baseFeePerGas" | "base_fee_per_gas" => Some(block.base_fee_per_gas.pretty()),
-        "difficulty" => Some(block.difficulty.pretty()),
-        "extraData" | "extra_data" => Some(block.extra_data.pretty()),
-        "gasLimit" | "gas_limit" => Some(block.gas_limit.pretty()),
-        "gasUsed" | "gas_used" => Some(block.gas_used.pretty()),
-        "hash" => Some(block.hash.pretty()),
-        "logsBloom" | "logs_bloom" => Some(block.logs_bloom.pretty()),
-        "miner" | "author" => Some(block.author.pretty()),
-        "mixHash" | "mix_hash" => Some(block.mix_hash.pretty()),
-        "nonce" => Some(block.nonce.pretty()),
-        "number" => Some(block.number.pretty()),
-        "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
-        "transactionsRoot" | "transactions_root" => Some(block.transactions_root.pretty()),
-        "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
-        "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
-        "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
+        "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
+        "difficulty" => Some(block.header.difficulty.pretty()),
+        "extraData" | "extra_data" => Some(block.header.extra_data.pretty()),
+        "gasLimit" | "gas_limit" => Some(block.header.gas_limit.pretty()),
+        "gasUsed" | "gas_used" => Some(block.header.gas_used.pretty()),
+        "hash" => Some(block.header.hash.pretty()),
+        "logsBloom" | "logs_bloom" => Some(block.header.logs_bloom.pretty()),
+        "miner" | "author" => Some(block.header.miner.pretty()),
+        "mixHash" | "mix_hash" => Some(block.header.mix_hash.pretty()),
+        "nonce" => Some(block.header.nonce.pretty()),
+        "number" => Some(block.header.number.pretty()),
+        "parentHash" | "parent_hash" => Some(block.header.parent_hash.pretty()),
+        "transactionsRoot" | "transactions_root" => Some(block.header.transactions_root.pretty()),
+        "receiptsRoot" | "receipts_root" => Some(block.header.receipts_root.pretty()),
+        "sha3Uncles" | "sha_3_uncles" => Some(block.header.uncles_hash.pretty()),
         "size" => Some(block.size.pretty()),
-        "stateRoot" | "state_root" => Some(block.state_root.pretty()),
-        "timestamp" => Some(block.timestamp.pretty()),
-        "totalDifficulty" | "total_difficult" => Some(block.total_difficulty.pretty()),
+        "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
+        "timestamp" => Some(block.header.timestamp.pretty()),
+        "totalDifficulty" | "total_difficult" => Some(block.header.total_difficulty.pretty()),
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
@@ -463,7 +489,7 @@ pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String
     }
 }
 
-fn pretty_block_basics<T>(block: &Block<T>) -> String {
+fn pretty_block_basics(block: &Block) -> String {
     format!(
         "
 baseFeePerGas        {}
@@ -480,34 +506,32 @@ number               {}
 parentHash           {}
 transactionsRoot     {}
 receiptsRoot         {}
-sealFields           {}
 sha3Uncles           {}
 size                 {}
 stateRoot            {}
 timestamp            {}
 withdrawalsRoot      {}
 totalDifficulty      {}{}",
-        block.base_fee_per_gas.pretty(),
-        block.difficulty.pretty(),
-        block.extra_data.pretty(),
-        block.gas_limit.pretty(),
-        block.gas_used.pretty(),
-        block.hash.pretty(),
-        block.logs_bloom.pretty(),
-        block.author.pretty(),
-        block.mix_hash.pretty(),
-        block.nonce.pretty(),
-        block.number.pretty(),
-        block.parent_hash.pretty(),
-        block.transactions_root.pretty(),
-        block.receipts_root.pretty(),
-        block.seal_fields.pretty(),
-        block.uncles_hash.pretty(),
+        block.header.base_fee_per_gas.pretty(),
+        block.header.difficulty.pretty(),
+        block.header.extra_data.pretty(),
+        block.header.gas_limit.pretty(),
+        block.header.gas_used.pretty(),
+        block.header.hash.pretty(),
+        block.header.logs_bloom.pretty(),
+        block.header.miner.pretty(),
+        block.header.mix_hash.pretty(),
+        block.header.nonce.pretty(),
+        block.header.number.pretty(),
+        block.header.parent_hash.pretty(),
+        block.header.transactions_root.pretty(),
+        block.header.receipts_root.pretty(),
+        block.header.uncles_hash.pretty(),
         block.size.pretty(),
-        block.state_root.pretty(),
-        block.timestamp.pretty(),
-        block.withdrawals_root.pretty(),
-        block.total_difficulty.pretty(),
+        block.header.state_root.pretty(),
+        block.header.timestamp.pretty(),
+        block.header.withdrawals_root.pretty(),
+        block.header.total_difficulty.pretty(),
         block.other.pretty()
     )
 }
@@ -594,7 +618,7 @@ txType               0
     #[test]
     fn print_block_w_txs() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: Block<Transaction> = serde_json::from_str(block).unwrap();
+        let block: Block = serde_json::from_str(block).unwrap();
         let output ="\nblockHash            0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972
 blockNumber          3
 from                 0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a
@@ -609,7 +633,11 @@ to                   0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e
 transactionIndex     0
 v                    37
 value                0".to_string();
-        let generated = block.transactions[0].pretty();
+        let txs = match block.transactions {
+            BlockTransactions::Full(txs) => txs,
+            _ => panic!("not full transactions"),
+        };
+        let generated = txs[0].pretty();
         assert_eq!(generated.as_str(), output.as_str());
     }
 
@@ -657,45 +685,40 @@ value                0".to_string();
     #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: Block<Transaction> = serde_json::from_str(block).unwrap();
-        assert_eq!(None, get_pretty_tx_attr(&block.transactions[0], ""));
-        assert_eq!(
-            Some("3".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "blockNumber")
-        );
+        let block: Block = serde_json::from_str(block).unwrap();
+        let txs = match block.transactions {
+            BlockTransactions::Full(txes) => txes,
+            _ => panic!("not full transactions"),
+        };
+        assert_eq!(None, get_pretty_tx_attr(&txs[0], ""));
+        assert_eq!(Some("3".to_string()), get_pretty_tx_attr(&txs[0], "blockNumber"));
         assert_eq!(
             Some("0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "from")
+            get_pretty_tx_attr(&txs[0], "from")
         );
-        assert_eq!(Some("90000".to_string()), get_pretty_tx_attr(&block.transactions[0], "gas"));
-        assert_eq!(
-            Some("20000000000".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "gasPrice")
-        );
+        assert_eq!(Some("90000".to_string()), get_pretty_tx_attr(&txs[0], "gas"));
+        assert_eq!(Some("20000000000".to_string()), get_pretty_tx_attr(&txs[0], "gasPrice"));
         assert_eq!(
             Some("0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "hash")
+            get_pretty_tx_attr(&txs[0], "hash")
         );
-        assert_eq!(Some("0x".to_string()), get_pretty_tx_attr(&block.transactions[0], "input"));
-        assert_eq!(Some("2".to_string()), get_pretty_tx_attr(&block.transactions[0], "nonce"));
+        assert_eq!(Some("0x".to_string()), get_pretty_tx_attr(&txs[0], "input"));
+        assert_eq!(Some("2".to_string()), get_pretty_tx_attr(&txs[0], "nonce"));
         assert_eq!(
             Some("0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "r")
+            get_pretty_tx_attr(&txs[0], "r")
         );
         assert_eq!(
             Some("0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "s")
+            get_pretty_tx_attr(&txs[0], "s")
         );
         assert_eq!(
             Some("0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e".into()),
-            get_pretty_tx_attr(&block.transactions[0], "to")
+            get_pretty_tx_attr(&txs[0], "to")
         );
-        assert_eq!(
-            Some("0".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "transactionIndex")
-        );
-        assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&block.transactions[0], "v"));
-        assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&block.transactions[0], "value"));
+        assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&txs[0], "transactionIndex"));
+        assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&txs[0], "v"));
+        assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&txs[0], "value"));
     }
 
     #[test]
@@ -731,7 +754,7 @@ value                0".to_string();
           }
         );
 
-        let block: Block<()> = serde_json::from_value(json).unwrap();
+        let block: Block = serde_json::from_value(json).unwrap();
 
         assert_eq!(None, get_pretty_block_attr(&block, ""));
         assert_eq!(Some("7".to_string()), get_pretty_block_attr(&block, "baseFeePerGas"));

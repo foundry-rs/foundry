@@ -3,7 +3,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
@@ -14,7 +13,10 @@ use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 mod fork;
 pub(crate) mod mapping;
@@ -74,7 +76,7 @@ impl Cheatcode for loadAllocsCall {
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
 
         // Let's first assume we're reading a file with only the allocs.
-        let allocs: HashMap<Address, GenesisAccount> = match read_json_file(path) {
+        let allocs: BTreeMap<Address, GenesisAccount> = match read_json_file(path) {
             Ok(allocs) => allocs,
             Err(_) => {
                 // Let's try and read from a genesis file, and extract allocs.
@@ -112,7 +114,7 @@ impl Cheatcode for dumpStateCall {
             .ecx
             .journaled_state
             .state()
-            .into_iter()
+            .iter_mut()
             .filter(|(key, val)| !skip(key, val))
             .map(|(key, val)| {
                 (
