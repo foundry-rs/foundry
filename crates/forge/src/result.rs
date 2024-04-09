@@ -364,10 +364,10 @@ pub struct TestResult {
     /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
     pub decoded_logs: Vec<String>,
 
-    /// What kind of test this was
+    /// What kind of test this was.
     pub kind: TestKind,
 
-    /// What kind of environment this test was run in
+    /// What kind of environment this test was run in.
     pub environment: TestEnvironment,
 
     /// Traces
