@@ -83,6 +83,48 @@
           "description": "The account's code was copied."
         }
       ]
+    },
+    {
+      "name": "ForgeContext",
+      "description": "Forge execution contexts.",
+      "variants": [
+        {
+          "name": "TestGroup",
+          "description": "Test group execution context (test, coverage or snapshot)."
+        },
+        {
+          "name": "Test",
+          "description": "`forge test` execution context."
+        },
+        {
+          "name": "Coverage",
+          "description": "`forge coverage` execution context."
+        },
+        {
+          "name": "Snapshot",
+          "description": "`forge snapshot` execution context."
+        },
+        {
+          "name": "ScriptGroup",
+          "description": "Script group execution context (dry run, broadcast or resume)."
+        },
+        {
+          "name": "ScriptDryRun",
+          "description": "`forge script` execution context."
+        },
+        {
+          "name": "ScriptBroadcast",
+          "description": "`forge script --broadcast` execution context."
+        },
+        {
+          "name": "ScriptResume",
+          "description": "`forge script --resume` execution context."
+        },
+        {
+          "name": "Unknown",
+          "description": "Unknown `forge` execution context."
+        }
+      ]
     }
   ],
   "structs": [
@@ -4846,6 +4888,26 @@
         ]
       },
       "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isContext",
+        "description": "Returns true if `forge` command was executed in given context.",
+        "declaration": "function isContext(ForgeContext context) external view returns (bool isContext);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isContext(uint8)",
+        "selector": "0x64af255d",
+        "selectorBytes": [
+          100,
+          175,
+          37,
+          93
+        ]
+      },
+      "group": "environment",
       "status": "stable",
       "safety": "safe"
     },

@@ -3,6 +3,7 @@
 #![allow(missing_docs)]
 
 use super::*;
+use crate::Vm::ForgeContext;
 use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
 
@@ -61,6 +62,28 @@ interface Vm {
         Extcodehash,
         /// The account's code was copied.
         Extcodecopy,
+    }
+
+    /// Forge execution contexts.
+    enum ForgeContext {
+        /// Test group execution context (test, coverage or snapshot).
+        TestGroup,
+        /// `forge test` execution context.
+        Test,
+        /// `forge coverage` execution context.
+        Coverage,
+        /// `forge snapshot` execution context.
+        Snapshot,
+        /// Script group execution context (dry run, broadcast or resume).
+        ScriptGroup,
+        /// `forge script` execution context.
+        ScriptDryRun,
+        /// `forge script --broadcast` execution context.
+        ScriptBroadcast,
+        /// `forge script --resume` execution context.
+        ScriptResume,
+        /// Unknown `forge` execution context.
+        Unknown,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
@@ -1598,6 +1621,10 @@ interface Vm {
         external view
         returns (bytes[] memory value);
 
+    /// Returns true if `forge` command was executed in given context.
+    #[cheatcode(group = Environment)]
+    function isContext(ForgeContext context) external view returns (bool isContext);
+
     // ======== Scripts ========
 
     // -------- Broadcasting Transactions --------
@@ -2064,4 +2091,31 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function toBase64URL(string calldata data) external pure returns (string memory);
 }
+}
+
+impl PartialEq for ForgeContext {
+    // Handles test group case (any of test, coverage or snapshot)
+    // and script group case (any of dry run, broadcast or resume).
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (_, &ForgeContext::TestGroup) => {
+                self == &ForgeContext::Test ||
+                    self == &ForgeContext::Snapshot ||
+                    self == &ForgeContext::Coverage
+            }
+            (_, &ForgeContext::ScriptGroup) => {
+                self == &ForgeContext::ScriptDryRun ||
+                    self == &ForgeContext::ScriptBroadcast ||
+                    self == &ForgeContext::ScriptResume
+            }
+            (&ForgeContext::Test, &ForgeContext::Test) |
+            (&ForgeContext::Snapshot, &ForgeContext::Snapshot) |
+            (&ForgeContext::Coverage, &ForgeContext::Coverage) |
+            (&ForgeContext::ScriptDryRun, &ForgeContext::ScriptDryRun) |
+            (&ForgeContext::ScriptBroadcast, &ForgeContext::ScriptBroadcast) |
+            (&ForgeContext::ScriptResume, &ForgeContext::ScriptResume) |
+            (&ForgeContext::Unknown, &ForgeContext::Unknown) => true,
+            _ => false,
+        }
+    }
 }

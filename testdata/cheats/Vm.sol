@@ -8,6 +8,7 @@ pragma experimental ABIEncoderV2;
 interface Vm {
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
     enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodehash, Extcodecopy }
+    enum ForgeContext { TestGroup, Test, Coverage, Snapshot, ScriptGroup, ScriptDryRun, ScriptBroadcast, ScriptResume, Unknown }
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
@@ -239,6 +240,7 @@ interface Vm {
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
     function indexOf(string memory input, string memory key) external pure returns (uint256);
+    function isContext(ForgeContext context) external view returns (bool isContext);
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
