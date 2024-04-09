@@ -6080,6 +6080,26 @@
     },
     {
       "func": {
+        "id": "promptAddress",
+        "description": "Prompts the user for an address in the terminal.",
+        "declaration": "function promptAddress(string calldata promptText) external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptAddress(string)",
+        "selector": "0x62ee05f4",
+        "selectorBytes": [
+          98,
+          238,
+          5,
+          244
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "promptSecret",
         "description": "Prompts the user for a hidden string value in the terminal.",
         "declaration": "function promptSecret(string calldata promptText) external returns (string memory input);",
@@ -6092,6 +6112,26 @@
           39,
           157,
           65
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptUint",
+        "description": "Prompts the user for uint256 in the terminal.",
+        "declaration": "function promptUint(string calldata promptText) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptUint(string)",
+        "selector": "0x652fd489",
+        "selectorBytes": [
+          101,
+          47,
+          212,
+          137
         ]
       },
       "group": "filesystem",

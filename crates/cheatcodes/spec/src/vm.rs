@@ -1427,6 +1427,14 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function promptSecret(string calldata promptText) external returns (string memory input);
 
+    /// Prompts the user for an address in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function promptAddress(string calldata promptText) external returns (address);
+
+    /// Prompts the user for uint256 in the terminal.
+    #[cheatcode(group = Filesystem)]
+    function promptUint(string calldata promptText) external returns (uint256);
+
     // ======== Environment Variables ========
 
     /// Sets environment variables.
