@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, Uint, U256};
+use alloy_primitives::{Address, Bytes, Uint, U256, U64};
 use alloy_providers::tmp::TempProvider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -182,11 +182,11 @@ impl VerifyBytecodeArgs {
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
-            .or_else(|_| eyre::bail!("Couldn't fetch transaction from RPC"))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?;
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
-            .or_else(|_| eyre::bail!("Couldn't fetch transacrion receipt from RPC"))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transacrion receipt from RPC: {:?}", e))?;
 
         let receipt = if let Some(receipt) = receipt {
             receipt
@@ -286,7 +286,7 @@ impl VerifyBytecodeArgs {
         let prev_block_nonce = provider
             .get_transaction_count(creation_data.contract_creator, Some(prev_block_id))
             .await?;
-        transaction.nonce = Uint::<64, 1>::from(prev_block_nonce);
+        transaction.nonce = U64::from(prev_block_nonce);
 
         if let Some(ref block) = block {
             env.block.timestamp = block.header.timestamp;
