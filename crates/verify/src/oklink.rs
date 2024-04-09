@@ -280,10 +280,10 @@ impl OklinkVerificationProvider {
     /// Create an oklink client
     pub(crate) fn client(
         &self,
-        chain: Chain,
+        _chain: Chain,
         verifier_url: Option<&str>,
         oklink_key: Option<&str>,
-        config: &Config,
+        _config: &Config,
     ) -> Result<Client> {
         let oklink_key = oklink_key.unwrap();
 
