@@ -25,7 +25,7 @@ const DUMMY_CREATE_ADDRESS: Address = address!("00000000000000000000000000000000
 /// This then allows us to customize the matching behavior for each call data on the
 /// `ExpectedCallData` struct and track how many times we've actually seen the call on the second
 /// element of the tuple.
-pub type ExpectedCallTracker = HashMap<Address, HashMap<Vec<u8>, (ExpectedCallData, u64)>>;
+pub type ExpectedCallTracker = HashMap<Address, HashMap<Bytes, (ExpectedCallData, u64)>>;
 
 #[derive(Clone, Debug)]
 pub struct ExpectedCallData {
@@ -318,7 +318,7 @@ impl Cheatcode for expectSafeMemoryCallCall {
 fn expect_call(
     state: &mut Cheatcodes,
     target: &Address,
-    calldata: &Vec<u8>,
+    calldata: &Bytes,
     value: Option<&U256>,
     mut gas: Option<u64>,
     mut min_gas: Option<u64>,
@@ -351,7 +351,7 @@ fn expect_call(
                 "counted expected calls can only bet set once"
             );
             expecteds.insert(
-                calldata.to_vec(),
+                calldata.clone(),
                 (ExpectedCallData { value: value.copied(), gas, min_gas, count, call_type }, 0),
             );
         }

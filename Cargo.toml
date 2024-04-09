@@ -107,9 +107,6 @@ codegen-units = 1
 [profile.release.package]
 mdbook.opt-level = 1
 protobuf.opt-level = 1
-rusoto_core.opt-level = 1
-rusoto_credential.opt-level = 1
-rusoto_kms.opt-level = 1
 toml_edit.opt-level = 1
 trezor-client.opt-level = 1
 
@@ -140,16 +137,16 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.4", default-features = false }
-foundry-compilers = { version = "0.3.13", default-features = false }
+foundry-block-explorers = { version = "0.2.5", default-features = false }
+foundry-compilers = { version = "0.3.14", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "7.1", default-features = false, features = ["std"] }
-revm-primitives = { version = "3", default-features = false, features = ["std"] }
-revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "ba0b6ab", features = [
+revm = { version = "8", default-features = false }
+revm-primitives = { version = "3", default-features = false }
+revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "510d4d0", features = [
     "serde",
-] }
+] } 
 
 ## ethers
 ethers = { version = "2.0.14", default-features = false }
@@ -161,30 +158,34 @@ ethers-signers = { version = "2.0.14", default-features = false }
 ethers-middleware = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-providers = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "9ac2c90", default-features = false }
-alloy-primitives = { version = "0.6.3", features = ["getrandom"] }
-alloy-dyn-abi = "0.6.3"
-alloy-json-abi = "0.6.3"
-alloy-sol-types = "0.6.3"
-syn-solidity = "0.6.3"
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-signer-wallet = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "5f74d4e", default-features = false }
+alloy-primitives = { version = "0.7.0", features = ["getrandom"] }
+alloy-dyn-abi = "0.7.0"
+alloy-json-abi = "0.7.0"
+alloy-sol-types = "0.7.0"
+syn-solidity = "0.7.0"
 alloy-chains = "0.1"
-alloy-trie = "0.3"
-
+alloy-trie = "0.3.1"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 

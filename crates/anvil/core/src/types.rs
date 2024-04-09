@@ -190,10 +190,10 @@ pub struct NodeInfo {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeEnvironment {
-    pub base_fee: U256,
+    pub base_fee: u128,
     pub chain_id: u64,
-    pub gas_limit: U256,
-    pub gas_price: U256,
+    pub gas_limit: u128,
+    pub gas_price: u128,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
