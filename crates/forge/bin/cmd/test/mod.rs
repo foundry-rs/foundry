@@ -462,7 +462,8 @@ impl TestArgs {
                             // Enable Etherscan decoding for forking tests.
                             identifier.enable_etherscan();
                         } else {
-                            // Disable Etherscan decoding for non-forking tests.
+                            // Disable Etherscan decoding for local tests to avoid unnecessary API
+                            // calls that can slow down execution significantly if rate-limited.
                             identifier.disable_etherscan();
                         }
 
