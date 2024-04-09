@@ -35,7 +35,6 @@ use crate::{
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, U256, U64};
-use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
     Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
@@ -46,6 +45,7 @@ use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
+use alloy_trie::{HashBuilder, Nibbles};
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},

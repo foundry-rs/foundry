@@ -1047,7 +1047,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // The gas limit of the call.
             gasLimit: gas.limit(),
             // The total gas used.
-            gasTotalUsed: gas.spend(),
+            gasTotalUsed: gas.spent(),
             // The amount of gas used for memory expansion.
             gasMemoryUsed: gas.memory(),
             // The amount of gas refunded.
