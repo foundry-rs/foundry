@@ -2,8 +2,8 @@
 
 use alloy_primitives::U256;
 use forge::{
-    inspectors::CheatsConfig, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
-    TestOptionsBuilder,
+    inspectors::CheatsConfig, revm::primitives::SpecId, MultiContractRunner,
+    MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_compilers::{
     artifacts::{Libraries, Settings},
@@ -46,6 +46,11 @@ impl fmt::Display for ForgeTestProfile {
 }
 
 impl ForgeTestProfile {
+    /// Returns true if the profile is Cancun.
+    pub fn is_cancun(&self) -> bool {
+        matches!(self, Self::Cancun)
+    }
+
     pub fn root(&self) -> PathBuf {
         PathBuf::from(TESTDATA)
     }
@@ -147,7 +152,7 @@ impl ForgeTestProfile {
             "fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
         ];
 
-        if matches!(self, Self::Cancun) {
+        if self.is_cancun() {
             config.evm_version = EvmVersion::Cancun;
         }
 
@@ -162,6 +167,7 @@ pub struct ForgeTestData {
     pub test_opts: TestOptions,
     pub evm_opts: EvmOpts,
     pub config: Config,
+    pub profile: ForgeTestProfile,
 }
 
 impl ForgeTestData {
@@ -175,15 +181,20 @@ impl ForgeTestData {
         let config = profile.config();
         let evm_opts = profile.evm_opts();
 
-        Self { project, output, test_opts, evm_opts, config }
+        Self { project, output, test_opts, evm_opts, config, profile }
     }
 
     /// Builds a base runner
     pub fn base_runner(&self) -> MultiContractRunnerBuilder {
         init_tracing();
-        MultiContractRunnerBuilder::default()
+        let mut runner = MultiContractRunnerBuilder::default()
             .sender(self.evm_opts.sender)
-            .with_test_options(self.test_opts.clone())
+            .with_test_options(self.test_opts.clone());
+        if self.profile.is_cancun() {
+            runner = runner.evm_spec(SpecId::CANCUN);
+        }
+
+        runner
     }
 
     /// Builds a non-tracing runner

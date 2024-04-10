@@ -328,6 +328,26 @@ impl Cheatcode for getBlockTimestampCall {
     }
 }
 
+impl Cheatcode for blobBaseFeeCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { newBlobBaseFee } = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`blobBaseFee` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        ccx.ecx.env.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getBlobBaseFeeCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        Ok(ccx.ecx.env.block.get_blob_excess_gas().unwrap_or(0).abi_encode())
+    }
+}
+
 impl Cheatcode for dealCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
