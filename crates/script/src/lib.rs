@@ -7,11 +7,11 @@ use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers_signers::Signer;
 use eyre::{ContextCompat, Result};
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
@@ -20,10 +20,8 @@ use foundry_common::{
     compile::SkipBuildFilter,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    provider::ethers::RpcUrl,
-    shell,
-    types::ToAlloy,
-    CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    provider::alloy::RpcUrl,
+    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
 use foundry_config::{
@@ -305,7 +303,7 @@ impl ScriptArgs {
             .wallets
             .private_keys()?
             .filter(|pks| pks.len() == 1)
-            .map(|pks| pks.first().unwrap().address().to_alloy());
+            .map(|pks| pks.first().unwrap().address());
         Ok(maybe_sender)
     }
 
@@ -531,7 +529,7 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url, None).await?
+            next_nonce(evm_opts.sender, fork_url).await?
         } else {
             // dapptools compatibility
             1
@@ -541,7 +539,7 @@ impl ScriptConfig {
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None).await?
+            next_nonce(sender, fork_url).await?
         } else {
             // dapptools compatibility
             1
@@ -559,13 +557,14 @@ impl ScriptConfig {
         artifact_ids: Vec<ArtifactId>,
         script_wallets: ScriptWallets,
         debug: bool,
+        target: ArtifactId,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some((artifact_ids, script_wallets)), debug).await
+        self._get_runner(Some((artifact_ids, script_wallets, target)), debug).await
     }
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets)>,
+        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -594,7 +593,7 @@ impl ScriptConfig {
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
-        if let Some((artifact_ids, script_wallets)) = cheats_data {
+        if let Some((artifact_ids, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(debug)
@@ -604,6 +603,7 @@ impl ScriptConfig {
                             self.evm_opts.clone(),
                             Some(artifact_ids),
                             Some(script_wallets),
+                            Some(target.version),
                         )
                         .into(),
                     )

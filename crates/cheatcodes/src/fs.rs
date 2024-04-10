@@ -271,14 +271,40 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 /// Returns the path to the json artifact depending on the input
+///
+/// Can parse following input formats:
+/// - `path/to/artifact.json`
+/// - `path/to/contract.sol`
+/// - `path/to/contract.sol:ContractName`
+/// - `path/to/contract.sol:ContractName:0.8.23`
+/// - `path/to/contract.sol:0.8.23`
+/// - `ContractName`
+/// - `ContractName:0.8.23`
 fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
     if path.ends_with(".json") {
         Ok(PathBuf::from(path))
     } else {
         let mut parts = path.split(':');
-        let file = PathBuf::from(parts.next().unwrap());
-        let contract_name = parts.next();
-        let version = parts.next();
+
+        let mut file = None;
+        let mut contract_name = None;
+        let mut version = None;
+
+        let path_or_name = parts.next().unwrap();
+        if path_or_name.ends_with(".sol") {
+            file = Some(PathBuf::from(path_or_name));
+            if let Some(name_or_version) = parts.next() {
+                if name_or_version.contains('.') {
+                    version = Some(name_or_version);
+                } else {
+                    contract_name = Some(name_or_version);
+                    version = parts.next();
+                }
+            }
+        } else {
+            contract_name = Some(path_or_name);
+            version = parts.next();
+        }
 
         let version = if let Some(version) = version {
             Some(Version::parse(version).map_err(|_| fmt_err!("Error parsing version"))?)
@@ -288,44 +314,70 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
 
         // Use available artifacts list if available
         if let Some(available_ids) = &state.config.available_artifacts {
-            let mut artifact = None;
+            let filtered = available_ids
+                .iter()
+                .filter(|id| {
+                    // name might be in the form of "Counter.0.8.23"
+                    let id_name = id.name.split('.').next().unwrap();
 
-            for id in available_ids.iter() {
-                // name might be in the form of "Counter.0.8.23"
-                let id_name = id.name.split('.').next().unwrap();
-
-                if !id.source.ends_with(&file) {
-                    continue;
-                }
-                if let Some(name) = contract_name {
-                    if id_name != name {
-                        continue;
+                    if let Some(path) = &file {
+                        if !id.source.ends_with(path) {
+                            return false;
+                        }
                     }
-                }
-                if let Some(ref version) = version {
-                    if id.version.minor != version.minor ||
-                        id.version.major != version.major ||
-                        id.version.patch != version.patch
-                    {
-                        continue;
+                    if let Some(name) = contract_name {
+                        if id_name != name {
+                            return false;
+                        }
                     }
-                }
-                if artifact.is_some() {
-                    return Err(fmt_err!("Multiple matching artifacts found"));
-                }
-                artifact = Some(id);
-            }
+                    if let Some(ref version) = version {
+                        if id.version.minor != version.minor ||
+                            id.version.major != version.major ||
+                            id.version.patch != version.patch
+                        {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .collect::<Vec<_>>();
 
-            let artifact = artifact.ok_or_else(|| fmt_err!("No matching artifact found"))?;
+            let artifact = match filtered.len() {
+                0 => Err(fmt_err!("No matching artifact found")),
+                1 => Ok(filtered[0]),
+                _ => {
+                    // If we know the current script/test contract solc version, try to filter by it
+                    state
+                        .config
+                        .running_version
+                        .as_ref()
+                        .and_then(|version| {
+                            let filtered = filtered
+                                .into_iter()
+                                .filter(|id| id.version == *version)
+                                .collect::<Vec<_>>();
+
+                            (filtered.len() == 1).then_some(filtered[0])
+                        })
+                        .ok_or_else(|| fmt_err!("Multiple matching artifacts found"))
+                }
+            }?;
+
             Ok(artifact.path.clone())
         } else {
-            let file = file.to_string_lossy();
-            let contract_name = if let Some(contract_name) = contract_name {
-                contract_name.to_owned()
-            } else {
-                file.replace(".sol", "")
-            };
-            Ok(state.config.paths.artifacts.join(format!("{file}/{contract_name}.json")))
+            let path_in_artifacts =
+                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                    (Some(file), Some(contract_name)) => Ok(format!("{file}/{contract_name}.json")),
+                    (None, Some(contract_name)) => {
+                        Ok(format!("{contract_name}.sol/{contract_name}.json"))
+                    }
+                    (Some(file), None) => {
+                        let name = file.replace(".sol", "");
+                        Ok(format!("{file}/{name}.json"))
+                    }
+                    _ => Err(fmt_err!("Invalid artifact path")),
+                }?;
+            Ok(state.config.paths.artifacts.join(path_in_artifacts))
         }
     }
 }
@@ -443,8 +495,8 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
     };
     Ok(FfiResult {
         exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout,
-        stderr: output.stderr,
+        stdout: encoded_stdout.into(),
+        stderr: output.stderr.into(),
     })
 }
 
@@ -485,6 +537,7 @@ fn prompt(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
+    use alloy_primitives::Bytes;
     use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {
@@ -502,7 +555,7 @@ mod tests {
         let cheats = cheats();
         let args = ["echo".to_string(), hex::encode(msg)];
         let output = ffi(&cheats, &args).unwrap();
-        assert_eq!(output.stdout, msg);
+        assert_eq!(output.stdout, Bytes::from(msg));
     }
 
     #[test]
@@ -511,7 +564,7 @@ mod tests {
         let cheats = cheats();
         let args = ["echo".to_string(), msg.to_string()];
         let output = ffi(&cheats, &args).unwrap();
-        assert_eq!(output.stdout, msg.as_bytes());
+        assert_eq!(output.stdout, Bytes::from(msg.as_bytes()));
     }
 
     #[test]

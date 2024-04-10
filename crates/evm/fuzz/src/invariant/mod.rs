@@ -10,7 +10,23 @@ mod filters;
 pub use filters::{ArtifactFilters, SenderFilters};
 
 pub type TargetedContracts = BTreeMap<Address, (String, JsonAbi, Vec<Function>)>;
-pub type FuzzRunIdentifiedContracts = Arc<Mutex<TargetedContracts>>;
+
+/// Contracts identified as targets during a fuzz run.
+/// During execution, any newly created contract is added as target and used through the rest of
+/// the fuzz run if the collection is updatable (no `targetContract` specified in `setUp`).
+#[derive(Clone, Debug)]
+pub struct FuzzRunIdentifiedContracts {
+    /// Contracts identified as targets during a fuzz run.
+    pub targets: Arc<Mutex<TargetedContracts>>,
+    /// Whether target contracts are updatable or not.
+    pub is_updatable: bool,
+}
+
+impl FuzzRunIdentifiedContracts {
+    pub fn new(targets: TargetedContracts, is_updatable: bool) -> Self {
+        Self { targets: Arc::new(Mutex::new(targets)), is_updatable }
+    }
+}
 
 /// (Sender, (TargetContract, Calldata))
 pub type BasicTxDetails = (Address, (Address, Bytes));

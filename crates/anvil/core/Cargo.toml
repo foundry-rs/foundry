@@ -12,11 +12,15 @@ repository.workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-evm.workspace = true
-revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
+revm = { workspace = true, default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types = { workspace = true }
-alloy-rpc-trace-types.workspace = true
+alloy-rpc-types-trace.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-network = { workspace = true, features = ["k256"] }
@@ -27,7 +31,7 @@ alloy-trie.workspace = true
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = "1.4"
-c-kzg = { version = "0.4.2", features = ["serde"] }
+c-kzg = { version = "1", features = ["serde"] }
 
 # misc
 rand = "0.8"

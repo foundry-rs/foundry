@@ -1,19 +1,17 @@
 use crate::tx;
+use alloy_network::{AnyNetwork, EthereumSigner};
+use alloy_primitives::{Address, U64};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_signer::Signer;
+use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
-use ethers_core::types::NameOrAddress;
-use ethers_middleware::SignerMiddleware;
-use ethers_providers::Middleware;
-use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{
-    cli_warn,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{cli_warn, ens::NameOrAddress};
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
@@ -38,7 +36,7 @@ pub struct SendTxArgs {
 
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
-    confirmations: usize,
+    confirmations: u64,
 
     /// Print the transaction receipt as JSON.
     #[arg(long, short, help_heading = "Display options")]
@@ -114,6 +112,11 @@ impl SendTxArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
+        let to = match to {
+            Some(to) => Some(to.resolve(&provider).await?),
+            None => None,
+        };
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
@@ -121,15 +124,15 @@ impl SendTxArgs {
         if unlocked {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
-                let current_chain_id = provider.get_chainid().await?.as_u64();
+                let current_chain_id = provider.get_chain_id().await?;
                 let config_chain_id = config_chain.id();
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
                 if config_chain_id != current_chain_id {
                     cli_warn!("Switching to chain {}", config_chain);
                     provider
-                        .request(
-                            "wallet_switchEthereumChain",
+                        .raw_request(
+                            "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
                                 "chainId": format!("0x{:x}", config_chain_id),
                             })],
@@ -139,17 +142,13 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(
-                    provider
-                        .get_transaction_count(config.sender.to_ethers(), None)
-                        .await?
-                        .to_alloy(),
-                );
+                tx.nonce =
+                    Some(U64::from(provider.get_transaction_count(config.sender, None).await?));
             }
 
             cast_send(
                 provider,
-                config.sender.to_ethers(),
+                config.sender,
                 to,
                 code,
                 sig,
@@ -171,13 +170,15 @@ impl SendTxArgs {
             let signer = eth.wallet.signer().await?;
             let from = signer.address();
 
-            tx::validate_from_address(eth.wallet.from, from.to_alloy())?;
+            tx::validate_from_address(eth.wallet.from, from)?;
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
+                tx.nonce = Some(U64::from(provider.get_transaction_count(from, None).await?));
             }
 
-            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
+            let signer = EthereumSigner::from(signer);
+            let provider =
+                ProviderBuilder::<_, _, AnyNetwork>::default().signer(signer).on_provider(provider);
 
             cast_send(
                 provider,
@@ -199,10 +200,10 @@ impl SendTxArgs {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-    provider: M,
-    from: F,
-    to: Option<T>,
+async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+    provider: P,
+    from: Address,
+    to: Option<Address>,
     code: Option<String>,
     sig: Option<String>,
     args: Vec<String>,
@@ -210,19 +211,16 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     chain: Chain,
     etherscan_api_key: Option<String>,
     cast_async: bool,
-    confs: usize,
+    confs: u64,
     to_json: bool,
-) -> Result<()>
-where
-    M::Error: 'static,
-{
-    let builder_output =
+) -> Result<()> {
+    let (tx, _) =
         tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key).await?;
 
     let cast = Cast::new(provider);
 
-    let pending_tx = cast.send(builder_output).await?;
-    let tx_hash = *pending_tx;
+    let pending_tx = cast.send(tx).await?;
+    let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {
         println!("{tx_hash:#x}");

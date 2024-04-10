@@ -83,6 +83,48 @@
           "description": "The account's code was copied."
         }
       ]
+    },
+    {
+      "name": "ForgeContext",
+      "description": "Forge execution contexts.",
+      "variants": [
+        {
+          "name": "TestGroup",
+          "description": "Test group execution context (test, coverage or snapshot)."
+        },
+        {
+          "name": "Test",
+          "description": "`forge test` execution context."
+        },
+        {
+          "name": "Coverage",
+          "description": "`forge coverage` execution context."
+        },
+        {
+          "name": "Snapshot",
+          "description": "`forge snapshot` execution context."
+        },
+        {
+          "name": "ScriptGroup",
+          "description": "Script group execution context (dry run, broadcast or resume)."
+        },
+        {
+          "name": "ScriptDryRun",
+          "description": "`forge script` execution context."
+        },
+        {
+          "name": "ScriptBroadcast",
+          "description": "`forge script --broadcast` execution context."
+        },
+        {
+          "name": "ScriptResume",
+          "description": "`forge script --resume` execution context."
+        },
+        {
+          "name": "Unknown",
+          "description": "Unknown `forge` execution context."
+        }
+      ]
     }
   ],
   "structs": [
@@ -413,6 +455,37 @@
           "name": "reverted",
           "ty": "bool",
           "description": "If the access was reverted."
+        }
+      ]
+    },
+    {
+      "name": "Gas",
+      "description": "Gas used. Returned by `lastCallGas`.",
+      "fields": [
+        {
+          "name": "gasLimit",
+          "ty": "uint64",
+          "description": "The gas limit of the call."
+        },
+        {
+          "name": "gasTotalUsed",
+          "ty": "uint64",
+          "description": "The total gas used."
+        },
+        {
+          "name": "gasMemoryUsed",
+          "ty": "uint64",
+          "description": "The amount of gas used for memory expansion."
+        },
+        {
+          "name": "gasRefunded",
+          "ty": "int64",
+          "description": "The amount of gas refunded."
+        },
+        {
+          "name": "gasRemaining",
+          "ty": "uint64",
+          "description": "The amount of gas remaining."
         }
       ]
     }
@@ -4860,6 +4933,26 @@
     },
     {
       "func": {
+        "id": "isContext",
+        "description": "Returns true if `forge` command was executed in given context.",
+        "declaration": "function isContext(ForgeContext context) external view returns (bool isContext);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isContext(uint8)",
+        "selector": "0x64af255d",
+        "selectorBytes": [
+          100,
+          175,
+          37,
+          93
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "isDir",
         "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
         "declaration": "function isDir(string calldata path) external returns (bool result);",
@@ -4995,6 +5088,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "lastCallGas",
+        "description": "Gets the gas used in the last call.",
+        "declaration": "function lastCallGas() external view returns (Gas memory gas);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "lastCallGas()",
+        "selector": "0x2b589b28",
+        "selectorBytes": [
+          43,
+          88,
+          155,
+          40
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },

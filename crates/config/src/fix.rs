@@ -10,7 +10,7 @@ use std::{
 
 /// A convenience wrapper around a TOML document and the path it was read from
 struct TomlFile {
-    doc: toml_edit::Document,
+    doc: toml_edit::DocumentMut,
     path: PathBuf,
 }
 
@@ -21,11 +21,11 @@ impl TomlFile {
         Ok(Self { doc, path })
     }
 
-    fn doc(&self) -> &toml_edit::Document {
+    fn doc(&self) -> &toml_edit::DocumentMut {
         &self.doc
     }
 
-    fn doc_mut(&mut self) -> &mut toml_edit::Document {
+    fn doc_mut(&mut self) -> &mut toml_edit::DocumentMut {
         &mut self.doc
     }
 
@@ -39,7 +39,7 @@ impl TomlFile {
 }
 
 impl Deref for TomlFile {
-    type Target = toml_edit::Document;
+    type Target = toml_edit::DocumentMut;
     fn deref(&self) -> &Self::Target {
         self.doc()
     }
