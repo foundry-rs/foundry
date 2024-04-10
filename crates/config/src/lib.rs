@@ -95,10 +95,7 @@ use providers::remappings::RemappingsProvider;
 
 mod inline;
 use crate::etherscan::EtherscanEnvProvider;
-pub use inline::{
-    validate_inline_config_type, InlineConfig, InlineConfigError, InlineConfigParser,
-    InlineConfigType, InlineFixturesConfig, NatSpec,
-};
+pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 /// Foundry configuration
 ///

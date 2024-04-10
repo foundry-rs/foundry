@@ -19,7 +19,7 @@ contract Target {
         bytes memory backup,
         string memory extra
     ) external {
-        if (owner_ == 0x6B175474E89094C44Da98b954EedeAC495271d0F) {
+        if (owner_ == address(0x6B175474E89094C44Da98b954EedeAC495271d0F)) {
             ownerFound = true;
         }
         if (_amount == 1122334455) amountFound = true;
@@ -39,47 +39,26 @@ contract Target {
 /// Try to compromise target contract by finding all accepted values using fixtures.
 contract InvariantFixtures is DSTest {
     Target target;
+    address[] public owner_ = [address(0x6B175474E89094C44Da98b954EedeAC495271d0F)];
+    uint256[] public _amount = [1, 2, 1122334455];
+    int32[] public magic = [-777, 777];
 
     function setUp() public {
         target = new Target();
     }
 
-    /// forge-config: fixture
-    function owner_() external pure returns (address[] memory) {
-        address[] memory addressFixture = new address[](1);
-        addressFixture[0] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-        return addressFixture;
-    }
-
-    /// forge-config: fixture
-    function _amount() external pure returns (uint256[] memory) {
-        uint256[] memory amountFixture = new uint256[](1);
-        amountFixture[0] = 1122334455;
-        return amountFixture;
-    }
-
-    /// forge-config: fixture
-    function magic() external pure returns (int32[] memory) {
-        int32[] memory magicFixture = new int32[](1);
-        magicFixture[0] = -777;
-        return magicFixture;
-    }
-
-    /// forge-config: fixture
     function key() external pure returns (bytes32[] memory) {
         bytes32[] memory keyFixture = new bytes32[](1);
         keyFixture[0] = "abcd1234";
         return keyFixture;
     }
 
-    /// forge-config: fixture
     function backup() external pure returns (bytes[] memory) {
         bytes[] memory backupFixture = new bytes[](1);
         backupFixture[0] = "qwerty1234";
         return backupFixture;
     }
 
-    /// forge-config: fixture
     function extra() external pure returns (string[] memory) {
         string[] memory extraFixture = new string[](1);
         extraFixture[0] = "112233aabbccdd";

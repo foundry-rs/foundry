@@ -5,6 +5,7 @@ use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
+use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256};
 use eyre::Result;
@@ -12,7 +13,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
 };
-use foundry_config::{FuzzConfig, InlineFixturesConfig, InvariantConfig};
+use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     coverage::HitMaps,
@@ -76,14 +77,14 @@ impl<'a> ContractRunner<'a> {
 impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
-    pub fn setup(&mut self, setup: bool, fixtures: &InlineFixturesConfig) -> TestSetup {
-        match self._setup(setup, fixtures) {
+    pub fn setup(&mut self, setup: bool) -> TestSetup {
+        match self._setup(setup) {
             Ok(setup) => setup,
             Err(err) => TestSetup::failed(err.to_string()),
         }
     }
 
-    fn _setup(&mut self, setup: bool, fixtures: &InlineFixturesConfig) -> Result<TestSetup> {
+    fn _setup(&mut self, setup: bool) -> Result<TestSetup> {
         trace!(?setup, "Setting test contract");
 
         // We max out their balance so that they can deploy and make calls.
@@ -172,7 +173,7 @@ impl<'a> ContractRunner<'a> {
                 labeled_addresses,
                 reason,
                 coverage,
-                fuzz_fixtures: self.fuzz_fixtures(address, fixtures),
+                fuzz_fixtures: self.fuzz_fixtures(address),
             }
         } else {
             TestSetup::success(
@@ -181,35 +182,75 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 Default::default(),
                 None,
-                self.fuzz_fixtures(address, fixtures),
+                self.fuzz_fixtures(address),
             )
         };
 
         Ok(setup)
     }
 
-    /// Collect fixtures from test contract. Fixtures are functions prefixed with `fixture_` key
-    /// and followed by the name of the parameter.
+    /// Collect fixtures from test contract.
     ///
-    /// For example:
-    /// `fixture_test() returns (address[] memory)` function
-    /// define an array of addresses to be used for fuzzed `test` named parameter in scope of the
+    /// - as storage arrays defined in test contract
+    /// Fixtures can be defined:
+    /// - as functions by having inline fixture configuration and same name as the parameter to be
+    /// fuzzed
+    ///
+    /// For example, a storage variable declared as
+    /// `uint256[] public amount = [1, 2, 3];`
+    /// define an array of uint256 values to be used for fuzzing `amount` named parameter in scope
+    /// of the current test.
+    ///
+    /// For example, a function declared as
+    /// `function owner() public returns (address[] memory)`
+    /// define an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
-    fn fuzz_fixtures(&mut self, address: Address, fixtures: &InlineFixturesConfig) -> FuzzFixtures {
-        match fixtures.to_owned().get_fixtures(self.name.to_string()) {
-            Some(functions) => {
-                let mut fixtures = HashMap::with_capacity(functions.len());
-                for func in self.contract.abi.functions().filter(|f| functions.contains(&f.name)) {
+    fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
+        let mut fixtures = HashMap::new();
+        self.contract
+            .abi
+            .functions()
+            .filter(|func| {
+                !func.is_setup() &&
+                    !func.is_invariant_test() &&
+                    !func.is_invariant_target_setup() &&
+                    !func.is_test()
+            })
+            .for_each(|func| {
+                if func.inputs.is_empty() {
+                    // Read fixtures declared as functions.
                     if let Ok(CallResult { raw: _, decoded_result }) =
                         self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
                     {
                         fixtures.insert(func.name.clone(), decoded_result);
                     }
-                }
-                FuzzFixtures::new(fixtures)
-            }
-            None => FuzzFixtures::default(),
-        }
+                } else {
+                    // For reading fixtures from storage arrays we collect values by calling the
+                    // function with incremented indexes until there's an error.
+                    let mut vals = Vec::new();
+                    let mut index = 0;
+                    loop {
+                        if let Ok(CallResult { raw: _, decoded_result }) = self.executor.call(
+                            CALLER,
+                            address,
+                            func,
+                            &[DynSolValue::Uint(U256::from(index), 256)],
+                            U256::ZERO,
+                            None,
+                        ) {
+                            vals.push(decoded_result);
+                        } else {
+                            // No result returned for this index, we reached the end of storage
+                            // array or the function is not a valid fixture.
+                            break;
+                        }
+                        index += 1;
+                    }
+                    fixtures.insert(func.name.clone(), DynSolValue::Array(vals));
+                };
+            });
+
+        FuzzFixtures::new(fixtures)
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -256,7 +297,7 @@ impl<'a> ContractRunner<'a> {
         if tmp_tracing {
             self.executor.set_tracing(true);
         }
-        let setup = self.setup(needs_setup, &test_options.inline_fixtures);
+        let setup = self.setup(needs_setup);
         if tmp_tracing {
             self.executor.set_tracing(false);
         }

@@ -3,8 +3,8 @@ extern crate tracing;
 
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
-    validate_inline_config_type, Config, FuzzConfig, InlineConfig, InlineConfigError,
-    InlineConfigParser, InlineConfigType, InlineFixturesConfig, InvariantConfig, NatSpec,
+    validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
+    InvariantConfig, NatSpec,
 };
 use proptest::test_runner::{
     FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
@@ -40,8 +40,6 @@ pub struct TestOptions {
     pub inline_fuzz: InlineConfig<FuzzConfig>,
     /// Contains per-test specific "invariant" configurations.
     pub inline_invariant: InlineConfig<InvariantConfig>,
-    /// Contains per-test specific "fixture" configurations.
-    pub inline_fixtures: InlineFixturesConfig,
 }
 
 impl TestOptions {
@@ -57,45 +55,33 @@ impl TestOptions {
         let natspecs: Vec<NatSpec> = NatSpec::parse(output, root);
         let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
         let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
-        let mut inline_fixtures = InlineFixturesConfig::default();
 
         for natspec in natspecs {
-            match validate_inline_config_type(&natspec, &profiles)? {
-                InlineConfigType::Fixture => {
-                    inline_fixtures.add_fixture(natspec.contract, natspec.function);
-                }
-                InlineConfigType::Profile => {
-                    FuzzConfig::validate_configs(&natspec)?;
-                    InvariantConfig::validate_configs(&natspec)?;
+            // Perform general validation
+            validate_profiles(&natspec, &profiles)?;
+            FuzzConfig::validate_configs(&natspec)?;
+            InvariantConfig::validate_configs(&natspec)?;
 
-                    // Apply in-line configurations for the current profile
-                    let configs: Vec<String> = natspec.current_profile_configs().collect();
-                    let c: &str = &natspec.contract;
-                    let f: &str = &natspec.function;
-                    let line: String = natspec.debug_context();
+            // Apply in-line configurations for the current profile
+            let configs: Vec<String> = natspec.current_profile_configs().collect();
+            let c: &str = &natspec.contract;
+            let f: &str = &natspec.function;
+            let line: String = natspec.debug_context();
 
-                    match base_fuzz.try_merge(&configs) {
-                        Ok(Some(conf)) => inline_fuzz.insert(c, f, conf),
-                        Ok(None) => { /* No inline config found, do nothing */ }
-                        Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
-                    }
+            match base_fuzz.try_merge(&configs) {
+                Ok(Some(conf)) => inline_fuzz.insert(c, f, conf),
+                Ok(None) => { /* No inline config found, do nothing */ }
+                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+            }
 
-                    match base_invariant.try_merge(&configs) {
-                        Ok(Some(conf)) => inline_invariant.insert(c, f, conf),
-                        Ok(None) => { /* No inline config found, do nothing */ }
-                        Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
-                    }
-                }
+            match base_invariant.try_merge(&configs) {
+                Ok(Some(conf)) => inline_invariant.insert(c, f, conf),
+                Ok(None) => { /* No inline config found, do nothing */ }
+                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
             }
         }
 
-        Ok(Self {
-            fuzz: base_fuzz,
-            invariant: base_invariant,
-            inline_fuzz,
-            inline_invariant,
-            inline_fixtures,
-        })
+        Ok(Self { fuzz: base_fuzz, invariant: base_invariant, inline_fuzz, inline_invariant })
     }
 
     /// Returns a "fuzz" test runner instance. Parameters are used to select tight scoped fuzz

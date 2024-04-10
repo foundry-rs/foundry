@@ -1,12 +1,9 @@
 use crate::Config;
-pub use conf_parser::{
-    parse_config_bool, parse_config_u32, validate_inline_config_type, InlineConfigParser,
-    InlineConfigType,
-};
+pub use conf_parser::{parse_config_bool, parse_config_u32, validate_profiles, InlineConfigParser};
 pub use error::{InlineConfigError, InlineConfigParserError};
 pub use natspec::NatSpec;
 use once_cell::sync::Lazy;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 mod conf_parser;
 mod error;
@@ -14,7 +11,6 @@ mod natspec;
 
 pub const INLINE_CONFIG_FUZZ_KEY: &str = "fuzz";
 pub const INLINE_CONFIG_INVARIANT_KEY: &str = "invariant";
-pub const INLINE_CONFIG_FIXTURE_KEY: &str = "fixture";
 const INLINE_CONFIG_PREFIX: &str = "forge-config";
 
 static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: Lazy<String> = Lazy::new(|| {
@@ -41,7 +37,7 @@ impl<T> InlineConfig<T> {
     }
 
     /// Inserts an inline configuration, for a test function.
-    /// Configuration is identified by the pair "contract", "function".    
+    /// Configuration is identified by the pair "contract", "function".
     pub fn insert<C, F>(&mut self, contract_id: C, fn_name: F, config: T)
     where
         C: Into<String>,
@@ -49,28 +45,6 @@ impl<T> InlineConfig<T> {
     {
         let key = (contract_id.into(), fn_name.into());
         self.configs.insert(key, config);
-    }
-}
-
-/// Represents per-test fixtures, declared inline
-/// as structured comments in Solidity test files. This allows
-/// setting data sets for specific fuzzed parameters in a solidity test.
-#[derive(Clone, Debug, Default)]
-pub struct InlineFixturesConfig {
-    /// Maps a test-contract to a set of test-fixtures.
-    configs: HashMap<String, HashSet<String>>,
-}
-
-impl InlineFixturesConfig {
-    /// Records a function to be used as fixture for given contract.
-    /// The name of function should be the same as the name of fuzzed parameter.
-    pub fn add_fixture(&mut self, contract: String, fixture: String) {
-        self.configs.entry(contract).or_default().insert(fixture);
-    }
-
-    /// Returns functions to be used as fixtures for given contract.
-    pub fn get_fixtures(&mut self, contract: String) -> Option<&HashSet<String>> {
-        self.configs.get(&contract)
     }
 }
 

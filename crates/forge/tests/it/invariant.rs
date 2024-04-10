@@ -477,6 +477,8 @@ async fn test_invariant_fuzzed_selected_targets() {
 async fn test_invariant_fixtures() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantFixtures.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 100;
     let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
