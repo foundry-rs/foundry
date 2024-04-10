@@ -88,17 +88,10 @@ impl<'a> TraceIdentifiers<'a> {
         Ok(self)
     }
 
-    /// Enables the Etherscan identifier.
-    pub fn enable_etherscan(&mut self) {
+    /// Enables or disables the Etherscan identifier.
+    pub fn enable_etherscan(&mut self, yes: bool) {
         if let Some(etherscan) = &mut self.etherscan {
-            etherscan.enable();
-        }
-    }
-
-    /// Disables the Etherscan identifier.
-    pub fn disable_etherscan(&mut self) {
-        if let Some(etherscan) = &mut self.etherscan {
-            etherscan.disable();
+            etherscan.enable(yes);
         }
     }
 

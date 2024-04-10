@@ -458,14 +458,10 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
-                        if result.is_fork() {
-                            // Enable Etherscan decoding for forking tests.
-                            identifier.enable_etherscan();
-                        } else {
-                            // Disable Etherscan decoding for local tests to avoid unnecessary API
-                            // calls that can slow down execution significantly if rate-limited.
-                            identifier.disable_etherscan();
-                        }
+                        // Enable Etherscan decoding for forking tests.
+                        // Disable Etherscan decoding for local tests to avoid unnecessary API
+                        // calls that can slow down execution significantly if rate-limited.
+                        identifier.enable_etherscan(result.is_fork());
 
                         decoder.identify(arena, &mut identifier);
                     }

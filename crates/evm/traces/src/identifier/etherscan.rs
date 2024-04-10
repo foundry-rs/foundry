@@ -57,18 +57,15 @@ impl EtherscanIdentifier {
             invalid_api_key: Arc::new(AtomicBool::new(false)),
             contracts: BTreeMap::new(),
             sources: BTreeMap::new(),
-            enabled: true,
+            // By default, the Etherscan identifier is disabled.
+            // It is enabled for forking tests and disabled for local tests on a per test basis.
+            enabled: false,
         }))
     }
 
-    /// Enables the Etherscan identifier.
-    pub fn enable(&mut self) {
-        self.enabled = true;
-    }
-
-    /// Disables the Etherscan identifier.
-    pub fn disable(&mut self) {
-        self.enabled = false;
+    /// Enables or disables the Etherscan identifier.
+    pub fn enable(&mut self, yes: bool) {
+        self.enabled = yes;
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
