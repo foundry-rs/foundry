@@ -41,10 +41,16 @@ contract InvariantFixtures is DSTest {
     Target target;
     address[] public owner_ = [address(0x6B175474E89094C44Da98b954EedeAC495271d0F)];
     uint256[] public _amount = [1, 2, 1122334455];
-    int32[] public magic = [-777, 777];
 
     function setUp() public {
         target = new Target();
+    }
+
+    function magic() external returns (int32[2] memory) {
+        int32[2] memory magic;
+        magic[0] = -777;
+        magic[1] = 777;
+        return magic;
     }
 
     function key() external pure returns (bytes32[] memory) {

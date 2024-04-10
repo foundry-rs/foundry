@@ -291,7 +291,10 @@ impl FuzzFixtures {
     /// Returns configured fixtures for `param_name` fuzzed parameter.
     pub fn param_fixtures(&self, param_name: &String) -> Option<&[DynSolValue]> {
         if let Some(param_fixtures) = self.inner.get(param_name) {
-            param_fixtures.as_array()
+            match param_fixtures {
+                DynSolValue::FixedArray(_) => param_fixtures.as_fixed_array(),
+                _ => param_fixtures.as_array(),
+            }
         } else {
             None
         }
