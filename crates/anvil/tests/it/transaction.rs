@@ -61,6 +61,7 @@ async fn can_transfer_eth() {
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 }
 
+// TODO: Come back to this after https://github.com/alloy-rs/alloy/issues/389 is fixed.
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -84,8 +85,6 @@ async fn can_order_transactions() {
     let tx = WithOtherFields::new(tx);
     let tx_lower = provider.send_transaction(tx).await.unwrap();
 
-    println!("Lower tx: {:?}", tx_lower);
-
     // craft the tx with higher price
     let mut tx = AlloyTransactionRequest::default().to(Some(from)).from(to).value(amount);
 
@@ -93,21 +92,11 @@ async fn can_order_transactions() {
     let tx = WithOtherFields::new(tx);
     let tx_higher = provider.send_transaction(tx).await.unwrap();
 
-    println!("Higher tx: {:?}", tx_higher);
-
     // manually mine the block with the transactions
     api.mine_one().await;
 
-    let block = provider.get_block(AlloyBlockId::latest(), false).await.unwrap().unwrap();
-
-    println!("Mined block Txs: {:?}", block.transactions);
-
     let higher_price = tx_higher.get_receipt().await.unwrap().transaction_hash;
-    println!("Higher price hash: {:?}", higher_price);
-
-    let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
-
-    println!("Lower price hash: {:?}", lower_price);
+    let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash; // Awaits endlessly here due to https://github.com/alloy-rs/alloy/issues/389
 
     // get the block, await receipts
     let block = provider.get_block(AlloyBlockId::latest(), false).await.unwrap().unwrap();
@@ -115,41 +104,51 @@ async fn can_order_transactions() {
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
 
+// TODO: Revisit after https://github.com/alloy-rs/alloy/issues/389 is fixed.
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
+    let tx =
+        AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce + 1);
+
+    let tx = WithOtherFields::new(tx);
 
     // send the transaction with higher nonce than on chain
-    let higher_pending_tx =
-        provider.send_transaction(tx.clone().nonce(nonce + 1u64), None).await.unwrap();
+    let higher_pending_tx = provider.send_transaction(tx).await.unwrap();
 
     // ensure the listener for ready transactions times out
     let mut listener = api.new_ready_transactions();
     let res = timeout(Duration::from_millis(1500), listener.next()).await;
     res.unwrap_err();
 
+    let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce);
+
+    let tx = WithOtherFields::new(tx);
     // send with the actual nonce which is mined immediately
-    let tx =
-        provider.send_transaction(tx.nonce(nonce), None).await.unwrap().await.unwrap().unwrap();
+    let tx = provider.send_transaction(tx).await.unwrap();
 
+    let tx = tx.get_receipt().await.unwrap();
     // this will unblock the currently pending tx
-    let higher_tx = higher_pending_tx.await.unwrap().unwrap();
+    let higher_tx = higher_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
-    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
     assert_eq!(2, block.transactions.len());
-    assert_eq!(vec![tx.transaction_hash, higher_tx.transaction_hash], block.transactions);
+    assert_eq!(
+        BlockTransactions::Hashes(vec![tx.transaction_hash, higher_tx.transaction_hash]),
+        block.transactions
+    );
 }
 
+// TODO: Revisit after alloy/#389 is fixed.
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -157,9 +156,9 @@ async fn can_replace_transaction() {
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -167,62 +166,77 @@ async fn can_replace_transaction() {
     let gas_price = provider.get_gas_price().await.unwrap();
     let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from).nonce(nonce);
+    let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce);
 
+    let mut tx = WithOtherFields::new(tx);
+
+    tx.set_gas_price(gas_price);
     // send transaction with lower gas price
-    let lower_priced_pending_tx =
-        provider.send_transaction(tx.clone().gas_price(gas_price), None).await.unwrap();
+    let lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
 
+    tx.set_gas_price(gas_price + 1);
     // send the same transaction with higher gas price
-    let higher_priced_pending_tx =
-        provider.send_transaction(tx.gas_price(gas_price + 1u64), None).await.unwrap();
+    let higher_priced_pending_tx = provider.send_transaction(tx).await.unwrap();
 
     // mine exactly one block
     api.mine_one().await;
 
-    // lower priced transaction was replaced
-    let lower_priced_receipt = lower_priced_pending_tx.await.unwrap();
-    assert!(lower_priced_receipt.is_none());
+    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
 
-    let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
+    // lower priced transaction was replaced
+    let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
+
+    let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
     // ensure that only the replacement tx was mined
-    let block = provider.get_block(1u64).await.unwrap().unwrap();
+
     assert_eq!(1, block.transactions.len());
-    assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
+    assert_eq!(
+        BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
+        block.transactions
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_too_high_gas_limits() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = api.gas_limit();
+    let gas_limit = api.gas_limit().to::<u128>();
     let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
+    let tx = AlloyTransactionRequest::default()
+        .to(Some(to))
+        .value(amount)
+        .from(from)
+        .with_gas_limit(gas_limit);
+
+    let mut tx = WithOtherFields::new(tx);
 
     // send transaction with the exact gas limit
-    let pending = provider.send_transaction(tx.clone().gas(gas_limit.to_ethers()), None).await;
+    let pending = provider.send_transaction(tx.clone()).await.unwrap();
 
-    pending.unwrap();
+    let pending_receipt = pending.get_receipt().await;
+    assert!(pending_receipt.is_ok());
+
+    tx.set_gas_limit(gas_limit + 1);
 
     // send transaction with higher gas limit
-    let pending =
-        provider.send_transaction(tx.clone().gas(gas_limit.to_ethers() + 1u64), None).await;
+    let pending = provider.send_transaction(tx.clone()).await;
 
     assert!(pending.is_err());
     let err = pending.unwrap_err();
     assert!(err.to_string().contains("gas too high"));
 
-    api.anvil_set_balance(from.to_alloy(), U256::MAX.to_alloy()).await.unwrap();
+    api.anvil_set_balance(from, rU256::MAX).await.unwrap();
 
-    let pending = provider.send_transaction(tx.gas(gas_limit.to_ethers()), None).await;
-    pending.unwrap();
+    tx.set_gas_limit(gas_limit);
+    let pending = provider.send_transaction(tx).await;
+    let _ = pending.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -232,9 +246,9 @@ async fn can_reject_underpriced_replacement() {
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -242,26 +256,32 @@ async fn can_reject_underpriced_replacement() {
     let gas_price = provider.get_gas_price().await.unwrap();
     let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from).nonce(nonce);
+    let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce);
 
+    let mut tx = WithOtherFields::new(tx);
+
+    tx.set_gas_price(gas_price + 1);
     // send transaction with higher gas price
-    let higher_priced_pending_tx =
-        provider.send_transaction(tx.clone().gas_price(gas_price + 1u64), None).await.unwrap();
+    let higher_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
 
+    tx.set_gas_price(gas_price);
     // send the same transaction with lower gas price
-    let lower_priced_pending_tx = provider.send_transaction(tx.gas_price(gas_price), None).await;
+    let lower_priced_pending_tx = provider.send_transaction(tx).await;
 
     let replacement_err = lower_priced_pending_tx.unwrap_err();
     assert!(replacement_err.to_string().contains("replacement transaction underpriced"));
 
     // mine exactly one block
     api.mine_one().await;
-    let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
+    let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
-    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
     assert_eq!(1, block.transactions.len());
-    assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
+    assert_eq!(
+        BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
+        block.transactions
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
