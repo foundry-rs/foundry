@@ -57,9 +57,9 @@ impl EtherscanIdentifier {
             invalid_api_key: Arc::new(AtomicBool::new(false)),
             contracts: BTreeMap::new(),
             sources: BTreeMap::new(),
-            // By default, the Etherscan identifier is disabled.
-            // It is enabled for forking tests and disabled for local tests on a per test basis.
-            enabled: false,
+            // By default, the Etherscan identifier is enabled to cover edge cases.
+            // It is disabled for local tests and enabled for forked tests on a per test basis.
+            enabled: true,
         }))
     }
 

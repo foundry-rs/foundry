@@ -432,7 +432,7 @@ impl TestResult {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
-    /// Returns `true` if this is the result of a forked test
+    /// Returns `true` if this is the result of a fork test
     pub fn is_fork(&self) -> bool {
         matches!(self.environment, TestEnvironment::Fork { .. })
     }
@@ -444,7 +444,47 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
-        format!("{self} {name} {}", self.kind.report())
+        format!("{self} {name} {}{}", self.environment.report(), self.kind.report())
+    }
+}
+
+/// Various types of tests
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TestKind {
+    /// A standard test that consists of calling the defined solidity function
+    ///
+    /// Holds the consumed gas
+    Standard(u64),
+    /// A solidity fuzz test, that stores all test cases
+    Fuzz {
+        /// we keep this for the debugger
+        first_case: FuzzCase,
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+    },
+    /// A solidity invariant test, that stores all test cases
+    Invariant { runs: usize, calls: usize, reverts: usize },
+}
+
+impl Default for TestKind {
+    fn default() -> Self {
+        Self::Standard(0)
+    }
+}
+
+impl TestKind {
+    /// The gas consumed by this test
+    pub fn report(&self) -> TestKindReport {
+        match self {
+            TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
+            TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
+                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            }
+            TestKind::Invariant { runs, calls, reverts } => {
+                TestKindReport::Invariant { runs: *runs, calls: *calls, reverts: *reverts }
+            }
+        }
     }
 }
 
@@ -493,7 +533,7 @@ pub enum TestEnvironment {
     /// A forked test environment
     Fork {
         /// The block number at which the test was executed
-        block: u64,
+        block_number: u64,
     },
 }
 
@@ -503,42 +543,30 @@ impl Default for TestEnvironment {
     }
 }
 
-/// Various types of tests
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TestKind {
-    /// A standard test that consists of calling the defined solidity function
-    ///
-    /// Holds the consumed gas
-    Standard(u64),
-    /// A solidity fuzz test, that stores all test cases
-    Fuzz {
-        /// we keep this for the debugger
-        first_case: FuzzCase,
-        runs: usize,
-        mean_gas: u64,
-        median_gas: u64,
-    },
-    /// A solidity invariant test, that stores all test cases
-    Invariant { runs: usize, calls: usize, reverts: usize },
-}
-
-impl Default for TestKind {
-    fn default() -> Self {
-        Self::Standard(0)
+impl TestEnvironment {
+    // The environment in which the test was run
+    pub fn report(&self) -> TestEnvironmentReport {
+        match self {
+            TestEnvironment::Standard => TestEnvironmentReport::Standard,
+            TestEnvironment::Fork { block_number } => {
+                TestEnvironmentReport::Fork { block_number: *block_number }
+            }
+        }
     }
 }
 
-impl TestKind {
-    /// The gas consumed by this test
-    pub fn report(&self) -> TestKindReport {
+/// Environment report by a test.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TestEnvironmentReport {
+    Standard,
+    Fork { block_number: u64 },
+}
+
+impl fmt::Display for TestEnvironmentReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
-            TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
-                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
-            }
-            TestKind::Invariant { runs, calls, reverts } => {
-                TestKindReport::Invariant { runs: *runs, calls: *calls, reverts: *reverts }
-            }
+            TestEnvironmentReport::Standard => write!(f, ""),
+            TestEnvironmentReport::Fork { block_number } => write!(f, "(block: {block_number}) "),
         }
     }
 }
