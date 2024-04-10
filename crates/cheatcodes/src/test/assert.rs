@@ -1122,13 +1122,17 @@ fn uint_assert_approx_eq_rel(
     right: U256,
     max_delta: U256,
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
-    if right.is_zero() && !left.is_zero() {
-        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-            left,
-            right,
-            max_delta,
-            real_delta: EqRelDelta::Undefined,
-        })))
+    if right.is_zero() {
+        if left.is_zero() {
+            return Ok(Default::default())
+        } else {
+            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+                left,
+                right,
+                max_delta,
+                real_delta: EqRelDelta::Undefined,
+            })))
+        };
     }
 
     let delta = get_delta_uint(left, right)
@@ -1153,13 +1157,17 @@ fn int_assert_approx_eq_rel(
     right: I256,
     max_delta: U256,
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
-    if right.is_zero() && !left.is_zero() {
-        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-            left,
-            right,
-            max_delta,
-            real_delta: EqRelDelta::Undefined,
-        })))
+    if right.is_zero() {
+        if left.is_zero() {
+            return Ok(Default::default())
+        } else {
+            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+                left,
+                right,
+                max_delta,
+                real_delta: EqRelDelta::Undefined,
+            })))
+        }
     }
 
     let (_, abs_right) = right.into_sign_and_abs();
