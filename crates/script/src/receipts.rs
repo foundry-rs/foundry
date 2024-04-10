@@ -1,27 +1,24 @@
 use super::sequence::ScriptSequence;
-use alloy_primitives::TxHash;
-use ethers_core::types::TransactionReceipt;
-use ethers_providers::{Middleware, PendingTransaction};
+use alloy_chains::Chain;
+use alloy_primitives::{utils::format_units, TxHash, U256};
+use alloy_provider::{PendingTransactionBuilder, Provider};
+use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::Result;
-use foundry_cli::{init_progress, update_progress, utils::print_receipt};
-use foundry_common::{
-    provider::ethers::RetryProvider,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_cli::{init_progress, update_progress};
+use foundry_common::provider::alloy::RetryProvider;
 use futures::StreamExt;
 use std::sync::Arc;
 
 /// Convenience enum for internal signalling of transaction status
 enum TxStatus {
     Dropped,
-    Success(TransactionReceipt),
-    Revert(TransactionReceipt),
+    Success(AnyTransactionReceipt),
+    Revert(AnyTransactionReceipt),
 }
 
-impl From<TransactionReceipt> for TxStatus {
-    fn from(receipt: TransactionReceipt) -> Self {
-        let status = receipt.status.expect("receipt is from an ancient, pre-EIP658 block");
-        if status.is_zero() {
+impl From<AnyTransactionReceipt> for TxStatus {
+    fn from(receipt: AnyTransactionReceipt) -> Self {
+        if !receipt.inner.inner.inner.receipt.status {
             TxStatus::Revert(receipt)
         } else {
             TxStatus::Success(receipt)
@@ -68,7 +65,7 @@ pub async fn clear_pendings(
     let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
 
     let mut errors: Vec<String> = vec![];
-    let mut receipts = Vec::<TransactionReceipt>::with_capacity(count);
+    let mut receipts = Vec::<AnyTransactionReceipt>::with_capacity(count);
 
     // set up progress bar
     let mut pos = 0;
@@ -87,7 +84,7 @@ pub async fn clear_pendings(
             }
             Ok(TxStatus::Success(receipt)) => {
                 trace!(tx_hash=?tx_hash, "received tx receipt");
-                deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
+                deployment_sequence.remove_pending(receipt.transaction_hash);
                 receipts.push(receipt);
             }
             Ok(TxStatus::Revert(receipt)) => {
@@ -95,7 +92,7 @@ pub async fn clear_pendings(
                 // if this is not removed from pending, then the script becomes
                 // un-resumable. Is this desirable on reverts?
                 warn!(tx_hash=?tx_hash, "Transaction Failure");
-                deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
+                deployment_sequence.remove_pending(receipt.transaction_hash);
                 errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
             }
         }
@@ -105,7 +102,7 @@ pub async fn clear_pendings(
     }
 
     // sort receipts by blocks asc and index
-    receipts.sort_unstable();
+    receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
 
     // print all receipts
     for receipt in receipts {
@@ -136,20 +133,53 @@ async fn check_tx_status(
     // still neatly return the tuple
     let result = async move {
         // First check if there's a receipt
-        let receipt_opt = provider.get_transaction_receipt(hash.to_ethers()).await?;
+        let receipt_opt = provider.get_transaction_receipt(hash).await?;
         if let Some(receipt) = receipt_opt {
             return Ok(receipt.into());
         }
 
         // If the tx is present in the mempool, run the pending tx future, and
         // assume the next drop is really really real
-        let pending_res = PendingTransaction::new(hash.to_ethers(), provider).await?;
-        match pending_res {
-            Some(receipt) => Ok(receipt.into()),
-            None => Ok(TxStatus::Dropped),
-        }
+        Ok(PendingTransactionBuilder::new(provider, hash)
+            .get_receipt()
+            .await
+            .map_or(TxStatus::Dropped, |r| r.into()))
     }
     .await;
 
     (hash, result)
+}
+
+/// Prints parts of the receipt to stdout
+pub fn print_receipt(chain: Chain, receipt: &AnyTransactionReceipt) {
+    let gas_used = receipt.gas_used;
+    let gas_price = receipt.effective_gas_price;
+    foundry_common::shell::println(format!(
+        "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
+        status = if !receipt.inner.inner.inner.receipt.status {
+            "❌  [Failed]"
+        } else {
+            "✅  [Success]"
+        },
+        tx_hash = receipt.transaction_hash,
+        caddr = if let Some(addr) = &receipt.contract_address {
+            format!("\nContract Address: {}", addr.to_checksum(None))
+        } else {
+            String::new()
+        },
+        bn = receipt.block_number.unwrap_or_default(),
+        gas = if gas_price == 0 {
+            format!("Gas Used: {gas_used}")
+        } else {
+            let paid = format_units(gas_used.saturating_mul(gas_price), 18)
+                .unwrap_or_else(|_| "N/A".into());
+            let gas_price = format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());
+            format!(
+                "Paid: {} ETH ({gas_used} gas * {} gwei)",
+                paid.trim_end_matches('0'),
+                gas_price.trim_end_matches('0').trim_end_matches('.')
+            )
+        },
+    ))
+    .expect("could not print receipt");
 }

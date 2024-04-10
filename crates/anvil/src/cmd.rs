@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, U256};
-use alloy_signer::coins_bip39::{English, Mnemonic};
+use alloy_signer_wallet::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
@@ -194,9 +194,9 @@ impl NodeArgs {
         };
 
         NodeConfig::default()
-            .with_gas_limit(self.evm_opts.gas_limit.map(U256::from))
+            .with_gas_limit(self.evm_opts.gas_limit)
             .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
-            .with_gas_price(self.evm_opts.gas_price.map(U256::from))
+            .with_gas_price(self.evm_opts.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
@@ -216,7 +216,7 @@ impl NodeArgs {
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
-            .with_base_fee(self.evm_opts.block_base_fee_per_gas.map(U256::from))
+            .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
@@ -455,7 +455,7 @@ pub struct AnvilEvmArgs {
 
     /// The block gas limit.
     #[arg(long, alias = "block-gas-limit", help_heading = "Environment config")]
-    pub gas_limit: Option<u64>,
+    pub gas_limit: Option<u128>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
     #[arg(
@@ -474,7 +474,7 @@ pub struct AnvilEvmArgs {
 
     /// The gas price.
     #[arg(long, help_heading = "Environment config")]
-    pub gas_price: Option<u64>,
+    pub gas_price: Option<u128>,
 
     /// The base fee in a block.
     #[arg(
@@ -483,7 +483,7 @@ pub struct AnvilEvmArgs {
         value_name = "FEE",
         help_heading = "Environment config"
     )]
-    pub block_base_fee_per_gas: Option<u64>,
+    pub block_base_fee_per_gas: Option<u128>,
 
     /// The chain ID.
     #[arg(long, alias = "chain", help_heading = "Environment config")]

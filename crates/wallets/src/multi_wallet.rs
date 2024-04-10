@@ -3,11 +3,10 @@ use crate::{
     wallet_signer::{PendingSigner, WalletSigner},
 };
 use alloy_primitives::Address;
+use alloy_signer::Signer;
 use clap::Parser;
 use derive_builder::Builder;
-use ethers_signers::Signer;
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use foundry_config::Config;
 use serde::Serialize;
 use std::{collections::HashMap, iter::repeat, path::PathBuf};
@@ -24,15 +23,14 @@ pub struct MultiWallet {
 
 impl MultiWallet {
     pub fn new(pending_signers: Vec<PendingSigner>, signers: Vec<WalletSigner>) -> Self {
-        let signers =
-            signers.into_iter().map(|signer| (signer.address().to_alloy(), signer)).collect();
+        let signers = signers.into_iter().map(|signer| (signer.address(), signer)).collect();
         Self { pending_signers, signers }
     }
 
     fn maybe_unlock_pending(&mut self) -> Result<()> {
         for pending in self.pending_signers.drain(..) {
             let signer = pending.unlock()?;
-            self.signers.insert(signer.address().to_alloy(), signer);
+            self.signers.insert(signer.address(), signer);
         }
         Ok(())
     }
@@ -48,7 +46,7 @@ impl MultiWallet {
     }
 
     pub fn add_signer(&mut self, signer: WalletSigner) {
-        self.signers.insert(signer.address().to_alloy(), signer);
+        self.signers.insert(signer.address(), signer);
     }
 }
 
@@ -386,7 +384,7 @@ impl MultiWalletOpts {
                 .collect::<Vec<_>>();
 
             for key in aws_keys {
-                let aws_signer = WalletSigner::from_aws(&key).await?;
+                let aws_signer = WalletSigner::from_aws(key).await?;
                 wallets.push(aws_signer)
             }
 
@@ -399,7 +397,7 @@ impl MultiWalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::{path::Path, str::FromStr};
 
     #[test]
     fn parse_keystore_args() {
@@ -439,7 +437,7 @@ mod tests {
         assert_eq!(unlocked.len(), 1);
         assert_eq!(
             unlocked[0].address(),
-            "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
+            Address::from_str("0xec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
         );
     }
 

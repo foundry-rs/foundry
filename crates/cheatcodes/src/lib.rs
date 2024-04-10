@@ -34,8 +34,10 @@ mod test;
 mod toml;
 mod utils;
 
+pub use env::set_execution_context;
 pub use script::ScriptWallets;
 pub use test::expect::ExpectedCallTracker;
+pub use Vm::ForgeContext;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {

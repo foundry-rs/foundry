@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_primitives::{Bytes, SignatureError as AlloySignatureError};
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
@@ -37,6 +37,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode receipt")]
+    FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in th EVM's environment after merge")]
@@ -180,7 +182,7 @@ pub enum InvalidTransactionError {
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required exceeds allowance: {0:?}")]
-    BasicOutOfGas(U256),
+    BasicOutOfGas(u128),
     /// Thrown if executing a transaction failed during estimate/call
     #[error("execution reverted: {0:?}")]
     Revert(Option<Bytes>),
@@ -347,6 +349,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
+                }
+                BlockchainError::FailedToDecodeReceipt => {
+                    RpcError::invalid_params("Failed to decode receipt")
                 }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")

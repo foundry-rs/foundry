@@ -6,7 +6,7 @@ use alloy_primitives::Log;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CALLER;
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::invariant::{BasicTxDetails, InvariantContract};
+use foundry_evm_fuzz::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract};
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
 use revm::primitives::U256;
 use std::borrow::Cow;
@@ -16,6 +16,7 @@ use std::borrow::Cow;
 /// Either returns the call result if successful, or nothing if there was an error.
 pub fn assert_invariants(
     invariant_contract: &InvariantContract<'_>,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
     executor: &Executor,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
@@ -49,6 +50,7 @@ pub fn assert_invariants(
         if invariant_failures.error.is_none() {
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
+                targeted_contracts,
                 Some(func),
                 calldata,
                 call_result,

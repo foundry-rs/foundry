@@ -17,9 +17,7 @@ foundry-compilers = { workspace = true, features = ["project-util"] }
 foundry-config.workspace = true
 
 alloy-primitives.workspace = true
-
-ethers-core.workspace = true
-ethers-providers.workspace = true
+alloy-provider.workspace = true
 
 eyre.workspace = true
 fd-lock = "4.0.0"
