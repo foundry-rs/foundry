@@ -565,8 +565,10 @@ pub enum TestEnvironmentReport {
 impl fmt::Display for TestEnvironmentReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestEnvironmentReport::Standard => write!(f, ""),
-            TestEnvironmentReport::Fork { block_number } => write!(f, "(block: {block_number}) "),
+            TestEnvironmentReport::Fork { block_number } => {
+                write!(f, "(block: {block_number}) ")
+            }
+            _ => Ok(()),
         }
     }
 }
