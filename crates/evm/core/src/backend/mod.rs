@@ -524,7 +524,7 @@ impl Backend {
 
     /// Returns whether the backend has any active forks
     pub fn has_forks(&self) -> bool {
-        !self.inner.has_forks()
+        self.inner.has_forks()
     }
 
     /// Returns all snapshots created in this backend

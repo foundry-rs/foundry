@@ -292,7 +292,7 @@ import "src/Contract.sol";
 
 contract ContractTest is Test {
     function setUp() public {
-        vm.createSelectFork("<url>");
+        vm.createSelectFork("<url>", 19_626_899);
     }
 
     function test() public {
