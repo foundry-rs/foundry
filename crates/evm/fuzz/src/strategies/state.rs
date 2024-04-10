@@ -212,7 +212,11 @@ pub fn build_initial_state<DB: DatabaseRef>(
     let mut values = IndexSet::new();
     let mut addresses = IndexSet::new();
 
-    for (address, account) in db.accounts.iter() {
+    // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
+    let mut accs = db.accounts.iter().collect::<Vec<_>>();
+    accs.sort_by_key(|(address, _)| *address);
+
+    for (address, account) in accs {
         let address: Address = *address;
         // Insert basic account information
         values.insert(address.into_word().into());
@@ -304,10 +308,10 @@ pub fn collect_created_contracts(
     project_contracts: &ContractsByArtifact,
     setup_contracts: &ContractsByAddress,
     artifact_filters: &ArtifactFilters,
-    targeted_contracts: FuzzRunIdentifiedContracts,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.lock();
+    let mut writable_targeted = targeted_contracts.targets.lock();
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {

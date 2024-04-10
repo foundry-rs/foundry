@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
 use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
@@ -109,19 +109,15 @@ impl RunArgs {
             .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
-            tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
-        {
+        if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 tx.hash
             ));
         }
 
-        let tx_block_number = tx
-            .block_number
-            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
-            .to::<u64>();
+        let tx_block_number =
+            tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // fetch the block the transaction was mined in
         let block = provider.get_block(tx_block_number.into(), true).await?;
@@ -136,12 +132,12 @@ impl RunArgs {
         env.block.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            env.block.timestamp = block.header.timestamp;
+            env.block.timestamp = U256::from(block.header.timestamp);
             env.block.coinbase = block.header.miner;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.header.gas_limit;
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
@@ -174,8 +170,7 @@ impl RunArgs {
                     // we skip them otherwise this would cause
                     // reverts
                     if is_known_system_sender(tx.from) ||
-                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                            Some(SYSTEM_TRANSACTION_TYPE)
+                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
                         continue;

@@ -1,5 +1,5 @@
 use crate::utils::parse_ether_value;
-use alloy_primitives::U256;
+use alloy_primitives::{U256, U64};
 use clap::Parser;
 use serde::Serialize;
 
@@ -38,7 +38,7 @@ pub struct TransactionOpts {
 
     /// Nonce for the transaction.
     #[arg(long)]
-    pub nonce: Option<U256>,
+    pub nonce: Option<U64>,
 
     /// Send a legacy transaction instead of an EIP1559 transaction.
     ///
