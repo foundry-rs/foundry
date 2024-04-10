@@ -3751,8 +3751,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.3.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd3323f90e9f256a2c359dbb1cc7e1b7e4fef9e04e5a82693895e959a6efe010"
+source = "git+https://github.com/blazewashere/compilers?branch=issue47#2f3da66bab2b33ceb0b60c6bab21e06eab12f280"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3775,7 +3774,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "solang-parser",
- "svm-rs 0.4.1",
+ "svm-rs 0.5.0",
  "svm-rs-builds",
  "tempfile",
  "thiserror",
@@ -4834,6 +4833,22 @@ dependencies = [
  "native-tls",
  "tokio",
  "tokio-native-tls",
+]
+
+[[package]]
+name = "hyper-tls"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper 1.2.0",
+ "hyper-util",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+ "tower-service",
 ]
 
 [[package]]
@@ -6759,7 +6774,7 @@ dependencies = [
  "http-body 0.4.6",
  "hyper 0.14.28",
  "hyper-rustls 0.24.2",
- "hyper-tls",
+ "hyper-tls 0.5.0",
  "ipnet",
  "js-sys",
  "log",
@@ -6796,6 +6811,7 @@ checksum = "2d66674f2b6fb864665eea7a3c1ac4e3dfacd2fda83cf6f935a612e01b0e3338"
 dependencies = [
  "base64 0.21.7",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http 1.1.0",
@@ -6803,11 +6819,13 @@ dependencies = [
  "http-body-util",
  "hyper 1.2.0",
  "hyper-rustls 0.26.0",
+ "hyper-tls 0.6.0",
  "hyper-util",
  "ipnet",
  "js-sys",
  "log",
  "mime",
+ "native-tls",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
@@ -6820,6 +6838,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls 0.25.0",
  "tower-service",
  "url",
@@ -7909,16 +7928,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "svm-rs-builds"
-version = "0.4.1"
+name = "svm-rs"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bcf7abc816dd67daf88fccfb835118b0e71cf8cc3e1d0e120893e139799df6c"
+checksum = "c45cbd3c1f451842dc2eca09747ae7b578a15814a34160b96c23e3dd1965f6eb"
+dependencies = [
+ "const-hex",
+ "dirs 5.0.1",
+ "fs4",
+ "once_cell",
+ "reqwest 0.12.2",
+ "semver 1.0.22",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "url",
+ "zip",
+]
+
+[[package]]
+name = "svm-rs-builds"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a87a752d4beab7191460d9835c8d62ca21ed1e47cb07c3985650551fae0a96"
 dependencies = [
  "build_const",
  "const-hex",
  "semver 1.0.22",
  "serde_json",
- "svm-rs 0.4.1",
+ "svm-rs 0.5.0",
 ]
 
 [[package]]
