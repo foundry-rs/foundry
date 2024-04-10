@@ -18,12 +18,12 @@ contract PromptTest is DSTest {
     }
 
     function testPrompt_Address() public {
+        vm._expectCheatcodeRevert();
         address test = vm.promptAddress("test");
-        assertEq(test, 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
     }
 
     function testPrompt_Uint() public {
+        vm._expectCheatcodeRevert();
         uint256 test = vm.promptUint("test");
-        assertEq(test, 6969);
     }
 }
