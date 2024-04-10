@@ -3,7 +3,11 @@ use std::{fs::read_dir, path::PathBuf, time::Duration};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_block_explorers::{contract::Metadata, Client};
+use foundry_block_explorers::{
+    contract::{ContractCreationData, ContractMetadata, Metadata},
+    errors::EtherscanError,
+    Client,
+};
 use foundry_cli::{opts::EtherscanOpts, p_println, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
@@ -12,6 +16,7 @@ use foundry_compilers::{
     ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
+use mockall::automock;
 
 use super::{init::InitArgs, install::DependencyInstallOpts};
 
@@ -78,10 +83,30 @@ impl CloneArgs {
             // if the etherscan api key is set, we can call etherscan more frequently
             Duration::from_secs(1)
         };
+        let client = Client::new(chain, etherscan_api_key)?;
+        Self::run_with_client(
+            chain,
+            contract_address,
+            &root,
+            enable_git,
+            &client,
+            etherscan_call_interval,
+            quiet,
+        )
+        .await
+    }
 
+    pub(crate) async fn run_with_client(
+        chain: Chain,
+        contract_address: Address,
+        root: &PathBuf,
+        enable_git: bool,
+        client: &impl EtherscanClient,
+        etherscan_call_interval: Duration,
+        quiet: bool,
+    ) -> Result<()> {
         // get the contract code
         p_println!(!quiet => "Downloading the source code of {} from Etherscan...", contract_address);
-        let client = Client::new(chain, etherscan_api_key)?;
         let mut meta = client.contract_source_code(contract_address).await?;
         if meta.items.len() != 1 {
             return Err(eyre::eyre!("contract not found or ill-formed"));
@@ -154,7 +179,7 @@ impl CloneArgs {
             path: main_file,
             target_contract: meta.contract_name,
             address: contract_address,
-            chain_id: etherscan.chain.unwrap_or_default().id(),
+            chain_id: chain.id(),
             creation_transaction: creation_tx.transaction_hash,
             deployer: creation_tx.contract_creator,
             constructor_arguments: meta.constructor_arguments,
@@ -388,21 +413,59 @@ pub fn find_main_contract<'a>(
     Err(eyre::eyre!("contract not found"))
 }
 
+/// EtherscanClient is a trait that defines the methods to interact with Etherscan.
+/// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
+#[automock]
+pub(crate) trait EtherscanClient {
+    async fn contract_source_code(
+        &self,
+        address: Address,
+    ) -> std::result::Result<ContractMetadata, EtherscanError>;
+    async fn contract_creation_data(
+        &self,
+        address: Address,
+    ) -> std::result::Result<ContractCreationData, EtherscanError>;
+}
+
+impl EtherscanClient for Client {
+    #[inline]
+    async fn contract_source_code(
+        &self,
+        address: Address,
+    ) -> std::result::Result<ContractMetadata, EtherscanError> {
+        self.contract_source_code(address).await
+    }
+
+    #[inline]
+    async fn contract_creation_data(
+        &self,
+        address: Address,
+    ) -> std::result::Result<ContractCreationData, EtherscanError> {
+        self.contract_creation_data(address).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, thread::sleep, time::Duration};
+    use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
     use crate::cmd::clone::compile_project;
 
     use super::CloneArgs;
+    use alloy_primitives::Address;
+    use foundry_block_explorers::{
+        contract::{ContractCreationData, ContractMetadata},
+        Client,
+    };
     use foundry_compilers::{Artifact, ProjectCompileOutput};
+    use foundry_config::Chain;
     use hex::ToHex;
     use serial_test::serial;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         // wait 5 second to avoid etherscan rate limit
-        println!("wait for 5 seconds to avoid etherscan rate limit");
-        sleep(Duration::from_secs(5));
+        // println!("wait for 5 seconds to avoid etherscan rate limit");
+        // sleep(Duration::from_secs(5));
 
         println!("project_root: {:#?}", root);
         compile_project(root).expect("compilation failure")
@@ -428,106 +491,134 @@ mod tests {
         });
     }
 
+    fn mock_etherscan(address: Address) -> impl super::EtherscanClient {
+        // load mock data
+        let mut mocked_data = BTreeMap::new();
+        let data_folder =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/etherscan");
+        // iterate each sub folder
+        for entry in std::fs::read_dir(data_folder).expect("failed to read test data folder") {
+            let entry = entry.expect("failed to read test data entry");
+            let addr: Address = entry.file_name().to_string_lossy().parse().unwrap();
+            let contract_data_dir = entry.path();
+            // the metadata.json file contains the metadata of the contract
+            let metadata_file = contract_data_dir.join("metadata.json");
+            let metadata: ContractMetadata =
+                serde_json::from_str(&std::fs::read_to_string(metadata_file).unwrap())
+                    .expect("failed to parse metadata.json");
+            // the creation_data.json file contains the creation data of the contract
+            let creation_data_file = contract_data_dir.join("creation_data.json");
+            let creation_data: ContractCreationData =
+                serde_json::from_str(&std::fs::read_to_string(creation_data_file).unwrap())
+                    .expect("failed to parse creation_data.json");
+            // insert the data to the map
+            mocked_data.insert(addr, (metadata, creation_data));
+        }
+
+        let (metadata, creation_data) = mocked_data.get(&address).unwrap();
+        let metadata = metadata.clone();
+        let creation_data = *creation_data;
+        let mut mocked_client = super::MockEtherscanClient::new();
+        mocked_client
+            .expect_contract_source_code()
+            .times(1)
+            .returning(move |_| Ok(metadata.clone()));
+        mocked_client
+            .expect_contract_creation_data()
+            .times(1)
+            .returning(move |_| Ok(creation_data));
+        mocked_client
+    }
+
+    /// Fetch the metadata and creation data from Etherscan and dump them to the testdata folder.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
+    #[ignore = "this test is used to dump mock data from Etherscan"]
+    async fn test_dump_mock_data() {
+        let address: Address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
+        let data_folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/etherscan")
+            .join(address.to_string());
+        // create folder if not exists
+        std::fs::create_dir_all(&data_folder).unwrap();
+        // create metadata.json and creation_data.json
+        let client = Client::new(Chain::mainnet(), "").unwrap();
+        let meta = client.contract_source_code(address).await.unwrap();
+        // dump json
+        let json = serde_json::to_string_pretty(&meta).unwrap();
+        // write to metadata.json
+        std::fs::write(data_folder.join("metadata.json"), json).unwrap();
+        std::thread::sleep(Duration::from_secs(5));
+        let creation_data = client.contract_creation_data(address).await.unwrap();
+        // dump json
+        let json = serde_json::to_string_pretty(&creation_data).unwrap();
+        // write to creation_data.json
+        std::fs::write(data_folder.join("creation_data.json"), json).unwrap();
+    }
+
+    /// Run the clone command with the specified contract address and assert the compilation.
+    async fn one_test_case(address: Address, check_compilation_result: bool) {
+        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let client = mock_etherscan(address);
+        CloneArgs::run_with_client(
+            Chain::mainnet(),
+            address,
+            &project_root,
+            false,
+            &client,
+            Default::default(),
+            false,
+        )
+        .await
+        .unwrap();
+        let rv = assert_successful_compilation(&project_root);
+        if check_compilation_result {
+            let (contract_name, stripped_creation_code) =
+                pick_creation_info(&address.to_string()).expect("creation code not found");
+            assert_compilation_result(rv, contract_name, stripped_creation_code);
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[serial]
     async fn test_clone_single_file_contract() {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let args = CloneArgs {
-            address: "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".to_string(),
-            root: project_root.clone(),
-            etherscan: Default::default(),
-            quiet: false,
-            enable_git: false,
-        };
-        let (contract_name, stripped_creation_code) =
-            pick_creation_info(&args.address).expect("creation code not found");
-        args.run().await.unwrap();
-        let rv = assert_successful_compilation(&project_root);
-        assert_compilation_result(rv, contract_name, stripped_creation_code)
+        let address = "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".parse().unwrap();
+        one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[serial]
     async fn test_clone_contract_with_optimization_details() {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let args = CloneArgs {
-            address: "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".to_string(),
-            root: project_root.clone(),
-            etherscan: Default::default(),
-            quiet: false,
-            enable_git: false,
-        };
-        let (contract_name, stripped_creation_code) =
-            pick_creation_info(&args.address).expect("creation code not found");
-        args.run().await.unwrap();
-        let rv = assert_successful_compilation(&project_root);
-        assert_compilation_result(rv, contract_name, stripped_creation_code)
+        let address = "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".parse().unwrap();
+        one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[serial]
     async fn test_clone_contract_with_libraries() {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let args = CloneArgs {
-            address: "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".to_string(),
-            root: project_root.clone(),
-            etherscan: Default::default(),
-            quiet: false,
-            enable_git: false,
-        };
-        let (contract_name, stripped_creation_code) =
-            pick_creation_info(&args.address).expect("creation code not found");
-        args.run().await.unwrap();
-        let rv = assert_successful_compilation(&project_root);
-        assert_compilation_result(rv, contract_name, stripped_creation_code)
+        let address = "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".parse().unwrap();
+        one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[serial]
     async fn test_clone_contract_with_metadata() {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let args = CloneArgs {
-            address: "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".to_string(),
-            root: project_root.clone(),
-            etherscan: Default::default(),
-            quiet: false,
-            enable_git: false,
-        };
-        let (contract_name, stripped_creation_code) =
-            pick_creation_info(&args.address).expect("creation code not found");
-        args.run().await.unwrap();
-        let rv = assert_successful_compilation(&project_root);
-        assert_compilation_result(rv, contract_name, stripped_creation_code)
+        let address = "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".parse().unwrap();
+        one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[serial]
     async fn test_clone_contract_with_relative_import() {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let args = CloneArgs {
-            address: "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".to_string(),
-            root: project_root.clone(),
-            etherscan: Default::default(),
-            quiet: false,
-            enable_git: false,
-        };
-        args.run().await.unwrap();
-        assert_successful_compilation(&project_root);
+        let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
+        one_test_case(address, false).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[serial]
     async fn test_clone_contract_with_original_remappings() {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
-        let args = CloneArgs {
-            address: "0x9ab6b21cdf116f611110b048987e58894786c244".to_string(),
-            root: project_root.clone(),
-            etherscan: Default::default(),
-            quiet: false,
-            enable_git: false,
-        };
-        args.run().await.unwrap();
-        assert_successful_compilation(&project_root);
+        let address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
+        one_test_case(address, false).await
     }
 
     fn pick_creation_info(address: &str) -> Option<(&'static str, &'static str)> {

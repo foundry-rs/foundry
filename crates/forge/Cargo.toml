@@ -42,6 +42,7 @@ rayon = "1"
 serde.workspace = true
 tracing.workspace = true
 yansi = "0.5"
+mockall = "0.12"
 
 # bin
 forge-doc.workspace = true
