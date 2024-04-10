@@ -26,10 +26,8 @@ impl StringStrategy {
     /// Create a new string strategy.
     pub fn init(fixtures: Option<&[DynSolValue]>) -> BoxedStrategy<DynSolValue> {
         let value_from_fixture = |fixture: Option<&DynSolValue>| {
-            if let Some(fixture) = fixture {
-                if let Some(fixture) = fixture.as_str() {
-                    return DynSolValue::String(fixture.to_string());
-                }
+            if let Some(val @ DynSolValue::String(_)) = fixture {
+                return val.clone()
             }
             error!("{:?} is not a valid string fixture, generate random value", fixture);
             let mut rng = thread_rng();

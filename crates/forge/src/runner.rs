@@ -203,7 +203,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// For example, a function declared as
     /// `function owner() public returns (address[] memory)`
-    /// define an array of addresses to be used for fuzzing `owner` named parameter in scope of the
+    /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
         let mut fixtures = HashMap::new();

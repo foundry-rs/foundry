@@ -26,10 +26,8 @@ impl AddressStrategy {
     /// Create a new address strategy.
     pub fn init(fixtures: Option<&[DynSolValue]>) -> BoxedStrategy<DynSolValue> {
         let value_from_fixture = |fixture: Option<&DynSolValue>| {
-            if let Some(fixture) = fixture {
-                if let Some(fixture) = fixture.as_address() {
-                    return DynSolValue::Address(fixture);
-                }
+            if let Some(val @ DynSolValue::Address(_)) = fixture {
+                return val.clone()
             }
             error!("{:?} is not a valid address fixture, generate random value", fixture);
             DynSolValue::Address(Address::random())

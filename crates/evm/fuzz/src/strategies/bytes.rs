@@ -26,10 +26,8 @@ impl BytesStrategy {
     /// Create a new bytes strategy.
     pub fn init(fixtures: Option<&[DynSolValue]>) -> BoxedStrategy<DynSolValue> {
         let value_from_fixture = |fixture: Option<&DynSolValue>| {
-            if let Some(fixture) = fixture {
-                if let Some(fixture) = fixture.as_bytes() {
-                    return DynSolValue::Bytes(fixture.to_vec());
-                }
+            if let Some(val @ DynSolValue::Bytes(_)) = fixture {
+                return val.clone()
             }
             error!("{:?} is not a valid bytes fixture, generate random value", fixture);
             let random: [u8; 32] = rand::random();
