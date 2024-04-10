@@ -22,7 +22,7 @@ alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 serde.workspace = true
 eyre.workspace = true
-ethers-providers.workspace = true
+alloy-provider.workspace = true
 tracing.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }

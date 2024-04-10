@@ -152,6 +152,18 @@ async fn test_invariant() {
                 vec![("invariant_dummy()", true, None, None, None)],
             ),
             (
+                "default/fuzz/invariant/common/InvariantCustomError.t.sol:InvariantCustomError",
+                vec![("invariant_decode_error()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:ExplicitTargetContract",
+                vec![("invariant_explicit_target()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:DynamicTargetContract",
+                vec![("invariant_dynamic_targets()", true, None, None, None)],
+            ),
+            (
                 "default/fuzz/invariant/common/InvariantFixtures.t.sol:InvariantFixtures",
                 vec![(
                     "invariant_target_not_compromised()",
@@ -259,14 +271,14 @@ async fn test_invariant_shrink() {
                 let create_fren_sequence = sequence[0].clone();
                 assert_eq!(
                     create_fren_sequence.contract_name.unwrap(),
-                    "fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
+                    "default/fuzz/invariant/common/InvariantInnerContract.t.sol:Jesus"
                 );
                 assert_eq!(create_fren_sequence.signature.unwrap(), "create_fren()");
 
                 let betray_sequence = sequence[1].clone();
                 assert_eq!(
                     betray_sequence.contract_name.unwrap(),
-                    "fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
+                    "default/fuzz/invariant/common/InvariantInnerContract.t.sol:Judas"
                 );
                 assert_eq!(betray_sequence.signature.unwrap(), "betray()");
             }
@@ -410,6 +422,54 @@ async fn test_invariant_assume_respects_restrictions() {
                 None,
             )],
         )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_decode_custom_error() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantCustomError.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantCustomError.t.sol:InvariantCustomError",
+            vec![(
+                "invariant_decode_error()",
+                false,
+                Some("InvariantCustomError(111, \"custom\")".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_fuzzed_selected_targets() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/target/FuzzedTargetContracts.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:ExplicitTargetContract",
+                vec![("invariant_explicit_target()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/target/FuzzedTargetContracts.t.sol:DynamicTargetContract",
+                vec![(
+                    "invariant_dynamic_targets()",
+                    false,
+                    Some("revert: wrong target selector called".into()),
+                    None,
+                    None,
+                )],
+            ),
+        ]),
     );
 }
 

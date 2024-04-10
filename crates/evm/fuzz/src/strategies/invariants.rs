@@ -17,7 +17,7 @@ pub fn override_call_strat(
     target: Arc<RwLock<Address>>,
     fuzz_fixtures: FuzzFixtures,
 ) -> SBoxedStrategy<(Address, Bytes)> {
-    let contracts_ref = contracts.clone();
+    let contracts_ref = contracts.targets.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
         20 => any::<prop::sample::Selector>()
@@ -28,7 +28,7 @@ pub fn override_call_strat(
         let fuzz_fixtures = fuzz_fixtures.clone();
 
         let func = {
-            let contracts = contracts.lock();
+            let contracts = contracts.targets.lock();
             let (_, abi, functions) = contracts.get(&target_address).unwrap_or_else(|| {
                 // Choose a random contract if target selected by lazy strategy is not in fuzz run
                 // identified contracts. This can happen when contract is created in `setUp` call
@@ -82,7 +82,7 @@ fn generate_call(
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
             let (contract, func) = {
-                let contracts = contracts.lock();
+                let contracts = contracts.targets.lock();
                 let contracts =
                     contracts.iter().filter(|(_, (_, abi, _))| !abi.functions.is_empty());
                 let (&contract, (_, abi, functions)) = selector.select(contracts);

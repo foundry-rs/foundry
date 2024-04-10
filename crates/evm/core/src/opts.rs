@@ -1,7 +1,7 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::Block;
 use eyre::WrapErr;
 use foundry_common::{
@@ -95,7 +95,7 @@ impl EvmOpts {
         environment(
             &provider,
             self.memory_limit,
-            self.env.gas_price,
+            self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
             self.fork_block_number,
             self.sender,
@@ -205,7 +205,7 @@ impl EvmOpts {
                 .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chain_id()) {
-                return Some(Chain::from(id.to::<u64>()));
+                return Some(Chain::from(id));
             }
         }
 

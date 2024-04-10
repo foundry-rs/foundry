@@ -4,8 +4,6 @@ use crate::{
     runtime_client::{RuntimeClient, RuntimeClientBuilder},
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
-use ethers_core::types::U256;
-use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
@@ -249,44 +247,6 @@ impl ProviderBuilder {
 
         Ok(provider)
     }
-}
-
-/// Estimates EIP1559 fees depending on the chain
-///
-/// Uses custom gas oracles for
-///   - polygon
-///
-/// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
-pub async fn estimate_eip1559_fees<M: Middleware>(
-    provider: &M,
-    chain: Option<u64>,
-) -> Result<(U256, U256)>
-where
-    M::Error: 'static,
-{
-    let chain = if let Some(chain) = chain {
-        chain
-    } else {
-        provider.get_chainid().await.wrap_err("Failed to get chain id")?.as_u64()
-    };
-
-    if let Ok(chain) = NamedChain::try_from(chain) {
-        // handle chains that deviate from `eth_feeHistory` and have their own oracle
-        match chain {
-            NamedChain::Polygon | NamedChain::PolygonMumbai => {
-                // TODO: phase this out somehow
-                let chain = match chain {
-                    NamedChain::Polygon => ethers_core::types::Chain::Polygon,
-                    NamedChain::PolygonMumbai => ethers_core::types::Chain::PolygonMumbai,
-                    _ => unreachable!(),
-                };
-                let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
-                return Ok(estimator.estimate_eip1559_fees().await?);
-            }
-            _ => {}
-        }
-    }
-    provider.estimate_eip1559_fees(None).await.wrap_err("Failed fetch EIP1559 fees")
 }
 
 #[cfg(not(windows))]

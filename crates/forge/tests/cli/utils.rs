@@ -1,7 +1,8 @@
 //! Various helper functions
 
+use alloy_signer_wallet::LocalWallet;
 use ethers_core::types::{Address, Chain};
-use ethers_signers::{LocalWallet, Signer};
+use foundry_common::types::ToEthers;
 
 /// Returns the current millis since unix epoch.
 ///
@@ -46,7 +47,7 @@ pub struct EnvExternalities {
 impl EnvExternalities {
     pub fn address(&self) -> Option<Address> {
         let pk: LocalWallet = self.pk.parse().ok()?;
-        Some(pk.address())
+        Some(pk.address().to_ethers())
     }
 
     pub fn goerli() -> Option<Self> {

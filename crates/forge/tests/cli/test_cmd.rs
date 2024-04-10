@@ -526,3 +526,18 @@ contract GasLimitTest is Test {
 
     cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
 });
+
+forgetest!(test_match_path, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"  
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["test", "--match-path", "src/dummy.sol"]);
+    cmd.assert_success()
+});

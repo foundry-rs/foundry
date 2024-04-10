@@ -1,10 +1,12 @@
 use crate::opts::parse_slot;
-use alloy_primitives::{B256, U256};
+use alloy_network::AnyNetwork;
+use alloy_primitives::{Address, B256, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
+use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers_core::types::{BlockId, NameOrAddress};
-use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
@@ -14,8 +16,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
-    provider::ethers::RetryProvider,
-    types::{ToAlloy, ToEthers},
+    ens::NameOrAddress,
 };
 use foundry_compilers::{
     artifacts::StorageLayout, Artifact, ConfigurableContractArtifact, Project, Solc,
@@ -80,19 +81,19 @@ impl StorageArgs {
         let config = Config::from(&self);
 
         let Self { address, slot, block, build, .. } = self;
-
         let provider = utils::get_provider(&config)?;
+        let address = address.resolve(&provider).await?;
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
-            println!("{}", cast.storage(address, slot.to_ethers(), block).await?);
+            println!("{}", cast.storage(address, slot, block).await?);
             return Ok(());
         }
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code = provider.get_code(address.clone(), block).await?.to_alloy();
+        let address_code = provider.get_code_at(address, block.unwrap_or_default()).await?;
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
@@ -107,8 +108,7 @@ impl StorageArgs {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address.clone(), block, artifact, true)
-                    .await;
+                return fetch_and_print_storage(provider, address, block, artifact, true).await;
             }
         }
 
@@ -123,11 +123,7 @@ impl StorageArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, api_key)?;
-        let addr = address
-            .as_address()
-            .ok_or_else(|| eyre::eyre!("Could not resolve address"))?
-            .to_alloy();
-        let source = find_source(client, addr).await?;
+        let source = find_source(client, address).await?;
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
@@ -209,9 +205,9 @@ impl StorageValue {
     }
 }
 
-async fn fetch_and_print_storage(
-    provider: RetryProvider,
-    address: NameOrAddress,
+async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+    provider: P,
+    address: Address,
     block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
@@ -226,18 +222,17 @@ async fn fetch_and_print_storage(
     }
 }
 
-async fn fetch_storage_slots(
-    provider: RetryProvider,
-    address: NameOrAddress,
+async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+    provider: P,
+    address: Address,
     block: Option<BlockId>,
     layout: &StorageLayout,
 ) -> Result<Vec<StorageValue>> {
     let requests = layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
-        let raw_slot_value =
-            provider.get_storage_at(address.clone(), slot.to_ethers(), block).await?.to_alloy();
+        let raw_slot_value = provider.get_storage_at(address, slot.into(), block).await?;
 
-        let value = StorageValue { slot, raw_slot_value };
+        let value = StorageValue { slot, raw_slot_value: raw_slot_value.into() };
 
         Ok(value)
     });
