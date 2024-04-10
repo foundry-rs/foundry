@@ -1,8 +1,7 @@
-use alloy_primitives::{Address, Bytes, U256, U64};
-use alloy_providers::tmp::TempProvider;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
-use ethers_providers::Middleware;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::{
@@ -12,7 +11,6 @@ use foundry_cli::{
 use foundry_common::{
     compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
     provider::alloy::ProviderBuilder,
-    types::ToEthers,
 };
 use foundry_compilers::{
     artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
@@ -111,7 +109,7 @@ impl VerifyBytecodeArgs {
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
 
-        let code = provider.get_code_at(self.address, None).await?;
+        let code = provider.get_code_at(self.address, BlockId::latest()).await?;
         if code.is_empty() {
             eyre::bail!("No bytecode found at address {}", self.address);
         }
@@ -128,7 +126,7 @@ impl VerifyBytecodeArgs {
         // If RPC is not set, the default chain is used
         let chain = if config.get_rpc_url().is_some() {
             let chain_id = provider.get_chain_id().await?;
-            Chain::from(chain_id.to::<u64>())
+            Chain::from(chain_id)
         } else {
             config.chain.unwrap_or_default()
         };
@@ -258,11 +256,12 @@ impl VerifyBytecodeArgs {
             Some(_) => eyre::bail!("Invalid block number"),
             None => {
                 let provider = utils::get_provider(&config)?;
-                provider.get_transaction(creation_data.transaction_hash.to_ethers()).await?
-                    .ok_or_else(|| eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag"))?
-                    .block_number
-                    .ok_or_else(|| eyre::eyre!("Transaction does not have a block number"))?
-                    .as_u64()
+                provider
+                    .get_transaction_by_hash(creation_data.transaction_hash)
+                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+                    .block_number.ok_or_else(|| {
+                        eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
+                    })?
             }
         };
 
@@ -286,15 +285,15 @@ impl VerifyBytecodeArgs {
         let prev_block_nonce = provider
             .get_transaction_count(creation_data.contract_creator, Some(prev_block_id))
             .await?;
-        transaction.nonce = U64::from(prev_block_nonce);
+        transaction.nonce = prev_block_nonce;
 
         if let Some(ref block) = block {
-            env.block.timestamp = block.header.timestamp;
+            env.block.timestamp = U256::from(block.header.timestamp);
             env.block.coinbase = block.header.miner;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.header.gas_limit;
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
         }
 
         configure_tx_env(&mut env, &transaction);
@@ -337,10 +336,7 @@ impl VerifyBytecodeArgs {
             })?;
 
         let onchain_runtime_code = provider
-            .get_code_at(
-                self.address,
-                Some(BlockId::Number(BlockNumberOrTag::Number(simulation_block))),
-            )
+            .get_code_at(self.address, BlockId::Number(BlockNumberOrTag::Number(simulation_block)))
             .await?;
 
         // Compare the runtime bytecode with the locally built bytecode

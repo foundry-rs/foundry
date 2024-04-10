@@ -20,7 +20,6 @@ hex.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types.workspace = true
-alloy-providers.workspace = true
 revm-primitives.workspace = true
 serde.workspace = true
 eyre.workspace = true
