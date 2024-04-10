@@ -2,7 +2,10 @@
 
 use crate::{
     config::*,
-    test_helpers::{ForgeTestData, RE_PATH_SEPARATOR, TEST_DATA_DEFAULT, TEST_DATA_MULTI_VERSION},
+    test_helpers::{
+        ForgeTestData, RE_PATH_SEPARATOR, TEST_DATA_CANCUN, TEST_DATA_DEFAULT,
+        TEST_DATA_MULTI_VERSION,
+    },
 };
 use foundry_config::{fs_permissions::PathPermission, FsPermissions};
 use foundry_test_utils::Filter;
@@ -49,4 +52,9 @@ async fn test_cheats_local_default_isolated() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local_multi_version() {
     test_cheats_local(&TEST_DATA_MULTI_VERSION).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cheats_local_cancun() {
+    test_cheats_local(&TEST_DATA_CANCUN).await
 }
