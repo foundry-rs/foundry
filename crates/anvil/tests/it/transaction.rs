@@ -1,23 +1,22 @@
 use crate::{
     abi::*,
-    utils::{ethers_http_provider, ethers_ws_provider},
+    utils::{ethers_http_provider, ethers_ws_provider, http_provider},
 };
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Bytes, U256 as rU256};
+use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest as AlloyTransactionRequest,
     state::{AccountOverride, StateOverride},
-    BlockNumberOrTag, WithOtherFields,
+    BlockId as AlloyBlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
 };
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    prelude::{
-        signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
-        TransactionRequest,
-    },
+    prelude::{signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware},
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
+        Address, BlockNumber, Transaction, TransactionReceipt, TransactionRequest, H256, U256,
     },
 };
 use foundry_common::types::{ToAlloy, ToEthers};
@@ -28,14 +27,14 @@ use tokio::time::timeout;
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert!(nonce.is_zero());
+    assert!(nonce == 0);
 
     let balance_before = provider.get_balance(to, None).await.unwrap();
 
@@ -43,32 +42,34 @@ async fn can_transfer_eth() {
 
     // craft the tx
     // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
-
+    let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
     // broadcast it via the eth_sendTransaction API
-    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = provider.send_transaction(tx).await.unwrap();
 
-    assert_eq!(tx.block_number, Some(1u64.into()));
-    assert_eq!(tx.transaction_index, 0u64.into());
+    let tx = tx.get_receipt().await.unwrap();
+
+    assert_eq!(tx.block_number, Some(1));
+    assert_eq!(tx.transaction_index, 0);
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
 
-    assert_eq!(nonce, 1u64.into());
+    assert_eq!(nonce, 1);
 
     let to_balance = provider.get_balance(to, None).await.unwrap();
 
-    assert_eq!(balance_before.saturating_add(amount.to_ethers()), to_balance);
+    assert_eq!(balance_before.saturating_add(amount), to_balance);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -77,26 +78,41 @@ async fn can_order_transactions() {
     let gas_price = provider.get_gas_price().await.unwrap();
 
     // craft the tx with lower price
-    let tx =
-        TransactionRequest::new().to(to).from(from).value(amount.to_ethers()).gas_price(gas_price);
-    let tx_lower = provider.send_transaction(tx, None).await.unwrap();
+    let mut tx = AlloyTransactionRequest::default().to(Some(to)).from(from).value(amount);
+
+    tx.set_gas_price(gas_price);
+    let tx = WithOtherFields::new(tx);
+    let tx_lower = provider.send_transaction(tx).await.unwrap();
+
+    println!("Lower tx: {:?}", tx_lower);
 
     // craft the tx with higher price
-    let tx = TransactionRequest::new()
-        .to(from)
-        .from(to)
-        .value(amount.to_ethers())
-        .gas_price(gas_price + 1);
-    let tx_higher = provider.send_transaction(tx, None).await.unwrap();
+    let mut tx = AlloyTransactionRequest::default().to(Some(from)).from(to).value(amount);
+
+    tx.set_gas_price(gas_price + 1);
+    let tx = WithOtherFields::new(tx);
+    let tx_higher = provider.send_transaction(tx).await.unwrap();
+
+    println!("Higher tx: {:?}", tx_higher);
 
     // manually mine the block with the transactions
     api.mine_one().await;
 
+    let block = provider.get_block(AlloyBlockId::latest(), false).await.unwrap().unwrap();
+
+    println!("Mined block Txs: {:?}", block.transactions);
+
+    let higher_price = tx_higher.get_receipt().await.unwrap().transaction_hash;
+    println!("Higher price hash: {:?}", higher_price);
+
+    let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
+
+    println!("Lower price hash: {:?}", lower_price);
+
     // get the block, await receipts
-    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
-    let lower_price = tx_lower.await.unwrap().unwrap().transaction_hash;
-    let higher_price = tx_higher.await.unwrap().unwrap().transaction_hash;
-    assert_eq!(block.transactions, vec![higher_price, lower_price])
+    let block = provider.get_block(AlloyBlockId::latest(), false).await.unwrap().unwrap();
+
+    assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
 
 #[tokio::test(flavor = "multi_thread")]

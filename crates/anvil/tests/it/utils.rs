@@ -1,7 +1,5 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Bytes;
-use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, RootProvider};
-use alloy_transport::BoxTransport;
 use ethers::{
     addressbook::contract,
     contract::ContractInstance,
@@ -9,7 +7,13 @@ use ethers::{
     prelude::DeploymentTxFactory,
     types::{Address, Chain},
 };
-use foundry_common::provider::ethers::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::{
+    alloy::{
+        get_http_provider, ProviderBuilder as AlloyProviderBuilder,
+        RetryProvider as AlloyRetryProvider,
+    },
+    ethers::{ProviderBuilder, RetryProvider},
+};
 use std::borrow::Borrow;
 
 /// Returns a set of various contract addresses
@@ -23,22 +27,16 @@ pub fn contract_addresses(chain: Chain) -> Vec<Address> {
     ]
 }
 
-pub async fn http_provider(http_endpoint: &str) -> RootProvider<BoxTransport> {
-    AlloyProviderBuilder::new()
-        .on_builtin(http_endpoint)
-        .await
-        .expect("failed to build HTTP provider")
+pub fn http_provider(http_endpoint: &str) -> AlloyRetryProvider {
+    get_http_provider(http_endpoint)
 }
 
-pub async fn ws_provider(ws_endpoint: &str) -> RootProvider<BoxTransport> {
-    AlloyProviderBuilder::new().on_builtin(ws_endpoint).await.expect("failed to build WS provider")
+pub async fn ws_provider(ws_endpoint: &str) -> AlloyRetryProvider {
+    AlloyProviderBuilder::new(ws_endpoint).build().expect("failed to build Alloy WS provider")
 }
 
-pub async fn ipc_provider(ipc_endpoint: &str) -> RootProvider<BoxTransport> {
-    AlloyProviderBuilder::new()
-        .on_builtin(ipc_endpoint)
-        .await
-        .expect("failed to build IPC provider")
+pub async fn ipc_provider(ipc_endpoint: &str) -> AlloyRetryProvider {
+    AlloyProviderBuilder::new(ipc_endpoint).build().expect("failed to build Alloy IPC provider")
 }
 
 /// Builds an ethers HTTP [RetryProvider]
