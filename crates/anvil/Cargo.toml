@@ -47,7 +47,12 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types.workspace = true
 alloy-rpc-types-trace.workspace = true
-alloy-provider = { workspace = true, features = ["pubsub"] }
+alloy-provider = { workspace = true, features = [
+    "pubsub",
+    "ws",
+    "ipc",
+    "reqwest",
+] }
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
