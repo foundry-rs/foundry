@@ -27,23 +27,17 @@ pub async fn http_provider(http_endpoint: &str) -> RootProvider<BoxTransport> {
     AlloyProviderBuilder::new()
         .on_builtin(http_endpoint)
         .await
-        .map(|p| p)
         .expect("failed to build HTTP provider")
 }
 
 pub async fn ws_provider(ws_endpoint: &str) -> RootProvider<BoxTransport> {
-    AlloyProviderBuilder::new()
-        .on_builtin(ws_endpoint)
-        .await
-        .map(|p| p)
-        .expect("failed to build WS provider")
+    AlloyProviderBuilder::new().on_builtin(ws_endpoint).await.expect("failed to build WS provider")
 }
 
 pub async fn ipc_provider(ipc_endpoint: &str) -> RootProvider<BoxTransport> {
     AlloyProviderBuilder::new()
         .on_builtin(ipc_endpoint)
         .await
-        .map(|p| p)
         .expect("failed to build IPC provider")
 }
 
