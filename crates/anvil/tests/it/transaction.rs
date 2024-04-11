@@ -12,12 +12,12 @@ use alloy_rpc_types::{
 };
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
-    prelude::{signer::SignerMiddlewareError, Middleware, Signer, SignerMiddleware},
+    prelude::Middleware,
     types::{Transaction, TransactionReceipt, TransactionRequest},
 };
-use foundry_common::types::ToEthers;
+use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
-use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashSet, str::FromStr, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -581,30 +581,34 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), 1u64);
 }
 
-// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let provider = ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-    let nonce = client.get_transaction_count(from, None).await.unwrap();
-    // explicitly set the nonce
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+
     let mut tasks = Vec::new();
-    let mut tx =
-        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
-    tx.set_nonce(nonce);
-    tx.set_gas(300_000u64);
+
+    let greeter = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+
+    let greeter_calldata = greeter.calldata();
+
+    let tx = AlloyTransactionRequest::default()
+        .from(from)
+        .with_input(greeter_calldata.to_owned())
+        .nonce(nonce)
+        .with_gas_limit(300_000u128);
+
+    let tx = WithOtherFields::new(tx);
 
     for _ in 0..10 {
-        let client = Arc::clone(&client);
+        let provider = provider.clone();
         let tx = tx.clone();
         let task = tokio::task::spawn(async move {
-            Ok::<_, SignerMiddlewareError<_, _>>(
-                client.send_transaction(tx, None).await?.await.unwrap(),
-            )
+            Ok(provider.send_transaction(tx).await?.get_receipt().await.unwrap())
         });
         tasks.push(task);
     }
@@ -613,52 +617,54 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let successful_tx =
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
-    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 1u64.into());
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), 1u64);
 }
 
-// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let provider = ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .send()
-        .await
-        .unwrap();
+    let greeter_contract =
+        AlloyGreeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
 
-    let nonce = client.get_transaction_count(from, None).await.unwrap();
-    // explicitly set the nonce
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+
     let mut tasks = Vec::new();
-    let mut deploy_tx =
-        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
-    deploy_tx.set_nonce(nonce);
-    deploy_tx.set_gas(300_000u64);
 
-    let mut set_greeting_tx = greeter_contract.set_greeting("Hello".to_string()).tx;
-    set_greeting_tx.set_nonce(nonce);
-    set_greeting_tx.set_gas(300_000u64);
+    let deploy = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let deploy_calldata = deploy.calldata();
+    let deploy_tx = AlloyTransactionRequest::default()
+        .from(from)
+        .with_input(deploy_calldata.to_owned())
+        .nonce(nonce)
+        .with_gas_limit(300_000u128);
+    let deploy_tx = WithOtherFields::new(deploy_tx);
+
+    let set_greeting = greeter_contract.setGreeting("Hello".to_string());
+    let set_greeting_calldata = set_greeting.calldata();
+
+    let set_greeting_tx = AlloyTransactionRequest::default()
+        .from(from)
+        .with_input(set_greeting_calldata.to_owned())
+        .nonce(nonce)
+        .with_gas_limit(300_000u128);
+    let set_greeting_tx = WithOtherFields::new(set_greeting_tx);
 
     for idx in 0..10 {
-        let client = Arc::clone(&client);
+        let provider = provider.clone();
         let task = if idx % 2 == 0 {
             let tx = deploy_tx.clone();
             tokio::task::spawn(async move {
-                Ok::<_, SignerMiddlewareError<_, _>>(
-                    client.send_transaction(tx, None).await?.await.unwrap(),
-                )
+                Ok(provider.send_transaction(tx).await?.get_receipt().await.unwrap())
             })
         } else {
             let tx = set_greeting_tx.clone();
             tokio::task::spawn(async move {
-                Ok::<_, SignerMiddlewareError<_, _>>(
-                    client.send_transaction(tx, None).await?.await.unwrap(),
-                )
+                Ok(provider.send_transaction(tx).await?.get_receipt().await.unwrap())
             })
         };
 
@@ -669,9 +675,8 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let successful_tx =
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
-    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), nonce + 1);
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), nonce + 1);
 }
-
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
