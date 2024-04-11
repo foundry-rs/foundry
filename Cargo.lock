@@ -666,6 +666,7 @@ version = "0.2.0"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
+ "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-genesis",

@@ -5,6 +5,8 @@ use ethers::{
     types::Address,
 };
 
+// use alloy_contract;
+use alloy_sol_types::sol;
 #[derive(Clone, Debug, EthEvent)]
 pub struct ValueChanged {
     #[ethevent(indexed)]
@@ -14,6 +16,25 @@ pub struct ValueChanged {
     pub old_value: String,
     pub new_value: String,
 }
+
+// TODO: Rename to Greeter before merging
+sol!(
+    #[sol(rpc)]
+    AlloyGreeter,
+    "test-data/greeter.json"
+);
+
+sol!(
+    #[sol(rpc)]
+    AlloySimpleStorage,
+    "test-data/SimpleStorage.json"
+);
+
+sol!(
+    #[sol(rpc)]
+    AlloyMulticallContract,
+    "test-data/multicall.json"
+);
 
 abigen!(Greeter, "test-data/greeter.json");
 abigen!(SimpleStorage, "test-data/SimpleStorage.json");

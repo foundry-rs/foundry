@@ -292,9 +292,12 @@ async fn can_deploy_greeter_http() {
     let signer: EthereumSigner = wallet.clone().into();
 
     let provider = ethers_http_provider(&handle.http_endpoint());
-    let _provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let client = Arc::new(SignerMiddleware::new(provider, wallet.to_ethers()));
+
+    let _alloy_greeter =
+        AlloyGreeter::deploy_builder(&provider_with_signer, "Hello World!".to_string());
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
         .unwrap()
