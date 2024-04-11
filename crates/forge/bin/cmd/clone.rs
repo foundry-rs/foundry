@@ -16,7 +16,6 @@ use foundry_compilers::{
     ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
-use mockall::automock;
 
 use super::{init::InitArgs, install::DependencyInstallOpts};
 
@@ -413,9 +412,11 @@ pub fn find_main_contract<'a>(
     Err(eyre::eyre!("contract not found"))
 }
 
+#[cfg(test)]
+use mockall::automock;
 /// EtherscanClient is a trait that defines the methods to interact with Etherscan.
 /// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
-#[automock]
+#[cfg_attr(test, automock)]
 pub(crate) trait EtherscanClient {
     async fn contract_source_code(
         &self,

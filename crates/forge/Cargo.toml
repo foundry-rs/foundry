@@ -42,7 +42,6 @@ rayon = "1"
 serde.workspace = true
 tracing.workspace = true
 yansi = "0.5"
-mockall = "0.12"
 
 # bin
 forge-doc.workspace = true
@@ -94,6 +93,7 @@ opener = "0.6"
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
+mockall = "0.12"
 criterion = "0.5"
 globset = "0.4"
 paste = "1.0"
