@@ -20,6 +20,18 @@ use foundry_config::{Chain, Config};
 use super::{init::InitArgs, install::DependencyInstallOpts};
 
 /// CLI arguments for `forge clone`.
+///
+/// `forge clone` clones an on-chain contract from block explorers (e.g., Etherscan) in the
+/// following steps:
+/// 1. Fetch the contract source code from the block explorer.
+/// 2. Initialize a empty foundry project at the `root` directory specified in `CloneArgs`.
+/// 3. Dump the contract sources to the source directory.
+/// 4. Update the `foundry.toml` configuration file with the compiler settings from Etherscan.
+/// 5. Try compile the cloned contract, so that we can get the original storage layout. This
+///    original storage layout is preserved in the `CloneMetadata` so that if the user later
+///    modifies the contract, it is possible to quickly check the storage layout compatibility with
+///    the original on-chain contract.
+/// 6. Dump the `CloneMetadata` to the root directory of the cloned project as `.clone.meta` file.
 #[derive(Clone, Debug, Parser)]
 pub struct CloneArgs {
     /// The contract address to clone.
@@ -57,7 +69,7 @@ pub struct CloneMetadata {
     pub chain_id: ChainId,
     /// The transaction hash of the creation transaction.
     pub creation_transaction: TxHash,
-    /// The address of the deployer (caller of the CREATE/CREATE2).
+    /// The address of the deployer, i.e., sender of the creation transaction.
     pub deployer: Address,
     /// The constructor arguments of the contract on chain.
     pub constructor_arguments: Bytes,
@@ -96,6 +108,18 @@ impl CloneArgs {
         .await
     }
 
+    /// Clone a contract on a specific chain using the given client of block explorer (e.g.,
+    /// Etherscan). This function allows caller to specify one block explorer client so that
+    /// mocking in test is possible.
+    ///
+    /// * `chain` - the chain where the contract to be cloned locates.
+    /// * `contract_address` - the address of the contract to be cloned.
+    /// * `root` - the root directory to clone the contract into as a foundry project.
+    /// * `enable_git` - whether to enable git for the cloned project.
+    /// * `client` - the client of the block explorer.
+    /// * `etherscan_call_interval` - the interval between two calls to block explorer. This is used
+    ///   to avoid rate limit.
+    /// * `quiet` - whether to print messages.
     pub(crate) async fn run_with_client(
         chain: Chain,
         contract_address: Address,
