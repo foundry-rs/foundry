@@ -1,6 +1,9 @@
 use crate::{
     abi::*,
-    utils::{ethers_http_provider, ethers_ws_provider, http_provider, http_provider_with_signer},
+    utils::{
+        ethers_http_provider, ethers_ws_provider, http_provider, http_provider_with_signer,
+        ws_provider,
+    },
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Bytes, U256 as rU256};
@@ -358,57 +361,63 @@ async fn can_deploy_and_mine_manually() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_automatically() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
 
-    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
-    let sent_tx = client.send_transaction(tx, None).await.unwrap();
+    let greeter_builder =
+        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+            .from(wallet.address());
+
+    let greeter_calldata = greeter_builder.calldata();
+
+    let tx = AlloyTransactionRequest::default()
+        .from(wallet.address())
+        .with_input(greeter_calldata.to_owned());
+
+    let tx = WithOtherFields::new(tx);
+
+    let sent_tx = provider.send_transaction(tx).await.unwrap();
 
     // re-enable auto mine
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let receipt = sent_tx.await.unwrap().unwrap();
-    assert_eq!(receipt.status.unwrap().as_u64(), 1u64);
+    let receipt = sent_tx.get_receipt().await.unwrap();
+    assert_eq!(receipt.block_number, Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .send()
+    let greeter_addr = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+        .from(wallet.address())
+        .deploy()
         .await
         .unwrap();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
+    let greeter_contract = AlloyGreeter::new(greeter_addr, provider.clone());
 
-    let block = client.get_block_number().await.unwrap();
-
-    greeter_contract
-        .set_greeting("Another Message".to_string())
-        .send()
-        .await
-        .unwrap()
-        .await
-        .unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Another Message", greeting);
+    assert_eq!("Hello World!", greeting._0);
+
+    let block = provider.get_block_number().await.unwrap();
+
+    let _ = greeter_contract.setGreeting("Another Message".to_string()).send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting._0);
 
     // returns previous state
     let greeting =
-        greeter_contract.greet().block(BlockId::Number(block.into())).call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
+        greeter_contract.greet().block(AlloyBlockId::Number(block.into())).call().await.unwrap();
+    assert_eq!("Hello World!", greeting._0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
