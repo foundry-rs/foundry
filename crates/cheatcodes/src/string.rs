@@ -2,6 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
 
 // address
@@ -132,6 +133,14 @@ impl Cheatcode for splitCall {
         let Self { input, delimiter } = self;
         let parts: Vec<&str> = input.split(delimiter).collect();
         Ok(parts.abi_encode())
+    }
+}
+
+// indexOf
+impl Cheatcode for indexOfCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, key } = self;
+        Ok(input.find(key).map(U256::from).unwrap_or(U256::MAX).abi_encode())
     }
 }
 

@@ -24,9 +24,10 @@ alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
-alloy-providers.workspace = true
+alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
-alloy-signer = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer.workspace = true
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 parking_lot = "0.12"
 
 eyre.workspace = true
@@ -42,3 +43,6 @@ k256.workspace = true
 walkdir = "2"
 p256 = "0.13.2"
 thiserror = "1"
+semver = "1"
+rustc-hash.workspace = true
+dialoguer = "0.11.0"

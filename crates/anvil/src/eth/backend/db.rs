@@ -1,36 +1,25 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{mem::state::trie_hash_db, revm::primitives::AccountInfo};
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use crate::revm::primitives::AccountInfo;
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
-use anvil_core::eth::trie::KeccakHasher;
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
     fork::BlockchainDb,
-    hashbrown::HashMap,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{BlockEnv, Bytecode, KECCAK_EMPTY},
+        primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
 };
-use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, path::Path};
 
-/// Type alias for the `HashDB` representation of the Database
-pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
-
-/// Helper trait get access to the data in `HashDb` form
+/// Helper trait get access to the full state data of the database
 #[auto_impl::auto_impl(Box)]
-pub trait MaybeHashDatabase: DatabaseRef<Error = DatabaseError> {
-    /// Return the DB as read-only hashdb and the root key
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
-        None
-    }
-    /// Return the storage DB as read-only hashdb and the storage root of the account
-    fn maybe_account_db(&self, _addr: Address) -> Option<(AsHashDB, B256)> {
+pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         None
     }
 
@@ -44,15 +33,12 @@ pub trait MaybeHashDatabase: DatabaseRef<Error = DatabaseError> {
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
 }
 
-impl<'a, T: 'a + MaybeHashDatabase + ?Sized> MaybeHashDatabase for &'a T
+impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
 where
     &'a T: DatabaseRef<Error = DatabaseError>,
 {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
-        T::maybe_as_hash_db(self)
-    }
-    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, B256)> {
-        T::maybe_account_db(self, addr)
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        T::maybe_as_full_db(self)
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
@@ -80,7 +66,7 @@ pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>
     + DatabaseCommit
-    + MaybeHashDatabase
+    + MaybeFullDatabase
     + MaybeForkedDatabase
     + fmt::Debug
     + Send
@@ -126,7 +112,11 @@ pub trait Db:
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
     /// Write all chain data to serialized bytes buffer
-    fn dump_state(&self, at: BlockEnv) -> DatabaseResult<Option<SerializableState>>;
+    fn dump_state(
+        &self,
+        at: BlockEnv,
+        best_number: U64,
+    ) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
@@ -196,7 +186,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         self.block_hashes.insert(number, hash);
     }
 
-    fn dump_state(&self, _at: BlockEnv) -> DatabaseResult<Option<SerializableState>> {
+    fn dump_state(
+        &self,
+        _at: BlockEnv,
+        _best_number: U64,
+    ) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
     }
 
@@ -213,10 +207,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
-        Some(trie_hash_db(&self.accounts))
+impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.accounts)
     }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.accounts);
         let mut accounts = HashMap::new();
@@ -271,12 +266,12 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 }
 
 /// Represents a state at certain point
-pub struct StateDb(pub(crate) Box<dyn MaybeHashDatabase + Send + Sync>);
+pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
 // === impl StateDB ===
 
 impl StateDb {
-    pub fn new(db: impl MaybeHashDatabase + Send + Sync + 'static) -> Self {
+    pub fn new(db: impl MaybeFullDatabase + Send + Sync + 'static) -> Self {
         Self(Box::new(db))
     }
 }
@@ -300,13 +295,9 @@ impl DatabaseRef for StateDb {
     }
 }
 
-impl MaybeHashDatabase for StateDb {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
-        self.0.maybe_as_hash_db()
-    }
-
-    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, B256)> {
-        self.0.maybe_account_db(addr)
+impl MaybeFullDatabase for StateDb {
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        self.0.maybe_as_full_db()
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
@@ -329,6 +320,8 @@ pub struct SerializableState {
     /// Note: This is an Option for backwards compatibility: <https://github.com/foundry-rs/foundry/issues/5460>
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
+    /// The best block number of the state, can be different from block number (Arbitrum chain).
+    pub best_block_number: Option<U64>,
 }
 
 // === impl SerializableState ===

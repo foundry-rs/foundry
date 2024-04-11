@@ -1,16 +1,19 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, CompactContractBytecode, ContractBytecodeSome},
+    artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
+use foundry_linking::Linker;
+use num_format::{Locale, ToFormattedString};
+use rustc_hash::FxHashMap;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
@@ -244,7 +247,16 @@ impl ProjectCompiler {
             }
 
             let mut size_report = SizeReport { contracts: BTreeMap::new() };
-            let artifacts: BTreeMap<_, _> = output.artifacts().collect();
+
+            let artifacts: BTreeMap<_, _> = output
+                .artifact_ids()
+                .filter(|(id, _)| {
+                    // filter out forge-std specific contracts
+                    !id.source.to_string_lossy().contains("/forge-std/src/")
+                })
+                .map(|(id, artifact)| (id.name, artifact))
+                .collect();
+
             for (name, artifact) in artifacts {
                 let size = deployed_contract_size(artifact).unwrap_or_default();
 
@@ -277,8 +289,10 @@ impl ProjectCompiler {
 pub struct ContractSources {
     /// Map over artifacts' contract names -> vector of file IDs
     pub ids_by_name: HashMap<String, Vec<u32>>,
-    /// Map over file_id -> (source code, contract)
-    pub sources_by_id: HashMap<u32, (String, ContractBytecodeSome)>,
+    /// Map over file_id -> source code
+    pub sources_by_id: FxHashMap<u32, String>,
+    /// Map over file_id -> contract name -> bytecode
+    pub artifacts_by_id: FxHashMap<u32, HashMap<String, ContractBytecodeSome>>,
 }
 
 impl ContractSources {
@@ -286,7 +300,10 @@ impl ContractSources {
     pub fn from_project_output(
         output: &ProjectCompileOutput,
         root: &Path,
+        libraries: &Libraries,
     ) -> Result<ContractSources> {
+        let linker = Linker::new(root, output.artifact_ids().collect());
+
         let mut sources = ContractSources::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
@@ -294,12 +311,8 @@ impl ContractSources {
                 let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
-                let compact = CompactContractBytecode {
-                    abi: artifact.abi.clone(),
-                    bytecode: artifact.bytecode.clone(),
-                    deployed_bytecode: artifact.deployed_bytecode.clone(),
-                };
-                let contract = compact_to_contract(compact)?;
+                let linked = linker.link(&id, libraries)?;
+                let contract = compact_to_contract(linked)?;
                 sources.insert(&id, file_id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");
@@ -317,29 +330,44 @@ impl ContractSources {
         bytecode: ContractBytecodeSome,
     ) {
         self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
-        self.sources_by_id.insert(file_id, (source, bytecode));
+        self.sources_by_id.insert(file_id, source);
+        self.artifacts_by_id.entry(file_id).or_default().insert(artifact_id.name.clone(), bytecode);
     }
 
     /// Returns the source for a contract by file ID.
-    pub fn get(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
+    pub fn get(&self, id: u32) -> Option<&String> {
         self.sources_by_id.get(&id)
     }
 
     /// Returns all sources for a contract by name.
-    pub fn get_sources(
-        &self,
-        name: &str,
-    ) -> Option<impl Iterator<Item = (u32, &(String, ContractBytecodeSome))>> {
-        self.ids_by_name
-            .get(name)
-            .map(|ids| ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))))
+    pub fn get_sources<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Option<impl Iterator<Item = (u32, &'_ str, &'_ ContractBytecodeSome)>> {
+        self.ids_by_name.get(name).map(|ids| {
+            ids.iter().filter_map(|id| {
+                Some((
+                    *id,
+                    self.sources_by_id.get(id)?.as_ref(),
+                    self.artifacts_by_id.get(id)?.get(name)?,
+                ))
+            })
+        })
     }
 
-    /// Returns all (name, source) pairs.
-    pub fn entries(&self) -> impl Iterator<Item = (String, &(String, ContractBytecodeSome))> {
-        self.ids_by_name.iter().flat_map(|(name, ids)| {
-            ids.iter().filter_map(|id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
-        })
+    /// Returns all (name, source, bytecode) sets.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &str, &ContractBytecodeSome)> {
+        self.artifacts_by_id
+            .iter()
+            .filter_map(|(id, artifacts)| {
+                let source = self.sources_by_id.get(id)?;
+                Some(
+                    artifacts
+                        .iter()
+                        .map(move |(name, bytecode)| (name.as_ref(), source.as_ref(), bytecode)),
+                )
+            })
+            .flatten()
     }
 }
 
@@ -376,10 +404,11 @@ impl Display for SizeReport {
         table.load_preset(ASCII_MARKDOWN);
         table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
+        // filters out non dev contracts (Test or Script)
         let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
         for (name, contract) in contracts {
             let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
@@ -389,10 +418,15 @@ impl Display for SizeReport {
                 _ => Color::Red,
             };
 
+            let locale = &Locale::en;
             table.add_row([
                 Cell::new(name).fg(color),
-                Cell::new(contract.size as f64 / 1000.0).fg(color),
-                Cell::new(margin as f64 / 1000.0).fg(color),
+                Cell::new(contract.size.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(color),
+                Cell::new(margin.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(color),
             ]);
         }
 

@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use alloy_signer::{LocalWallet, Signer};
+use alloy_signer_wallet::LocalWallet;
 use foundry_config::Config;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
@@ -110,6 +110,11 @@ impl ScriptWallets {
     pub fn add_signer(&self, private_key: impl AsRef<[u8]>) -> Result {
         self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
         Ok(Default::default())
+    }
+
+    /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
+    pub fn signers(&self) -> Result<Vec<Address>> {
+        Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
     }
 }
 

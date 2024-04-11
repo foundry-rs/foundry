@@ -1,6 +1,6 @@
 //! general eth api tests with websocket provider
 
-use alloy_providers::provider::TempProvider;
+use alloy_provider::Provider;
 use anvil::{spawn, NodeConfig};
 use ethers::types::U256;
 use foundry_common::types::ToAlloy;

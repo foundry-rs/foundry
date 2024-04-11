@@ -2,10 +2,8 @@ use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
     StorageInfo,
 };
-use alloy_consensus::ReceiptWithBloom;
-use alloy_network::Sealable;
-use alloy_primitives::{Log, TxHash, B256, U256};
-use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
+use alloy_primitives::{TxHash, B256};
+use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
 use anvil_rpc::{request::Version, response::ResponseResult};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
@@ -22,7 +20,7 @@ pub struct LogsSubscription {
     pub blocks: NewBlockNotifications,
     pub storage: StorageInfo,
     pub filter: FilteredParams,
-    pub queued: VecDeque<AlloyLog>,
+    pub queued: VecDeque<Log>,
     pub id: SubscriptionId,
 }
 
@@ -145,30 +143,20 @@ impl Stream for EthSubscription {
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs(
-    block: Block,
-    receipts: Vec<TypedReceipt>,
-    filter: &FilteredParams,
-) -> Vec<AlloyLog> {
+pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredParams) -> Vec<Log> {
     /// Determines whether to add this log
-    fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
-        let log = AlloyLog {
-            address: l.address,
-            topics: l.topics().to_vec(),
-            data: l.data.data.clone(),
-            block_hash: None,
-            block_number: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        };
+    fn add_log(
+        block_hash: B256,
+        l: &alloy_primitives::Log,
+        block: &Block,
+        params: &FilteredParams,
+    ) -> bool {
         if params.filter.is_some() {
             let block_number = block.header.number;
             if !params.filter_block_range(block_number) ||
                 !params.filter_block_hash(block_hash) ||
-                !params.filter_address(&log) ||
-                !params.filter_topics(&log)
+                !params.filter_address(&l.address) ||
+                !params.filter_topics(l.topics())
             {
                 return false;
             }
@@ -176,29 +164,22 @@ pub fn filter_logs(
         true
     }
 
-    let block_hash = block.header.hash();
+    let block_hash = block.header.hash_slow();
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let receipt: ReceiptWithBloom = receipt.into();
-        let receipt_logs = receipt.receipt.logs;
-        let transaction_hash: Option<B256> = if !receipt_logs.is_empty() {
-            Some(block.transactions[receipt_index].hash())
-        } else {
-            None
-        };
-        for log in receipt_logs.into_iter() {
-            if add_log(block_hash, &log, &block, filter) {
-                logs.push(AlloyLog {
-                    address: log.address,
-                    topics: log.topics().to_vec(),
-                    data: log.data.data,
+        let transaction_hash = block.transactions[receipt_index].hash();
+        for log in receipt.logs() {
+            if add_log(block_hash, log, &block, filter) {
+                logs.push(Log {
+                    inner: log.clone(),
                     block_hash: Some(block_hash),
-                    block_number: Some(U256::from(block.header.number)),
-                    transaction_hash,
-                    transaction_index: Some(U256::from(receipt_index)),
-                    log_index: Some(U256::from(log_index)),
+                    block_number: Some(block.header.number),
+                    transaction_hash: Some(transaction_hash),
+                    transaction_index: Some(receipt_index as u64),
+                    log_index: Some(log_index as u64),
                     removed: false,
+                    block_timestamp: Some(block.header.timestamp),
                 });
             }
             log_index += 1;

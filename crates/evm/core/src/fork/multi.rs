@@ -4,9 +4,11 @@
 //! concurrently active pairs at once.
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
-use alloy_providers::provider::Provider;
-use alloy_transport::BoxTransport;
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::provider::{
+    alloy::{ProviderBuilder, RetryProvider},
+    runtime_transport::RuntimeTransport,
+    tower::RetryBackoffService,
+};
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -169,7 +171,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Arc<Provider<BoxTransport>>>;
+type Handler = BackendHandler<RetryBackoffService<RuntimeTransport>, Arc<RetryProvider>>;
 
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
@@ -500,7 +502,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
 
     // we need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number = block.header.number.unwrap_or(meta.block_env.number).to::<u64>();
+    let number = block.header.number.unwrap_or(meta.block_env.number.to());
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {

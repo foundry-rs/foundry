@@ -1,9 +1,12 @@
-use alloy_primitives::Address;
-use cast::{TxBuilder, TxBuilderOutput};
-use ethers_core::types::NameOrAddress;
-use ethers_providers::Middleware;
+use alloy_json_abi::Function;
+use alloy_network::{AnyNetwork, TransactionBuilder};
+use alloy_primitives::{Address, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_transport::Transport;
 use eyre::Result;
-use foundry_cli::opts::TransactionOpts;
+use foundry_cli::{opts::TransactionOpts, utils::parse_function_args};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Chain;
 
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
@@ -34,40 +37,86 @@ pub fn validate_to_address(code: &Option<String>, to: &Option<NameOrAddress>) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn build_tx<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-    provider: &M,
+pub async fn build_tx<
+    P: Provider<T, AnyNetwork>,
+    T: Transport + Clone,
+    F: Into<NameOrAddress>,
+    TO: Into<NameOrAddress>,
+>(
+    provider: &P,
     from: F,
-    to: Option<T>,
+    to: Option<TO>,
     code: Option<String>,
     sig: Option<String>,
     args: Vec<String>,
     tx: TransactionOpts,
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
-) -> Result<TxBuilderOutput> {
-    let mut builder = TxBuilder::new(provider, from, to, chain, tx.legacy).await?;
-    builder
-        .etherscan_api_key(etherscan_api_key)
-        .gas(tx.gas_limit)
-        .gas_price(tx.gas_price)
-        .priority_gas_price(tx.priority_gas_price)
-        .value(tx.value)
-        .nonce(tx.nonce);
+) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
+    let chain = chain.into();
+
+    let from = from.into().resolve(provider).await?;
+    let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
+
+    let mut req = WithOtherFields::new(TransactionRequest::default())
+        .with_to(to.into())
+        .with_from(from)
+        .with_value(tx.value.unwrap_or_default())
+        .with_chain_id(chain.id());
+
+    req.set_nonce(if let Some(nonce) = tx.nonce {
+        nonce.to()
+    } else {
+        provider.get_transaction_count(from, None).await?
+    });
+
+    if tx.legacy || chain.is_legacy() {
+        req.set_gas_price(if let Some(gas_price) = tx.gas_price {
+            gas_price.to()
+        } else {
+            provider.get_gas_price().await?
+        });
+    } else {
+        let (max_fee, priority_fee) = match (tx.gas_price, tx.priority_gas_price) {
+            (Some(gas_price), Some(priority_gas_price)) => (gas_price, priority_gas_price),
+            (_, _) => {
+                let estimate = provider.estimate_eip1559_fees(None).await?;
+                (
+                    tx.gas_price.unwrap_or(U256::from(estimate.max_fee_per_gas)),
+                    tx.priority_gas_price.unwrap_or(U256::from(estimate.max_priority_fee_per_gas)),
+                )
+            }
+        };
+
+        req.set_max_fee_per_gas(max_fee.to());
+        req.set_max_priority_fee_per_gas(priority_fee.to());
+    }
 
     let params = sig.as_deref().map(|sig| (sig, args));
-    if let Some(code) = code {
+    let (data, func) = if let Some(code) = code {
         let mut data = hex::decode(code)?;
 
         if let Some((sig, args)) = params {
-            let (mut sigdata, _) = builder.create_args(sig, args).await?;
+            let (mut sigdata, _) =
+                parse_function_args(sig, args, None, chain, provider, etherscan_api_key.as_deref())
+                    .await?;
             data.append(&mut sigdata);
         }
 
-        builder.set_data(data);
+        (data, None)
+    } else if let Some((sig, args)) = params {
+        parse_function_args(sig, args, None, chain, provider, etherscan_api_key.as_deref()).await?
     } else {
-        builder.args(params).await?;
-    }
+        (Vec::new(), None)
+    };
 
-    let builder_output = builder.build();
-    Ok(builder_output)
+    req.set_input(data.into());
+
+    req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
+        gas_limit.to()
+    } else {
+        provider.estimate_gas(&req, None).await?
+    });
+
+    Ok((req, func))
 }

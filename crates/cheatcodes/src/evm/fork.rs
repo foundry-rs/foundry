@@ -1,10 +1,10 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{B256, U256};
-use alloy_providers::provider::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use eyre::WrapErr;
-use foundry_common::{provider::alloy::ProviderBuilder, types::ToEthers};
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
 
@@ -64,7 +64,12 @@ impl Cheatcode for createSelectFork_2Call {
 impl Cheatcode for rollFork_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber } = self;
-        ccx.ecx.db.roll_fork(None, *blockNumber, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
+        ccx.ecx.db.roll_fork(
+            None,
+            (*blockNumber).to(),
+            &mut ccx.ecx.env,
+            &mut ccx.ecx.journaled_state,
+        )?;
         Ok(Default::default())
     }
 }
@@ -87,7 +92,7 @@ impl Cheatcode for rollFork_2Call {
         let Self { forkId, blockNumber } = self;
         ccx.ecx.db.roll_fork(
             Some(*forkId),
-            *blockNumber,
+            (*blockNumber).to(),
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
         )?;
@@ -225,7 +230,7 @@ impl Cheatcode for rpcCall {
         let method: &'static str = Box::new(method.clone()).leak();
         let params_json: serde_json::Value = serde_json::from_str(params)?;
         let result = RuntimeOrHandle::new()
-            .block_on(provider.raw_request(method, params_json))
+            .block_on(provider.raw_request(method.into(), params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
         let result_as_tokens = crate::json::json_value_to_token(&result)
@@ -252,36 +257,35 @@ impl Cheatcode for eth_getLogsCall {
         let provider = ProviderBuilder::new(&url).build()?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, topic) in topics.iter().enumerate() {
-            let topic = topic.to_ethers();
             // todo: needed because rust wants to convert FixedBytes<32> to U256 to convert it back
             // to FixedBytes<32> and then to Topic for some reason removing the
             // From<U256> impl in alloy does not fix the situation, and it is not possible to impl
             // From<FixedBytes<32>> either because of a conflicting impl
             match i {
-                0 => filter = filter.event_signature(U256::from_be_bytes(topic.to_fixed_bytes())),
-                1 => filter = filter.topic1(U256::from_be_bytes(topic.to_fixed_bytes())),
-                2 => filter = filter.topic2(U256::from_be_bytes(topic.to_fixed_bytes())),
-                3 => filter = filter.topic3(U256::from_be_bytes(topic.to_fixed_bytes())),
+                0 => filter = filter.event_signature(*topic),
+                1 => filter = filter.topic1(*topic),
+                2 => filter = filter.topic2(*topic),
+                3 => filter = filter.topic3(*topic),
                 _ => unreachable!(),
             };
         }
 
         // todo: handle the errors somehow
         let logs = RuntimeOrHandle::new()
-            .block_on(provider.get_logs(filter))
+            .block_on(provider.get_logs(&filter))
             .wrap_err("failed to get logs")?;
 
         let eth_logs = logs
             .into_iter()
             .map(|log| EthGetLogs {
-                emitter: log.address,
-                topics: log.topics.into_iter().collect(),
-                data: log.data.0.into(),
+                emitter: log.address(),
+                topics: log.topics().to_vec(),
+                data: log.inner.data.data,
                 blockHash: log.block_hash.unwrap_or_default(),
-                blockNumber: log.block_number.unwrap_or_default().to(),
+                blockNumber: log.block_number.unwrap_or_default(),
                 transactionHash: log.transaction_hash.unwrap_or_default(),
-                transactionIndex: log.transaction_index.unwrap_or_default().to(),
-                logIndex: log.log_index.unwrap_or_default(),
+                transactionIndex: log.transaction_index.unwrap_or_default(),
+                logIndex: U256::from(log.log_index.unwrap_or_default()),
                 removed: log.removed,
             })
             .collect::<Vec<_>>();

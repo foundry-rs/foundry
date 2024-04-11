@@ -10,32 +10,36 @@ use std::{
 
 /// A convenience wrapper around a TOML document and the path it was read from
 struct TomlFile {
-    doc: toml_edit::Document,
+    doc: toml_edit::DocumentMut,
     path: PathBuf,
 }
 
 impl TomlFile {
-    fn open(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn open(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let path = path.as_ref().to_owned();
         let doc = fs::read_to_string(&path)?.parse()?;
         Ok(Self { doc, path })
     }
-    fn doc(&self) -> &toml_edit::Document {
+
+    fn doc(&self) -> &toml_edit::DocumentMut {
         &self.doc
     }
-    fn doc_mut(&mut self) -> &mut toml_edit::Document {
+
+    fn doc_mut(&mut self) -> &mut toml_edit::DocumentMut {
         &mut self.doc
     }
+
     fn path(&self) -> &Path {
         self.path.as_ref()
     }
+
     fn save(&self) -> io::Result<()> {
         fs::write(self.path(), self.doc().to_string())
     }
 }
 
 impl Deref for TomlFile {
-    type Target = toml_edit::Document;
+    type Target = toml_edit::DocumentMut;
     fn deref(&self) -> &Self::Target {
         self.doc()
     }

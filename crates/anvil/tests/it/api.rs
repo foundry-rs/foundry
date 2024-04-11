@@ -5,12 +5,12 @@ use crate::{
     utils::ethers_http_provider,
 };
 use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
-use alloy_providers::provider::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
     state::{AccountOverride, StateOverride},
+    WithOtherFields,
 };
-use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
@@ -213,7 +213,7 @@ async fn can_call_on_pending_block() {
             .call()
             .await
             .unwrap();
-        assert_eq!(block.header.timestamp, block_timestamp.to_alloy());
+        assert_eq!(block.header.timestamp, block_timestamp.as_u64());
 
         let block_gas_limit = pending_contract
             .get_current_block_gas_limit()
@@ -221,7 +221,7 @@ async fn can_call_on_pending_block() {
             .call()
             .await
             .unwrap();
-        assert_eq!(block.header.gas_limit, block_gas_limit.to_alloy());
+        assert_eq!(block.header.gas_limit, block_gas_limit.as_u128());
 
         let block_coinbase = pending_contract
             .get_current_block_coinbase()
@@ -244,11 +244,11 @@ where
 {
     let result = api
         .call(
-            CallRequest {
+            WithOtherFields::new(CallRequest {
                 input: CallInput::maybe_input(call.tx.data().cloned().map(|b| b.0.into())),
                 to: Some(to.to_alloy()),
                 ..Default::default()
-            },
+            }),
             None,
             Some(overrides),
         )

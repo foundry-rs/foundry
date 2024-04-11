@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_primitives::{Bytes, SignatureError as AlloySignatureError};
 use alloy_signer::Error as AlloySignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
@@ -37,6 +37,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode receipt")]
+    FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in th EVM's environment after merge")]
@@ -81,6 +83,8 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
+    #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
+    EIP4844TransactionUnsupportedAtHardfork,
     #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
     DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
@@ -178,7 +182,7 @@ pub enum InvalidTransactionError {
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required exceeds allowance: {0:?}")]
-    BasicOutOfGas(U256),
+    BasicOutOfGas(u128),
     /// Thrown if executing a transaction failed during estimate/call
     #[error("execution reverted: {0:?}")]
     Revert(Option<Bytes>),
@@ -346,6 +350,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
                 }
+                BlockchainError::FailedToDecodeReceipt => {
+                    RpcError::invalid_params("Failed to decode receipt")
+                }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
@@ -406,6 +413,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::EIP4844TransactionUnsupportedAtHardfork => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {

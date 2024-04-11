@@ -23,7 +23,9 @@ use etherscan::EtherscanVerificationProvider;
 pub mod provider;
 use provider::VerificationProvider;
 
+
 mod oklink;
+pub mod bytecode;
 pub mod retry;
 mod sourcify;
 

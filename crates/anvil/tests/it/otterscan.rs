@@ -1,11 +1,12 @@
 //! tests for otterscan endpoints
 use crate::{
     abi::MulticallContract,
-    utils::{ethers_http_provider, ethers_ws_provider},
+    utils::{
+        ethers_http_provider, ethers_ws_provider, ContractInstanceCompat, DeploymentTxFactoryCompat,
+    },
 };
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
-use alloy_signer::Signer as AlloySigner;
 use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
@@ -19,8 +20,8 @@ use ethers::{
     types::{Bytes, TransactionRequest},
     utils::get_contract_address,
 };
-use ethers_solc::{project_util::TempProject, Artifact};
 use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -31,8 +32,8 @@ async fn can_call_erigon_get_header_by_number() {
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
     let res1 = api.erigon_get_header_by_number(1.into()).await.unwrap().unwrap();
 
-    assert_eq!(res0.header.number, Some(rU256::from(0)));
-    assert_eq!(res1.header.number, Some(rU256::from(1)));
+    assert_eq!(res0.header.number, Some(0));
+    assert_eq!(res1.header.number, Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -136,10 +137,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -194,10 +195,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -307,10 +308,10 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = ContractInstance::new(
+    let contract = ContractInstance::new_compat(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
@@ -397,7 +398,7 @@ contract Contract {
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
     let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);
@@ -485,7 +486,7 @@ async fn can_call_ots_get_block_transactions() {
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
-            assert_eq!(expected, receipt.transaction_hash.map(|h| h.to_ethers()));
+            assert_eq!(expected, Some(receipt.transaction_hash.to_ethers()));
             assert_eq!(
                 expected.map(|h| h.to_alloy()),
                 result.fullblock.block.transactions.hashes().nth(i).copied(),
@@ -526,7 +527,7 @@ async fn can_call_ots_search_transactions_before() {
             assert_eq!(hashes.pop(), Some(tx.hash.to_ethers()));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap().to::<u64>() - 1;
+        block = result.txs.last().unwrap().block_number.unwrap() - 1;
     }
 
     assert!(hashes.is_empty());
@@ -562,7 +563,7 @@ async fn can_call_ots_search_transactions_after() {
             assert_eq!(hashes.pop_back(), Some(tx.hash.to_ethers()));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap().to::<u64>() + 1;
+        block = result.txs.last().unwrap().block_number.unwrap() + 1;
     }
 
     assert!(hashes.is_empty());

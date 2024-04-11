@@ -520,6 +520,7 @@ impl CallTraceDecoder {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
             "createWallet" | "deriveKey" => Some("<pk>"),
+            "promptSecret" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,

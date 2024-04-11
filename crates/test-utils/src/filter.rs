@@ -7,6 +7,7 @@ pub struct Filter {
     contract_regex: Regex,
     path_regex: Regex,
     exclude_tests: Option<Regex>,
+    exclude_contracts: Option<Regex>,
     exclude_paths: Option<Regex>,
 }
 
@@ -21,6 +22,7 @@ impl Filter {
             path_regex: Regex::new(path_pattern)
                 .unwrap_or_else(|_| panic!("Failed to parse path pattern: `{path_pattern}`")),
             exclude_tests: None,
+            exclude_contracts: None,
             exclude_paths: None,
         }
     }
@@ -41,6 +43,14 @@ impl Filter {
         self
     }
 
+    /// All contracts to also exclude
+    ///
+    /// This is a workaround since regex does not support negative look aheads
+    pub fn exclude_contracts(mut self, pattern: &str) -> Self {
+        self.exclude_contracts = Some(Regex::new(pattern).unwrap());
+        self
+    }
+
     /// All paths to also exclude
     ///
     /// This is a workaround since regex does not support negative look aheads
@@ -55,6 +65,7 @@ impl Filter {
             contract_regex: Regex::new(".*").unwrap(),
             path_regex: Regex::new(".*").unwrap(),
             exclude_tests: None,
+            exclude_contracts: None,
             exclude_paths: None,
         }
     }
@@ -71,6 +82,12 @@ impl TestFilter for Filter {
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {
+        if let Some(exclude) = &self.exclude_contracts {
+            if exclude.is_match(contract_name) {
+                return false;
+            }
+        }
+
         self.contract_regex.is_match(contract_name)
     }
 

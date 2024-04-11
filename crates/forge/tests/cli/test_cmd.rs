@@ -358,10 +358,10 @@ interface IERC20 {
     function name() external view returns (string memory);
 }
 
-contract USDCCallingTest is Test {
+contract USDTCallingTest is Test {
     function test() public {
         vm.createSelectFork("<url>");
-        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
     }
 }
    "#
@@ -525,4 +525,19 @@ contract GasLimitTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+});
+
+forgetest!(test_match_path, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"  
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["test", "--match-path", "src/dummy.sol"]);
+    cmd.assert_success()
 });

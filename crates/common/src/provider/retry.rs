@@ -49,6 +49,9 @@ impl RetryPolicy for RateLimitRetryPolicy {
                 false
             }
             TransportError::ErrorResp(err) => should_retry_json_rpc_error(err),
+            TransportError::NullResp => true,
+            TransportError::UnsupportedFeature(_) => false,
+            TransportError::LocalUsageError(_) => false,
         }
     }
 
@@ -79,6 +82,12 @@ fn should_retry_transport_level_error(error: &TransportErrorKind) -> bool {
     match error {
         // Missing batch response errors can be retried.
         TransportErrorKind::MissingBatchResponse(_) => true,
+        TransportErrorKind::Custom(err) => {
+            // currently http error responses are not standard in alloy
+            let msg = err.to_string();
+            msg.contains("429 Too Many Requests")
+        }
+
         // If the backend is gone, or there's a completely custom error, we should assume it's not
         // retryable.
         _ => false,

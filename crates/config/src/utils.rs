@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use toml_edit::{Document, Item};
+use toml_edit::{DocumentMut, Item};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -216,9 +216,9 @@ pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<S
 
 /// Returns a [`toml_edit::Document`] loaded from the provided `path`.
 /// Can raise an error in case of I/O or parsing errors.
-fn read_toml(path: impl AsRef<Path>) -> eyre::Result<Document> {
+fn read_toml(path: impl AsRef<Path>) -> eyre::Result<DocumentMut> {
     let path = path.as_ref().to_owned();
-    let doc: Document = std::fs::read_to_string(path)?.parse()?;
+    let doc: DocumentMut = std::fs::read_to_string(path)?.parse()?;
     Ok(doc)
 }
 

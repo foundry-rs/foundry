@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
 use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
@@ -30,7 +30,8 @@ pub struct RunArgs {
     debug: bool,
 
     /// Print out opcode traces.
-    #[arg(long, short)]
+    #[deprecated]
+    #[arg(long, short, hide = true)]
     trace_printer: bool,
 
     /// Executes the transaction only with the state from the previous block.
@@ -82,6 +83,11 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
+        #[allow(deprecated)]
+        if self.trace_printer {
+            eprintln!("WARNING: --trace-printer is deprecated and has no effect\n");
+        }
+
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
         let evm_opts = figment.extract::<EvmOpts>()?;
@@ -103,39 +109,47 @@ impl RunArgs {
             .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
-            tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
-        {
+        if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 tx.hash
             ));
         }
 
-        let tx_block_number = tx
-            .block_number
-            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
-            .to::<u64>();
+        let tx_block_number =
+            tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+
+        // fetch the block the transaction was mined in
+        let block = provider.get_block(tx_block_number.into(), true).await?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
         let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug);
+        let mut evm_version = self.evm_version;
 
         env.block.number = U256::from(tx_block_number);
 
-        let block = provider.get_block(tx_block_number.into(), true).await?;
-        if let Some(ref block) = block {
-            env.block.timestamp = block.header.timestamp;
+        if let Some(block) = &block {
+            env.block.timestamp = U256::from(block.header.timestamp);
             env.block.coinbase = block.header.miner;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.header.gas_limit;
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
+
+            // TODO: we need a smarter way to map the block to the corresponding evm_version for
+            // commonly used chains
+            if evm_version.is_none() {
+                // if the block has the excess_blob_gas field, we assume it's a Cancun block
+                if block.header.excess_blob_gas.is_some() {
+                    evm_version = Some(EvmVersion::Cancun);
+                }
+            }
         }
 
+        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug);
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
@@ -156,8 +170,7 @@ impl RunArgs {
                     // we skip them otherwise this would cause
                     // reverts
                     if is_known_system_sender(tx.from) ||
-                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                            Some(SYSTEM_TRANSACTION_TYPE)
+                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
                         continue;
@@ -201,8 +214,6 @@ impl RunArgs {
 
         // Execute our transaction
         let result = {
-            executor.set_trace_printer(self.trace_printer);
-
             configure_tx_env(&mut env, &tx);
 
             if let Some(to) = tx.to {
