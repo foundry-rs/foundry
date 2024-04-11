@@ -1,5 +1,6 @@
 //! commonly used abigen generated types
 
+use alloy_sol_types::sol;
 use ethers::{
     contract::{abigen, EthEvent},
     types::Address,
@@ -14,6 +15,25 @@ pub struct ValueChanged {
     pub old_value: String,
     pub new_value: String,
 }
+
+// TODO: Rename to Greeter before merging
+sol!(
+    #[sol(rpc)]
+    AlloyGreeter,
+    "test-data/greeter.json"
+);
+
+sol!(
+    #[sol(rpc)]
+    AlloySimpleStorage,
+    "test-data/SimpleStorage.json"
+);
+
+sol!(
+    #[sol(rpc)]
+    AlloyMulticallContract,
+    "test-data/multicall.json"
+);
 
 abigen!(Greeter, "test-data/greeter.json");
 abigen!(SimpleStorage, "test-data/SimpleStorage.json");

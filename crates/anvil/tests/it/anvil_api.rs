@@ -1,6 +1,10 @@
 //! tests for custom anvil endpoints
-use crate::{abi::*, fork::fork_config, utils::http_provider};
-use alloy_network::TransactionBuilder;
+use crate::{
+    abi::*,
+    fork::fork_config,
+    utils::{http_provider, http_provider_with_signer},
+};
+use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
@@ -137,4 +141,54 @@ async fn can_auto_impersonate_account() {
     // explicitly impersonated accounts get returned by `eth_accounts`
     api.anvil_impersonate_account(impersonate).await.unwrap();
     assert!(api.accounts().unwrap().contains(&impersonate));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_contract() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+
+    let signer: EthereumSigner = wallet.clone().into();
+
+    let provider = http_provider(&handle.http_endpoint());
+    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let greeter_contract_builder =
+        AlloyGreeter::deploy_builder(&provider_with_signer, "Hello World!".to_string());
+    let greeter_contract_address = greeter_contract_builder.deploy().await.unwrap();
+    let greeter_contract = AlloyGreeter::new(greeter_contract_address, &provider);
+
+    let impersonate = greeter_contract_address;
+
+    let to = Address::random();
+    let val = U256::from(1337);
+
+    // // fund the impersonated account
+    api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
+
+    let tx =
+        TransactionRequest::default().with_from(impersonate).with_to(to.into()).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+
+    let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
+    let greeting = _0;
+    assert_eq!("Hello World!", greeting);
+
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, val.into());
+
+    api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+
+    let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
+    let greeting = _0;
+    assert_eq!("Hello World!", greeting);
 }
