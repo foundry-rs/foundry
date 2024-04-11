@@ -44,6 +44,7 @@ pub struct CloneArgs {
 /// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
 /// cloned contract. The metadata can be serialized to a metadata file in the cloned project root.
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CloneMetadata {
     /// The path to the source file that contains the contract declaration.
     /// The path is relative to the root directory of the project.
