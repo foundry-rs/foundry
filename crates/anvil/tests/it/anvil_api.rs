@@ -25,7 +25,6 @@ use std::{
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
-
     let provider = http_provider(&handle.http_endpoint());
 
     let gas_price = U256::from(1337);
@@ -66,7 +65,6 @@ async fn can_set_storage() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-
     let provider = http_provider(&handle.http_endpoint());
 
     let impersonate = Address::random();
@@ -106,7 +104,6 @@ async fn can_impersonate_account() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_auto_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-
     let provider = http_provider(&handle.http_endpoint());
 
     let impersonate = Address::random();
@@ -225,4 +222,54 @@ async fn can_impersonate_gnosis_safe() {
     let code = provider.get_code_at(safe, Number(BlockNumberOrTag::Latest)).await.unwrap();
     // code is added back after stop impersonating
     assert!(!code.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_multiple_accounts() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let impersonate0 = Address::random();
+    let impersonate1 = Address::random();
+    let to = Address::random();
+
+    let val = U256::from(1337);
+    let funding = U256::from(1e18 as u64);
+    // fund the impersonated accounts
+    api.anvil_set_balance(impersonate0, funding).await.unwrap();
+    api.anvil_set_balance(impersonate1, funding).await.unwrap();
+
+    let tx =
+        TransactionRequest::default().with_from(impersonate0).with_to(to.into()).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    api.anvil_impersonate_account(impersonate0).await.unwrap();
+    api.anvil_impersonate_account(impersonate1).await.unwrap();
+
+    let res0 = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(res0.from, impersonate0);
+
+    let nonce = provider.get_transaction_count(impersonate0, None).await.unwrap();
+    assert_eq!(nonce, 1u64);
+
+    let receipt = provider.get_transaction_receipt(res0.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res0.inner, receipt.inner);
+
+    let res1 = provider
+        .send_transaction(tx.with_from(impersonate1))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert_eq!(res1.from, impersonate1);
+
+    let nonce = provider.get_transaction_count(impersonate1, None).await.unwrap();
+    assert_eq!(nonce, 1u64);
+
+    let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res1.inner, receipt.inner);
+
+    assert_ne!(res0.inner, res1.inner);
 }
