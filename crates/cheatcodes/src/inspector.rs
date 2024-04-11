@@ -1342,15 +1342,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let address = self.allow_cheatcodes_on_create(ecx, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // If the create scheme is create2, and the caller is the DEFAULT_CREATE2_DEPLOYER then
-            // we must add 1 to the depth to account for the call to the create2 factory.
-            let mut depth = ecx.journaled_state.depth();
-            if let CreateScheme::Create2 { salt: _ } = call.scheme {
-                if call.caller == DEFAULT_CREATE2_DEPLOYER {
-                    depth += 1;
-                }
-            }
-
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs_stack.push(vec![AccountAccess {
@@ -1369,7 +1360,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on create_end
                 storageAccesses: vec![],    // updated on create_end
-                depth,
+                depth: ecx.journaled_state.depth(),
             }]);
         }
 
