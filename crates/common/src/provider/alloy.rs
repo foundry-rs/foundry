@@ -4,8 +4,10 @@ use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_provider::{
-    network::AnyNetwork, utils::Eip1559Estimation, Provider,
-    ProviderBuilder as AlloyProviderBuilder, RootProvider,
+    fillers::{FillProvider, JoinFill, SignerFiller},
+    network::{AnyNetwork, EthereumSigner},
+    utils::Eip1559Estimation,
+    Identity, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::Transport;
@@ -29,6 +31,14 @@ use super::{
 
 /// Helper type alias for a retry provider
 pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
+
+/// Helper type alias for a retry provider with a signer
+pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
+    JoinFill<Identity, SignerFiller<EthereumSigner>>,
+    RootProvider<RetryBackoffService<RuntimeTransport>, N>,
+    RetryBackoffService<RuntimeTransport>,
+    N,
+>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -243,6 +253,43 @@ impl ProviderBuilder {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            .on_provider(RootProvider::new(client));
+
+        Ok(provider)
+    }
+
+    /// Constructs the `RetryProvider` with a signer
+    pub fn build_with_signer(self, signer: EthereumSigner) -> Result<RetryProviderWithSigner> {
+        let ProviderBuilder {
+            url,
+            chain: _,
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+            jwt,
+            headers,
+        } = self;
+        let url = url?;
+
+        let retry_layer = RetryBackoffLayer::new(
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            compute_units_per_second,
+        );
+
+        let transport = RuntimeTransportBuilder::new(url.clone())
+            .with_timeout(timeout)
+            .with_headers(headers)
+            .with_jwt(jwt)
+            .build();
+
+        let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
+
+        let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            .signer(signer)
             .on_provider(RootProvider::new(client));
 
         Ok(provider)

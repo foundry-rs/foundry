@@ -24,6 +24,7 @@ vergen = { workspace = true, default-features = false, features = [
 
 [dependencies]
 # foundry internal
+alloy-contract.workspace = true
 anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
@@ -47,7 +48,12 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types.workspace = true
 alloy-rpc-types-trace.workspace = true
-alloy-provider = { workspace = true, features = ["pubsub"] }
+alloy-provider = { workspace = true, features = [
+    "pubsub",
+    "ws",
+    "ipc",
+    "reqwest",
+] }
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
