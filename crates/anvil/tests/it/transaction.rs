@@ -903,7 +903,6 @@ async fn can_stream_pending_transactions() {
     }
 }
 
-// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_access_list() {
     /// returns a String representation of the AccessList, with sorted
