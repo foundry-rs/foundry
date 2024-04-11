@@ -158,7 +158,7 @@ impl CloneArgs {
 
         // dump sources and update the remapping in configuration
         let Settings { remappings: original_remappings, .. } = meta.settings()?;
-        let remappings = dump_sources(&meta, &root)?;
+        let (remappings, strip_old_src) = dump_sources(&meta, &root)?;
         Config::update_at(&root, |config, doc| {
             let profile = config.profile.as_str().as_str();
             let mut remapping_array = toml_edit::Array::new();
@@ -167,11 +167,13 @@ impl CloneArgs {
                 // we should update its remapped path in the same way as we dump sources
                 // i.e., remove prefix `contracts` (if any) and add prefix `src`
                 let mut r = r.to_owned();
-                let new_path = PathBuf::from(r.path.clone())
-                    .strip_prefix("contracts")
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or(PathBuf::from(r.path));
-                r.path = PathBuf::from("src").join(new_path).to_string_lossy().to_string();
+                if strip_old_src {
+                    let new_path = PathBuf::from(r.path.clone())
+                        .strip_prefix("contracts")
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or(PathBuf::from(r.path));
+                    r.path = PathBuf::from("src").join(new_path).to_string_lossy().to_string();
+                }
                 remapping_array.push(r.to_string());
             }
             // new remappings
@@ -353,7 +355,9 @@ fn update_config_by_metadata(
 /// Dump the contract sources to the root directory.
 /// The sources are dumped to the `src` directory.
 /// IO errors may be returned.
-fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping>> {
+/// A list of remappings is returned, as well as a boolean indicating whether the old `contract`
+/// or `src` directories are stripped.
+fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemapping>, bool)> {
     // get config
     let path_config = ProjectPathsConfig::builder().build_with_root(root);
     let src_dir = root.join(path_config.sources).canonicalize()?;
@@ -373,6 +377,15 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
         .write_to(&tmp_dump_dir)
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
 
+    // check whether we need to strip the `contract` or `src` directories in the original sources.
+    // They are the source directories in foundry or hardhat projects. We do not want to preserve
+    // them in the cloned project.
+    // If there is any other directory other than `src` `contracts` or `lib`, we should not strip.
+    let strip_old_src = std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
+        let Ok(e) = e else { return false };
+        let folder_name = e.file_name().to_string_lossy().to_string();
+        ["contracts", "src", "lib"].contains(&folder_name.as_str())
+    });
     // move contract sources to the `src` directory
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
         if std::fs::metadata(&src_dir).is_err() {
@@ -381,7 +394,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
         let entry = entry?;
         let folder_name = entry.file_name().to_string_lossy().to_string();
         // special handling for contracts and src directories: we flatten them.
-        if folder_name.as_str() == "contracts" || folder_name.as_str() == "src" {
+        if strip_old_src && (folder_name.as_str() == "contracts" || folder_name.as_str() == "src") {
             // move all sub folders in contracts to src
             for e in read_dir(entry.path())? {
                 let e = e?;
@@ -408,7 +421,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
     // remove the temporary directory
     std::fs::remove_dir_all(tmp_dump_dir)?;
 
-    Ok(remappings.into_iter().map(|r| r.into_relative(root)).collect())
+    Ok((remappings.into_iter().map(|r| r.into_relative(root)).collect(), strip_old_src))
 }
 
 /// Compile the project in the root directory, and return the compilation result.
@@ -644,6 +657,13 @@ mod tests {
     #[serial]
     async fn test_clone_contract_with_original_remappings() {
         let address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
+        one_test_case(address, false).await
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[serial]
+    async fn test_clone_contract_with_relative_import2() {
+        let address = "0x044b75f554b886A065b9567891e45c79542d7357".parse().unwrap();
         one_test_case(address, false).await
     }
 
