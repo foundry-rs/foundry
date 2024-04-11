@@ -3,25 +3,21 @@ use crate::{
     utils::{ethers_http_provider, ethers_ws_provider, http_provider, ws_provider},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address as aAddress, Bytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest as AlloyTransactionRequest,
     state::{AccountOverride, StateOverride},
-    BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
+    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
 };
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
-    abi::ethereum_types::BigEndianHash,
     prelude::{signer::SignerMiddlewareError, Middleware, Signer, SignerMiddleware},
-    types::{
-        transaction::eip2930::{AccessList, AccessListItem},
-        Address, Transaction, TransactionReceipt, TransactionRequest, H256,
-    },
+    types::{Transaction, TransactionReceipt, TransactionRequest},
 };
 use foundry_common::types::ToEthers;
 use futures::{future::join_all, FutureExt, StreamExt};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -697,7 +693,7 @@ async fn can_get_pending_transaction() {
     let tx = AlloyTransactionRequest::default()
         .from(from)
         .value(U256::from(1337))
-        .to(Some(aAddress::random()));
+        .to(Some(Address::random()));
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap();
 
@@ -742,7 +738,7 @@ async fn can_handle_different_sender_nonce_calculation() {
         let tx_from_first = AlloyTransactionRequest::default()
             .from(from_first)
             .value(U256::from(1337u64))
-            .to(Some(aAddress::random()));
+            .to(Some(Address::random()));
         let tx_from_first = WithOtherFields::new(tx_from_first);
         let _tx = provider.send_transaction(tx_from_first).await.unwrap();
         let nonce_from_first =
@@ -752,7 +748,7 @@ async fn can_handle_different_sender_nonce_calculation() {
         let tx_from_second = AlloyTransactionRequest::default()
             .from(from_second)
             .value(U256::from(1337u64))
-            .to(Some(aAddress::random()));
+            .to(Some(Address::random()));
         let tx_from_second = WithOtherFields::new(tx_from_second);
         let _tx = provider.send_transaction(tx_from_second).await.unwrap();
         let nonce_from_second =
@@ -777,7 +773,7 @@ async fn includes_pending_tx_for_transaction_count() {
         let tx = AlloyTransactionRequest::default()
             .from(from)
             .value(U256::from(1337))
-            .to(Some(aAddress::random()));
+            .to(Some(Address::random()));
         let tx = WithOtherFields::new(tx);
         let _tx = provider.send_transaction(tx).await.unwrap();
         let nonce = provider.get_transaction_count(from, Some(BlockId::pending())).await.unwrap();
@@ -829,8 +825,7 @@ async fn test_tx_receipt() {
     let wallet = handle.dev_wallets().next().unwrap();
     let provider = http_provider(&handle.http_endpoint());
 
-    let tx =
-        AlloyTransactionRequest::default().to(Some(aAddress::random())).value(U256::from(1337));
+    let tx = AlloyTransactionRequest::default().to(Some(Address::random())).value(U256::from(1337));
 
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -941,39 +936,52 @@ async fn test_tx_access_list() {
     //     - The sender shouldn't be in the AL
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client =
-        Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
+    let provider = http_provider(&handle.http_endpoint());
 
     let sender = Address::random();
     let other_acc = Address::random();
-    let multicall = MulticallContract::deploy(client.clone(), ()).unwrap().send().await.unwrap();
+    let multicall = AlloyMulticallContract::deploy(provider.clone()).await.unwrap();
     let simple_storage =
-        SimpleStorage::deploy(client.clone(), "foo".to_string()).unwrap().send().await.unwrap();
+        AlloySimpleStorage::deploy(provider.clone(), "foo".to_string()).await.unwrap();
 
     // when calling `setValue` on SimpleStorage, both the `lastSender` and `_value` storages are
     // modified The `_value` is a `string`, so the storage slots here (small string) are `0x1`
     // and `keccak(0x1)`
-    let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
-    let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
+    let set_value = simple_storage.setValue("bar".to_string());
+    let set_value_calldata = set_value.calldata();
+    let set_value_tx = AlloyTransactionRequest::default()
+        .from(sender)
+        .to(Some(*simple_storage.address()))
+        .with_input(set_value_calldata.to_owned());
+    let set_value_tx = WithOtherFields::new(set_value_tx);
+    let access_list = provider.create_access_list(&set_value_tx, None).await.unwrap();
+    // let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
+    // let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         AccessList::from(vec![AccessListItem {
-            address: simple_storage.address(),
+            address: *simple_storage.address(),
             storage_keys: vec![
-                H256::zero(),
-                H256::from_uint(&(1u64.into())),
-                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"
-                    .parse()
-                    .unwrap(),
+                FixedBytes::ZERO,
+                FixedBytes::with_last_byte(1),
+                FixedBytes::from_str(
+                    "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6",
+                )
+                .unwrap(),
             ],
         }]),
     );
 
     // With a subcall that fetches the balances of an account (`other_acc`), only the address
     // of this account should be in the Access List
-    let call_tx = multicall.get_eth_balance(other_acc).from(sender).tx;
-    let access_list = client.create_access_list(&call_tx, None).await.unwrap();
+    let call_tx = multicall.getEthBalance(other_acc);
+    let call_tx_data = call_tx.calldata();
+    let call_tx = AlloyTransactionRequest::default()
+        .from(sender)
+        .to(Some(*multicall.address()))
+        .with_input(call_tx_data.to_owned());
+    let call_tx = WithOtherFields::new(call_tx);
+    let access_list = provider.create_access_list(&call_tx, None).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         AccessList::from(vec![AccessListItem { address: other_acc, storage_keys: vec![] }]),
@@ -981,24 +989,31 @@ async fn test_tx_access_list() {
 
     // With a subcall to another contract, the AccessList should be the same as when calling the
     // subcontract directly (given that the proxy contract doesn't read/write any state)
-    let subcall_tx = multicall
-        .aggregate(vec![Call {
-            target: simple_storage.address(),
-            call_data: set_value_tx.data().unwrap().clone(),
-        }])
+    let subcall_tx = multicall.aggregate(vec![AlloyMulticallContract::Call {
+        target: *simple_storage.address(),
+        callData: set_value_calldata.to_owned(),
+    }]);
+
+    let subcall_tx_calldata = subcall_tx.calldata();
+
+    let subcall_tx = AlloyTransactionRequest::default()
         .from(sender)
-        .tx;
-    let access_list = client.create_access_list(&subcall_tx, None).await.unwrap();
+        .to(Some(*multicall.address()))
+        .with_input(subcall_tx_calldata.to_owned());
+    let subcall_tx = WithOtherFields::new(subcall_tx);
+    let access_list = provider.create_access_list(&subcall_tx, None).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
+        // H256::from_uint(&(1u64.into())),
         AccessList::from(vec![AccessListItem {
-            address: simple_storage.address(),
+            address: *simple_storage.address(),
             storage_keys: vec![
-                H256::zero(),
-                H256::from_uint(&(1u64.into())),
-                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"
-                    .parse()
-                    .unwrap(),
+                FixedBytes::ZERO,
+                FixedBytes::with_last_byte(1),
+                FixedBytes::from_str(
+                    "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6",
+                )
+                .unwrap(),
             ],
         }]),
     );
@@ -1016,7 +1031,7 @@ async fn estimates_gas_on_pending_by_default() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let sender = wallet.address();
-    let recipient = aAddress::random();
+    let recipient = Address::random();
 
     let tx =
         AlloyTransactionRequest::default().from(sender).to(Some(recipient)).value(U256::from(1e18));
@@ -1038,7 +1053,7 @@ async fn test_estimate_gas() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let sender = wallet.address();
-    let recipient = aAddress::random();
+    let recipient = Address::random();
 
     let tx = AlloyTransactionRequest::default()
         .from(recipient)
@@ -1082,7 +1097,7 @@ async fn test_reject_gas_too_low() {
 
     let gas = 21_000u64 - 1;
     let tx = AlloyTransactionRequest::default()
-        .to(Some(aAddress::random()))
+        .to(Some(Address::random()))
         .value(U256::from(1337u64))
         .from(account)
         .with_gas_limit(gas as u128);
