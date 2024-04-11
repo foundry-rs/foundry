@@ -191,18 +191,18 @@ impl<'a> ContractRunner<'a> {
 
     /// Collect fixtures from test contract.
     ///
-    /// - as storage arrays defined in test contract
     /// Fixtures can be defined:
+    /// - as storage arrays in test contract
     /// - as functions by having inline fixture configuration and same name as the parameter to be
     /// fuzzed
     ///
-    /// For example, a storage variable declared as
+    /// Storage array fixtures:
     /// `uint256[] public amount = [1, 2, 3];`
     /// define an array of uint256 values to be used for fuzzing `amount` named parameter in scope
     /// of the current test.
     ///
-    /// For example, a function declared as
-    /// `function owner() public returns (address[] memory)`
+    /// Function fixtures:
+    /// `function owner() public returns (address[] memory){}`
     /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
