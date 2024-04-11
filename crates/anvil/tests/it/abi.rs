@@ -34,6 +34,12 @@ sol!(
     AlloyMulticallContract,
     "test-data/multicall.json"
 );
+sol!(
+    #[sol(rpc)]
+    contract AlloyBUSD {
+        function balanceOf(address) external view returns (uint256);
+    }
+);
 
 abigen!(Greeter, "test-data/greeter.json");
 abigen!(SimpleStorage, "test-data/SimpleStorage.json");
