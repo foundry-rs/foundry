@@ -62,7 +62,12 @@ async fn can_set_storage() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+
     let provider = http_provider(&handle.http_endpoint());
+    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -80,11 +85,17 @@ async fn can_impersonate_account() {
         .with_value(val);
     let tx = WithOtherFields::new(tx);
 
-    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     api.anvil_impersonate_account(impersonate).await.unwrap();
     assert!(api.accounts().unwrap().contains(&impersonate));
 
-    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider_with_signer
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
     assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
@@ -94,13 +105,17 @@ async fn can_impersonate_account() {
     assert_eq!(balance, val.into());
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
-    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_auto_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+
     let provider = http_provider(&handle.http_endpoint());
+    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -118,11 +133,17 @@ async fn can_auto_impersonate_account() {
         .with_value(val);
     let tx = WithOtherFields::new(tx);
 
-    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     api.anvil_auto_impersonate_account(true).await.unwrap();
 
-    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider_with_signer
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
     assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
@@ -132,7 +153,7 @@ async fn can_auto_impersonate_account() {
     assert_eq!(balance, val.into());
 
     api.anvil_auto_impersonate_account(false).await.unwrap();
-    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     // explicitly impersonated accounts get returned by `eth_accounts`
     api.anvil_impersonate_account(impersonate).await.unwrap();
@@ -166,7 +187,7 @@ async fn can_impersonate_contract() {
         TransactionRequest::default().with_from(impersonate).with_to(to.into()).with_value(val);
     let tx = WithOtherFields::new(tx);
 
-    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
     let greeting = _0;
@@ -174,7 +195,13 @@ async fn can_impersonate_contract() {
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
 
-    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider_with_signer
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
     assert_eq!(res.from, impersonate);
 
     let balance = provider.get_balance(to, None).await.unwrap();
@@ -182,7 +209,7 @@ async fn can_impersonate_contract() {
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
 
-    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
     let greeting = _0;
