@@ -23,7 +23,7 @@ use foundry_evm::{
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
-    fuzz::{invariant::InvariantContract, CounterExample, FuzzFixtures},
+    fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -192,63 +192,54 @@ impl<'a> ContractRunner<'a> {
     /// Collect fixtures from test contract.
     ///
     /// Fixtures can be defined:
-    /// - as storage arrays in test contract
-    /// - as functions by having inline fixture configuration and same name as the parameter to be
+    /// - as storage arrays in test contract, prefixed with `fixture`
+    /// - as functions prefixed with `fixture` and followed by parameter name to be
     /// fuzzed
     ///
     /// Storage array fixtures:
-    /// `uint256[] public amount = [1, 2, 3];`
+    /// `uint256[] public fixture_amount = [1, 2, 3];`
     /// define an array of uint256 values to be used for fuzzing `amount` named parameter in scope
     /// of the current test.
     ///
     /// Function fixtures:
-    /// `function owner() public returns (address[] memory){}`
+    /// `function fixture_owner() public returns (address[] memory){}`
     /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
         let mut fixtures = HashMap::new();
-        self.contract
-            .abi
-            .functions()
-            .filter(|func| {
-                !func.is_setup() &&
-                    !func.is_invariant_test() &&
-                    !func.is_invariant_target_setup() &&
-                    !func.is_test()
-            })
-            .for_each(|func| {
-                if func.inputs.is_empty() {
-                    // Read fixtures declared as functions.
-                    if let Ok(CallResult { raw: _, decoded_result }) =
-                        self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
-                    {
-                        fixtures.insert(func.name.clone(), decoded_result);
+        self.contract.abi.functions().filter(|func| func.is_fixture()).for_each(|func| {
+            if func.inputs.is_empty() {
+                // Read fixtures declared as functions.
+                if let Ok(CallResult { raw: _, decoded_result }) =
+                    self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+                {
+                    fixtures.insert(fixture_name(func.name.clone()), decoded_result);
+                }
+            } else {
+                // For reading fixtures from storage arrays we collect values by calling the
+                // function with incremented indexes until there's an error.
+                let mut vals = Vec::new();
+                let mut index = 0;
+                loop {
+                    if let Ok(CallResult { raw: _, decoded_result }) = self.executor.call(
+                        CALLER,
+                        address,
+                        func,
+                        &[DynSolValue::Uint(U256::from(index), 256)],
+                        U256::ZERO,
+                        None,
+                    ) {
+                        vals.push(decoded_result);
+                    } else {
+                        // No result returned for this index, we reached the end of storage
+                        // array or the function is not a valid fixture.
+                        break;
                     }
-                } else {
-                    // For reading fixtures from storage arrays we collect values by calling the
-                    // function with incremented indexes until there's an error.
-                    let mut vals = Vec::new();
-                    let mut index = 0;
-                    loop {
-                        if let Ok(CallResult { raw: _, decoded_result }) = self.executor.call(
-                            CALLER,
-                            address,
-                            func,
-                            &[DynSolValue::Uint(U256::from(index), 256)],
-                            U256::ZERO,
-                            None,
-                        ) {
-                            vals.push(decoded_result);
-                        } else {
-                            // No result returned for this index, we reached the end of storage
-                            // array or the function is not a valid fixture.
-                            break;
-                        }
-                        index += 1;
-                    }
-                    fixtures.insert(func.name.clone(), DynSolValue::Array(vals));
-                };
-            });
+                    index += 1;
+                }
+                fixtures.insert(fixture_name(func.name.clone()), DynSolValue::Array(vals));
+            };
+        });
 
         FuzzFixtures::new(fixtures)
     }

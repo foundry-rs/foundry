@@ -289,8 +289,8 @@ impl FuzzFixtures {
     }
 
     /// Returns configured fixtures for `param_name` fuzzed parameter.
-    pub fn param_fixtures(&self, param_name: &String) -> Option<&[DynSolValue]> {
-        if let Some(param_fixtures) = self.inner.get(param_name) {
+    pub fn param_fixtures(&self, param_name: &str) -> Option<&[DynSolValue]> {
+        if let Some(param_fixtures) = self.inner.get(&normalize_fixture(param_name)) {
             match param_fixtures {
                 DynSolValue::FixedArray(_) => param_fixtures.as_fixed_array(),
                 _ => param_fixtures.as_array(),
@@ -299,4 +299,15 @@ impl FuzzFixtures {
             None
         }
     }
+}
+
+/// Extracts fixture name from a function name.
+/// For example: fixtures defined in `fixture_Owner` function will be applied for `owner` parameter.
+pub fn fixture_name(function_name: String) -> String {
+    normalize_fixture(function_name.strip_prefix("fixture").unwrap())
+}
+
+/// Normalize fixture parameter name, for example `_Owner` to `owner`.
+fn normalize_fixture(param_name: &str) -> String {
+    param_name.trim_matches(&['_']).to_ascii_lowercase()
 }

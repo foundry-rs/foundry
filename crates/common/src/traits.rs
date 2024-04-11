@@ -34,8 +34,8 @@ pub trait TestFunctionExt {
     /// Returns whether this function is a `setUp` function.
     fn is_setup(&self) -> bool;
 
-    /// Returns whether this function is a invariant setup function.
-    fn is_invariant_target_setup(&self) -> bool;
+    /// Returns whether this function is a fixture function.
+    fn is_fixture(&self) -> bool;
 }
 
 impl TestFunctionExt for Function {
@@ -60,8 +60,8 @@ impl TestFunctionExt for Function {
         self.name.is_setup()
     }
 
-    fn is_invariant_target_setup(&self) -> bool {
-        self.name.is_invariant_target_setup()
+    fn is_fixture(&self) -> bool {
+        self.name.is_fixture()
     }
 }
 
@@ -86,8 +86,8 @@ impl TestFunctionExt for String {
         self.as_str().is_setup()
     }
 
-    fn is_invariant_target_setup(&self) -> bool {
-        self.as_str().is_invariant_target_setup()
+    fn is_fixture(&self) -> bool {
+        self.as_str().is_fixture()
     }
 }
 
@@ -112,16 +112,8 @@ impl TestFunctionExt for str {
         self.eq_ignore_ascii_case("setup")
     }
 
-    fn is_invariant_target_setup(&self) -> bool {
-        self.eq_ignore_ascii_case("excludeArtifacts") ||
-            self.eq_ignore_ascii_case("excludeContracts") ||
-            self.eq_ignore_ascii_case("excludeSenders") ||
-            self.eq_ignore_ascii_case("targetArtifacts") ||
-            self.eq_ignore_ascii_case("targetArtifactSelectors") ||
-            self.eq_ignore_ascii_case("targetContracts") ||
-            self.eq_ignore_ascii_case("targetSelectors") ||
-            self.eq_ignore_ascii_case("targetSenders") ||
-            self.eq_ignore_ascii_case("targetInterfaces")
+    fn is_fixture(&self) -> bool {
+        self.starts_with("fixture")
     }
 }
 

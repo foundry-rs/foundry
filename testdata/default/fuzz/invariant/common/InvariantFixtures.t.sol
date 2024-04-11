@@ -39,33 +39,33 @@ contract Target {
 /// Try to compromise target contract by finding all accepted values using fixtures.
 contract InvariantFixtures is DSTest {
     Target target;
-    address[] public owner_ = [address(0x6B175474E89094C44Da98b954EedeAC495271d0F)];
-    uint256[] public _amount = [1, 2, 1122334455];
+    address[] public fixture_owner_ = [address(0x6B175474E89094C44Da98b954EedeAC495271d0F)];
+    uint256[] public fixture_amount = [1, 2, 1122334455];
 
     function setUp() public {
         target = new Target();
     }
 
-    function magic() external returns (int32[2] memory) {
+    function fixtureMagic() external returns (int32[2] memory) {
         int32[2] memory magic;
         magic[0] = -777;
         magic[1] = 777;
         return magic;
     }
 
-    function key() external pure returns (bytes32[] memory) {
+    function fixtureKey() external pure returns (bytes32[] memory) {
         bytes32[] memory keyFixture = new bytes32[](1);
         keyFixture[0] = "abcd1234";
         return keyFixture;
     }
 
-    function backup() external pure returns (bytes[] memory) {
+    function fixtureBackup() external pure returns (bytes[] memory) {
         bytes[] memory backupFixture = new bytes[](1);
         backupFixture[0] = "qwerty1234";
         return backupFixture;
     }
 
-    function extra() external pure returns (string[] memory) {
+    function fixtureExtra() external pure returns (string[] memory) {
         string[] memory extraFixture = new string[](1);
         extraFixture[0] = "112233aabbccdd";
         return extraFixture;
