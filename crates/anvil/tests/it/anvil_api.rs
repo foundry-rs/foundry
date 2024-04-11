@@ -5,9 +5,9 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address, U256, U64};
+use alloy_primitives::{address, Address, U256, U64};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId::Number, BlockNumberOrTag, TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
@@ -25,6 +25,7 @@ use std::{
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+
     let provider = http_provider(&handle.http_endpoint());
 
     let gas_price = U256::from(1337);
@@ -65,6 +66,7 @@ async fn can_set_storage() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
+
     let provider = http_provider(&handle.http_endpoint());
 
     let impersonate = Address::random();
@@ -104,6 +106,7 @@ async fn can_impersonate_account() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_auto_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
+
     let provider = http_provider(&handle.http_endpoint());
 
     let impersonate = Address::random();
@@ -146,8 +149,8 @@ async fn can_auto_impersonate_account() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_contract() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let wallet = handle.dev_wallets().next().unwrap();
 
+    let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
 
     let provider = http_provider(&handle.http_endpoint());
@@ -191,4 +194,35 @@ async fn can_impersonate_contract() {
     let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
     let greeting = _0;
     assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_gnosis_safe() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
+    let safe = address!("A063Cb7CFd8E57c30c788A0572CBbf2129ae56B6");
+
+    let code = provider.get_code_at(safe, Number(BlockNumberOrTag::Latest)).await.unwrap();
+    assert!(!code.is_empty());
+
+    api.anvil_impersonate_account(safe).await.unwrap();
+
+    let code = provider.get_code_at(safe, Number(BlockNumberOrTag::Latest)).await.unwrap();
+    assert!(!code.is_empty());
+
+    let balance = U256::from(1e18 as u64);
+    // fund the impersonated account
+    api.anvil_set_balance(safe, balance).await.unwrap();
+
+    let on_chain_balance =
+        provider.get_balance(safe, Some(Number(BlockNumberOrTag::Latest))).await.unwrap();
+    assert_eq!(on_chain_balance, balance);
+
+    api.anvil_stop_impersonating_account(safe).await.unwrap();
+
+    let code = provider.get_code_at(safe, Number(BlockNumberOrTag::Latest)).await.unwrap();
+    // code is added back after stop impersonating
+    assert!(!code.is_empty());
 }
