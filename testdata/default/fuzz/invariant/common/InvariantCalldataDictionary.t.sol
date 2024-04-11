@@ -81,11 +81,11 @@ contract InvariantCalldataDictionary is DSTest {
         return targets;
     }
 
-    function sender() external returns (address[] memory) {
+    function fixtureSender() external returns (address[] memory) {
         return actors;
     }
 
-    function candidate() external returns (address[] memory) {
+    function fixtureCandidate() external returns (address[] memory) {
         return actors;
     }
 
