@@ -1,6 +1,6 @@
 use crate::{
     abi::*,
-    utils::{ethers_http_provider, ethers_ws_provider, http_provider, ws_provider},
+    utils::{http_provider, ws_provider},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
@@ -11,10 +11,6 @@ use alloy_rpc_types::{
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
 };
 use anvil::{spawn, Hardfork, NodeConfig};
-use ethers::{
-    prelude::Middleware,
-    types::{Transaction, TransactionReceipt, TransactionRequest},
-};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, str::FromStr, time::Duration};
@@ -843,38 +839,55 @@ async fn test_tx_receipt() {
     assert!(tx.contract_address.is_some());
 }
 
-// TODO: Migrate to Alloy
+// TODO: Fix error: ErrorPayload { code: -32602, message: "invalid type: boolean `true`, expected
+// unit", data: None } originating from watch_full_pending_transactions
 #[tokio::test(flavor = "multi_thread")]
 async fn can_stream_pending_transactions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(2)))).await;
     let num_txs = 5;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-    let ws_provider = ethers_ws_provider(&handle.ws_endpoint());
+
+    let provider = http_provider(&handle.http_endpoint());
+    let ws_provider = ws_provider(&handle.ws_endpoint());
 
     let accounts = provider.get_accounts().await.unwrap();
-    let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
+    let tx = AlloyTransactionRequest::default()
+        .from(accounts[0])
+        .to(Some(accounts[0]))
+        .value(U256::from(1e18));
 
     let mut sending = futures::future::join_all(
         std::iter::repeat(tx.clone())
             .take(num_txs)
             .enumerate()
-            .map(|(nonce, tx)| tx.nonce(nonce))
+            .map(|(nonce, tx)| tx.nonce(nonce as u64))
             .map(|tx| async {
-                provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap()
+                let tx = WithOtherFields::new(tx);
+                provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap()
             }),
     )
     .fuse();
 
-    let mut watch_tx_stream =
-        provider.watch_pending_transactions().await.unwrap().transactions_unordered(num_txs).fuse();
+    let mut watch_tx_stream = provider
+        .watch_full_pending_transactions()
+        .await
+        .unwrap() // TODO: Fix error here
+        .into_stream()
+        .flat_map(futures::stream::iter)
+        .take(num_txs)
+        .fuse();
 
-    let mut sub_tx_stream =
-        ws_provider.subscribe_pending_txs().await.unwrap().transactions_unordered(2).fuse();
+    let mut sub_tx_stream = ws_provider
+        .subscribe_full_pending_transactions()
+        .await
+        .unwrap()
+        .into_stream()
+        .take(2)
+        .fuse();
 
-    let mut sent: Option<Vec<TransactionReceipt>> = None;
-    let mut watch_received: Vec<Transaction> = Vec::with_capacity(num_txs);
-    let mut sub_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+    let mut sent = None;
+    let mut watch_received = Vec::with_capacity(num_txs);
+    let mut sub_received = Vec::with_capacity(num_txs);
 
     loop {
         futures::select! {
@@ -882,12 +895,17 @@ async fn can_stream_pending_transactions() {
                 sent = Some(txs)
             },
             tx = watch_tx_stream.next() => {
-                watch_received.push(tx.unwrap().unwrap());
+                if let Some(tx) = tx {
+                    watch_received.push(tx);
+                }
             },
             tx = sub_tx_stream.next() => {
-                sub_received.push(tx.unwrap().unwrap());
+                if let Some(tx) = tx {
+                    sub_received.push(tx);
+                }
             },
         };
+
         if watch_received.len() == num_txs && sub_received.len() == num_txs {
             if let Some(ref sent) = sent {
                 assert_eq!(sent.len(), watch_received.len());
