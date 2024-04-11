@@ -273,3 +273,44 @@ async fn can_impersonate_multiple_accounts() {
 
     assert_ne!(res0.inner, res1.inner);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_manually() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let start_num = provider.get_block_number().await.unwrap();
+
+    for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
+        api.evm_mine(None).await.unwrap();
+        let num = provider.get_block_number().await.unwrap();
+        assert_eq!(num, start_num + idx as u64 + 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let next_timestamp = now + Duration::from_secs(60);
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(next_timestamp.as_secs()).unwrap();
+
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+    assert_eq!(block.header.number.unwrap(), 1);
+    assert_eq!(block.header.timestamp, next_timestamp.as_secs());
+
+    api.evm_mine(None).await.unwrap();
+
+    let next = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+    assert_eq!(next.header.number.unwrap(), 2);
+
+    assert!(next.header.timestamp > block.header.timestamp);
+}
