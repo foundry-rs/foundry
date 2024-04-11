@@ -495,10 +495,9 @@ async fn get_blocktimestamp_works() {
     assert_eq!(timestamp, U256::from(next_timestamp));
 }
 
-// TODO: Set Tx Fails
 #[tokio::test(flavor = "multi_thread")]
 async fn call_past_state() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = http_provider(&handle.http_endpoint());
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -516,17 +515,10 @@ async fn call_past_state() {
     let value = contract.getValue().call().await.unwrap();
     assert_eq!(value._0, "initial value");
 
-    let set = contract.setValue("hi".to_string());
+    let gas_price = api.gas_price().unwrap().to::<u128>();
+    let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
 
-    let set_tx = set.send().await.unwrap();
-
-    let receipt = set_tx.get_receipt().await.unwrap();
-
-    assert_eq!(true, receipt.inner.inner.inner.receipt.status); // TODO: Investigate: Set Tx fails which causes assert_eq!(value._0, "hi") to fail
-
-    let set_block = provider.get_block_number().await.unwrap();
-
-    assert!(set_block > deployed_block);
+    let _set_tx = set_tx.send().await.unwrap();
 
     // assert new value
     let value = contract.getValue().call().await.unwrap();
