@@ -1,5 +1,5 @@
 use crate::strategies::fixture_strategy;
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::Address;
 use proptest::{
     arbitrary::any,
@@ -35,7 +35,7 @@ impl AddressStrategy {
         fixture_strategy!(
             fixtures,
             value_from_fixture,
-            any::<Address>().prop_map(DynSolValue::Address).boxed()
+            DynSolValue::type_strategy(&DynSolType::Address).boxed()
         )
     }
 }

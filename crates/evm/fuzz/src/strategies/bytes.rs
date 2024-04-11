@@ -73,12 +73,7 @@ impl FixedBytesStrategy {
         fixture_strategy!(
             fixtures,
             value_from_fixture,
-            any::<B256>()
-                .prop_map(move |mut v| {
-                    v[size..].fill(0);
-                    DynSolValue::FixedBytes(v, size)
-                })
-                .boxed()
+            DynSolValue::type_strategy(&DynSolType::FixedBytes(size)).boxed()
         )
     }
 }
