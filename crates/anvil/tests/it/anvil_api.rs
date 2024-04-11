@@ -16,6 +16,7 @@ use anvil_core::{
 };
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::revm::primitives::SpecId;
+use futures::stream::All;
 use std::{
     str::FromStr,
     sync::Arc,
@@ -420,8 +421,8 @@ async fn test_can_set_storage_bsc_fork() {
     let provider = http_provider(&handle.http_endpoint());
 
     let busd_addr = address!("e9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
-    let idx: U256 =
-        "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49".parse().unwrap();
+    let idx = U256::from_str("0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49")
+        .unwrap();
     let value = fixed_bytes!("0000000000000000000000000000000000000000000000000000000000003039");
 
     api.anvil_set_storage_at(busd_addr, idx, value).await.unwrap();
@@ -438,3 +439,248 @@ async fn test_can_set_storage_bsc_fork() {
     let balance = _0;
     assert_eq!(balance, U256::from(12345u64));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = http_provider(&handle.http_endpoint());
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider
+        .get_block(Number(BlockNumberOrTag::Number(block_number)), true)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: U64::from(0),
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash.unwrap(),
+        hard_fork: SpecId::CANCUN,
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: U256::from_str("0x3b9aca00").unwrap().to(),
+            chain_id: 0x7a69,
+            gas_limit: U256::from_str("0x1c9c380").unwrap().to(),
+            gas_price: U256::from_str("0x77359400").unwrap().to(),
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let provider = http_provider(&handle.http_endpoint());
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let block = provider
+        .get_block(Number(BlockNumberOrTag::Number(block_number)), true)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let expected_metadata = AnvilMetadata {
+        latest_block_hash: block.header.hash.unwrap(),
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION,
+        instance_id: api.instance_id(),
+        forked_network: None,
+        snapshots: Default::default(),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata_on_fork() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+    let provider = Arc::new(http_provider(&handle.http_endpoint()));
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let block = provider
+        .get_block(Number(BlockNumberOrTag::Number(block_number)), true)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let expected_metadata = AnvilMetadata {
+        latest_block_hash: block.header.hash.unwrap(),
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION,
+        instance_id: api.instance_id(),
+        forked_network: Some(ForkedNetwork {
+            chain_id,
+            fork_block_number: block_number,
+            fork_block_hash: block.header.hash.unwrap(),
+        }),
+        snapshots: Default::default(),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_changes_on_reset() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+    let instance_id = metadata.instance_id;
+
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: None })).await.unwrap();
+
+    let new_metadata = api.anvil_metadata().await.unwrap();
+    let new_instance_id = new_metadata.instance_id;
+
+    assert_ne!(instance_id, new_instance_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_transaction_receipt() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    // set the base fee
+    let new_base_fee = U256::from(1000);
+    api.anvil_set_next_block_base_fee_per_gas(new_base_fee).await.unwrap();
+
+    // send a EIP-1559 transaction
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_to(Some(to).into()).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let receipt = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+
+    // the block should have the new base fee
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+    assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u128>());
+
+    // mine blocks
+    api.evm_mine(None).await.unwrap();
+
+    // the transaction receipt should have the original effective gas price
+    let new_receipt = provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap();
+    assert_eq!(receipt.effective_gas_price, new_receipt.unwrap().effective_gas_price);
+}
+
+// test can set chain id
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_chain_id() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id, 31337);
+
+    let chain_id = 1234;
+    api.anvil_set_chain_id(chain_id).await.unwrap();
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id, 1234);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6096>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_next_block_timestamp() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block, latest_block);
+
+    api.mine_one().await;
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert!(block.header.timestamp > latest_block.header.timestamp);
+}
+
+// test that after a snapshot revert, the env block is reset
+// to its correct value (block number, etc.)
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_call_latest_block_timestamp() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+
+    let multicall_contract = AlloyMulticallContract::new(
+        address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"),
+        &provider,
+    );
+
+    let AlloyMulticallContract::getCurrentBlockTimestampReturn { timestamp } =
+        multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
+    assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
+
+    let AlloyMulticallContract::getCurrentBlockDifficultyReturn { difficulty } =
+        multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
+    assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
+
+    let AlloyMulticallContract::getCurrentBlockGasLimitReturn { gaslimit } =
+        multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
+    assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
+
+    let AlloyMulticallContract::getCurrentBlockCoinbaseReturn { coinbase } =
+        multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
+    assert_eq!(coinbase, latest_block.header.miner);
+}
+
+// #[tokio::test(flavor = "multi_thread")]
+// async fn can_remove_pool_transactions() {
+//     let (api, handle) = spawn(NodeConfig::test()).await;
+
+//     let wallet = handle.dev_wallets().next().unwrap();
+//     let signer: EthereumSigner = wallet.clone().into();
+//     let from = wallet.address();
+
+//     let provider = http_provider(&handle.http_endpoint());
+//     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+//     let sender = Address::random();
+//     let to = Address::random();
+//     let val = U256::from(1337);
+//     let tx =
+//         TransactionRequest::default().with_from(sender).with_to(Some(to).into()).with_value(val);
+//     let tx = WithOtherFields::new(tx);
+
+//     provider.send_transaction(tx.with_from(from)).await.unwrap();
+
+//     let initial_txs = provider.txpool_inspect().await.unwrap();
+//     assert_eq!(initial_txs.pending.len(), 1);
+
+//     api.anvil_remove_pool_transactions(wallet.address().to_alloy()).await.unwrap();
+
+//     let final_txs = provider.txpool_inspect().await.unwrap();
+//     assert_eq!(final_txs.pending.len(), 0);
+// }
