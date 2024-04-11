@@ -1,8 +1,8 @@
 use crate::{
     abi::*,
-    utils::{ethers_http_provider, ethers_ws_provider, http_provider},
+    utils::{ethers_http_provider, ethers_ws_provider, http_provider, http_provider_with_signer},
 };
-use alloy_network::TransactionBuilder;
+use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Bytes, U256 as rU256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -287,10 +287,14 @@ async fn can_reject_underpriced_replacement() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let wallet = handle.dev_wallets().next().unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let signer: EthereumSigner = wallet.clone().into();
+
+    let provider = ethers_http_provider(&handle.http_endpoint());
+    let _provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let client = Arc::new(SignerMiddleware::new(provider, wallet.to_ethers()));
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
         .unwrap()
