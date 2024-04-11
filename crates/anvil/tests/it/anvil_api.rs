@@ -314,3 +314,100 @@ async fn test_set_next_timestamp() {
 
     assert!(next.header.timestamp > block.header.timestamp);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now + Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+    assert!(block.header.timestamp >= timestamp.as_secs());
+
+    api.evm_mine(None).await.unwrap();
+    let next = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+    assert!(next.header.timestamp > block.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time_in_past() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now - Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+    assert!(block.header.timestamp >= timestamp.as_secs());
+    assert!(block.header.timestamp < now.as_secs());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_timestamp_interval() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    api.evm_mine(None).await.unwrap();
+    let interval = 10;
+
+    for _ in 0..5 {
+        let block =
+            provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+        // mock timestamp
+        api.evm_set_block_timestamp_interval(interval).unwrap();
+        api.evm_mine(None).await.unwrap();
+
+        let new_block =
+            provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+        assert_eq!(new_block.header.timestamp, block.header.timestamp + interval);
+    }
+
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+    let next_timestamp = block.header.timestamp + 50;
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
+
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, next_timestamp);
+
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+    // interval also works after setting the next timestamp manually
+    assert_eq!(block.header.timestamp, next_timestamp + interval);
+
+    assert!(api.evm_remove_block_timestamp_interval().unwrap());
+
+    api.evm_mine(None).await.unwrap();
+    let new_block =
+        provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+
+    // offset is applied correctly after resetting the interval
+    assert!(new_block.header.timestamp > block.header.timestamp);
+
+    api.evm_mine(None).await.unwrap();
+    let another_block =
+        provider.get_block(Number(BlockNumberOrTag::Latest), true).await.unwrap().unwrap();
+    // check interval is disabled
+    assert!(another_block.header.timestamp - new_block.header.timestamp < interval);
+}
