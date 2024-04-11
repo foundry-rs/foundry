@@ -25,6 +25,7 @@ sol!(
 );
 
 sol!(
+    #[derive(Debug)]
     #[sol(rpc)]
     AlloySimpleStorage,
     "test-data/SimpleStorage.json"

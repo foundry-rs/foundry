@@ -1,28 +1,25 @@
 use crate::{
     abi::*,
-    utils::{
-        ethers_http_provider, ethers_ws_provider, http_provider, http_provider_with_signer,
-        ws_provider,
-    },
+    utils::{ethers_http_provider, ethers_ws_provider, http_provider, ws_provider},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Bytes, U256 as rU256};
+use alloy_primitives::{Address as aAddress, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest as AlloyTransactionRequest,
     state::{AccountOverride, StateOverride},
-    BlockId as AlloyBlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
+    BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
 };
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    prelude::{signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware},
+    prelude::{signer::SignerMiddlewareError, Middleware, Signer, SignerMiddleware},
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, BlockNumber, Transaction, TransactionReceipt, TransactionRequest, H256, U256,
+        Address, Transaction, TransactionReceipt, TransactionRequest, H256,
     },
 };
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::types::ToEthers;
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -41,7 +38,7 @@ async fn can_transfer_eth() {
 
     let balance_before = provider.get_balance(to, None).await.unwrap();
 
-    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
     // craft the tx
     // specify the `from` field so that the client knows which account to use
@@ -77,7 +74,7 @@ async fn can_order_transactions() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
     let gas_price = provider.get_gas_price().await.unwrap();
 
@@ -102,7 +99,7 @@ async fn can_order_transactions() {
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash; // Awaits endlessly here due to https://github.com/alloy-rs/alloy/issues/389
 
     // get the block, await receipts
-    let block = provider.get_block(AlloyBlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
 
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
@@ -118,7 +115,7 @@ async fn can_respect_nonces() {
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =
         AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce + 1);
@@ -167,7 +164,7 @@ async fn can_replace_transaction() {
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
-    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce);
 
@@ -210,7 +207,7 @@ async fn can_reject_too_high_gas_limits() {
     let to = accounts[1].address();
 
     let gas_limit = api.gas_limit().to::<u128>();
-    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx = AlloyTransactionRequest::default()
         .to(Some(to))
@@ -235,7 +232,7 @@ async fn can_reject_too_high_gas_limits() {
     let err = pending.unwrap_err();
     assert!(err.to_string().contains("gas too high"));
 
-    api.anvil_set_balance(from, rU256::MAX).await.unwrap();
+    api.anvil_set_balance(from, U256::MAX).await.unwrap();
 
     tx.set_gas_limit(gas_limit);
     let pending = provider.send_transaction(tx).await;
@@ -257,7 +254,7 @@ async fn can_reject_underpriced_replacement() {
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
-    let amount = handle.genesis_balance().checked_div(rU256::from(3u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from).nonce(nonce);
 
@@ -416,180 +413,187 @@ async fn can_call_greeter_historic() {
 
     // returns previous state
     let greeting =
-        greeter_contract.greet().block(AlloyBlockId::Number(block.into())).call().await.unwrap();
+        greeter_contract.greet().block(BlockId::Number(block.into())).call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let provider = ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .legacy()
-        .send()
+    let greeter_addr = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+        .from(wallet.address())
+        // .legacy() unimplemented! in alloy
+        .deploy()
         .await
         .unwrap();
 
-    let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
-
-    let greeter_contract =
-        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
+    let greeter_contract = AlloyGreeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
+    assert_eq!("Hello World!", greeting._0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_get_code() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let provider = ws_provider(&handle.ws_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .legacy()
-        .send()
+    let greeter_addr = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+        .from(wallet.address())
+        .deploy()
         .await
         .unwrap();
 
-    let code = client.get_code(greeter_contract.address(), None).await.unwrap();
+    let code = provider.get_code_at(greeter_addr, BlockId::latest()).await.unwrap();
     assert!(!code.as_ref().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_blocktimestamp_works() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let contract = AlloyMulticallContract::deploy(provider.clone()).await.unwrap();
 
-    let contract =
-        MulticallContract::deploy(Arc::clone(&client), ()).unwrap().send().await.unwrap();
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
 
-    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-
-    assert!(timestamp > U256::one());
+    assert!(timestamp > U256::from(1));
 
     let latest_block =
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp.as_u64(), latest_block.header.timestamp);
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    assert_eq!(timestamp.to::<u64>(), latest_block.header.timestamp);
 
     // repeat call same result
-    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp.as_u64(), latest_block.header.timestamp);
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    assert_eq!(timestamp.to::<u64>(), latest_block.header.timestamp);
 
     // mock timestamp
-    let next_timestamp = timestamp.as_u64() + 1337;
+    let next_timestamp = timestamp.to::<u64>() + 1337;
     api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
-    let timestamp =
-        contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, next_timestamp.into());
+    let timestamp = contract
+        .getCurrentBlockTimestamp()
+        .block(BlockId::pending())
+        .call()
+        .await
+        .unwrap()
+        .timestamp;
+    assert_eq!(timestamp, U256::from(next_timestamp));
 
     // repeat call same result
-    let timestamp =
-        contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, next_timestamp.into());
+    let timestamp = contract
+        .getCurrentBlockTimestamp()
+        .block(BlockId::pending())
+        .call()
+        .await
+        .unwrap()
+        .timestamp;
+    assert_eq!(timestamp, U256::from(next_timestamp));
 }
 
+// TODO: Set Tx Fails
 #[tokio::test(flavor = "multi_thread")]
 async fn call_past_state() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let contract_addr =
+        AlloySimpleStorage::deploy_builder(provider.clone(), "initial value".to_string())
+            .from(wallet.address())
+            .deploy()
+            .await
+            .unwrap();
 
-    let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
-        .unwrap()
-        .send()
-        .await
-        .unwrap();
+    let contract = AlloySimpleStorage::new(contract_addr, provider.clone());
 
-    let deployed_block = client.get_block_number().await.unwrap();
+    let deployed_block = provider.get_block_number().await.unwrap();
 
-    // assert initial state
-    let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();
-    assert_eq!(value, "initial value");
+    let value = contract.getValue().call().await.unwrap();
+    assert_eq!(value._0, "initial value");
 
-    // make a call with `client`
-    let _tx_hash = contract
-        .method::<_, H256>("setValue", "hi".to_owned())
-        .unwrap()
-        .send()
-        .await
-        .unwrap()
-        .await
-        .unwrap()
-        .unwrap();
+    let set = contract.setValue("hi".to_string());
+
+    let set_tx = set.send().await.unwrap();
+
+    let receipt = set_tx.get_receipt().await.unwrap();
+
+    assert_eq!(true, receipt.inner.inner.inner.receipt.status); // TODO: Investigate: Set Tx fails which causes assert_eq!(value._0, "hi") to fail
+
+    let set_block = provider.get_block_number().await.unwrap();
+
+    assert!(set_block > deployed_block);
 
     // assert new value
-    let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();
-    assert_eq!(value, "hi");
+    let value = contract.getValue().call().await.unwrap();
+    assert_eq!(value._0, "hi");
 
     // assert previous value
-    let value = contract
-        .method::<_, String>("getValue", ())
-        .unwrap()
-        .block(BlockId::Number(deployed_block.into()))
-        .call()
-        .await
-        .unwrap();
-    assert_eq!(value, "initial value");
+    let value =
+        contract.getValue().block(BlockId::Number(deployed_block.into())).call().await.unwrap();
+    assert_eq!(value._0, "initial value");
 
-    let hash = client.get_block(1).await.unwrap().unwrap().hash.unwrap();
-    let value = contract
-        .method::<_, String>("getValue", ())
-        .unwrap()
-        .block(BlockId::Hash(hash))
-        .call()
+    let hash = provider
+        .get_block(BlockId::Number(1.into()), false)
         .await
+        .unwrap()
+        .unwrap()
+        .header
+        .hash
         .unwrap();
-    assert_eq!(value, "initial value");
+    let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
+    assert_eq!(value._0, "initial value");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let provider = ws_provider(&handle.ws_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
 
     // explicitly set the nonce
-    let tx = TransactionRequest::new().to(to).value(100u64).from(from).nonce(nonce).gas(21_000u64);
+    let tx = AlloyTransactionRequest::default()
+        .to(Some(to))
+        .value(U256::from(100))
+        .from(from)
+        .nonce(nonce)
+        .with_gas_limit(21000u128);
+
+    let tx = WithOtherFields::new(tx);
+
     let mut tasks = Vec::new();
     for _ in 0..10 {
-        let provider = provider.clone();
         let tx = tx.clone();
-        let task =
-            tokio::task::spawn(async move { provider.send_transaction(tx, None).await?.await });
+        let provider = provider.clone();
+        let task = tokio::task::spawn(async move {
+            provider.send_transaction(tx).await.unwrap().get_receipt().await
+        });
         tasks.push(task);
     }
 
     // only one succeeded
     let successful_tx =
-        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().is_ok()).count();
     assert_eq!(successful_tx, 1);
 
-    assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), 1u64.into());
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), 1u64);
 }
 
+// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -624,6 +628,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 1u64.into());
 }
 
+// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -686,17 +691,21 @@ async fn can_get_pending_transaction() {
     // disable auto mining so we can check if we can return pending tx from the mempool
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
     let from = handle.dev_wallets().next().unwrap().address();
-    let tx = TransactionRequest::new().from(from.to_ethers()).value(1337u64).to(Address::random());
-    let tx = provider.send_transaction(tx, None).await.unwrap();
+    let tx = AlloyTransactionRequest::default()
+        .from(from)
+        .value(U256::from(1337))
+        .to(Some(aAddress::random()));
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap();
 
-    let pending = provider.get_transaction(tx.tx_hash()).await.unwrap();
-    assert!(pending.is_some());
+    let pending = provider.get_transaction_by_hash(*tx.tx_hash()).await;
+    assert!(pending.is_ok());
 
     api.mine_one().await;
-    let mined = provider.get_transaction(tx.tx_hash()).await.unwrap().unwrap();
+    let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap();
 
     assert_eq!(mined.hash, pending.unwrap().hash);
 }
@@ -707,15 +716,12 @@ async fn test_first_noce_is_zero() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
     let from = handle.dev_wallets().next().unwrap().address();
 
-    let nonce = provider
-        .get_transaction_count(from.to_ethers(), Some(BlockId::Number(BlockNumber::Pending)))
-        .await
-        .unwrap();
+    let nonce = provider.get_transaction_count(from, Some(BlockId::pending())).await.unwrap();
 
-    assert_eq!(nonce, U256::zero());
+    assert_eq!(nonce, 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -724,8 +730,8 @@ async fn can_handle_different_sender_nonce_calculation() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from_first = accounts[0].address();
     let from_second = accounts[1].address();
 
@@ -733,23 +739,25 @@ async fn can_handle_different_sender_nonce_calculation() {
 
     // send a bunch of tx to the mempool and check nonce is returned correctly
     for idx in 1..=tx_count {
-        let tx_from_first =
-            TransactionRequest::new().from(from_first).value(1337u64).to(Address::random());
-        let _tx = provider.send_transaction(tx_from_first, None).await.unwrap();
-        let nonce_from_first = provider
-            .get_transaction_count(from_first, Some(BlockId::Number(BlockNumber::Pending)))
-            .await
-            .unwrap();
-        assert_eq!(nonce_from_first, idx.into());
+        let tx_from_first = AlloyTransactionRequest::default()
+            .from(from_first)
+            .value(U256::from(1337u64))
+            .to(Some(aAddress::random()));
+        let tx_from_first = WithOtherFields::new(tx_from_first);
+        let _tx = provider.send_transaction(tx_from_first).await.unwrap();
+        let nonce_from_first =
+            provider.get_transaction_count(from_first, Some(BlockId::pending())).await.unwrap();
+        assert_eq!(nonce_from_first, idx);
 
-        let tx_from_second =
-            TransactionRequest::new().from(from_second).value(1337u64).to(Address::random());
-        let _tx = provider.send_transaction(tx_from_second, None).await.unwrap();
-        let nonce_from_second = provider
-            .get_transaction_count(from_second, Some(BlockId::Number(BlockNumber::Pending)))
-            .await
-            .unwrap();
-        assert_eq!(nonce_from_second, idx.into());
+        let tx_from_second = AlloyTransactionRequest::default()
+            .from(from_second)
+            .value(U256::from(1337u64))
+            .to(Some(aAddress::random()));
+        let tx_from_second = WithOtherFields::new(tx_from_second);
+        let _tx = provider.send_transaction(tx_from_second).await.unwrap();
+        let nonce_from_second =
+            provider.get_transaction_count(from_second, Some(BlockId::pending())).await.unwrap();
+        assert_eq!(nonce_from_second, idx);
     }
 }
 
@@ -759,63 +767,58 @@ async fn includes_pending_tx_for_transaction_count() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
     let from = handle.dev_wallets().next().unwrap().address();
 
     let tx_count = 10u64;
 
     // send a bunch of tx to the mempool and check nonce is returned correctly
     for idx in 1..=tx_count {
-        let tx =
-            TransactionRequest::new().from(from.to_ethers()).value(1337u64).to(Address::random());
-        let _tx = provider.send_transaction(tx, None).await.unwrap();
-        let nonce = provider
-            .get_transaction_count(from.to_ethers(), Some(BlockId::Number(BlockNumber::Pending)))
-            .await
-            .unwrap();
-        assert_eq!(nonce, idx.into());
+        let tx = AlloyTransactionRequest::default()
+            .from(from)
+            .value(U256::from(1337))
+            .to(Some(aAddress::random()));
+        let tx = WithOtherFields::new(tx);
+        let _tx = provider.send_transaction(tx).await.unwrap();
+        let nonce = provider.get_transaction_count(from, Some(BlockId::pending())).await.unwrap();
+        assert_eq!(nonce, idx);
     }
 
     api.mine_one().await;
-    let nonce = provider
-        .get_transaction_count(from.to_ethers(), Some(BlockId::Number(BlockNumber::Pending)))
-        .await
-        .unwrap();
-    assert_eq!(nonce, tx_count.into());
+    let nonce = provider.get_transaction_count(from, Some(BlockId::pending())).await.unwrap();
+    assert_eq!(nonce, tx_count);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_historic_info() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
-    let tx = TransactionRequest::new().to(to).value(amount.to_ethers()).from(from);
-    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
+    let tx = AlloyTransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap();
+    let _ = tx.get_receipt().await.unwrap();
 
-    let nonce_pre = provider
-        .get_transaction_count(from, Some(BlockNumber::Number(0.into()).into()))
-        .await
-        .unwrap();
+    let nonce_pre =
+        provider.get_transaction_count(from, Some(BlockId::Number(0.into()))).await.unwrap();
 
-    let nonce_post =
-        provider.get_transaction_count(from, Some(BlockNumber::Latest.into())).await.unwrap();
+    let nonce_post = provider.get_transaction_count(from, Some(BlockId::latest())).await.unwrap();
 
     assert!(nonce_pre < nonce_post);
 
-    let balance_pre =
-        provider.get_balance(from, Some(BlockNumber::Number(0.into()).into())).await.unwrap();
+    let balance_pre = provider.get_balance(from, Some(BlockId::Number(0.into()))).await.unwrap();
 
-    let balance_post = provider.get_balance(from, Some(BlockNumber::Latest.into())).await.unwrap();
+    let balance_post = provider.get_balance(from, Some(BlockId::latest())).await.unwrap();
 
     assert!(balance_post < balance_pre);
 
     let to_balance = provider.get_balance(to, None).await.unwrap();
-    assert_eq!(balance_pre.saturating_add(amount.to_ethers()), to_balance);
+    assert_eq!(balance_pre.saturating_add(amount), to_balance);
 }
 
 // <https://github.com/eth-brownie/brownie/issues/1549>
@@ -823,24 +826,32 @@ async fn can_get_historic_info() {
 async fn test_tx_receipt() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client =
-        Arc::new(SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider = http_provider(&handle.http_endpoint());
 
-    let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
+    let tx =
+        AlloyTransactionRequest::default().to(Some(aAddress::random())).value(U256::from(1337));
 
-    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     assert!(tx.to.is_some());
 
-    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    let greeter_deploy = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let greeter_calldata = greeter_deploy.calldata();
 
-    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = AlloyTransactionRequest::default()
+        .from(wallet.address())
+        .with_input(greeter_calldata.to_owned());
+
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     // `to` field is none if it's a contract creation transaction: https://eth.wiki/json-rpc/API#eth_getTransactionReceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
 }
 
+// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn can_stream_pending_transactions() {
     let (_api, handle) =
@@ -897,6 +908,7 @@ async fn can_stream_pending_transactions() {
     }
 }
 
+// TODO: Migrate to Alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_access_list() {
     /// returns a String representation of the AccessList, with sorted
@@ -1000,21 +1012,22 @@ async fn estimates_gas_on_pending_by_default() {
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let wallet = handle.dev_wallets().next().unwrap();
     let sender = wallet.address();
-    let recipient = Address::random();
+    let recipient = aAddress::random();
 
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let tx =
+        AlloyTransactionRequest::default().from(sender).to(Some(recipient)).value(U256::from(1e18));
+    let tx = WithOtherFields::new(tx);
 
-    let tx = TransactionRequest::new().from(sender).to(recipient).value(1e18 as u64);
-    client.send_transaction(tx, None).await.unwrap();
+    let _pending = provider.send_transaction(tx).await.unwrap();
 
     let tx = AlloyTransactionRequest::default()
-        .from(recipient.to_alloy())
-        .to(Some(sender.to_alloy()))
-        .value(rU256::from(1e10))
+        .from(recipient)
+        .to(Some(sender))
+        .value(U256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     api.estimate_gas(WithOtherFields::new(tx), None, None).await.unwrap();
 }
@@ -1023,14 +1036,14 @@ async fn estimates_gas_on_pending_by_default() {
 async fn test_estimate_gas() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let wallet = handle.dev_wallets().next().unwrap();
     let sender = wallet.address();
-    let recipient = Address::random();
+    let recipient = aAddress::random();
 
     let tx = AlloyTransactionRequest::default()
-        .from(recipient.to_alloy())
-        .to(Some(sender.to_alloy()))
-        .value(rU256::from(1e10))
+        .from(recipient)
+        .to(Some(sender))
+        .value(U256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.
     let error_result = api.estimate_gas(WithOtherFields::new(tx.clone()), None, None).await;
@@ -1044,7 +1057,7 @@ async fn test_estimate_gas() {
     );
 
     // Setup state override to simulate sufficient funds for the recipient.
-    let addr = alloy_primitives::Address::from_slice(recipient.as_bytes());
+    let addr = recipient;
     let account_override =
         AccountOverride { balance: Some(alloy_primitives::U256::from(1e18)), ..Default::default() };
     let mut state_override = StateOverride::new();
@@ -1057,24 +1070,25 @@ async fn test_estimate_gas() {
         .expect("Failed to estimate gas with state override");
 
     // Assert the gas estimate meets the expected minimum.
-    assert!(gas_estimate >= rU256::from(21000), "Gas estimate is lower than expected minimum");
+    assert!(gas_estimate >= U256::from(21000), "Gas estimate is lower than expected minimum");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_gas_too_low() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
     let account = handle.dev_accounts().next().unwrap();
 
     let gas = 21_000u64 - 1;
-    let tx = TransactionRequest::new()
-        .to(Address::random())
+    let tx = AlloyTransactionRequest::default()
+        .to(Some(aAddress::random()))
         .value(U256::from(1337u64))
-        .from(account.to_ethers())
-        .gas(gas);
+        .from(account)
+        .with_gas_limit(gas as u128);
+    let tx = WithOtherFields::new(tx);
 
-    let resp = provider.send_transaction(tx, None).await;
+    let resp = provider.send_transaction(tx).await;
 
     let err = resp.unwrap_err().to_string();
     assert!(err.contains("intrinsic gas too low"));
@@ -1084,50 +1098,51 @@ async fn test_reject_gas_too_low() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_high_gas_limit() {
     let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(100_000_000))).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let greeter_contract =
+        AlloyGreeter::deploy(provider, "Hello World!".to_string()).await.unwrap();
 
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .send()
-        .await
-        .unwrap();
-
-    let greeting = greeter_contract.greet().gas(60_000_000u64).call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
+    let greeting = greeter_contract.greet().gas(60_000_000u128).call().await.unwrap();
+    assert_eq!("Hello World!", greeting._0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_eip1559_pre_london() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let gas_limit = api.gas_limit().to::<u128>();
+    let gas_price = api.gas_price().unwrap().to::<u128>();
 
-    let gas_limit = api.gas_limit();
-    let gas_price = api.gas_price().unwrap();
-    let unsupported = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .gas(gas_limit.to_ethers())
-        .gas_price(gas_price.to_ethers())
-        .send()
-        .await
-        .unwrap_err()
-        .to_string();
+    let unsupported_call_builder =
+        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let unsupported_calldata = unsupported_call_builder.calldata();
+
+    let unsup_tx = AlloyTransactionRequest::default()
+        .from(handle.dev_accounts().next().unwrap())
+        .with_input(unsupported_calldata.to_owned())
+        .with_gas_limit(gas_limit)
+        .with_max_fee_per_gas(gas_price)
+        .with_max_priority_fee_per_gas(gas_price);
+
+    let unsup_tx = WithOtherFields::new(unsup_tx);
+
+    let unsupported = provider.send_transaction(unsup_tx).await.unwrap_err().to_string();
     assert!(unsupported.contains("not supported by the current hardfork"), "{unsupported}");
 
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .legacy()
-        .send()
-        .await
-        .unwrap();
+    let greeter_contract_addr =
+        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+            .gas(gas_limit)
+            .gas_price(gas_price)
+            .deploy()
+            .await
+            .unwrap();
+
+    let greeter_contract = AlloyGreeter::new(greeter_contract_addr, provider);
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
+    assert_eq!("Hello World!", greeting._0);
 }
 
 // https://github.com/foundry-rs/foundry/issues/6931
@@ -1147,7 +1162,7 @@ async fn can_mine_multiple_in_block() {
     let first = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
     let second = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
 
-    api.anvil_mine(Some(rU256::from(1)), Some(rU256::ZERO)).await.unwrap();
+    api.anvil_mine(Some(U256::from(1)), Some(U256::ZERO)).await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
