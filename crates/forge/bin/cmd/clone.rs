@@ -485,7 +485,7 @@ impl EtherscanClient for Client {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, path::PathBuf, time::Duration};
+    use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
     use crate::cmd::clone::compile_project;
 
@@ -609,7 +609,7 @@ mod tests {
                 pick_creation_info(&address.to_string()).expect("creation code not found");
             assert_compilation_result(rv, contract_name, stripped_creation_code);
         }
-        fs::remove_dir_all(project_root).unwrap();
+        std::fs::remove_dir_all(project_root).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
