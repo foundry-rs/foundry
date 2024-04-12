@@ -776,12 +776,12 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         let mut builder = ProjectPathsConfig::builder()
-            .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
-            .sources(&self.src)
-            .tests(&self.test)
-            .scripts(&self.script)
-            .artifacts(&self.out)
-            .libs(self.libs.iter())
+            .cache(self.__root.0.join(&self.cache_path).join(SOLIDITY_FILES_CACHE_FILENAME))
+            .sources(self.__root.0.join(&self.src))
+            .tests(self.__root.0.join(&self.test))
+            .scripts(self.__root.0.join(&self.script))
+            .artifacts(self.__root.0.join(&self.out))
+            .libs(self.libs.iter().map(|l| self.__root.0.join(l)))
             .remappings(self.get_all_remappings());
 
         if let Some(build_info_path) = &self.build_info_path {

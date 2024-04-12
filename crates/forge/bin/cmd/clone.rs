@@ -426,7 +426,6 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
 
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &PathBuf) -> Result<ProjectCompileOutput> {
-    std::env::set_current_dir(root)?;
     let mut config = Config::load_with_root(root);
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
@@ -486,7 +485,7 @@ impl EtherscanClient for Client {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+    use std::{collections::BTreeMap, fs, path::PathBuf, time::Duration};
 
     use crate::cmd::clone::compile_project;
 
@@ -499,13 +498,8 @@ mod tests {
     use foundry_compilers::{Artifact, ProjectCompileOutput};
     use foundry_config::Chain;
     use hex::ToHex;
-    use serial_test::serial;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
-        // wait 5 second to avoid etherscan rate limit
-        // println!("wait for 5 seconds to avoid etherscan rate limit");
-        // sleep(Duration::from_secs(5));
-
         println!("project_root: {:#?}", root);
         compile_project(root).expect("compilation failure")
     }
@@ -570,8 +564,7 @@ mod tests {
     }
 
     /// Fetch the metadata and creation data from Etherscan and dump them to the testdata folder.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     #[ignore = "this test is used to dump mock data from Etherscan"]
     async fn test_dump_mock_data() {
         let address: Address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
@@ -616,52 +609,46 @@ mod tests {
                 pick_creation_info(&address.to_string()).expect("creation code not found");
             assert_compilation_result(rv, contract_name, stripped_creation_code);
         }
+        fs::remove_dir_all(project_root).unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_single_file_contract() {
         let address = "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".parse().unwrap();
         one_test_case(address, true).await
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_optimization_details() {
         let address = "0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545".parse().unwrap();
         one_test_case(address, true).await
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_libraries() {
         let address = "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec".parse().unwrap();
         one_test_case(address, true).await
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_metadata() {
         let address = "0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05".parse().unwrap();
         one_test_case(address, true).await
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_original_remappings() {
         let address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
         one_test_case(address, false).await
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[serial]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_relative_import2() {
         let address = "0x044b75f554b886A065b9567891e45c79542d7357".parse().unwrap();
         one_test_case(address, false).await

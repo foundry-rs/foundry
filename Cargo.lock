@@ -3009,7 +3009,6 @@ dependencies = [
  "semver 1.0.22",
  "serde",
  "serde_json",
- "serial_test",
  "similar",
  "solang-parser",
  "strum 0.26.2",
