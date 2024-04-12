@@ -838,6 +838,12 @@ impl Backend {
     > {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
+
+        if env.handler_cfg.is_optimism {
+            env.tx.optimism.enveloped_tx =
+                Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
+        }
+
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
         let mut evm = self.new_evm_with_inspector_ref(&*db, env, &mut inspector);
