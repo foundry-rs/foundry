@@ -34,11 +34,19 @@ sol!(
     AlloyMulticallContract,
     "test-data/multicall.json"
 );
+
 sol!(
     #[sol(rpc)]
     contract AlloyBUSD {
         function balanceOf(address) external view returns (uint256);
     }
+);
+
+sol!(
+    #[sol(rpc)]
+    #[derive(Debug)]
+    VendingMachine,
+    "test-data/VendingMachine.json"
 );
 
 abigen!(Greeter, "test-data/greeter.json");
