@@ -172,7 +172,8 @@ async fn can_impersonate_contract() {
     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let greeter_contract_builder =
-        AlloyGreeter::deploy_builder(&provider_with_signer, "Hello World!".to_string());
+        AlloyGreeter::deploy_builder(&provider_with_signer, "Hello World!".to_string())
+            .from(wallet.address());
     let greeter_contract_address = greeter_contract_builder.deploy().await.unwrap();
     let greeter_contract = AlloyGreeter::new(greeter_contract_address, &provider);
 

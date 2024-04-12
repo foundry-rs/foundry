@@ -187,7 +187,8 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let multicall_contract_builder = AlloyMulticallContract::deploy_builder(&provider_with_signer);
+    let multicall_contract_builder =
+        AlloyMulticallContract::deploy_builder(&provider_with_signer).from(wallet.address());
     let multicall_contract_address = multicall_contract_builder.deploy().await.unwrap();
     let pending_multicall_contract =
         AlloyMulticallContract::new(multicall_contract_address, &provider);
@@ -287,13 +288,15 @@ async fn can_call_with_state_override() {
 
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let multicall_contract_builder = AlloyMulticallContract::deploy_builder(&provider_with_signer);
+    let multicall_contract_builder =
+        AlloyMulticallContract::deploy_builder(&provider_with_signer).from(wallet.address());
     let multicall_contract_address = multicall_contract_builder.deploy().await.unwrap();
     let multicall_contract = AlloyMulticallContract::new(multicall_contract_address, &provider);
 
     let init_value = "toto".to_string();
     let simple_storage_contract_builder =
-        AlloySimpleStorage::deploy_builder(&provider_with_signer, init_value.clone());
+        AlloySimpleStorage::deploy_builder(&provider_with_signer, init_value.clone())
+            .from(wallet.address());
     let simple_storage_contract_address = simple_storage_contract_builder.deploy().await.unwrap();
     let simple_storage_contract =
         AlloySimpleStorage::new(simple_storage_contract_address, &provider);
