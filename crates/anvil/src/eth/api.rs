@@ -1581,7 +1581,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_dropAllTransactions`
     pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
         node_info!("anvil_dropAllTransactions");
-        self.pool.drop_all_transactions();
+        self.pool.clear();
         Ok(())
     }
 

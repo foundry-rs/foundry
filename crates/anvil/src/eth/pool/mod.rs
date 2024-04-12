@@ -166,21 +166,10 @@ impl Pool {
         dropped
     }
 
-    pub fn drop_all_transactions(&self) {
-        let pool = self.inner.write();
-
-        let pending_transactions = pool.pending_transactions.transactions();
-        let ready_transactions = pool.ready_transactions.get_transactions();
-
-        pending_transactions.for_each(|pool_transaction| {
-            let tx_hash = pool_transaction.as_ref().hash();
-            self.drop_transaction(tx_hash);
-        });
-
-        ready_transactions.for_each(|pool_transaction| {
-            let tx_hash = pool_transaction.as_ref().hash();
-            self.drop_transaction(tx_hash);
-        });
+    /// Removes all transactions from the pool
+    pub fn clear(&self) {
+        let mut pool = self.inner.write();
+        pool.clear();
     }
 
     /// notifies all listeners about the transaction
@@ -226,6 +215,12 @@ impl PoolInner {
     /// Returns an iterator over transactions that are ready.
     fn ready_transactions(&self) -> TransactionsIterator {
         self.ready_transactions.get_transactions()
+    }
+
+    /// Clears 
+    fn clear(&mut self) {
+        self.ready_transactions.clear();
+        self.pending_transactions.clear();
     }
 
     /// checks both pools for the matching transaction
