@@ -1,16 +1,18 @@
+use std::sync::Arc;
+
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
 use foundry_config::NamedChain;
 use revm::{
-    db::WrapDatabaseRef,
-    primitives::{SpecId, TransactTo},
+    db::WrapDatabaseRef, handler::register::EvmHandler, interpreter::{CallContext, CallInputs, CallScheme, Transfer}, primitives::{CreateScheme, EVMError, SpecId, TransactTo}, FrameOrResult, FrameResult
 };
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
 
+use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 pub use crate::ic::*;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
@@ -97,6 +99,49 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
 pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     let refund_quotient = if SpecId::enabled(spec, SpecId::LONDON) { 5 } else { 2 };
     spent - (refunded).min(spent / refund_quotient)
+}
+
+pub fn create2_handler_register<'a, DB: revm::Database, EXT>(
+    handler: &mut EvmHandler<'a, EXT, DB>,
+) {
+    let call_handle = handler.execution.call.clone();
+    let old_handle = handler.execution.create.clone();
+    handler.execution.create = Arc::new(
+        move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+            match inputs.scheme {
+                CreateScheme::Create2(salt) => {
+                    let address = DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, &inputs.init_code);
+                    let call_inputs = CallInputs {
+                        contract: DEFAULT_CREATE2_DEPLOYER,
+                        transfer: Transfer {
+                            source: inputs.caller,
+                            target: DEFAULT_CREATE2_DEPLOYER,
+                            value: inputs.value.clone(),
+                        },
+                        input: inputs.init_code.clone(),
+                        gas_limit: inputs.gas_limit,
+                        context: CallContext {
+                            caller: inputs.caller,
+                            address: DEFAULT_CREATE2_DEPLOYER,
+                            code_address: DEFAULT_CREATE2_DEPLOYER,
+                            apparent_value: inputs.value.clone(),
+                            scheme: CallScheme::Call,
+                        },
+                        is_static: false,
+                        return_memory_offset: 0..0,
+                    };
+
+                    let result = call_handle(ctx, Box::new(call_inputs))?;
+
+                    let FrameResult::Call(outcome) = result else {
+                        unreachable!()
+                    };
+
+                    Ok(FrameOrResult::Result(FrameResult::Create()))
+                }
+            }
+        },
+    );
 }
 
 /// Creates a new EVM with the given inspector.
