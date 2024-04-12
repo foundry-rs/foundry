@@ -1,6 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_network::EthereumSigner;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address as aAddress, Bytes};
 use ethers::{
     addressbook::contract,
     contract::ContractInstance,
@@ -17,6 +17,8 @@ use foundry_common::provider::{
 };
 use std::borrow::Borrow;
 
+use crate::abi::AlloyGreeter;
+
 /// Returns a set of various contract addresses
 pub fn contract_addresses(chain: Chain) -> Vec<Address> {
     vec![
@@ -26,6 +28,16 @@ pub fn contract_addresses(chain: Chain) -> Vec<Address> {
         contract("uniswapV3Factory").unwrap().address(chain).unwrap(),
         contract("uniswapV3SwapRouter02").unwrap().address(chain).unwrap(),
     ]
+}
+
+pub async fn deploy_alloy_greeter(
+    provider: AlloyRetryProvider,
+    greeting: String,
+    deployer: aAddress,
+) -> aAddress {
+    let alloy_greeter =
+        AlloyGreeter::deploy_builder(provider, greeting).from(deployer).deploy().await.unwrap();
+    alloy_greeter
 }
 
 pub fn http_provider(http_endpoint: &str) -> AlloyRetryProvider {
