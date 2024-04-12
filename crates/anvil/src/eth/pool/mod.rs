@@ -217,7 +217,7 @@ impl PoolInner {
         self.ready_transactions.get_transactions()
     }
 
-    /// Clears 
+    /// Clears
     fn clear(&mut self) {
         self.ready_transactions.clear();
         self.pending_transactions.clear();

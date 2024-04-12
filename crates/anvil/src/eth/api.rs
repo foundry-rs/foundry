@@ -1575,7 +1575,6 @@ impl EthApi {
         Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
     }
 
-
     /// Removes all transactions from the pool
     ///
     /// Handler for RPC call: `anvil_dropAllTransactions`
