@@ -118,7 +118,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
         let timestamp = self.block_env.timestamp.to::<u64>();
-        let base_fee = if self.cfg_env.handler_cfg.spec_id >= SpecId::LONDON {
+        let base_fee = if self.cfg_env.handler_cfg.spec_id.is_enabled_in(SpecId::LONDON) {
             Some(self.block_env.basefee.to::<u128>())
         } else {
             None
