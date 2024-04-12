@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::{
-    abi::AlloyMulticallContract,
+    abi::{AlloyMulticallContract, AlloySimpleStorage},
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
@@ -10,12 +10,13 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
     state::{AccountOverride, StateOverride},
-    BlockId, BlockTransactions, WithOtherFields,
+    BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
 };
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
 };
+use ethers::contract::Multicall;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -84,10 +85,10 @@ async fn can_modify_chain_id() {
     let provider = http_provider(&handle.http_endpoint());
 
     let chain_id = provider.get_chain_id().await.unwrap();
-    assert_eq!(chain_id, 777_u64);
+    assert_eq!(chain_id, 777);
 
     let chain_id = provider.get_net_version().await.unwrap();
-    assert_eq!(chain_id, 777_u64);
+    assert_eq!(chain_id, 777);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -192,63 +193,193 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    // let multicall_contract_builder =
-    // AlloyMulticallContract::deploy_builder(&provider_with_signer);
-    // let multicall_contract_address = multicall_contract_builder.deploy().await.unwrap();
-    // let multicall_contract = AlloyMulticallContract::new(multicall_contract_address, &provider);
-
-    // let mut deploy_tx = MulticallContract::deploy(Arc::clone(&client), ()).unwrap().deployer.tx;
-    // deploy_tx.set_nonce(0);
-    // let pending_contract_address = get_contract_address(sender, deploy_tx.nonce().unwrap());
-
-    // client.send_transaction(deploy_tx, None).await.unwrap();
-
-    // let pending_contract = MulticallContract::new(pending_contract_address, client.clone());
+    let multicall_contract_builder = AlloyMulticallContract::deploy_builder(&provider_with_signer);
+    let multicall_contract_address = multicall_contract_builder.deploy().await.unwrap();
+    let pending_multicall_contract =
+        AlloyMulticallContract::new(multicall_contract_address, &provider);
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
 
-    // // Ensure that we can get the block_number from the pending contract
-    // let (ret_block_number, _) =
-    //     pending_contract.aggregate(vec![]).block(BlockNumber::Pending).call().await.unwrap();
-    // assert_eq!(ret_block_number.as_u64(), 1u64);
+    // Ensure that we can get the block_number from the pending contract
+    let AlloyMulticallContract::aggregateReturn { blockNumber: ret_block_number, .. } =
+        pending_multicall_contract
+            .aggregate(vec![])
+            .block(BlockId::pending())
+            .call()
+            .await
+            .unwrap();
+    assert_eq!(ret_block_number, U256::from(1));
 
-    // let accounts: Vec<rAddress> = handle.dev_wallets().map(|w| w.address()).collect();
-    // for i in 1..10 {
-    //     api.anvil_set_coinbase(accounts[i % accounts.len()]).await.unwrap();
-    //     api.evm_set_block_gas_limit(rU256::from(30_000_000 + i)).unwrap();
+    let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
 
-    //     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
-    //     tokio::time::sleep(Duration::from_secs(1)).await;
-    // }
-    // // Ensure that the right header values are set when calling a past block
-    // for block_number in 1..(api.block_number().unwrap().to::<usize>() + 1) {
-    //     let block_number_alloy = alloy_rpc_types::BlockNumberOrTag::Number(block_number as u64);
-    //     let block_number_ethers = BlockNumber::Number((block_number as u64).into());
-    //     let block = api.block_by_number(block_number_alloy).await.unwrap().unwrap();
+    for i in 1..10 {
+        api.anvil_set_coinbase(accounts[i % accounts.len()]).await.unwrap();
+        api.evm_set_block_gas_limit(U256::from(30_000_000 + i)).unwrap();
 
-    //     let block_timestamp = pending_contract
-    //         .get_current_block_timestamp()
-    //         .block(block_number_ethers)
-    //         .call()
-    //         .await
-    //         .unwrap();
-    //     assert_eq!(block.header.timestamp, block_timestamp.as_u64());
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 
-    //     let block_gas_limit = pending_contract
-    //         .get_current_block_gas_limit()
-    //         .block(block_number_ethers)
-    //         .call()
-    //         .await
-    //         .unwrap();
-    //     assert_eq!(block.header.gas_limit, block_gas_limit.as_u128());
+    // Ensure that the right header values are set when calling a past block
+    for anvil_block_number in 1..(api.block_number().unwrap().to::<usize>() + 1) {
+        let block_number = BlockNumberOrTag::Number(anvil_block_number as u64);
+        let block = api.block_by_number(block_number).await.unwrap().unwrap();
 
-    //     let block_coinbase = pending_contract
-    //         .get_current_block_coinbase()
-    //         .block(block_number_ethers)
-    //         .call()
-    //         .await
-    //         .unwrap();
-    //     assert_eq!(block.header.miner, block_coinbase);
-    // }
+        let AlloyMulticallContract::getCurrentBlockTimestampReturn {
+            timestamp: ret_timestamp, ..
+        } = pending_multicall_contract
+            .getCurrentBlockTimestamp()
+            .block(BlockId::number(anvil_block_number as u64))
+            .call()
+            .await
+            .unwrap();
+        assert_eq!(block.header.timestamp, ret_timestamp.to::<u64>());
+
+        let AlloyMulticallContract::getCurrentBlockGasLimitReturn {
+            gaslimit: ret_gas_limit, ..
+        } = pending_multicall_contract
+            .getCurrentBlockGasLimit()
+            .block(BlockId::number(anvil_block_number as u64))
+            .call()
+            .await
+            .unwrap();
+        assert_eq!(block.header.gas_limit, ret_gas_limit.to::<u128>());
+
+        let AlloyMulticallContract::getCurrentBlockCoinbaseReturn {
+            coinbase: ret_coinbase, ..
+        } = pending_multicall_contract
+            .getCurrentBlockCoinbase()
+            .block(BlockId::number(anvil_block_number as u64))
+            .call()
+            .await
+            .unwrap();
+        assert_eq!(block.header.miner, ret_coinbase);
+    }
+}
+
+// async fn call_with_override<M, D>(
+//     api: &EthApi,
+//     call: ContractCall<M, D>,
+//     to: Address,
+//     overrides: StateOverride,
+// ) -> D
+// where
+//     D: Tokenizable,
+// {
+//     let result = api
+//         .call(
+//             WithOtherFields::new(TransactionRequest {
+//                 input: TransactionInput::maybe_input(call.tx.data().cloned().map(|b|
+// b.0.into())),                 to: Some(to),
+//                 ..Default::default()
+//             }),
+//             None,
+//             Some(overrides),
+//         )
+//         .await
+//         .unwrap();
+//     decode_function_data(&call.function, result.as_ref(), false).unwrap()
+// }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_with_state_override() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+
+    let provider = http_provider(&handle.http_endpoint());
+    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let multicall_contract_builder = AlloyMulticallContract::deploy_builder(&provider_with_signer);
+    let multicall_contract_address = multicall_contract_builder.deploy().await.unwrap();
+    let multicall_contract = AlloyMulticallContract::new(multicall_contract_address, &provider);
+
+    let init_value = "toto".to_string();
+    let simple_storage_contract_builder =
+        AlloySimpleStorage::deploy_builder(&provider_with_signer, init_value.clone());
+    let simple_storage_contract_address = simple_storage_contract_builder.deploy().await.unwrap();
+    let simple_storage_contract =
+        AlloySimpleStorage::new(simple_storage_contract_address, &provider);
+
+    // // Test the `balance` account override
+    // let balance = rU256::from(42u64);
+    // let result = call_with_override(
+    //     &api,
+    //     multicall.get_eth_balance(account),
+    //     multicall.address(),
+    //     HashMap::from([(
+    //         account.to_alloy(),
+    //         AccountOverride { balance: Some(balance), ..Default::default() },
+    //     )]),
+    // )
+    // .await;
+    // assert_eq!(result, balance.to_ethers());
+
+    // // Test the `state_diff` account override
+    // let overrides = HashMap::from([(
+    //     simple_storage.address().to_alloy(),
+    //     AccountOverride {
+    //         // The `lastSender` is in the first storage slot
+    //         state_diff: Some(HashMap::from([(
+    //             B256::ZERO,
+    //             rU256::from_be_slice(B256::from(account.to_alloy().into_word()).as_slice()),
+    //         )])),
+    //         ..Default::default()
+    //     },
+    // )]);
+
+    // let last_sender = call_with_override(
+    //     &api,
+    //     simple_storage.last_sender(),
+    //     simple_storage.address(),
+    //     Default::default(),
+    // )
+    // .await;
+    // // No `sender` set without override
+    // assert_eq!(last_sender, Address::zero());
+    // let last_sender = call_with_override(
+    //     &api,
+    //     simple_storage.last_sender(),
+    //     simple_storage.address(),
+    //     overrides.clone(),
+    // )
+    // .await;
+    // // `sender` *is* set with override
+    // assert_eq!(last_sender, account);
+    // let value =
+    //     call_with_override(&api, simple_storage.get_value(), simple_storage.address(), overrides)
+    //         .await;
+    // // `value` *is not* changed with state-diff
+    // assert_eq!(value, init_value);
+
+    // // Test the `state` account override
+    // let overrides = HashMap::from([(
+    //     simple_storage.address().to_alloy(),
+    //     AccountOverride {
+    //         // The `lastSender` is in the first storage slot
+    //         state: Some(HashMap::from([(
+    //             B256::ZERO,
+    //             rU256::from_be_slice(B256::from(account.to_alloy().into_word()).as_slice()),
+    //         )])),
+    //         ..Default::default()
+    //     },
+    // )]);
+
+    // let last_sender = call_with_override(
+    //     &api,
+    //     simple_storage.last_sender(),
+    //     simple_storage.address(),
+    //     overrides.clone(),
+    // )
+    // .await;
+    // // `sender` *is* set with override
+    // assert_eq!(last_sender, account);
+    // let value =
+    //     call_with_override(&api, simple_storage.get_value(), simple_storage.address(), overrides)
+    //         .await;
+    // // `value` *is* changed with state
+    // assert_eq!(value, "");
 }
