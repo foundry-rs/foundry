@@ -296,6 +296,9 @@ impl EthApi {
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
+            EthRequest::DropAllTransactions() => {
+                self.anvil_drop_all_transactions().await.to_rpc_result()
+            }
             EthRequest::Reset(fork) => {
                 self.anvil_reset(fork.and_then(|p| p.params)).await.to_rpc_result()
             }
@@ -1570,6 +1573,16 @@ impl EthApi {
     pub async fn anvil_drop_transaction(&self, tx_hash: B256) -> Result<Option<B256>> {
         node_info!("anvil_dropTransaction");
         Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
+    }
+
+
+    /// Removes all transactions from the pool
+    ///
+    /// Handler for RPC call: `anvil_dropAllTransactions`
+    pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
+        node_info!("anvil_dropAllTransactions");
+        self.pool.drop_all_transactions();
+        Ok(())
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config.

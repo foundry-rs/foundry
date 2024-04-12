@@ -166,6 +166,16 @@ impl Pool {
         dropped
     }
 
+    pub fn drop_all_transactions(&self) {
+        let pool = self.inner.write();
+        let mut transactions_iterator = pool.pending_transactions.transactions();
+        
+        while let Some(pool_transaction) = transactions_iterator.next() {
+            let tx_hash = pool_transaction.as_ref().hash();
+            self.drop_transaction(tx_hash);
+        }
+    }
+
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
         let mut listener = self.transaction_listener.lock();
