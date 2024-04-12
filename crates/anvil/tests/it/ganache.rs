@@ -14,7 +14,7 @@ use alloy_primitives::{address, Address};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use alloy_signer_wallet::{LocalWallet, MnemonicBuilder};
-use alloy_sol_types::sol;
+use alloy_sol_types::{sol, Revert};
 use foundry_compilers::{project_util::TempProject, Artifact};
 use std::{str::FromStr, sync::Arc};
 
@@ -95,37 +95,64 @@ async fn test_ganache_emit_logs() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_ganache_deploy_reverting() {
-    let signer: EthereumSigner = ganache_wallet().into();
+    sol!(
+        #[derive(Debug)]
+        #[sol(rpc)]
+        RevertingConstructor,
+        "test-data/RevertingConstructor.json"
+    );
+
+    let wallet = ganache_wallet();
+    let signer: EthereumSigner = wallet.into();
     let provider = http_provider("http://127.0.0.1:8545");
     let provider_with_signer = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r#"
-pragma solidity 0.8.13;
-contract Contract {
-    constructor() {
-      require(false, "");
-    }
+    // deploy will fail
+    let contract_builder = RevertingConstructor::deploy_builder(&provider_with_signer);
+    contract_builder.deploy().await.unwrap_err();
 }
-"#,
-    )
-    .unwrap();
 
-    let mut compiled = prj.compile().unwrap();
-    println!("{compiled}");
-    assert!(!compiled.has_compiler_errors());
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn test_ganache_tx_reverting() {
+    sol!(
+        #[derive(Debug)]
+        #[sol(rpc)]
+        RevertingMethod,
+        "test-data/RevertingMethod.json"
+    );
 
-    let contract_artifact = compiled.remove_first("Contract").unwrap();
+    let wallet = ganache_wallet();
+    let signer: EthereumSigner = wallet.into();
+    let provider = http_provider("http://127.0.0.1:8545");
+    let provider_with_signer = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
-    let (abi, bytecode, _) = contract_artifact.into_contract_bytecode().into_parts();
+    // deploy successfully
+    let contract_builder = RevertingMethod::deploy_builder(&provider_with_signer);
+    let contract_address = contract_builder.deploy().await.unwrap();
+    let contract = RevertingMethod::new(contract_address, &provider);
+    contract.getSecret().call().await.unwrap_err();
 
-    // let contract =
-    //     ContractInstanceCompat::new(abi.unwrap(), bytecode.unwrap(), provider_with_signer);
-    // contract.deploy(()).unwrap().send().await.unwrap_err();
-
-    // let contract_builder = ContractInstance::deploy_builder(&provider_with_signer)
-    //     .abi(abi.unwrap())
-    //     .bytecode(bytecode.unwrap());
+    // /*  Ganache rpc errors look like:
+    // <   {
+    // <     "id": 1627277502538,
+    // <     "jsonrpc": "2.0",
+    // <     "error": {
+    // <       "message": "VM Exception while processing transaction: revert !authorized",
+    // <       "code": -32000,
+    // <       "data": {
+    // <         "0x90264de254689f1d4e7f8670cd97f60d9bc803874fdecb34d249bd1cc3ca823a": {
+    // <           "error": "revert",
+    // <           "program_counter": 223,
+    // <           "return":
+    // "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b21617574686f72697a6564000000000000000000000000000000000000000000"
+    // , <           "reason": "!authorized"
+    // <         },
+    // <         "stack": "c: VM Exception while processing transaction: revert !authorized\n    at
+    // Function.c.fromResults
+    // (/usr/local/lib/node_modules/ganache-cli/build/ganache-core.node.cli.js:4:192416)\n    at
+    // /usr/local/lib/node_modules/ganache-cli/build/ganache-core.node.cli.js:42:50402", <
+    // "name": "c" <       }
+    // <     }
+    //  */
 }
