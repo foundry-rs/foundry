@@ -5,19 +5,13 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address, ChainId, B256, U256};
+use alloy_primitives::{Address, ChainId, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    request::{TransactionInput, TransactionRequest},
-    state::{AccountOverride, StateOverride},
-    BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
+    request::TransactionRequest, BlockId, BlockNumberOrTag, BlockTransactions, WithOtherFields,
 };
-use anvil::{
-    eth::{api::CLIENT_VERSION, EthApi},
-    spawn, NodeConfig, CHAIN_ID,
-};
-use ethers::contract::Multicall;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number() {
