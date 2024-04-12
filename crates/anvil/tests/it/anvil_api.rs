@@ -1,6 +1,7 @@
 //! tests for custom anvil endpoints
+
 use crate::{
-    abi::*,
+    abi::{AlloyBUSD, AlloyGreeter, AlloyMulticallContract},
     fork::fork_config,
     utils::{http_provider, http_provider_with_signer},
 };
@@ -99,7 +100,7 @@ async fn can_impersonate_account() {
     assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
-    assert_eq!(nonce, 1u64);
+    assert_eq!(nonce, 1);
 
     let balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance, val.into());
@@ -147,7 +148,7 @@ async fn can_auto_impersonate_account() {
     assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
-    assert_eq!(nonce, 1u64);
+    assert_eq!(nonce, 1);
 
     let balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance, val.into());
@@ -272,7 +273,7 @@ async fn can_impersonate_multiple_accounts() {
     assert_eq!(res0.from, impersonate0);
 
     let nonce = provider.get_transaction_count(impersonate0, None).await.unwrap();
-    assert_eq!(nonce, 1u64);
+    assert_eq!(nonce, 1);
 
     let receipt = provider.get_transaction_receipt(res0.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res0.inner, receipt.inner);
@@ -288,7 +289,7 @@ async fn can_impersonate_multiple_accounts() {
     assert_eq!(res1.from, impersonate1);
 
     let nonce = provider.get_transaction_count(impersonate1, None).await.unwrap();
-    assert_eq!(nonce, 1u64);
+    assert_eq!(nonce, 1);
 
     let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res1.inner, receipt.inner);
