@@ -38,24 +38,13 @@ async fn test_sub_new_heads_ipc() {
 
     let provider = ipc_provider(handle.ipc_path().unwrap().as_str()).await;
 
-    let sub = provider.subscribe_blocks().await.unwrap();
+    let blocks = provider.subscribe_blocks().await.unwrap().into_stream();
 
     // mine a block every 1 seconds
     api.anvil_set_interval_mining(1).unwrap();
 
-    let mut stream = sub.into_stream().take(3);
+    let blocks = blocks.take(3).collect::<Vec<_>>().await;
+    let block_numbers = blocks.into_iter().map(|b| b.header.number.unwrap()).collect::<Vec<_>>();
 
-    let block_numbers: Vec<u64> = vec![];
-
-    // let handle = tokio::task::spawn(async move {
-    //     let mut block_numbers = vec![];
-    //     while let Some(block) = stream.next().await {
-    //         block_numbers.push(block.header.number.unwrap());
-    //     }
-    //     block_numbers
-    // });
-
-    // handle.await.unwrap();
-
-    // assert_eq!(block_numbers, vec![1, 2, 3]);
+    assert_eq!(block_numbers, vec![1, 2, 3]);
 }
