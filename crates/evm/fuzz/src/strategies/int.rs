@@ -91,8 +91,7 @@ impl ValueTree for IntValueTree {
 /// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
 /// `function testFuzz_int32(int32 amount)`.
 ///
-/// If fixture is not a valid int type then an error is raised and test suite will continue to
-/// execute with random int values.
+/// If fixture is not a valid int type then fuzzer will panic.
 #[derive(Debug)]
 pub struct IntStrategy {
     /// Bit size of int (e.g. 256)
@@ -155,12 +154,7 @@ impl IntStrategy {
                 return Ok(IntValueTree::new(int_fixture.0, false));
             }
         }
-        error!(
-            "{:?} is not a valid {} fixture, generate random tree",
-            fixture,
-            DynSolType::Int(self.bits)
-        );
-        self.generate_random_tree(runner)
+        panic!("{:?} is not a valid {} fixture", fixture, DynSolType::Int(self.bits));
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {

@@ -62,7 +62,7 @@ mod tests {
     use crate::{strategies::fuzz_calldata, FuzzFixtures};
     use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
     use alloy_json_abi::Function;
-    use alloy_primitives::{Address, I256};
+    use alloy_primitives::Address;
     use proptest::prelude::Strategy;
     use std::collections::HashMap;
 
@@ -81,22 +81,6 @@ mod tests {
         let strategy = fuzz_calldata(function, &FuzzFixtures::new(fixtures));
         let _ = strategy.prop_map(move |fuzzed| {
             assert_eq!(expected, fuzzed);
-        });
-    }
-
-    #[test]
-    fn can_fuzz_with_wrong_fixtures_type() {
-        let function = Function::parse("test_fuzzed_uint256(uint256 uintFixture)").unwrap();
-
-        let mut fixtures = HashMap::new();
-        fixtures.insert(
-            "uintFixture".to_string(),
-            DynSolValue::Array(vec![DynSolValue::Int(I256::MAX, 8)]),
-        );
-
-        let strategy = fuzz_calldata(function, &FuzzFixtures::new(fixtures));
-        let _ = strategy.prop_map(move |fuzzed| {
-            assert!(fuzzed.len() > 0);
         });
     }
 }

@@ -8,8 +8,8 @@ use proptest::prelude::*;
 const MAX_ARRAY_LEN: usize = 256;
 
 /// Given a parameter type and configured fixtures for param name, returns a strategy for generating
-/// values for that type. Fixtures can be currently generated for uint, int and address types and
-/// are defined for named parameter.
+/// values for that type. Fixtures can be currently generated for uint, int, address, bytes and
+/// string types and are defined for parameter name.
 ///
 /// For example, fixtures for parameter `owner` of type `address` can be defined in a function with
 /// a `function fixture_owner() public returns (address[] memory)` signature.
@@ -26,10 +26,9 @@ pub fn fuzz_param(
     fuzz_fixtures: Option<&[DynSolValue]>,
 ) -> BoxedStrategy<DynSolValue> {
     match *param {
-        DynSolType::Address => fixture_strategy!(
-            fuzz_fixtures,
-            DynSolValue::type_strategy(&DynSolType::Address).boxed()
-        ),
+        DynSolType::Address => {
+            fixture_strategy!(fuzz_fixtures, DynSolValue::type_strategy(&DynSolType::Address))
+        }
         DynSolType::Int(n @ 8..=256) => super::IntStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Int(x, n))
             .boxed(),
@@ -38,21 +37,19 @@ pub fn fuzz_param(
             .boxed(),
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
         DynSolType::Bytes => {
-            fixture_strategy!(fuzz_fixtures, DynSolValue::type_strategy(&DynSolType::Bytes).boxed())
+            fixture_strategy!(fuzz_fixtures, DynSolValue::type_strategy(&DynSolType::Bytes))
         }
         DynSolType::FixedBytes(size @ 1..=32) => fixture_strategy!(
             fuzz_fixtures,
-            DynSolValue::type_strategy(&DynSolType::FixedBytes(size)).boxed()
+            DynSolValue::type_strategy(&DynSolType::FixedBytes(size))
         ),
         DynSolType::String => fixture_strategy!(
             fuzz_fixtures,
-            DynSolValue::type_strategy(&DynSolType::String)
-                .prop_map(move |value| {
-                    DynSolValue::String(
-                        value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
-                    )
-                })
-                .boxed()
+            DynSolValue::type_strategy(&DynSolType::String).prop_map(move |value| {
+                DynSolValue::String(
+                    value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
+                )
+            })
         ),
         DynSolType::Tuple(ref params) => params
             .iter()

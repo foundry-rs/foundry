@@ -18,22 +18,26 @@ pub use invariants::{fuzz_contract_with_calldata, invariant_strat, override_call
 
 /// Macro to create strategy with fixtures.
 /// 1. A default strategy if no fixture defined for current parameter.
-/// 2. A fixture based strategy if configured values for current parameter.
-/// If fixture is not a valid type then fuzzer will panic.
+/// 2. A weighted strategy that use fixtures and default strategy values for current parameter.
+/// If fixture is not of the same type as fuzzed parameter then fuzzer will panic.
 macro_rules! fixture_strategy {
     ($fixtures:ident, $default_strategy:expr) => {
         if let Some(fixtures) = $fixtures {
-            let custom_fixtures: Vec<DynSolValue> =
-                fixtures.iter().enumerate().map(|(_, value)| value.to_owned()).collect();
-            let custom_fixtures_len = custom_fixtures.len();
-            any::<prop::sample::Index>()
-                .prop_map(move |index| {
-                    let index = index.index(custom_fixtures_len);
-                    custom_fixtures.get(index).unwrap().clone()
-                })
-                .boxed()
+            proptest::prop_oneof![
+                50 => {
+                    let custom_fixtures: Vec<DynSolValue> =
+                        fixtures.iter().enumerate().map(|(_, value)| value.to_owned()).collect();
+                    let custom_fixtures_len = custom_fixtures.len();
+                    any::<prop::sample::Index>()
+                        .prop_map(move |index| {
+                            let index = index.index(custom_fixtures_len);
+                            custom_fixtures.get(index).unwrap().clone()
+                        })
+                },
+                50 => $default_strategy
+            ].boxed()
         } else {
-            return $default_strategy
+            $default_strategy.boxed()
         }
     };
 }
