@@ -1516,14 +1516,15 @@ impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
         inputs: &mut CreateInputs,
     ) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
-            let mut base_depth = 1;
-            if let Some(prank) = &self.prank {
-                base_depth = prank.depth;
+            let target_depth = if let Some(prank) = &self.prank {
+                prank.depth
             } else if let Some(broadcast) = &self.broadcast {
-                base_depth = broadcast.depth;
-            }
+                broadcast.depth
+            } else {
+                1
+            };
 
-            ecx.journaled_state.depth() == base_depth &&
+            ecx.journaled_state.depth() == target_depth &&
                 (self.broadcast.is_some() || self.config.always_use_create_2_factory)
         } else {
             false
