@@ -1510,9 +1510,6 @@ impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
     /// `Create2` and the current execution depth matches the depth at which the `prank` or
     /// `broadcast` was started, or the default depth of 1 if no prank or broadcast is currently
     /// active.
-    ///
-    /// Returns a `DatabaseError::MissingCreate2Deployer` if the `DEFAULT_CREATE2_DEPLOYER` account
-    /// is not found or if it does not have any associated bytecode.
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<DB>,
