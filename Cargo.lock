@@ -514,7 +514,7 @@ source = "git+https://github.com/alloy-rs/alloy?rev=7629f79#7629f79e3ffb6abd0be9
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
- "reqwest 0.12.2",
+ "reqwest 0.12.3",
  "serde_json",
  "tower",
  "url",
@@ -1316,7 +1316,7 @@ dependencies = [
  "aws-smithy-types",
  "bytes",
  "fastrand",
- "h2",
+ "h2 0.3.26",
  "http 0.2.12",
  "http-body 0.4.6",
  "http-body 1.0.0",
@@ -1884,6 +1884,7 @@ dependencies = [
  "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-targets 0.52.4",
 ]
 
@@ -3627,7 +3628,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers",
- "reqwest 0.12.2",
+ "reqwest 0.12.3",
  "semver 1.0.22",
  "serde",
  "serde_json",
@@ -3763,7 +3764,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.8.5",
  "reqwest 0.11.27",
- "reqwest 0.12.2",
+ "reqwest 0.12.3",
  "rustc-hash",
  "semver 1.0.22",
  "serde",
@@ -3834,7 +3835,7 @@ dependencies = [
  "path-slash",
  "pretty_assertions",
  "regex",
- "reqwest 0.12.2",
+ "reqwest 0.12.3",
  "revm-primitives",
  "semver 1.0.22",
  "serde",
@@ -6839,7 +6840,6 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
- "mime_guess",
  "native-tls",
  "once_cell",
  "percent-encoding",
@@ -6861,18 +6861,19 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "webpki-roots 0.25.4",
- "winreg",
+ "winreg 0.50.0",
 ]
 
 [[package]]
 name = "reqwest"
-version = "0.12.2"
+version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d66674f2b6fb864665eea7a3c1ac4e3dfacd2fda83cf6f935a612e01b0e3338"
+checksum = "3e6cc1e89e689536eb5aeede61520e874df5a4707df811cd5da4aa5fbb2aae19"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.0",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2 0.4.4",
@@ -6887,13 +6888,14 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
  "rustls 0.22.3",
  "rustls-native-certs 0.7.0",
- "rustls-pemfile 1.0.4",
+ "rustls-pemfile 2.1.1",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -6911,7 +6913,7 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots 0.26.1",
- "winreg",
+ "winreg 0.52.0",
 ]
 
 [[package]]
@@ -7673,7 +7675,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "hex",
- "sha2 0.10.8",
+ "sha2",
  "tokio",
 ]
 
@@ -7832,15 +7834,15 @@ dependencies = [
 
 [[package]]
 name = "soldeer"
-version = "0.2.8"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7145ab41ed2360a51d1006c22914fe18b521594583a4fa55c3113bc91d147699"
+checksum = "9a7ca0d5dd06b4a6b654d8461216d359bfb917d6e0498696c54b2d4e42b31551"
 dependencies = [
  "chrono",
  "clap",
  "email-address-parser",
  "regex",
- "reqwest 0.11.27",
+ "reqwest 0.12.3",
  "rpassword",
  "serde",
  "serde_derive",
@@ -7854,7 +7856,7 @@ dependencies = [
  "toml_edit 0.22.9",
  "uuid 1.8.0",
  "walkdir",
- "yansi 0.5.1",
+ "yansi 1.0.1",
  "zip",
  "zip-extract",
 ]
@@ -8339,7 +8341,7 @@ checksum = "a1f364cd47675674b7d9dead65b7ef11e46bc918f1b058f37195fc81dfb0ef62"
 dependencies = [
  "bytes",
  "futures-util",
- "reqwest 0.12.2",
+ "reqwest 0.12.3",
  "tokio",
  "tokio-util",
 ]
@@ -8826,6 +8828,16 @@ name = "uuid"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+dependencies = [
+ "getrandom 0.2.12",
+ "serde",
+]
+
+[[package]]
+name = "uuid"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a183cf7feeba97b4dd1c0d46788634f6221d87fa961b305bed08c851829efcc0"
 dependencies = [
  "getrandom 0.2.12",
  "serde",
@@ -9341,6 +9353,16 @@ name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
