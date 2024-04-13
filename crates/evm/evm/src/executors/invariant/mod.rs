@@ -247,7 +247,9 @@ impl<'a> InvariantExecutor<'a> {
                     let mut state_changeset =
                         call_result.state_changeset.to_owned().expect("no changesets");
 
-                    collect_data(&mut state_changeset, sender, &call_result, &fuzz_state);
+                    if !&call_result.reverted {
+                        collect_data(&mut state_changeset, sender, &call_result, &fuzz_state);
+                    }
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts
                     // are updatable.
@@ -682,7 +684,7 @@ fn collect_data(
         sender_changeset = state_changeset.remove(sender);
     }
 
-    fuzz_state.collect_state_from_call(&call_result.logs, &*state_changeset);
+    fuzz_state.collect_state_from_call(&call_result.result, &call_result.logs, &*state_changeset);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {

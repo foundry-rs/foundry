@@ -36,10 +36,21 @@ impl EvmFuzzState {
         }
     }
 
-    /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to
-    /// the given [FuzzDictionaryConfig].
-    pub fn collect_state_from_call(&self, logs: &[Log], state_changeset: &StateChangeset) {
+    /// Collects call result (if any), state changes from a [StateChangeset] and logs into an
+    /// [EvmFuzzState] according to the given [FuzzDictionaryConfig].
+    pub fn collect_state_from_call(
+        &self,
+        result: &Bytes,
+        logs: &[Log],
+        state_changeset: &StateChangeset,
+    ) {
         let mut dict = self.inner.write();
+
+        // Insert call result.
+        let result_chunks = result.chunks_exact(32);
+        for chunk in result_chunks {
+            dict.insert_value(chunk.try_into().unwrap());
+        }
 
         // Insert log topics and data.
         for log in logs {
