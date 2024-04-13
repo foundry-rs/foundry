@@ -4,10 +4,10 @@ use crate::{
     config::*,
     test_helpers::{ForgeTestData, TEST_DATA_DEFAULT},
 };
-use alloy_primitives::{address, Address};
-use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
+use alloy_json_abi::Event;
+use alloy_primitives::{address, Address, U256};
 use forge::result::TestStatus;
-use foundry_common::types::ToEthers;
 use foundry_config::{fs_permissions::PathPermission, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -125,25 +125,15 @@ test_repro!(3347, false, None, |res| {
     let mut res = res.remove("default/repros/Issue3347.t.sol:Issue3347Test").unwrap();
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
-    let event = Event {
-        name: "log2".to_string(),
-        inputs: vec![
-            EventParam { name: "x".to_string(), kind: ParamType::Uint(256), indexed: false },
-            EventParam { name: "y".to_string(), kind: ParamType::Uint(256), indexed: false },
-        ],
-        anonymous: false,
-    };
-    let raw_log = RawLog {
-        topics: test.logs[0].data.topics().iter().map(|t| t.to_ethers()).collect(),
-        data: test.logs[0].data.data.clone().to_vec(),
-    };
-    let log = event.parse_log(raw_log).unwrap();
+    let event = Event::parse("event log2(uint256, uint256)").unwrap();
+    let decoded = event.decode_log(&test.logs[0].data, false).unwrap();
     assert_eq!(
-        log,
-        Log {
-            params: vec![
-                LogParam { name: "x".to_string(), value: Token::Uint(1u64.into()) },
-                LogParam { name: "y".to_string(), value: Token::Uint(2u64.into()) }
+        decoded,
+        DecodedEvent {
+            indexed: vec![],
+            body: vec![
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::from(2), 256)
             ]
         }
     );

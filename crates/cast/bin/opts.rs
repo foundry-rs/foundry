@@ -5,10 +5,11 @@ use crate::cmd::{
     wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
-use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -423,7 +424,7 @@ pub enum CastSubcommand {
 
         /// The number of confirmations until the receipt is fetched
         #[arg(long, default_value = "1")]
-        confirmations: usize,
+        confirmations: u64,
 
         /// Exit immediately if the transaction was not found.
         #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
@@ -906,9 +907,9 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_rpc_types::{BlockNumberOrTag, RpcBlockHash};
     use cast::SimpleCast;
     use clap::CommandFactory;
-    use ethers_core::types::BlockNumber;
 
     #[test]
     fn verify_cli() {
@@ -997,30 +998,34 @@ mod tests {
         let test_cases = [
             TestCase {
                 input: "0".to_string(),
-                expect: BlockId::Number(BlockNumber::Number(0u64.into())),
+                expect: BlockId::Number(BlockNumberOrTag::Number(0u64)),
             },
             TestCase {
                 input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
                     .to_string(),
-                expect: BlockId::Hash(
+                expect: BlockId::Hash(RpcBlockHash::from_hash(
                     "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
                         .parse()
                         .unwrap(),
-                ),
+                    None,
+                )),
             },
-            TestCase { input: "latest".to_string(), expect: BlockId::Number(BlockNumber::Latest) },
+            TestCase {
+                input: "latest".to_string(),
+                expect: BlockId::Number(BlockNumberOrTag::Latest),
+            },
             TestCase {
                 input: "earliest".to_string(),
-                expect: BlockId::Number(BlockNumber::Earliest),
+                expect: BlockId::Number(BlockNumberOrTag::Earliest),
             },
             TestCase {
                 input: "pending".to_string(),
-                expect: BlockId::Number(BlockNumber::Pending),
+                expect: BlockId::Number(BlockNumberOrTag::Pending),
             },
-            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumber::Safe) },
+            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumberOrTag::Safe) },
             TestCase {
                 input: "finalized".to_string(),
-                expect: BlockId::Number(BlockNumber::Finalized),
+                expect: BlockId::Number(BlockNumberOrTag::Finalized),
             },
         ];
 

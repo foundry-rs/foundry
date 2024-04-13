@@ -38,7 +38,7 @@ pub const ARBITRUM_SENDER: Address = address!("000000000000000000000000000000000
 pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
 /// Transaction identifier of System transaction types
-pub const SYSTEM_TRANSACTION_TYPE: u64 = 126u64;
+pub const SYSTEM_TRANSACTION_TYPE: u8 = 126;
 
 /// Returns whether the sender is a known L2 system sender that is the first tx in every block.
 ///

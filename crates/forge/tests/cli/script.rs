@@ -1231,3 +1231,61 @@ contract CustomErrorScript is Script {
     cmd.arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     assert!(cmd.stderr_lossy().contains("script failed: CustomError()"));
 });
+
+// https://github.com/foundry-rs/foundry/issues/7620
+forgetest_async!(can_run_zero_base_fee, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let node_config = NodeConfig::test().with_base_fee(Some(0));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    // Firstly run script with non-zero gas prices to ensure that eth_feeHistory contains non-zero
+    // values.
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+        "--with-gas-price",
+        "2000000",
+        "--priority-gas-price",
+        "100000",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+    // Ensure that we can correctly estimate gas when base fee is zero but priority fee is not.
+    cmd.forge_fuse().args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});

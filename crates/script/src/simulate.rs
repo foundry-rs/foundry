@@ -13,13 +13,12 @@ use crate::{
     sequence::get_commit_hash,
     ScriptArgs, ScriptConfig, ScriptResult,
 };
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{utils::format_units, Address, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{
-    get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
-};
+use foundry_common::{get_contract_name, provider::alloy::RpcUrl, shell, ContractsByArtifact};
 use foundry_evm::traces::render_trace_arena;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -132,9 +131,8 @@ impl PreSimulationState {
                     }
                     // We inflate the gas used by the user specified percentage
                     None => {
-                        let gas =
-                            U256::from(result.gas_used * self.args.gas_estimate_multiplier / 100);
-                        tx.gas = Some(gas);
+                        let gas = result.gas_used * self.args.gas_estimate_multiplier / 100;
+                        tx.gas = Some(gas as u128);
                     }
                 }
                 let tx = TransactionWithMetadata::new(
@@ -266,7 +264,7 @@ impl FilledTransactionsState {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
         }
 
-        let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<RpcUrl, u128> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -282,15 +280,14 @@ impl FilledTransactionsState {
             let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             // Handles chain specific requirements.
-            tx.change_type(provider_info.is_legacy);
             tx.transaction.set_chain_id(provider_info.chain);
 
             if !self.args.skip_simulation {
-                let typed_tx = tx.typed_tx_mut();
+                let tx = tx.tx_mut();
 
                 if has_different_gas_calc(provider_info.chain) {
                     trace!("estimating with different gas calculation");
-                    let gas = *typed_tx.gas().expect("gas is set by simulation.");
+                    let gas = tx.gas.expect("gas is set by simulation.");
 
                     // We are trying to show the user an estimation of the total gas usage.
                     //
@@ -303,22 +300,19 @@ impl FilledTransactionsState {
                     // for chains where `has_different_gas_calc` returns true,
                     // we await each transaction before broadcasting the next
                     // one.
-                    if let Err(err) = estimate_gas(
-                        typed_tx,
-                        &provider_info.provider,
-                        self.args.gas_estimate_multiplier,
-                    )
-                    .await
+                    if let Err(err) =
+                        estimate_gas(tx, &provider_info.provider, self.args.gas_estimate_multiplier)
+                            .await
                     {
                         trace!("gas estimation failed: {err}");
 
                         // Restore gas value, since `estimate_gas` will remove it.
-                        typed_tx.set_gas(gas);
+                        tx.set_gas_limit(gas);
                     }
                 }
 
-                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::ZERO);
-                *total_gas += (*typed_tx.gas().expect("gas is set")).to_alloy();
+                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(0);
+                *total_gas += tx.gas.expect("gas is set");
             }
 
             new_sequence.push_back(tx);
@@ -346,7 +340,7 @@ impl FilledTransactionsState {
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
-                    gas_price
+                    gas_price.to()
                 } else {
                     provider_info.gas_price()?
                 };

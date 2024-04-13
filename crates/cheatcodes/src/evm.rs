@@ -3,7 +3,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_signer::Signer;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
@@ -14,7 +13,10 @@ use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 mod fork;
 pub(crate) mod mapping;
@@ -74,7 +76,7 @@ impl Cheatcode for loadAllocsCall {
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
 
         // Let's first assume we're reading a file with only the allocs.
-        let allocs: HashMap<Address, GenesisAccount> = match read_json_file(path) {
+        let allocs: BTreeMap<Address, GenesisAccount> = match read_json_file(path) {
             Ok(allocs) => allocs,
             Err(_) => {
                 // Let's try and read from a genesis file, and extract allocs.
@@ -112,7 +114,7 @@ impl Cheatcode for dumpStateCall {
             .ecx
             .journaled_state
             .state()
-            .into_iter()
+            .iter_mut()
             .filter(|(key, val)| !skip(key, val))
             .map(|(key, val)| {
                 (
@@ -224,6 +226,19 @@ impl Cheatcode for resumeGasMeteringCall {
     }
 }
 
+impl Cheatcode for lastCallGasCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        ensure!(state.last_call_gas.is_some(), "`lastCallGas` is only available after a call");
+        Ok(state
+            .last_call_gas
+            .as_ref()
+            // This should never happen, as we ensure `last_call_gas` is `Some` above.
+            .expect("`lastCallGas` is only available after a call")
+            .abi_encode())
+    }
+}
+
 impl Cheatcode for chainIdCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newChainId } = self;
@@ -310,6 +325,26 @@ impl Cheatcode for getBlockTimestampCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.env.block.timestamp.abi_encode())
+    }
+}
+
+impl Cheatcode for blobBaseFeeCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { newBlobBaseFee } = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`blobBaseFee` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        ccx.ecx.env.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getBlobBaseFeeCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        Ok(ccx.ecx.env.block.get_blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 

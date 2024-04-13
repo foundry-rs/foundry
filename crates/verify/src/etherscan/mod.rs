@@ -1,7 +1,7 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
-use ethers_providers::Middleware;
+use alloy_provider::Provider;
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
     errors::EtherscanError,
@@ -10,7 +10,7 @@ use foundry_block_explorers::{
     Client,
 };
 use foundry_cli::utils::{self, get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::{abi::encode_function_args, retry::Retry, types::ToEthers};
+use foundry_common::{abi::encode_function_args, retry::Retry};
 use foundry_compilers::{
     artifacts::{BytecodeObject, CompactContract},
     cache::CacheEntry,
@@ -498,20 +498,17 @@ impl EtherscanVerificationProvider {
         )?;
 
         let creation_data = client.contract_creation_data(args.address).await?;
-        let transaction = provider
-            .get_transaction(creation_data.transaction_hash.to_ethers())
-            .await?
-            .ok_or_eyre("Couldn't fetch transaction data from RPC")?;
+        let transaction = provider.get_transaction_by_hash(creation_data.transaction_hash).await?;
         let receipt = provider
-            .get_transaction_receipt(creation_data.transaction_hash.to_ethers())
+            .get_transaction_receipt(creation_data.transaction_hash)
             .await?
             .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
 
         let maybe_creation_code: &[u8];
 
-        if receipt.contract_address == Some(args.address.to_ethers()) {
+        if receipt.contract_address == Some(args.address) {
             maybe_creation_code = &transaction.input;
-        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER.to_ethers()) {
+        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER) {
             maybe_creation_code = &transaction.input[32..];
         } else {
             eyre::bail!("Fetching of constructor arguments is not supported for contracts created by contracts")

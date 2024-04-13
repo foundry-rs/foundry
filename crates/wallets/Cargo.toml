@@ -11,13 +11,18 @@ repository.workspace = true
 
 [dependencies]
 alloy-primitives.workspace = true
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer-aws.workspace = true
+alloy-signer-ledger.workspace = true
+alloy-signer-trezor.workspace = true
+alloy-network.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
+alloy-dyn-abi.workspace = true
 
-ethers-core.workspace = true
-ethers-providers.workspace = true
-ethers-signers = { workspace = true, features = ["aws", "ledger", "trezor"] }
-
-rusoto_core = { version = "0.48", default-features = false }
-rusoto_kms = { version = "0.48", default-features = false }
+aws-sdk-kms = { version = "1", default-features = false }
+aws-config = "1"
 
 foundry-config.workspace = true
 foundry-common.workspace = true
@@ -38,5 +43,4 @@ tokio = { version = "1", features = ["macros"] }
 
 [features]
 default = ["rustls"]
-rustls = ["ethers-providers/rustls", "rusoto_core/rustls"]
-openssl = ["ethers-providers/openssl"]
+rustls = ["aws-sdk-kms/rustls"]

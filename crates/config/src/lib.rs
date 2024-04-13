@@ -1228,7 +1228,7 @@ impl Config {
     /// [Self::get_config_path()] and if the closure returns `true`.
     pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
     where
-        F: FnOnce(&Config, &mut toml_edit::Document) -> bool,
+        F: FnOnce(&Config, &mut toml_edit::DocumentMut) -> bool,
     {
         let config = Self::load_with_root(root).sanitized();
         config.update(|doc| f(&config, doc))
@@ -1240,14 +1240,14 @@ impl Config {
     /// [Self::get_config_path()] and if the closure returns `true`
     pub fn update<F>(&self, f: F) -> eyre::Result<()>
     where
-        F: FnOnce(&mut toml_edit::Document) -> bool,
+        F: FnOnce(&mut toml_edit::DocumentMut) -> bool,
     {
         let file_path = self.get_config_path();
         if !file_path.exists() {
             return Ok(())
         }
         let contents = fs::read_to_string(&file_path)?;
-        let mut doc = contents.parse::<toml_edit::Document>()?;
+        let mut doc = contents.parse::<toml_edit::DocumentMut>()?;
         if f(&mut doc) {
             fs::write(file_path, doc.to_string())?;
         }

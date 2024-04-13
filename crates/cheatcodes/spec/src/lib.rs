@@ -83,10 +83,12 @@ impl Cheatcodes<'static> {
                 Vm::ChainInfo::STRUCT.clone(),
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
+                Vm::Gas::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
                 Vm::AccountAccessKind::ENUM.clone(),
+                Vm::ForgeContext::ENUM.clone(),
             ]),
             errors: Vm::VM_ERRORS.iter().map(|&x| x.clone()).collect(),
             events: Cow::Borrowed(&[]),

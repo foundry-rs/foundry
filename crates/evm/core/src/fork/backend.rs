@@ -4,8 +4,9 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_providers::tmp::TempProvider;
-use alloy_rpc_types::{Block, BlockId, Transaction};
+use alloy_provider::{network::AnyNetwork, Provider};
+use alloy_rpc_types::{Block, BlockId, Transaction, WithOtherFields};
+use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::{
@@ -21,6 +22,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
+    marker::PhantomData,
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -31,19 +33,23 @@ use std::{
 // Various future/request type aliases
 
 type AccountFuture<Err> =
-    Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
+    Pin<Box<dyn Future<Output = (Result<(U256, u64, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<B256, Err>, u64)> + Send>>;
 type FullBlockFuture<Err> =
     Pin<Box<dyn Future<Output = (FullBlockSender, Result<Option<Block>, Err>, BlockId)> + Send>>;
-type TransactionFuture<Err> =
-    Pin<Box<dyn Future<Output = (TransactionSender, Result<Transaction, Err>, B256)> + Send>>;
+type TransactionFuture<Err> = Pin<
+    Box<
+        dyn Future<Output = (TransactionSender, Result<WithOtherFields<Transaction>, Err>, B256)>
+            + Send,
+    >,
+>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
 type BlockHashSender = OneshotSender<DatabaseResult<B256>>;
 type FullBlockSender = OneshotSender<DatabaseResult<Block>>;
-type TransactionSender = OneshotSender<DatabaseResult<Transaction>>;
+type TransactionSender = OneshotSender<DatabaseResult<WithOtherFields<Transaction>>>;
 
 /// Request variants that are executed by the provider
 enum ProviderRequest<Err> {
@@ -76,8 +82,9 @@ enum BackendRequest {
 /// This handler will remain active as long as it is reachable (request channel still open) and
 /// requests are in progress.
 #[must_use = "futures do nothing unless polled"]
-pub struct BackendHandler<P> {
+pub struct BackendHandler<T, P> {
     provider: P,
+    transport: PhantomData<T>,
     /// Stores all the data.
     db: BlockchainDb,
     /// Requests currently in progress
@@ -97,9 +104,10 @@ pub struct BackendHandler<P> {
     block_id: Option<BlockId>,
 }
 
-impl<P> BackendHandler<P>
+impl<T, P> BackendHandler<T, P>
 where
-    P: TempProvider + Clone + 'static,
+    T: Transport + Clone,
+    P: Provider<T, AnyNetwork> + Clone + Unpin + 'static,
 {
     fn new(
         provider: P,
@@ -117,6 +125,7 @@ where
             queued_requests: Default::default(),
             incoming: rx,
             block_id,
+            transport: PhantomData,
         }
     }
 
@@ -197,7 +206,7 @@ where
         let fut = Box::pin(async move {
             let balance = provider.get_balance(address, block_id);
             let nonce = provider.get_transaction_count(address, block_id);
-            let code = provider.get_code_at(address, block_id);
+            let code = provider.get_code_at(address, block_id.unwrap_or_default());
             let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
             (resp, address)
         });
@@ -283,9 +292,10 @@ where
     }
 }
 
-impl<P> Future for BackendHandler<P>
+impl<T, P> Future for BackendHandler<T, P>
 where
-    P: TempProvider + Clone + Unpin + 'static,
+    T: Transport + Clone + Unpin,
+    P: Provider<T, AnyNetwork> + Clone + Unpin + 'static,
 {
     type Output = ();
 
@@ -343,7 +353,7 @@ where
 
                             // update the cache
                             let acc = AccountInfo {
-                                nonce: nonce.to(),
+                                nonce,
                                 balance,
                                 code: Some(Bytecode::new_raw(code).to_checked()),
                                 code_hash,
@@ -512,9 +522,14 @@ impl SharedBackend {
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub async fn spawn_backend<P>(provider: P, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
+    pub async fn spawn_backend<T, P>(
+        provider: P,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+    ) -> Self
     where
-        P: TempProvider + Unpin + 'static + Clone,
+        T: Transport + Clone + Unpin,
+        P: Provider<T, AnyNetwork> + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
         // spawn the provider handler to a task
@@ -525,13 +540,14 @@ impl SharedBackend {
 
     /// Same as `Self::spawn_backend` but spawns the `BackendHandler` on a separate `std::thread` in
     /// its own `tokio::Runtime`
-    pub fn spawn_backend_thread<P>(
+    pub fn spawn_backend_thread<T, P>(
         provider: P,
         db: BlockchainDb,
         pin_block: Option<BlockId>,
     ) -> Self
     where
-        P: TempProvider + Unpin + 'static + Clone,
+        T: Transport + Clone + Unpin,
+        P: Provider<T, AnyNetwork> + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
 
@@ -554,13 +570,14 @@ impl SharedBackend {
     }
 
     /// Returns a new `SharedBackend` and the `BackendHandler`
-    pub fn new<P>(
+    pub fn new<T, P>(
         provider: P,
         db: BlockchainDb,
         pin_block: Option<BlockId>,
-    ) -> (Self, BackendHandler<P>)
+    ) -> (Self, BackendHandler<T, P>)
     where
-        P: TempProvider + Clone + 'static,
+        T: Transport + Clone + Unpin,
+        P: Provider<T, AnyNetwork> + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
         let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
@@ -585,7 +602,7 @@ impl SharedBackend {
     }
 
     /// Returns the transaction for the hash
-    pub fn get_transaction(&self, tx: B256) -> DatabaseResult<Transaction> {
+    pub fn get_transaction(&self, tx: B256) -> DatabaseResult<WithOtherFields<Transaction>> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::Transaction(tx, sender);
