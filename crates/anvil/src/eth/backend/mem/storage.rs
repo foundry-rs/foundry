@@ -1,14 +1,14 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeHashDatabase, StateDb},
+        db::{MaybeFullDatabase, StateDb},
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
-use alloy_network::Sealable;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo};
 use alloy_rpc_trace_types::{
     geth::{
         FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
@@ -16,12 +16,9 @@ use alloy_rpc_trace_types::{
     },
     parity::LocalizedTransactionTrace,
 };
-use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo, TransactionReceipt,
-};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
+    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
 };
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
@@ -233,18 +230,18 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
-            base_fee: base_fee.map(|b| b.to::<u64>()),
-            gas_limit: env.block.gas_limit.to::<u64>(),
+            base_fee,
+            gas_limit: env.block.gas_limit.to::<u128>(),
             beneficiary: env.block.coinbase,
             difficulty: env.block.difficulty,
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
-        let genesis_hash = block.header.hash();
+        let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number: U64 = U64::from(0u64);
 
@@ -344,7 +341,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
@@ -413,7 +410,7 @@ impl MinedTransaction {
         )
         .into_localized_transaction_traces(RethTransactionInfo {
             hash: Some(self.info.transaction_hash),
-            index: Some(self.info.transaction_index as u64),
+            index: Some(self.info.transaction_index),
             block_hash: Some(self.block_hash),
             block_number: Some(self.block_number),
             base_fee: None,
@@ -467,7 +464,7 @@ impl MinedTransaction {
 #[derive(Clone, Debug)]
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
-    pub inner: TransactionReceipt,
+    pub inner: ReceiptResponse,
     /// Output data fo the transaction
     pub out: Option<Bytes>,
 }

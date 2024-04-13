@@ -7,8 +7,8 @@ use crate::{
     utils::configure_tx_env,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use alloy_primitives::{b256, keccak256, Address, B256, U256};
+use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction, WithOtherFields};
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
@@ -22,7 +22,7 @@ use revm::{
     Database, DatabaseCommit, Inspector, JournaledState,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     time::Instant,
 };
 
@@ -166,7 +166,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
@@ -262,7 +262,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), DatabaseError>;
 
@@ -857,18 +857,18 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(U64, Block)> {
+    ) -> eyre::Result<(u64, Block)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
-            let block = fork.db.db.get_full_block(tx_block.to::<u64>())?;
+            let block = fork.db.db.get_full_block(tx_block)?;
 
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
-            let fork_block = tx_block.to::<u64>() - 1;
-            Ok((U64::from(fork_block), block))
+            let fork_block = tx_block - 1;
+            Ok((fork_block, block))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
@@ -877,7 +877,7 @@ impl Backend {
                 .number
                 .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
 
-            Ok((number.to::<U64>(), block))
+            Ok((number, block))
         }
     }
 
@@ -904,7 +904,7 @@ impl Backend {
                 // System transactions such as on L2s don't contain any pricing info so we skip them
                 // otherwise this would cause reverts
                 if is_known_system_sender(tx.from) ||
-                    tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
+                    tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                 {
                     trace!(tx=?tx.hash, "skipping system transaction");
                     continue;
@@ -917,7 +917,7 @@ impl Backend {
                 trace!(tx=?tx.hash, "committing transaction");
 
                 commit_transaction(
-                    tx,
+                    WithOtherFields::new(tx),
                     env.clone(),
                     journaled_state,
                     fork,
@@ -976,7 +976,7 @@ impl DatabaseExt for Backend {
                     // another caller, so we need to ensure the caller account is present in the
                     // journaled state and database
                     let caller = current.tx.caller;
-                    if !journaled_state.state.contains_key(&caller) {
+                    journaled_state.state.entry(caller).or_insert_with(|| {
                         let caller_account = current_state
                             .state
                             .get(&caller)
@@ -987,8 +987,8 @@ impl DatabaseExt for Backend {
                             // update the caller account which is required by the evm
                             fork.db.insert_account_info(caller, caller_account.clone());
                         }
-                        journaled_state.state.insert(caller, caller_account.into());
-                    }
+                        caller_account.into()
+                    });
                     self.inner.revert_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
@@ -1115,7 +1115,7 @@ impl DatabaseExt for Backend {
             // necessarily the same caller as for the test, however we must always
             // ensure that fork's state contains the current sender
             let caller = env.tx.caller;
-            if !fork.journaled_state.state.contains_key(&caller) {
+            fork.journaled_state.state.entry(caller).or_insert_with(|| {
                 let caller_account = active_journaled_state
                     .state
                     .get(&env.tx.caller)
@@ -1126,8 +1126,8 @@ impl DatabaseExt for Backend {
                     // update the caller account which is required by the evm
                     fork.db.insert_account_info(caller, caller_account.clone());
                 }
-                fork.journaled_state.state.insert(caller, caller_account.into());
-            }
+                caller_account.into()
+            });
 
             self.update_fork_db(active_journaled_state, &mut fork);
 
@@ -1147,14 +1147,14 @@ impl DatabaseExt for Backend {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
         let (fork_id, backend, fork_env) =
-            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.to())?;
+            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
 
@@ -1216,7 +1216,7 @@ impl DatabaseExt for Backend {
             self.get_block_number_and_block_for_transaction(id, transaction)?;
 
         // roll the fork to the transaction's block or latest if it's pending
-        self.roll_fork(Some(id), fork_block.to(), env, journaled_state)?;
+        self.roll_fork(Some(id), fork_block, env, journaled_state)?;
 
         update_env_block(env, fork_block, &block);
 
@@ -1332,7 +1332,7 @@ impl DatabaseExt for Backend {
     /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), DatabaseError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
@@ -1855,20 +1855,20 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block(env: &mut Env, fork_block: U64, block: &Block) {
-    env.block.timestamp = block.header.timestamp;
+fn update_env_block(env: &mut Env, fork_block: u64, block: &Block) {
+    env.block.timestamp = U256::from(block.header.timestamp);
     env.block.coinbase = block.header.miner;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-    env.block.gas_limit = block.header.gas_limit;
-    env.block.number = block.header.number.map(|n| n.to()).unwrap_or(fork_block.to());
+    env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+    env.block.gas_limit = U256::from(block.header.gas_limit);
+    env.block.number = U256::from(block.header.number.unwrap_or(fork_block));
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an optional inspector
 fn commit_transaction<I: Inspector<Backend>>(
-    tx: Transaction,
+    tx: WithOtherFields<Transaction>,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,

@@ -25,7 +25,7 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
         match chain {
             NamedChain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
-                if block_number.to::<u64>() >= 15_537_351u64 {
+                if block_number >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 
@@ -68,14 +68,15 @@ pub fn get_function(
 /// Configures the env for the transaction
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
     env.tx.caller = tx.from;
-    env.tx.gas_limit = tx.gas.to();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default().to();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(|g| g.to());
-    env.tx.nonce = Some(tx.nonce.to());
+    env.tx.gas_limit = tx.gas as u64;
+    env.tx.gas_price = U256::from(tx.gas_price.unwrap_or_default());
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
+    env.tx.nonce = Some(tx.nonce);
     env.tx.access_list = tx
         .access_list
         .clone()
         .unwrap_or_default()
+        .0
         .into_iter()
         .map(|item| {
             (

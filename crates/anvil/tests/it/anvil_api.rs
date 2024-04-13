@@ -44,7 +44,7 @@ async fn can_set_block_gas_limit() {
     api.mine_one().await;
     let latest_block =
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block_gas_limit.to_alloy(), latest_block.header.gas_limit);
+    assert_eq!(block_gas_limit.as_u128(), latest_block.header.gas_limit);
 }
 
 // Ref <https://github.com/foundry-rs/foundry/issues/2341>
@@ -445,10 +445,10 @@ async fn can_get_node_info() {
         hard_fork: SpecId::CANCUN,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
-            base_fee: U256::from_str("0x3b9aca00").unwrap().to_alloy(),
+            base_fee: alloy_primitives::U256::from_str("0x3b9aca00").unwrap().to(),
             chain_id: 0x7a69,
-            gas_limit: U256::from_str("0x1c9c380").unwrap().to_alloy(),
-            gas_price: U256::from_str("0x77359400").unwrap().to_alloy(),
+            gas_limit: alloy_primitives::U256::from_str("0x1c9c380").unwrap().to(),
+            gas_price: alloy_primitives::U256::from_str("0x77359400").unwrap().to(),
         },
         fork_config: NodeForkConfig {
             fork_url: None,
@@ -616,16 +616,16 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     );
 
     assert_eq!(
-        multicall.get_current_block_timestamp().await.unwrap(),
-        latest_block.header.timestamp.to_ethers()
+        multicall.get_current_block_timestamp().await.unwrap().as_u64(),
+        latest_block.header.timestamp
     );
     assert_eq!(
         multicall.get_current_block_difficulty().await.unwrap(),
         latest_block.header.difficulty.to_ethers()
     );
     assert_eq!(
-        multicall.get_current_block_gas_limit().await.unwrap(),
-        latest_block.header.gas_limit.to_ethers()
+        multicall.get_current_block_gas_limit().await.unwrap().as_u128(),
+        latest_block.header.gas_limit
     );
     assert_eq!(
         multicall.get_current_block_coinbase().await.unwrap(),

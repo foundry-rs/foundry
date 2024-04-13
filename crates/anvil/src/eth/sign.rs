@@ -1,8 +1,10 @@
 use crate::eth::error::BlockchainError;
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_dyn_abi::TypedData;
-use alloy_network::{Signed, Transaction};
-use alloy_primitives::{Address, Signature, B256, U256};
-use alloy_signer::{LocalWallet, Signer as AlloySigner, SignerSync as AlloySignerSync};
+use alloy_network::TxSignerSync;
+use alloy_primitives::{Address, Signature, B256};
+use alloy_signer::Signer as AlloySigner;
+use alloy_signer_wallet::LocalWallet;
 use anvil_core::eth::transaction::{
     optimism::{DepositTransaction, DepositTransactionRequest},
     TypedTransaction, TypedTransactionRequest,
@@ -84,17 +86,13 @@ impl Signer for DevSigner {
         // typed data.
         signer.set_chain_id(None);
 
-        Ok(signer
-            .sign_hash(
-                payload.eip712_signing_hash().map_err(|_| BlockchainError::NoSignerAvailable)?,
-            )
-            .await?)
+        Ok(signer.sign_dynamic_typed_data(payload).await?)
     }
 
     async fn sign_hash(&self, address: Address, hash: B256) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
 
-        Ok(signer.sign_hash(hash).await?)
+        Ok(signer.sign_hash(&hash).await?)
     }
 
     fn sign_transaction(
@@ -160,7 +158,7 @@ pub fn build_typed_transaction(
                 source_hash,
                 mint,
                 is_system_tx,
-                nonce: U256::ZERO,
+                nonce: 0,
             })
         }
     };

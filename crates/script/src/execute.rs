@@ -7,16 +7,16 @@ use crate::{
 use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, U64};
+use alloy_primitives::{Address, Bytes};
+use alloy_provider::Provider;
 use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
-use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
-    provider::ethers::{get_http_provider, RpcUrl},
+    provider::alloy::{get_http_provider, RpcUrl},
     shell, ContractsByArtifact,
 };
 use foundry_compilers::artifacts::ContractBytecodeSome;
@@ -102,6 +102,7 @@ impl PreExecutionState {
                 self.build_data.build_data.artifact_ids.clone(),
                 self.script_wallets.clone(),
                 self.args.debug,
+                self.build_data.build_data.target.clone(),
             )
             .await?;
         let mut result = self.execute_with_runner(&mut runner).await?;
@@ -134,7 +135,7 @@ impl PreExecutionState {
                         transaction: TransactionRequest {
                             from: Some(self.script_config.evm_opts.sender),
                             input: Some(bytes.clone()).into(),
-                            nonce: Some(U64::from(self.script_config.sender_nonce + i as u64)),
+                            nonce: Some(self.script_config.sender_nonce + i as u64),
                             ..Default::default()
                         },
                     })
@@ -252,9 +253,8 @@ impl RpcData {
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
             let provider = get_http_provider(rpc);
-            let id = provider.get_chainid().await.ok()?;
-            let id_u64: u64 = id.try_into().ok()?;
-            NamedChain::try_from(id_u64).ok()
+            let id = provider.get_chain_id().await.ok()?;
+            NamedChain::try_from(id).ok()
         });
 
         let chains = join_all(chain_ids).await;

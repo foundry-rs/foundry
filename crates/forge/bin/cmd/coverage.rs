@@ -317,6 +317,7 @@ impl CoverageArgs {
                 evm_opts.clone(),
                 Some(artifact_ids),
                 None,
+                None,
             ))
             .with_test_options(TestOptions {
                 fuzz: config.fuzz,

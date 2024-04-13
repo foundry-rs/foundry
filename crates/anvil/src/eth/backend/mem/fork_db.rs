@@ -1,6 +1,6 @@
 use crate::{
     eth::backend::db::{
-        Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord, SerializableState,
+        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableState,
         StateDb,
     },
     revm::primitives::AccountInfo,
@@ -81,7 +81,7 @@ impl Db for ForkedDatabase {
     }
 }
 
-impl MaybeHashDatabase for ForkedDatabase {
+impl MaybeFullDatabase for ForkedDatabase {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -104,7 +104,7 @@ impl MaybeHashDatabase for ForkedDatabase {
     }
 }
 
-impl MaybeHashDatabase for ForkDbSnapshot {
+impl MaybeFullDatabase for ForkDbSnapshot {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
     }

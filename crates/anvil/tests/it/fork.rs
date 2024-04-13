@@ -5,12 +5,11 @@ use crate::{
     utils::{self, ethers_http_provider},
 };
 use alloy_primitives::{address, U256 as rU256};
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider as AlloyProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest as CallRequest},
-    BlockNumberOrTag,
+    BlockNumberOrTag, WithOtherFields,
 };
-use alloy_signer::Signer as AlloySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
@@ -23,7 +22,7 @@ use ethers::{
     },
 };
 use foundry_common::{
-    provider::ethers::get_http_provider,
+    provider::alloy::get_http_provider,
     rpc,
     rpc::next_http_rpc_endpoint,
     types::{ToAlloy, ToEthers},
@@ -290,7 +289,7 @@ async fn test_fork_snapshotting() {
     let provider = handle.http_provider();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU256::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -329,7 +328,7 @@ async fn test_fork_snapshotting_repeated() {
     let _ = tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU256::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -383,7 +382,7 @@ async fn test_fork_snapshotting_blocks() {
     assert_eq!(block_number_after, block_number + 1);
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU256::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
@@ -397,12 +396,12 @@ async fn test_fork_snapshotting_blocks() {
     // repeat transaction
     let _ = tx_provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU256::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
 
     // revert again: nothing to revert since snapshot gone
     assert!(!api.evm_revert(snapshot).await.unwrap());
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, initial_nonce + rU256::from(1));
+    assert_eq!(nonce, initial_nonce + 1);
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
 }
@@ -468,8 +467,8 @@ async fn can_reset_properly() {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let account = origin_handle.dev_accounts().next().unwrap();
     let origin_provider = origin_handle.http_provider();
-    let origin_nonce = rU256::from(1u64);
-    origin_api.anvil_set_nonce(account, origin_nonce).await.unwrap();
+    let origin_nonce = 1u64;
+    origin_api.anvil_set_nonce(account, rU256::from(origin_nonce)).await.unwrap();
 
     assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
 
@@ -486,10 +485,7 @@ async fn can_reset_properly() {
     let tx = fork_tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     // nonce incremented by 1
-    assert_eq!(
-        origin_nonce + rU256::from(1),
-        fork_provider.get_transaction_count(account, None).await.unwrap()
-    );
+    assert_eq!(origin_nonce + 1, fork_provider.get_transaction_count(account, None).await.unwrap());
 
     // resetting to origin state
     fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
@@ -754,13 +750,19 @@ async fn test_reset_fork_on_new_blocks() {
     let anvil_provider = ethers_http_provider(&handle.http_endpoint());
 
     let endpoint = next_http_rpc_endpoint();
-    let provider = Arc::new(get_http_provider(&endpoint).interval(Duration::from_secs(2)));
+    let provider = Arc::new(get_http_provider(&endpoint));
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 
     handle.task_manager().spawn_reset_on_new_polled_blocks(provider.clone(), api);
 
-    let mut stream = provider.watch_blocks().await.unwrap();
+    let mut stream = provider
+        .watch_blocks()
+        .await
+        .unwrap()
+        .with_poll_interval(Duration::from_secs(2))
+        .into_stream()
+        .flat_map(futures::stream::iter);
     // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge
     // cases where the stream immediately returns a block
     tokio::time::sleep(Chain::Mainnet.average_blocktime_hint().unwrap()).await;
@@ -788,11 +790,11 @@ async fn test_fork_call() {
 
     let res1 = api
         .call(
-            CallRequest {
+            WithOtherFields::new(CallRequest {
                 to: Some(to.to_alloy()),
                 input: input.to_alloy().into(),
                 ..Default::default()
-            },
+            }),
             None,
             None,
         )
@@ -810,7 +812,7 @@ async fn test_fork_block_timestamp() {
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert!(initial_block.header.timestamp.to::<u64>() < latest_block.header.timestamp.to::<u64>());
+    assert!(initial_block.header.timestamp < latest_block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -821,14 +823,11 @@ async fn test_fork_snapshot_block_timestamp() {
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     api.evm_revert(snapshot_id).await.unwrap();
-    api.evm_set_next_block_timestamp(initial_block.header.timestamp.to::<u64>()).unwrap();
+    api.evm_set_next_block_timestamp(initial_block.header.timestamp).unwrap();
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert_eq!(
-        initial_block.header.timestamp.to::<u64>(),
-        latest_block.header.timestamp.to::<u64>()
-    );
+    assert_eq!(initial_block.header.timestamp, latest_block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1092,7 +1091,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), rU256::from(59455969592u64));
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59455969592u128);
 
     // now reset to block 18835000 -1
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(18835000u64 - 1) }))
@@ -1103,7 +1102,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), rU256::from(59017001138u64));
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59017001138u128);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6795>
@@ -1180,11 +1179,11 @@ async fn test_fork_execution_reverted() {
 
     let resp = api
         .call(
-            CallRequest {
+            WithOtherFields::new(CallRequest {
                 to: Some(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377")),
                 input: TransactionInput::new("0x8f283b3c".as_bytes().into()),
                 ..Default::default()
-            },
+            }),
             Some(target.into()),
             None,
         )
