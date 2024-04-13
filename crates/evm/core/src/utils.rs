@@ -108,7 +108,7 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-pub fn get_create2_factory_call_inputs(salt: U256, inputs: Box<CreateInputs>) -> CallInputs {
+pub fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
         contract: DEFAULT_CREATE2_DEPLOYER,
@@ -161,7 +161,7 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
             }
 
             // Generate call inputs for CREATE2 factory.
-            let mut call_inputs = get_create2_factory_call_inputs(salt, inputs);
+            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs);
 
             // Call inspector to change input or return outcome.
             if let Some(outcome) = ctx.external.call(&mut ctx.evm, &mut call_inputs) {
