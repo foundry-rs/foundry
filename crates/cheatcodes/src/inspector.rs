@@ -1328,10 +1328,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 ecx.env.tx.caller = broadcast.new_origin;
 
                 if ecx.journaled_state.depth() == broadcast.depth {
+                    call.caller = broadcast.new_origin;
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
 
-                    let account =
-                        ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
+                    let account = ecx.journaled_state.state().get(&broadcast.new_origin).unwrap();
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.db.active_fork_url(),
@@ -1349,6 +1349,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ..Default::default()
                         },
                     });
+
                     let kind = match call.scheme {
                         CreateScheme::Create => "create",
                         CreateScheme::Create2 { .. } => "create2",

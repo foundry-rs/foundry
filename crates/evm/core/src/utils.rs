@@ -9,10 +9,10 @@ use revm::{
     db::WrapDatabaseRef,
     handler::register::EvmHandler,
     interpreter::{
-        CallContext, CallInputs, CallScheme, CreateOutcome, Gas, InstructionResult,
-        InterpreterResult, Transfer,
+        return_ok, CallContext, CallInputs, CallScheme, CreateInputs, CreateOutcome, Gas,
+        InstructionResult, InterpreterResult, Transfer,
     },
-    primitives::{CreateScheme, EVMError, SpecId, TransactTo},
+    primitives::{CreateScheme, EVMError, SpecId, TransactTo, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
 
@@ -108,8 +108,31 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
-    handler: &mut EvmHandler<'a, I, DB>,
+pub fn get_create2_factory_call_inputs(salt: U256, inputs: Box<CreateInputs>) -> CallInputs {
+    let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
+    CallInputs {
+        contract: DEFAULT_CREATE2_DEPLOYER,
+        transfer: Transfer {
+            source: inputs.caller,
+            target: DEFAULT_CREATE2_DEPLOYER,
+            value: inputs.value,
+        },
+        input: calldata.into(),
+        gas_limit: inputs.gas_limit,
+        context: CallContext {
+            caller: inputs.caller,
+            address: DEFAULT_CREATE2_DEPLOYER,
+            code_address: DEFAULT_CREATE2_DEPLOYER,
+            apparent_value: inputs.value,
+            scheme: CallScheme::Call,
+        },
+        is_static: false,
+        return_memory_offset: 0..0,
+    }
+}
+
+pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
+    handler: &mut EvmHandler<'_, I, DB>,
 ) {
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
 
@@ -124,9 +147,9 @@ pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
                 return old_handle(ctx, inputs);
             }
 
-            // Sanity checks for our CREATE2 deployer
+            // Sanity check that CREATE2 deployer exists.
             let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
-            if ctx.evm.db.code_by_hash(code_hash).map_err(EVMError::Database)?.is_empty() {
+            if code_hash == KECCAK_EMPTY {
                 return Ok(FrameOrResult::Result(FrameResult::Create(CreateOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
@@ -137,28 +160,10 @@ pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
                 })))
             }
 
-            let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
-            let mut call_inputs = CallInputs {
-                contract: DEFAULT_CREATE2_DEPLOYER,
-                transfer: Transfer {
-                    source: inputs.caller,
-                    target: DEFAULT_CREATE2_DEPLOYER,
-                    value: inputs.value.clone(),
-                },
-                input: calldata.into(),
-                gas_limit: inputs.gas_limit,
-                context: CallContext {
-                    caller: inputs.caller,
-                    address: DEFAULT_CREATE2_DEPLOYER,
-                    code_address: DEFAULT_CREATE2_DEPLOYER,
-                    apparent_value: inputs.value.clone(),
-                    scheme: CallScheme::Call,
-                },
-                is_static: false,
-                return_memory_offset: 0..0,
-            };
+            // Generate call inputs for CREATE2 factory.
+            let mut call_inputs = get_create2_factory_call_inputs(salt, inputs);
 
-            // call inspector to change input or return outcome.
+            // Call inspector to change input or return outcome.
             if let Some(outcome) = ctx.external.call(&mut ctx.evm, &mut call_inputs) {
                 create2_overrides_inner
                     .borrow_mut()
@@ -166,6 +171,7 @@ pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
                 return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
             }
 
+            // Push data about current override to the stack.
             create2_overrides_inner
                 .borrow_mut()
                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
@@ -184,6 +190,7 @@ pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
 
     handler.execution.insert_call_outcome =
         Arc::new(move |ctx, frame, shared_memory, mut outcome| {
+            // If we are on the depth of the latest override, handle the outcome.
             if create2_overrides_inner
                 .borrow()
                 .last()
@@ -191,11 +198,20 @@ pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
             {
                 let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
                 outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);
-                let create_outcome = CreateOutcome {
-                    address: Some(Address::try_from(outcome.result.output.as_ref()).unwrap()),
-                    result: outcome.result,
+
+                // Decode address from output.
+                let address = match outcome.instruction_result() {
+                    return_ok!() => {
+                        // SAFETY: we assume here that successful CREATE2 factory call will always
+                        // return a valid address.
+                        Some(Address::try_from(outcome.output().as_ref()).unwrap())
+                    }
+                    _ => None,
                 };
-                frame.frame_data_mut().interpreter.insert_create_outcome(create_outcome);
+                frame
+                    .frame_data_mut()
+                    .interpreter
+                    .insert_create_outcome(CreateOutcome { address, result: outcome.result });
 
                 Ok(())
             } else {
