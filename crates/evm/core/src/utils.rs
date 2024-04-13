@@ -1,19 +1,26 @@
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{FixedBytes, U256};
+use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
 use foundry_config::NamedChain;
 use revm::{
-    db::WrapDatabaseRef, handler::register::EvmHandler, interpreter::{CallContext, CallInputs, CallScheme, Transfer}, primitives::{CreateScheme, EVMError, SpecId, TransactTo}, FrameOrResult, FrameResult
+    db::WrapDatabaseRef,
+    handler::register::EvmHandler,
+    interpreter::{
+        CallContext, CallInputs, CallScheme, CreateOutcome, Gas, InstructionResult,
+        InterpreterResult, Transfer,
+    },
+    primitives::{CreateScheme, EVMError, SpecId, TransactTo},
+    FrameOrResult, FrameResult,
 };
 
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
 
-use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 pub use crate::ic::*;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -101,47 +108,100 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-pub fn create2_handler_register<'a, DB: revm::Database, EXT>(
-    handler: &mut EvmHandler<'a, EXT, DB>,
+pub fn create2_handler_register<'a, DB: revm::Database, I: InspectorExt<DB>>(
+    handler: &mut EvmHandler<'a, I, DB>,
 ) {
-    let call_handle = handler.execution.call.clone();
+    let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
+
+    let create2_overrides_inner = create2_overrides.clone();
     let old_handle = handler.execution.create.clone();
-    handler.execution.create = Arc::new(
-        move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
-            match inputs.scheme {
-                CreateScheme::Create2(salt) => {
-                    let address = DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, &inputs.init_code);
-                    let call_inputs = CallInputs {
-                        contract: DEFAULT_CREATE2_DEPLOYER,
-                        transfer: Transfer {
-                            source: inputs.caller,
-                            target: DEFAULT_CREATE2_DEPLOYER,
-                            value: inputs.value.clone(),
-                        },
-                        input: inputs.init_code.clone(),
-                        gas_limit: inputs.gas_limit,
-                        context: CallContext {
-                            caller: inputs.caller,
-                            address: DEFAULT_CREATE2_DEPLOYER,
-                            code_address: DEFAULT_CREATE2_DEPLOYER,
-                            apparent_value: inputs.value.clone(),
-                            scheme: CallScheme::Call,
-                        },
-                        is_static: false,
-                        return_memory_offset: 0..0,
-                    };
-
-                    let result = call_handle(ctx, Box::new(call_inputs))?;
-
-                    let FrameResult::Call(outcome) = result else {
-                        unreachable!()
-                    };
-
-                    Ok(FrameOrResult::Result(FrameResult::Create()))
-                }
+    handler.execution.create =
+        Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+            let CreateScheme::Create2 { salt } = inputs.scheme else {
+                return old_handle(ctx, inputs);
+            };
+            if !ctx.external.should_use_create2_factory(&mut ctx.evm, &mut inputs) {
+                return old_handle(ctx, inputs);
             }
-        },
-    );
+
+            // Sanity checks for our CREATE2 deployer
+            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
+            if ctx.evm.db.code_by_hash(code_hash).map_err(EVMError::Database)?.is_empty() {
+                return Ok(FrameOrResult::Result(FrameResult::Create(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "missing CREATE2 deployer".into(),
+                        gas: Gas::new(inputs.gas_limit),
+                    },
+                    address: None,
+                })))
+            }
+
+            let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
+            let mut call_inputs = CallInputs {
+                contract: DEFAULT_CREATE2_DEPLOYER,
+                transfer: Transfer {
+                    source: inputs.caller,
+                    target: DEFAULT_CREATE2_DEPLOYER,
+                    value: inputs.value.clone(),
+                },
+                input: calldata.into(),
+                gas_limit: inputs.gas_limit,
+                context: CallContext {
+                    caller: inputs.caller,
+                    address: DEFAULT_CREATE2_DEPLOYER,
+                    code_address: DEFAULT_CREATE2_DEPLOYER,
+                    apparent_value: inputs.value.clone(),
+                    scheme: CallScheme::Call,
+                },
+                is_static: false,
+                return_memory_offset: 0..0,
+            };
+
+            // call inspector to change input or return outcome.
+            if let Some(outcome) = ctx.external.call(&mut ctx.evm, &mut call_inputs) {
+                create2_overrides_inner
+                    .borrow_mut()
+                    .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
+                return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
+            }
+
+            create2_overrides_inner
+                .borrow_mut()
+                .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
+
+            let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
+
+            if let Ok(FrameOrResult::Frame(frame)) = &mut frame_or_result {
+                ctx.external
+                    .initialize_interp(&mut frame.frame_data_mut().interpreter, &mut ctx.evm)
+            }
+            frame_or_result
+        });
+
+    let create2_overrides_inner = create2_overrides.clone();
+    let old_handle = handler.execution.insert_call_outcome.clone();
+
+    handler.execution.insert_call_outcome =
+        Arc::new(move |ctx, frame, shared_memory, mut outcome| {
+            if create2_overrides_inner
+                .borrow()
+                .last()
+                .map_or(false, |(depth, _)| *depth == ctx.evm.journaled_state.depth())
+            {
+                let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
+                outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);
+                let create_outcome = CreateOutcome {
+                    address: Some(Address::try_from(outcome.result.output.as_ref()).unwrap()),
+                    result: outcome.result,
+                };
+                frame.frame_data_mut().interpreter.insert_create_outcome(create_outcome);
+
+                Ok(())
+            } else {
+                old_handle(ctx, frame, shared_memory, outcome)
+            }
+        });
 }
 
 /// Creates a new EVM with the given inspector.
@@ -152,7 +212,7 @@ pub fn new_evm_with_inspector<'a, DB, I>(
 ) -> revm::Evm<'a, I, DB>
 where
     DB: revm::Database,
-    I: revm::Inspector<DB>,
+    I: InspectorExt<DB>,
 {
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
     // performance issues.
@@ -160,6 +220,7 @@ where
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
+    handler.append_handler_register_plain(create2_handler_register);
     revm::Evm::new(context, handler)
 }
 
@@ -171,7 +232,7 @@ pub fn new_evm_with_inspector_ref<'a, DB, I>(
 ) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
 where
     DB: revm::DatabaseRef,
-    I: revm::Inspector<WrapDatabaseRef<DB>>,
+    I: InspectorExt<WrapDatabaseRef<DB>>,
 {
     new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

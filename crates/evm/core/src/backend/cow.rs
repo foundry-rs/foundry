@@ -6,6 +6,7 @@ use crate::{
         RevertSnapshotAction,
     },
     fork::{CreateFork, ForkId},
+    InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
@@ -16,7 +17,7 @@ use revm::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
         SpecId,
     },
-    Database, DatabaseCommit, Inspector, JournaledState,
+    Database, DatabaseCommit, JournaledState,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -58,7 +59,7 @@ impl<'a> CowBackend<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
-    pub fn inspect<'b, I: Inspector<&'b mut Self>>(
+    pub fn inspect<'b, I: InspectorExt<&'b mut Self>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: I,
@@ -176,7 +177,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact<I: Inspector<Backend>>(
+    fn transact<I: InspectorExt<Backend>>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,

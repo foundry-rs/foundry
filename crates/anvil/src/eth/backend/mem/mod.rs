@@ -77,6 +77,7 @@ use foundry_evm::{
     },
     utils::new_evm_with_inspector_ref,
 };
+use foundry_evm_core::InspectorExt;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
 use revm::{
@@ -819,7 +820,7 @@ impl Backend {
     ) -> revm::Evm<'_, I, WrapDatabaseRef<DB>>
     where
         DB: revm::DatabaseRef,
-        I: revm::Inspector<WrapDatabaseRef<DB>>,
+        I: InspectorExt<WrapDatabaseRef<DB>>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
         if let Some(ref factory) = self.precompile_factory {
