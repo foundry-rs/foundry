@@ -19,7 +19,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::alloy::estimate_eip1559_fees,
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
@@ -88,7 +88,7 @@ impl CreateArgs {
         let project = self.opts.project()?;
 
         let target_path = if let Some(ref mut path) = self.contract.path {
-            dunce::canonicalize(path)?
+            canonicalize(project.root().join(&path))?
         } else {
             find_contract_path(&self.contract.name, &project)?
         };
