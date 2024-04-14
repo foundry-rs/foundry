@@ -1,11 +1,16 @@
 //! Support for compiling [foundry_compilers::Project]
 
-use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
+use crate::{
+    compact_to_contract, fs::read_to_string, glob::GlobMatcher, term::SpinnerReporter,
+    TestFunctionExt,
+};
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
+    artifacts::{
+        output_selection::OutputSelection, BytecodeObject, ContractBytecodeSome, Libraries,
+    },
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -464,35 +469,71 @@ pub struct ContractInfo {
     pub is_dev_contract: bool,
 }
 
-/// Finds the path of the contract with the given name.
-/// Throws error if multiple or no contracts with the same name are found.
-pub fn find_contract_path(target_name: &str, project: &Project) -> Result<PathBuf> {
+/// Runs solc compiler without requesting any output and collects a mapping from contract names to
+/// source files containing artifact with given name.
+fn collect_contract_names_solc(project: &Project) -> Result<HashMap<String, Vec<PathBuf>>> {
+    let mut temp_project = (*project).clone();
+    temp_project.no_artifacts = true;
+    temp_project.solc_config.settings.output_selection =
+        OutputSelection::common_output_selection([]);
+
+    let output = temp_project.compile()?;
+
+    if output.has_compiler_errors() {
+        println!("{}", output);
+        eyre::bail!("Compilation failed");
+    }
+
+    let contracts = output.into_artifacts().fold(
+        HashMap::new(),
+        |mut contracts: HashMap<_, Vec<_>>, (id, _)| {
+            contracts.entry(id.name).or_default().push(id.source);
+            contracts
+        },
+    );
+
+    Ok(contracts)
+}
+
+/// Parses project sources via solang parser, collecting mapping from contract name to source files
+/// containing artifact with given name. On parser failure, fallbacks to
+/// [collect_contract_names_solc].
+fn collect_contract_names(project: &Project) -> Result<HashMap<String, Vec<PathBuf>>> {
     let graph = Graph::resolve(&project.paths)?;
-    let mut target = None;
+    let mut contracts: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     for file in graph.files().keys() {
-        let src = std::fs::read_to_string(file)?;
-        let (parsed, _) = solang_parser::parse(&src, 0)
-            .map_err(|_| eyre::eyre!("Failed to parse {}.", file.display()))?;
+        let src = read_to_string(file)?;
+        let Ok((parsed, _)) = solang_parser::parse(&src, 0) else {
+            return collect_contract_names_solc(project);
+        };
 
         for part in parsed.0 {
             if let SourceUnitPart::ContractDefinition(contract) = part {
                 if let Some(name) = contract.name {
-                    if name.name == target_name {
-                        if target.is_some() {
-                            eyre::bail!(
-                                "Found multiple matching contracts with the name `{}`",
-                                target_name
-                            );
-                        }
-                        target = Some(file);
-                    }
+                    contracts.entry(name.name).or_default().push(file.clone());
                 }
             }
         }
     }
 
-    target.cloned().ok_or_else(|| eyre::eyre!("No contract found with the name `{}`", target_name))
+    Ok(contracts)
+}
+
+/// Finds the path of the contract with the given name.
+/// Throws error if multiple or no contracts with the same name are found.
+pub fn find_contract_path(target_name: &str, project: &Project) -> Result<PathBuf> {
+    let mut contracts = collect_contract_names(project)?;
+
+    if contracts.get(target_name).map_or(true, |paths| paths.len() == 0) {
+        eyre::bail!("No contract found with the name `{}`", target_name);
+    }
+    let mut paths = contracts.remove(target_name).unwrap();
+    if paths.len() > 1 {
+        eyre::bail!("Multiple contracts found with the name `{}`", target_name);
+    }
+
+    Ok(paths.remove(0))
 }
 
 /// Compiles target file path.
