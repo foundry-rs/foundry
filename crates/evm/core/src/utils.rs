@@ -201,11 +201,15 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
 
                 // Decode address from output.
                 let address = match outcome.instruction_result() {
-                    return_ok!() => {
-                        // SAFETY: we assume here that successful CREATE2 factory call will always
-                        // return a valid address.
-                        Some(Address::try_from(outcome.output().as_ref()).unwrap())
-                    }
+                    return_ok!() => Address::try_from(outcome.output().as_ref())
+                        .map_err(|_| {
+                            outcome.result = InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: "invalid CREATE2 factory output".into(),
+                                gas: Gas::new(call_inputs.gas_limit),
+                            };
+                        })
+                        .ok(),
                     _ => None,
                 };
                 frame

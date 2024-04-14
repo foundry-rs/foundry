@@ -76,8 +76,8 @@ use foundry_evm::{
         },
     },
     utils::new_evm_with_inspector_ref,
+    InspectorExt,
 };
-use foundry_evm_core::InspectorExt;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
 use revm::{

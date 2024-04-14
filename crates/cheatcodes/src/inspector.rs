@@ -1503,13 +1503,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 }
 
 impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
-    /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for this CREATE2 frame.
-    ///
-    /// This function is invoked during the contract creation process and updates the caller of the
-    /// contract creation transaction to be the `DEFAULT_CREATE2_DEPLOYER` if the `CreateScheme` is
-    /// `Create2` and the current execution depth matches the depth at which the `prank` or
-    /// `broadcast` was started, or the default depth of 1 if no prank or broadcast is currently
-    /// active.
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<DB>,

@@ -13,8 +13,8 @@ use foundry_evm::{
         EvmContext,
     },
     traces::TracingInspectorConfig,
+    InspectorExt,
 };
-use foundry_evm_core::InspectorExt;
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
