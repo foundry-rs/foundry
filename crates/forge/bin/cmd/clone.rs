@@ -16,7 +16,6 @@ use foundry_compilers::{
     ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
-
 use super::{init::InitArgs, install::DependencyInstallOpts};
 
 /// CLI arguments for `forge clone`.
