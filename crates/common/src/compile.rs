@@ -525,7 +525,7 @@ fn collect_contract_names(project: &Project) -> Result<HashMap<String, Vec<PathB
 pub fn find_contract_path(target_name: &str, project: &Project) -> Result<PathBuf> {
     let mut contracts = collect_contract_names(project)?;
 
-    if contracts.get(target_name).map_or(true, |paths| paths.len() == 0) {
+    if contracts.get(target_name).map_or(true, |paths| paths.is_empty()) {
         eyre::bail!("No contract found with the name `{}`", target_name);
     }
     let mut paths = contracts.remove(target_name).unwrap();
