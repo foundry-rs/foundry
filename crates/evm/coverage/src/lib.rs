@@ -37,7 +37,7 @@ pub struct CoverageReport {
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
-    pub anchors: HashMap<ContractId, Vec<ItemAnchor>>,
+    pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
     /// All the bytecode hits for the codebase
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings
@@ -70,7 +70,10 @@ impl CoverageReport {
     }
 
     /// Add anchors to this report
-    pub fn add_anchors(&mut self, anchors: HashMap<ContractId, Vec<ItemAnchor>>) {
+    pub fn add_anchors(
+        &mut self,
+        anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
+    ) {
         self.anchors.extend(anchors);
     }
 
@@ -124,7 +127,12 @@ impl CoverageReport {
     ///
     /// This function should only be called *after* all the relevant sources have been processed and
     /// added to the map (see [add_source]).
-    pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: &HitMap) -> Result<()> {
+    pub fn add_hit_map(
+        &mut self,
+        contract_id: &ContractId,
+        hit_map: &HitMap,
+        deployed_code: bool,
+    ) -> Result<()> {
         // Add bytecode level hits
         let e = self
             .bytecode_hits
@@ -139,6 +147,7 @@ impl CoverageReport {
 
         // Add source level hits
         if let Some(anchors) = self.anchors.get(contract_id) {
+            let anchors = if deployed_code { &anchors.1 } else { &anchors.0 };
             for anchor in anchors {
                 if let Some(hits) = hit_map.hits.get(&anchor.instruction) {
                     self.items
