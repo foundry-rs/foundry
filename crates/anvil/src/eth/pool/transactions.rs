@@ -1,5 +1,5 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{Address, TxHash};
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{
@@ -65,10 +65,10 @@ impl FromStr for TransactionOrder {
 
 /// Metric value for the priority of a transaction.
 ///
-/// The `TransactionPriority` determines the ordering of two transactions that have all  their
+/// The `TransactionPriority` determines the ordering of two transactions that have all their
 /// markers satisfied.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransactionPriority(pub U256);
+pub struct TransactionPriority(pub u128);
 
 /// Internal Transaction type
 #[derive(Clone, PartialEq, Eq)]
@@ -92,7 +92,7 @@ impl PoolTransaction {
     }
 
     /// Returns the gas pric of this transaction
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         self.pending_transaction.transaction.gas_price()
     }
 }
@@ -132,6 +132,13 @@ impl PendingTransactions {
 
     pub fn is_empty(&self) -> bool {
         self.waiting_queue.is_empty()
+    }
+
+    /// Clears internal state
+    pub fn clear(&mut self) {
+        self.required_markers.clear();
+        self.waiting_markers.clear();
+        self.waiting_queue.clear();
     }
 
     /// Returns an iterator over all transactions in the waiting pool
@@ -375,6 +382,13 @@ impl ReadyTransactions {
             awaiting: Default::default(),
             _invalid: Default::default(),
         }
+    }
+
+    /// Clears the internal state
+    pub fn clear(&mut self) {
+        self.provided_markers.clear();
+        self.ready_tx.write().clear();
+        self.independent_transactions.clear();
     }
 
     /// Returns true if the transaction is part of the queue.
@@ -679,7 +693,7 @@ impl ReadyTransaction {
         &self.transaction.transaction.provides
     }
 
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         self.transaction.transaction.gas_price()
     }
 }

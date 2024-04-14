@@ -943,7 +943,7 @@ contract RecordAccountAccessesTest is DSTest {
                 data: abi.encodeCall(
                     Create2or.create2,
                     (bytes32(0), abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)))
-                    ),
+                ),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
                 depth: 1

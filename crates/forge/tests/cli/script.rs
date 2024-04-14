@@ -1157,3 +1157,135 @@ contract ScriptC {}
     tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
     tester.simulate(ScriptOutcome::OkNoEndpoint);
 });
+
+forgetest_async!(can_sign_with_script_wallet_single, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester
+        .add_sig("ScriptSign", "run()")
+        .load_private_keys(&[0])
+        .await
+        .simulate(ScriptOutcome::OkNoEndpoint);
+});
+
+forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    let acc = tester.accounts_pub[0].to_checksum(None);
+    tester
+        .add_sig("ScriptSign", "run(address)")
+        .arg(&acc)
+        .load_private_keys(&[0, 1, 2])
+        .await
+        .simulate(ScriptOutcome::OkRun);
+});
+
+forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "Sctipt.s.sol",
+            r#"
+contract Script {
+    function run() external {}
+
+    function run(address,uint256) external {}
+}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
+    assert!(cmd.stderr_lossy().contains("Multiple functions with the same name"));
+});
+
+forgetest_async!(can_decode_custom_errors, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
+
+    let script = prj
+        .add_script(
+            "CustomErrorScript.s.sol",
+            r#"
+import { Script } from "forge-std/Script.sol";
+
+contract ContractWithCustomError {
+    error CustomError();
+
+    constructor() {
+        revert CustomError();
+    }
+}
+
+contract CustomErrorScript is Script {
+    ContractWithCustomError test;
+
+    function run() public {
+        test = new ContractWithCustomError();
+    }
+}
+"#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
+    assert!(cmd.stderr_lossy().contains("script failed: CustomError()"));
+});
+
+// https://github.com/foundry-rs/foundry/issues/7620
+forgetest_async!(can_run_zero_base_fee, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let node_config = NodeConfig::test().with_base_fee(Some(0));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    // Firstly run script with non-zero gas prices to ensure that eth_feeHistory contains non-zero
+    // values.
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+        "--with-gas-price",
+        "2000000",
+        "--priority-gas-price",
+        "100000",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+    // Ensure that we can correctly estimate gas when base fee is zero but priority fee is not.
+    cmd.forge_fuse().args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});

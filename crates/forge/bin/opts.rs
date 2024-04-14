@@ -6,7 +6,7 @@ use crate::cmd::{
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
-use forge_verify::{VerifyArgs, VerifyCheckArgs};
+use forge_verify::{bytecode::VerifyBytecodeArgs, VerifyArgs, VerifyCheckArgs};
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -157,6 +157,10 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Verify the deployed bytecode against its source.
+    #[clap(visible_alias = "vb")]
+    VerifyBytecode(VerifyBytecodeArgs),
 }
 
 #[cfg(test)]

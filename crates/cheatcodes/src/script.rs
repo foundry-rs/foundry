@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use alloy_signer::{LocalWallet, Signer};
+use alloy_signer_wallet::LocalWallet;
 use foundry_config::Config;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;

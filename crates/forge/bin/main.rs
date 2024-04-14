@@ -5,12 +5,17 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
+use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
 
 mod cmd;
-mod opts;
-
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
+
+mod opts;
 use opts::{Forge, ForgeSubcommand};
+
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> Result<()> {
     handler::install();
@@ -19,6 +24,8 @@ fn main() -> Result<()> {
     utils::enable_paint();
 
     let opts = Forge::parse();
+    init_execution_context(&opts.cmd);
+
     match opts.cmd {
         ForgeSubcommand::Test(cmd) => {
             if cmd.is_watch() {
@@ -102,5 +109,28 @@ fn main() -> Result<()> {
         ForgeSubcommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
+        ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
     }
+}
+
+/// Set the program execution context based on `forge` subcommand used.
+/// The execution context can be set only once per program, and it can be checked by using
+/// cheatcodes.
+fn init_execution_context(subcommand: &ForgeSubcommand) {
+    let context = match subcommand {
+        ForgeSubcommand::Test(_) => ForgeContext::Test,
+        ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
+        ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
+        ForgeSubcommand::Script(cmd) => {
+            if cmd.broadcast {
+                ForgeContext::ScriptBroadcast
+            } else if cmd.resume {
+                ForgeContext::ScriptResume
+            } else {
+                ForgeContext::ScriptDryRun
+            }
+        }
+        _ => ForgeContext::Unknown,
+    };
+    set_execution_context(context);
 }

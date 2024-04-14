@@ -5,7 +5,9 @@ use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::{constants::CALLER, decode::RevertDecoder};
-use foundry_evm_fuzz::{BaseCounterExample, CounterExample, FuzzedCases, Reason};
+use foundry_evm_fuzz::{
+    invariant::FuzzRunIdentifiedContracts, BaseCounterExample, CounterExample, FuzzedCases, Reason,
+};
 use foundry_evm_traces::{load_contracts, CallTraceArena, TraceKind, Traces};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -98,8 +100,10 @@ pub struct FailedInvariantCaseData {
 }
 
 impl FailedInvariantCaseData {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         invariant_contract: &InvariantContract<'_>,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
         error_func: Option<&Function>,
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
@@ -112,8 +116,16 @@ impl FailedInvariantCaseData {
         } else {
             (None, "Revert")
         };
+
+        // Collect abis of fuzzed and invariant contracts to decode custom error.
+        let targets = targeted_contracts.targets.lock();
+        let abis = targets
+            .iter()
+            .map(|contract| &contract.1 .1)
+            .chain(std::iter::once(invariant_contract.abi));
+
         let revert_reason = RevertDecoder::new()
-            .with_abi(invariant_contract.abi)
+            .with_abis(abis)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
         Self {
