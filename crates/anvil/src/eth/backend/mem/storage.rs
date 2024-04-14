@@ -9,7 +9,7 @@ use crate::eth::{
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo};
-use alloy_rpc_trace_types::{
+use alloy_rpc_types_trace::{
     geth::{
         FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
         GethTrace, NoopFrame,
@@ -433,7 +433,10 @@ impl MinedTransaction {
                                 self.info.traces.clone(),
                                 TracingInspectorConfig::from_geth_config(&config),
                             )
-                            .geth_call_traces(call_config, self.receipt.gas_used().to::<u64>())
+                            .geth_call_traces(
+                                call_config,
+                                self.receipt.cumulative_gas_used() as u64,
+                            )
                             .into()),
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         }
@@ -452,7 +455,7 @@ impl MinedTransaction {
             TracingInspectorConfig::from_geth_config(&config),
         )
         .geth_traces(
-            self.receipt.gas_used().to::<u64>(),
+            self.receipt.cumulative_gas_used() as u64,
             self.info.out.clone().unwrap_or_default().0.into(),
             opts.config,
         )
