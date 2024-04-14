@@ -214,11 +214,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        EnvWithHandlerCfg::new_with_cfg_env(
-            self.cfg_env.clone(),
-            self.block_env.clone(),
-            tx_env,
-        )
+        EnvWithHandlerCfg::new_with_cfg_env(self.cfg_env.clone(), self.block_env.clone(), tx_env)
     }
 }
 
