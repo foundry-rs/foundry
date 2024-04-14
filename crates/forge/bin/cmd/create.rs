@@ -15,8 +15,9 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    fmt::parse_tokens, provider::alloy::estimate_eip1559_fees,
     compile::{self, find_contract_path},
+    fmt::parse_tokens,
+    provider::alloy::estimate_eip1559_fees,
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo};
 use serde_json::json;

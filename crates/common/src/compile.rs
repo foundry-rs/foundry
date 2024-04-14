@@ -1,10 +1,10 @@
 //! Support for compiling [foundry_compilers::Project]
 
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
 use crate::{
     compact_to_contract, fs::read_to_string, glob::GlobMatcher, term::SpinnerReporter,
     TestFunctionExt,
 };
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
