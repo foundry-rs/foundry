@@ -1,5 +1,4 @@
 use std::{fs::read_dir, path::PathBuf, time::Duration};
-
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueHint};
 use eyre::Result;
