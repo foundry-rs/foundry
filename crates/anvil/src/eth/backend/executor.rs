@@ -217,7 +217,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         EnvWithHandlerCfg::new_with_cfg_env(
             self.cfg_env.clone(),
             self.block_env.clone(),
-            tx.to_revm_tx_env(),
+            tx_env,
         )
     }
 }

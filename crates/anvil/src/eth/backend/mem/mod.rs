@@ -81,7 +81,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
-    primitives::{HashMap, ResultAndState},
+    primitives::{HashMap, OptimismFields, ResultAndState},
 };
 use std::{
     collections::BTreeMap,
@@ -1134,6 +1134,7 @@ impl Backend {
             chain_id: None,
             nonce,
             access_list: access_list.unwrap_or_default().flattened(),
+            optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
             ..Default::default()
         };
 
