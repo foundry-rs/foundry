@@ -74,3 +74,7 @@ num-format.workspace = true
 foundry-macros.workspace = true
 pretty_assertions.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = ["rustls"]
+rustls = ["reqwest_ethers/rustls-tls-native-roots"]
