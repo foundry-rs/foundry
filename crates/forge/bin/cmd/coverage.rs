@@ -358,7 +358,7 @@ impl CoverageArgs {
                     }
                 })
             });
-        for (artifact_id, hits, deployed_code) in data {
+        for (artifact_id, hits, is_deployed_code) in data {
             // TODO: Note down failing tests
             if let Some(source_id) = report.get_source_id(
                 artifact_id.version.clone(),
@@ -372,7 +372,7 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
-                    deployed_code,
+                    is_deployed_code,
                 )?;
             }
         }

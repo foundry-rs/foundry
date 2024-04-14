@@ -131,7 +131,7 @@ impl CoverageReport {
         &mut self,
         contract_id: &ContractId,
         hit_map: &HitMap,
-        deployed_code: bool,
+        is_deployed_code: bool,
     ) -> Result<()> {
         // Add bytecode level hits
         let e = self
@@ -147,7 +147,7 @@ impl CoverageReport {
 
         // Add source level hits
         if let Some(anchors) = self.anchors.get(contract_id) {
-            let anchors = if deployed_code { &anchors.1 } else { &anchors.0 };
+            let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for anchor in anchors {
                 if let Some(hits) = hit_map.hits.get(&anchor.instruction) {
                     self.items
