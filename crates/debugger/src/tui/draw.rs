@@ -401,11 +401,10 @@ impl DebuggerContext<'_> {
             self.current_step().total_gas_used,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
-        let hl_style = Style::new().fg(Color::White).bg(Color::DarkGray);
         let list = List::new(items)
             .block(block)
             .highlight_symbol("▶")
-            .highlight_style(hl_style)
+            .highlight_style(Style::new().fg(Color::White).bg(Color::DarkGray))
             .scroll_padding(1);
         let mut state = ListState::default().with_selected(Some(self.current_step));
         f.render_stateful_widget(list, area, &mut state);
