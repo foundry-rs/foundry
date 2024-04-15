@@ -823,5 +823,7 @@ contract AssertionsTest is DSTest {
             bytes("assertion failed: 1 !~= 0 (max delta: 0.0000000000000000%, real delta: undefined)")
         );
         vm.assertApproxEqRel(uint256(1), uint256(0), uint256(0));
+
+        vm.assertApproxEqRel(uint256(0), uint256(0), uint256(0));
     }
 }

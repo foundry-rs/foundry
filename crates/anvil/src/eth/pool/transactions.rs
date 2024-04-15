@@ -134,6 +134,13 @@ impl PendingTransactions {
         self.waiting_queue.is_empty()
     }
 
+    /// Clears internal state
+    pub fn clear(&mut self) {
+        self.required_markers.clear();
+        self.waiting_markers.clear();
+        self.waiting_queue.clear();
+    }
+
     /// Returns an iterator over all transactions in the waiting pool
     pub fn transactions(&self) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
         self.waiting_queue.values().map(|tx| tx.transaction.clone())
@@ -375,6 +382,13 @@ impl ReadyTransactions {
             awaiting: Default::default(),
             _invalid: Default::default(),
         }
+    }
+
+    /// Clears the internal state
+    pub fn clear(&mut self) {
+        self.provided_markers.clear();
+        self.ready_tx.write().clear();
+        self.independent_transactions.clear();
     }
 
     /// Returns true if the transaction is part of the queue.
