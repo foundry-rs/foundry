@@ -721,7 +721,12 @@ impl<'a> ContractRunner<'a> {
     }
 
     /// Returns the environment of the test runner
+    ///
+    /// If the backend has forks, return the block number of the fork.
+    /// If the backend does not have forks, return [TestEnvironment::Standard].
     fn get_environment(&self, env: Option<EnvWithHandlerCfg>) -> TestEnvironment {
+        // If a fork occurs inside of a test, use the block number of the fork as the test
+        // Note: if a user uses `vm.roll` in a test, the test will be marked as a fork.
         if let Some(environment) = env {
             let block_number = environment.env.block.number.to::<u64>();
 
