@@ -459,8 +459,8 @@ impl TestArgs {
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
                         // Enable Etherscan decoding for forking tests.
-                        // Disable Etherscan decoding for local tests to avoid unnecessary API
-                        // calls that can slow down execution significantly if rate-limited.
+                        // Disable Etherscan decoding for local tests to avoid unnecessary API calls
+                        // that can slow down execution significantly if rate-limited.
                         identifier.enable_etherscan(result.is_fork());
 
                         decoder.identify(arena, &mut identifier);
