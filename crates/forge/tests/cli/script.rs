@@ -808,9 +808,8 @@ contract Script0 is Script {
 
     assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
 
-    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
-        .into_iter()
-        .find(|file| file.ends_with("run-latest.json"))
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
     let content = foundry_common::fs::read_to_string(run_latest).unwrap();
@@ -893,8 +892,7 @@ contract Script0 is Script {
 
     assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
 
-    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
-        .into_iter()
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|file| file.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
