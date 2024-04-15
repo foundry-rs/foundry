@@ -3490,7 +3490,7 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "toml 0.8.12",
- "toml_edit 0.21.1",
+ "toml_edit 0.22.9",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -5605,7 +5605,7 @@ dependencies = [
  "cfg-if",
  "proc-macro2",
  "quote",
- "syn 2.0.53",
+ "syn 2.0.58",
 ]
 
 [[package]]

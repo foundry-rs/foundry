@@ -33,7 +33,7 @@ use super::{init::InitArgs, install::DependencyInstallOpts};
 #[derive(Clone, Debug, Parser)]
 pub struct CloneArgs {
     /// The contract address to clone.
-    address: String,
+    address: Address,
 
     /// The root directory of the cloned project.
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
@@ -79,9 +79,6 @@ impl CloneArgs {
     pub async fn run(self) -> Result<()> {
         let CloneArgs { address, quiet, root, enable_git, etherscan } = self;
 
-        // parse the contract address
-        let contract_address: Address = address.parse()?;
-
         // get the chain and api key from the config
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
@@ -96,7 +93,7 @@ impl CloneArgs {
         let client = Client::new(chain, etherscan_api_key)?;
         Self::run_with_client(
             chain,
-            contract_address,
+            address,
             &root,
             enable_git,
             &client,
@@ -250,7 +247,7 @@ impl CloneArgs {
 /// - https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description
 fn update_config_by_metadata(
     config: &Config,
-    doc: &mut toml_edit::Document,
+    doc: &mut toml_edit::DocumentMut,
     meta: &Metadata,
     chain: Chain,
 ) -> Result<()> {
