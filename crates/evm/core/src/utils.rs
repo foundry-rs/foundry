@@ -1,10 +1,12 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
+pub use crate::ic::*;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
+pub use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::NamedChain;
+pub use revm::primitives::State as StateChangeset;
 use revm::{
     db::WrapDatabaseRef,
     handler::register::EvmHandler,
@@ -15,12 +17,7 @@ use revm::{
     primitives::{CreateScheme, EVMError, SpecId, TransactTo, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
-
-pub use foundry_compilers::utils::RuntimeOrHandle;
-pub use revm::primitives::State as StateChangeset;
-
-pub use crate::ic::*;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -108,7 +105,7 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-pub fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
+fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
         contract: DEFAULT_CREATE2_DEPLOYER,

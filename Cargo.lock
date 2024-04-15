@@ -706,7 +706,6 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
- "foundry-evm-core",
  "futures",
  "hyper 0.14.28",
  "itertools 0.12.1",

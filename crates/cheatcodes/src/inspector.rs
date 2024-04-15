@@ -1331,7 +1331,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     call.caller = broadcast.new_origin;
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
 
-                    let account = ecx.journaled_state.state().get(&broadcast.new_origin).unwrap();
+                    let account = ecx.journaled_state.state()[&broadcast.new_origin];
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.db.active_fork_url(),
