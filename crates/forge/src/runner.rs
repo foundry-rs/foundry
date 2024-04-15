@@ -725,10 +725,10 @@ impl<'a> ContractRunner<'a> {
         if let Some(environment) = env {
             let block_number = environment.env.block.number.to::<u64>();
 
-            return match block_number {
-                // If the block number is at genesis we assume it is a non-forked environment
-                1 => TestEnvironment::Standard,
-                _ => TestEnvironment::Fork { block_number },
+            // If the block number is at genesis we assume it is a non-forked environment and
+            // continue checking for forks in the backend.
+            if block_number > 1 {
+                return TestEnvironment::Fork { block_number }
             }
         }
 
