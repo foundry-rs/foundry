@@ -137,11 +137,11 @@ impl VerifyBytecodeArgs {
             config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         // If etherscan key is not set, we can't proceed with etherscan verification
-        if self.etherscan_opts.key.is_none() {
+        let etherscan = if let Some(ref key) = self.etherscan_opts.key {
+            Client::new(chain, key.to_owned())?
+        } else {
             eyre::bail!("Etherscan API key is required for verification");
-        }
-        // Create etherscan client
-        let etherscan = Client::new(chain, self.etherscan_opts.key.clone().unwrap())?;
+        };
 
         // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(self.address).await?;
