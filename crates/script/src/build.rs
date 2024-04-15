@@ -174,7 +174,7 @@ impl PreprocessedState {
             if let Some(path) = contract.path {
                 dunce::canonicalize(path)?
             } else {
-                compile::find_contract_path(contract.name.as_str(), &project)?
+                foundry_compilers::utils::find_contract_path(&project, contract.name.as_str())?
             }
         };
 
