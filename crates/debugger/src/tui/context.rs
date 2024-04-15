@@ -5,13 +5,11 @@ use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
 use revm_inspectors::tracing::types::CallKind;
-use std::{cell::RefCell, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]
 pub(crate) struct DrawMemory {
-    // TODO
-    pub(crate) current_startline: RefCell<usize>,
     pub(crate) inner_call_index: usize,
     pub(crate) current_buf_startline: usize,
     pub(crate) current_stack_startline: usize,
