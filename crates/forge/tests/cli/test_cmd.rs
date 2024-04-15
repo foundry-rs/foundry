@@ -542,31 +542,58 @@ contract Dummy {
     cmd.assert_success()
 });
 
-forgetest_init!(can_emit_block_number_in_failing_trace, |prj, cmd| {
-    prj.wipe_contracts();
-
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
-
-    prj.add_test(
-        "Contract.t.sol",
-        &r#"
+static TRACE_TEST: &str = r#"
 import {Test} from "forge-std/Test.sol";
 
 interface IERC20 {
     function name() external view returns (string memory);
 }
 
-contract USDTCallingTest is Test {
-    function test() public {
+contract BlockNumberTraceTest is Test {
+    function testSuccessLocal() public pure {
+        vm.assertTrue(true);
+    }
+
+    function testRevertLocal() public pure {
+        vm.assertTrue(false);
+    }
+
+    function testSuccessFork() public {
+        vm.createSelectFork("<url>", 19_626_899);
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+    }
+
+    function testRevertFork() public {
         vm.createSelectFork("<url>", 19_626_899);
         IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
         revert();
     }
 }
-   "#
-        .replace("<url>", &endpoint),
+"#;
+
+forgetest_init!(can_emit_block_number_in_trace_verbose, |prj, cmd| {
+    prj.wipe_contracts();
+
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
+    prj.add_test("Contract.t.sol", &TRACE_TEST.replace("<url>", &endpoint)).unwrap();
+
+    let expected = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_emit_block_number_in_trace_verbose.stderr"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("<url>", &endpoint);
+
+    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+});
+
+forgetest_init!(can_emit_block_number_in_trace, |prj, cmd| {
+    prj.wipe_contracts();
+
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
+    prj.add_test("Contract.t.sol", &TRACE_TEST.replace("<url>", &endpoint)).unwrap();
 
     let expected = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -575,40 +602,5 @@ contract USDTCallingTest is Test {
     .unwrap()
     .replace("<url>", &endpoint);
 
-    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
-});
-
-forgetest_init!(can_emit_block_number_in_success_trace, |prj, cmd| {
-    prj.wipe_contracts();
-
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
-
-    prj.add_test(
-        "Contract.t.sol",
-        &r#"
-import {Test} from "forge-std/Test.sol";
-
-interface IERC20 {
-    function name() external view returns (string memory);
-}
-
-contract USDTCallingTest is Test {
-    function test() public {
-        vm.createSelectFork("<url>", 19_626_899);
-        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
-    }
-}
-   "#
-        .replace("<url>", &endpoint),
-    )
-    .unwrap();
-
-    let expected = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_emit_block_number_in_trace.stdout"),
-    )
-    .unwrap()
-    .replace("<url>", &endpoint);
-
-    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+    cmd.args(["test"]).unchecked_output().stdout_matches_content(&expected);
 });

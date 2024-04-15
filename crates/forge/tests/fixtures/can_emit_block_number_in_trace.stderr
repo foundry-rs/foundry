@@ -1,23 +1,19 @@
-Compiling 1 files with 0.8.23
+Compiling 1 files
  
 Compiler run successful!
 
-Ran 1 test for test/Contract.t.sol:USDTCallingTest
-[FAIL. Reason: EvmError: Revert] test() (block: 19626899) (gas: 9578)
-Traces:
-  [9578] USDTCallingTest::test()
-    ├─ [0] VM::createSelectFork("<url>", 19626899 [1.962e7])
-    │   └─ ← [Return] 0
-    ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
-    │   └─ ← [Return] "Tether USD"
-    └─ ← [Revert] EvmError: Revert
+Ran 4 tests for test/Contract.t.sol:BlockNumberTraceTest
+[FAIL. Reason: EvmError: Revert] testRevertFork() (gas: 9550)
+[FAIL. Reason: assertion failed] testRevertLocal() (gas: 3070)
+[PASS] testSuccessFork() (gas: 9598)
+[PASS] testSuccessLocal() (gas: 3048)
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; 
 
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; 
-
-Ran 1 test suite: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+Ran 1 test suite: 2 tests passed, 2 failed, 0 skipped (4 total tests)
 
 Failing tests:
-Encountered 1 failing testt/Contract.t.sol:USDTCallingTest
-[FAIL. Reason: EvmError: Revert] test() (block: 19626899) (gas: 9578)
+Encountered 2 failing testst/Contract.t.sol:BlockNumberTraceTest
+[FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626899) (gas: 9550)
+[FAIL. Reason: assertion failed] testRevertLocal() (gas: 3070)
 
-Encountered a total of 1 failing tests, 0 tests succeeded
+Encountered a total of 2 failing tests, 2 tests succeeded

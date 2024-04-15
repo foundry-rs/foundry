@@ -3,7 +3,7 @@ Compiling 1 files with 0.8.23
 Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:USDTCallingTest
-[PASS] test() (block: 19626899) (gas: 9583)
+[PASS] test() (gas: 9583)
 Traces:
   [9583] USDTCallingTest::test()
     ├─ [0] VM::createSelectFork("<url>", 19626899 [1.962e7])

@@ -1,0 +1,47 @@
+Compiling 1 files
+ 
+Compiler run successful!
+
+Ran 4 tests for test/Contract.t.sol:BlockNumberTraceTest
+[FAIL. Reason: EvmError: Revert] testRevertFork() (gas: 9550)
+Traces:
+  [9550] BlockNumberTraceTest::testRevertFork()
+    ├─ [0] VM::createSelectFork("<url>", 19626899 [1.962e7])
+    │   └─ ← [Return] 0
+    ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
+    │   └─ ← [Return] "Tether USD"
+    └─ ← [Revert] EvmError: Revert
+
+[FAIL. Reason: assertion failed] testRevertLocal() (gas: 3070)
+Traces:
+  [3070] BlockNumberTraceTest::testRevertLocal()
+    ├─ [0] VM::assertTrue(false) [staticcall]
+    │   └─ ← [Revert] assertion failed
+    └─ ← [Revert] assertion failed
+
+[PASS] testSuccessFork() (gas: 9598)
+Traces:
+  [9598] BlockNumberTraceTest::testSuccessFork()
+    ├─ [0] VM::createSelectFork("<url>", 19626899 [1.962e7])
+    │   └─ ← [Return] 0
+    ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
+    │   └─ ← [Return] "Tether USD"
+    └─ ← [Stop] 
+
+[PASS] testSuccessLocal() (gas: 3048)
+Traces:
+  [3048] BlockNumberTraceTest::testSuccessLocal()
+    ├─ [0] VM::assertTrue(true) [staticcall]
+    │   └─ ← [Return] 
+    └─ ← [Stop] 
+
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; 
+
+Ran 1 test suite: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+
+Failing tests:
+Encountered 2 failing testst/Contract.t.sol:BlockNumberTraceTest
+[FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626899) (gas: 9550)
+[FAIL. Reason: assertion failed] testRevertLocal() (gas: 3070)
+
+Encountered a total of 2 failing tests, 2 tests succeeded

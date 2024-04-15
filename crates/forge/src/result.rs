@@ -169,7 +169,7 @@ impl TestOutcome {
             let term = if failed > 1 { "tests" } else { "test" };
             shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                shell::println(result.short_failure_result(name))?;
             }
             shell::println("")?;
         }
@@ -443,7 +443,12 @@ impl TestResult {
     }
 
     /// Formats a successful test result into a string (for printing).
-    pub fn short_result(&self, name: &str) -> String {
+    pub fn short_success_result(&self, name: &str) -> String {
+        format!("{self} {name} {}", self.kind.report())
+    }
+
+    /// Formats a failed test result into a string (for printing).
+    pub fn short_failure_result(&self, name: &str) -> String {
         format!("{self} {name} {}{}", self.environment.report(), self.kind.report())
     }
 }
