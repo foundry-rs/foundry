@@ -1,4 +1,4 @@
-use std::{fs::read_dir, path::PathBuf, time::Duration};
+use super::{init::InitArgs, install::DependencyInstallOpts};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueHint};
 use eyre::Result;
@@ -15,7 +15,7 @@ use foundry_compilers::{
     ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
-use super::{init::InitArgs, install::DependencyInstallOpts};
+use std::{fs::read_dir, path::PathBuf, time::Duration};
 
 /// CLI arguments for `forge clone`.
 ///
