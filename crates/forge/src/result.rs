@@ -169,7 +169,7 @@ impl TestOutcome {
             let term = if failed > 1 { "tests" } else { "test" };
             shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                shell::println(result.short_failed_result(name))?;
             }
             shell::println("")?;
         }
@@ -442,8 +442,13 @@ impl TestResult {
         matches!(self.kind, TestKind::Fuzz { .. })
     }
 
-    /// Formats the test result into a string (for printing).
+    /// Formats a successful test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
+        format!("{self} {name} {}", self.kind.report())
+    }
+
+    /// Formats a failed test result into a string (for printing).
+    pub fn short_failed_result(&self, name: &str) -> String {
         format!("{self} {name} {}{}", self.environment.report(), self.kind.report())
     }
 }

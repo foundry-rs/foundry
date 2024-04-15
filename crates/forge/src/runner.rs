@@ -722,9 +722,13 @@ impl<'a> ContractRunner<'a> {
 
     /// Returns the environment of the test runner
     fn get_environment(&self, env: Option<EnvWithHandlerCfg>) -> TestEnvironment {
-        if let Some(block_environment) = env {
-            return TestEnvironment::Fork {
-                block_number: block_environment.env.block.number.to::<u64>(),
+        if let Some(environment) = env {
+            let block_number = environment.env.block.number.to::<u64>();
+
+            return match block_number {
+                // If the block number is at genesis we assume it is a non-forked environment
+                1 => TestEnvironment::Standard,
+                _ => TestEnvironment::Fork { block_number },
             }
         }
 
