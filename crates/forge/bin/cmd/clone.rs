@@ -15,7 +15,11 @@ use foundry_compilers::{
     ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
-use std::{fs::read_dir, path::PathBuf, time::Duration};
+use std::{
+    fs::read_dir,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 /// CLI arguments for `forge clone`.
 ///
@@ -42,6 +46,10 @@ pub struct CloneArgs {
     /// Enable git for the cloned project, default is false.
     #[arg(long)]
     pub enable_git: bool,
+
+    /// Do not generaet the remappings.txt file. Instead, keep the remappings in the configuration.
+    #[arg(long)]
+    pub no_remappings_txt: bool,
 
     /// Do not print any messages.
     #[arg(short, long)]
@@ -77,72 +85,69 @@ pub struct CloneMetadata {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let CloneArgs { address, quiet, root, enable_git, etherscan } = self;
+        let CloneArgs { address, quiet, root, enable_git, etherscan, no_remappings_txt } = self;
 
         // get the chain and api key from the config
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let etherscan_call_interval = if etherscan_api_key.is_empty() {
-            // if the etherscan api key is not set, we need to wait for 1 seconds between calls
-            Duration::from_secs(5)
-        } else {
-            // if the etherscan api key is set, we can call etherscan more frequently
-            Duration::from_secs(1)
-        };
-        let client = Client::new(chain, etherscan_api_key)?;
-        Self::run_with_client(
-            chain,
-            address,
-            &root,
-            enable_git,
-            &client,
-            etherscan_call_interval,
-            quiet,
-        )
-        .await
-    }
+        let client = Client::new(chain, etherscan_api_key.clone())?;
 
-    /// Clone a contract on a specific chain using the given client of block explorer (e.g.,
-    /// Etherscan). This function allows caller to specify one block explorer client so that
-    /// mocking in test is possible.
-    ///
-    /// * `chain` - the chain where the contract to be cloned locates.
-    /// * `contract_address` - the address of the contract to be cloned.
-    /// * `root` - the root directory to clone the contract into as a foundry project.
-    /// * `enable_git` - whether to enable git for the cloned project.
-    /// * `client` - the client of the block explorer.
-    /// * `etherscan_call_interval` - the interval between two calls to block explorer. This is used
-    ///   to avoid rate limit.
-    /// * `quiet` - whether to print messages.
-    pub(crate) async fn run_with_client(
-        chain: Chain,
-        contract_address: Address,
-        root: &PathBuf,
-        enable_git: bool,
-        client: &impl EtherscanClient,
-        etherscan_call_interval: Duration,
-        quiet: bool,
-    ) -> Result<()> {
-        // get the contract code
-        p_println!(!quiet => "Downloading the source code of {} from Etherscan...", contract_address);
-        let mut meta = client.contract_source_code(contract_address).await?;
-        if meta.items.len() != 1 {
-            return Err(eyre::eyre!("contract not found or ill-formed"));
-        }
-        let meta = meta.items.remove(0);
-        if meta.is_vyper() {
-            return Err(eyre::eyre!("Vyper contracts are not supported"));
-        }
+        // get the metadata from client
+        p_println!(!quiet => "Downloading the source code of {} from Etherscan...", address);
+        let meta = Self::collect_metadata_from_client(address, &client).await?;
 
-        // let's try to init the project with default init args
-        let opts = DependencyInstallOpts { no_git: !enable_git, quiet, ..Default::default() };
-        let init_args = InitArgs { root: root.clone(), opts, ..Default::default() };
-        init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
-
+        // initialize an empty project
+        Self::init_an_empty_project(&root, enable_git, quiet)?;
         // canonicalize the root path
         // note that at this point, the root directory must have been created
-        let root = dunce::canonicalize(root)?;
+        let root = dunce::canonicalize(&root)?;
+
+        // parse the metadata
+        Self::parse_metadata(&meta, chain, &root, no_remappings_txt).await?;
+
+        // collect the compilation metadata
+        p_println!(!quiet => "Collecting the creation information of {} from Etherscan...", address);
+        // if the etherscan api key is not set, we need to wait for 5 seconds between calls,
+        // otherwise 1 second
+        std::thread::sleep(Duration::from_secs(if etherscan_api_key.is_empty() { 5 } else { 1 }));
+        Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
+
+        // Git add and commit the changes if enabled
+        if enable_git {
+            let git = Git::new(&root).quiet(true);
+            git.add(Some("--all"))?;
+            git.commit("chore: forge clone")?;
+        }
+
+        Ok(())
+    }
+
+    /// Collect the metadata of the contract from the block explorer.
+    ///
+    /// * `address` - the address of the contract to be cloned.
+    /// * `client` - the client of the block explorer.
+    pub(crate) async fn collect_metadata_from_client(
+        address: Address,
+        client: &impl EtherscanClient,
+    ) -> Result<Metadata> {
+        let mut meta = client.contract_source_code(address).await?;
+        eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
+        let meta = meta.items.remove(0);
+        eyre::ensure!(!meta.is_vyper(), "Vyper contracts are not supported");
+        Ok(meta)
+    }
+
+    /// Initialize an empty project at the root directory.
+    ///
+    /// * `root` - the root directory of the project.
+    /// * `enable_git` - whether to enable git for the project.
+    /// * `quiet` - whether to print messages.
+    pub(crate) fn init_an_empty_project(root: &Path, enable_git: bool, quiet: bool) -> Result<()> {
+        // let's try to init the project with default init args
+        let opts = DependencyInstallOpts { no_git: !enable_git, quiet, ..Default::default() };
+        let init_args = InitArgs { root: root.to_path_buf(), opts, ..Default::default() };
+        init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
         // remove the unnecessary example contracts
         // XXX (ZZ): this is a temporary solution until we have a proper way to remove contracts,
@@ -151,10 +156,70 @@ impl CloneArgs {
         fs::remove_file(root.join("test/Counter.t.sol"))?;
         fs::remove_file(root.join("script/Counter.s.sol"))?;
 
+        Ok(())
+    }
+
+    /// Collect the compilation metadata of the cloned contract.
+    /// This function compiles the cloned contract and collects the compilation metadata.
+    ///
+    /// * `meta` - the metadata of the contract (from Etherscam).
+    /// * `chain` - the chain where the contract to be cloned locates.
+    /// * `address` - the address of the contract to be cloned.
+    /// * `root` - the root directory of the cloned project.
+    /// * `client` - the client of the block explorer.
+    pub(crate) async fn collect_compilation_metadata(
+        meta: &Metadata,
+        chain: Chain,
+        address: Address,
+        root: &PathBuf,
+        client: &impl EtherscanClient,
+    ) -> Result<()> {
+        // compile the cloned contract
+        let compile_output = compile_project(root)?;
+        let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
+        let main_file = main_file.strip_prefix(root)?.to_path_buf();
+        let storage_layout =
+            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+
+        // dump the metadata to the root directory
+        let creation_tx = client.contract_creation_data(address).await?;
+        let clone_meta = CloneMetadata {
+            path: main_file,
+            target_contract: meta.contract_name.clone(),
+            address,
+            chain_id: chain.id(),
+            creation_transaction: creation_tx.transaction_hash,
+            deployer: creation_tx.contract_creator,
+            constructor_arguments: meta.constructor_arguments.clone(),
+            storage_layout,
+        };
+        let metadata_content = serde_json::to_string(&clone_meta)?;
+        let metadata_file = root.join(".clone.meta");
+        fs::write(&metadata_file, metadata_content)?;
+        let mut perms = std::fs::metadata(&metadata_file)?.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&metadata_file, perms)?;
+
+        Ok(())
+    }
+
+    /// Download and parse the source code from Etherscan.
+    ///
+    /// * `chain` - the chain where the contract to be cloned locates.
+    /// * `address` - the address of the contract to be cloned.
+    /// * `root` - the root directory to clone the contract into as a foundry project.
+    /// * `client` - the client of the block explorer.
+    /// * `no_remappings_txt` - whether to generate the remappings.txt file.
+    pub(crate) async fn parse_metadata(
+        meta: &Metadata,
+        chain: Chain,
+        root: &PathBuf,
+        no_remappings_txt: bool,
+    ) -> Result<()> {
         // dump sources and update the remapping in configuration
         let Settings { remappings: original_remappings, .. } = meta.settings()?;
-        let (remappings, strip_old_src) = dump_sources(&meta, &root)?;
-        Config::update_at(&root, |config, doc| {
+        let (remappings, strip_old_src) = dump_sources(meta, root)?;
+        Config::update_at(root, |config, doc| {
             let profile = config.profile.as_str().as_str();
             let mut remapping_array = toml_edit::Array::new();
             // original remappings
@@ -181,43 +246,33 @@ impl CloneArgs {
         })?;
 
         // update configuration
-        Config::update_at(&root, |config, doc| {
-            update_config_by_metadata(config, doc, &meta, chain).is_ok()
+        Config::update_at(root, |config, doc| {
+            update_config_by_metadata(config, doc, meta, chain).is_ok()
         })?;
 
-        // compile the cloned contract
-        let compile_output = compile_project(&root)?;
-        let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
-        let main_file = main_file.strip_prefix(&root)?.to_path_buf();
-        let storage_layout =
-            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+        // write remappings to remappings.txt if necessary
+        if !no_remappings_txt {
+            let remappings_txt = root.join("remappings.txt");
+            eyre::ensure!(
+                !remappings_txt.exists(),
+                "remappings.txt already exists, please remove it first"
+            );
 
-        // dump the metadata to the root directory
-        p_println!(!quiet => "Collecting the creation information of {} from Etherscan...", contract_address);
-        std::thread::sleep(etherscan_call_interval);
-        let creation_tx = client.contract_creation_data(contract_address).await?;
-        let clone_meta = CloneMetadata {
-            path: main_file,
-            target_contract: meta.contract_name,
-            address: contract_address,
-            chain_id: chain.id(),
-            creation_transaction: creation_tx.transaction_hash,
-            deployer: creation_tx.contract_creator,
-            constructor_arguments: meta.constructor_arguments,
-            storage_layout,
-        };
-        let metadata_content = serde_json::to_string(&clone_meta)?;
-        let metadata_file = root.join(".clone.meta");
-        fs::write(&metadata_file, metadata_content)?;
-        let mut perms = std::fs::metadata(&metadata_file)?.permissions();
-        perms.set_readonly(true);
-        std::fs::set_permissions(&metadata_file, perms)?;
+            Config::update_at(root, |config, doc| {
+                let remappings_txt_content =
+                    config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+                if fs::write(&remappings_txt, remappings_txt_content).is_err() {
+                    return false
+                }
 
-        // Git add and commit the changes if enabled
-        if enable_git {
-            let git = Git::new(&root).quiet(true);
-            git.add(Some("--all"))?;
-            git.commit("chore: forge clone")?;
+                let profile = config.profile.as_str().as_str();
+                if let Some(elem) = doc[Config::PROFILE_SECTION][profile].as_table_mut() {
+                    elem.remove_entry("remappings");
+                    true
+                } else {
+                    false
+                }
+            })?;
         }
 
         Ok(())
@@ -420,6 +475,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
 }
 
 /// Compile the project in the root directory, and return the compilation result.
+/// XXX (ZZ): disable output when the quite flag is set.
 pub fn compile_project(root: &PathBuf) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root);
     config.extra_output.push(ContractOutputSelection::StorageLayout);
@@ -585,16 +641,19 @@ mod tests {
 
     /// Run the clone command with the specified contract address and assert the compilation.
     async fn one_test_case(address: Address, check_compilation_result: bool) {
-        let project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let mut project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let client = mock_etherscan(address);
-        CloneArgs::run_with_client(
+        let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
+        CloneArgs::init_an_empty_project(&project_root, false, false).unwrap();
+        project_root = dunce::canonicalize(&project_root).unwrap();
+        CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false).await.unwrap();
+        std::thread::sleep(Duration::from_secs(5));
+        CloneArgs::collect_compilation_metadata(
+            &meta,
             Chain::mainnet(),
             address,
             &project_root,
-            false,
             &client,
-            Default::default(),
-            false,
         )
         .await
         .unwrap();
