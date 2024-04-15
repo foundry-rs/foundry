@@ -135,6 +135,11 @@ impl VerifyBytecodeArgs {
         self.etherscan_opts.chain = Some(chain);
         self.etherscan_opts.key =
             config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
+
+        // If etherscan key is not set, we can't proceed with etherscan verification
+        if self.etherscan_opts.key.is_none() {
+            eyre::bail!("Etherscan API key is required for verification");
+        }
         // Create etherscan client
         let etherscan = Client::new(chain, self.etherscan_opts.key.clone().unwrap())?;
 
@@ -170,7 +175,7 @@ impl VerifyBytecodeArgs {
         if provided_constructor_args != constructor_args.to_string() && !self.json {
             println!(
                 "{}",
-                Paint::red("The provider constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
+                Paint::red("The provided constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
             );
         }
 
