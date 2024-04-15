@@ -1605,6 +1605,14 @@ impl BackendInner {
 
     /// Returns whether there are any active forks
     pub fn has_forks(&self) -> bool {
+        if self.launched_with_fork.is_some() {
+            return true;
+        }
+
+        if !self.issued_local_fork_ids.is_empty() {
+            return true;
+        }
+
         if !self.created_forks.is_empty() {
             return true;
         }

@@ -23,6 +23,7 @@ use foundry_evm::{
         EvmError, ExecutionErr, Executor, RawCallResult,
     },
     fuzz::{invariant::InvariantContract, CounterExample},
+    revm::primitives::EnvWithHandlerCfg,
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -235,7 +236,7 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
-                        environment: self.get_environment(),
+                        environment: self.get_environment(None),
                         traces: setup.traces,
                         coverage: setup.coverage,
                         labeled_addresses: setup.labeled_addresses,
@@ -337,7 +338,7 @@ impl<'a> ContractRunner<'a> {
         let mut executor = self.executor.clone();
         let start = Instant::now();
         let debug_arena;
-        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
+        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints, env) =
             match executor.execute_test(
                 self.sender,
                 address,
@@ -358,6 +359,7 @@ impl<'a> ContractRunner<'a> {
                         state_changeset,
                         debug,
                         cheatcodes,
+                        env,
                         ..
                     } = res.raw;
 
@@ -368,7 +370,7 @@ impl<'a> ContractRunner<'a> {
                     debug_arena = debug;
                     coverage = merge_coverages(coverage, execution_coverage);
 
-                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
+                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints, env)
                 }
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
@@ -384,6 +386,7 @@ impl<'a> ContractRunner<'a> {
                         None,
                         raw.state_changeset,
                         Default::default(),
+                        raw.env,
                     )
                 }
                 Err(EvmError::SkipError) => {
@@ -394,7 +397,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
-                        environment: self.get_environment(),
+                        environment: self.get_environment(None),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -407,7 +410,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Standard(0),
-                        environment: self.get_environment(),
+                        environment: self.get_environment(None),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -435,7 +438,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
-            environment: self.get_environment(),
+            environment: self.get_environment(Some(env)),
             traces,
             coverage,
             labeled_addresses,
@@ -478,7 +481,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
-                environment: self.get_environment(),
+                environment: self.get_environment(None),
                 coverage,
                 duration: start.elapsed(),
                 ..Default::default()
@@ -509,7 +512,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
-                        environment: self.get_environment(),
+                        environment: self.get_environment(None),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -576,7 +579,7 @@ impl<'a> ContractRunner<'a> {
                 calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
                 reverts,
             },
-            environment: self.get_environment(),
+            environment: self.get_environment(None),
             coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
@@ -633,7 +636,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
-                environment: self.get_environment(),
+                environment: self.get_environment(None),
                 debug,
                 breakpoints,
                 coverage,
@@ -706,7 +709,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind,
-            environment: self.get_environment(),
+            environment: self.get_environment(None),
             traces,
             coverage,
             labeled_addresses,
@@ -718,14 +721,20 @@ impl<'a> ContractRunner<'a> {
     }
 
     /// Returns the environment of the test runner
-    fn get_environment(&self) -> TestEnvironment {
+    fn get_environment(&self, env: Option<EnvWithHandlerCfg>) -> TestEnvironment {
+        if let Some(block_environment) = env {
+            return TestEnvironment::Fork {
+                block_number: block_environment.env.block.number.to::<u64>(),
+            }
+        }
+
         self.executor
             .backend
             .has_forks()
             .then(|| TestEnvironment::Fork {
                 block_number: self.executor.env.block.number.to::<u64>(),
             })
-            .unwrap_or(TestEnvironment::Standard)
+            .unwrap_or_default()
     }
 }
 
