@@ -4,7 +4,7 @@ use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{get_contract_name, ContractData, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
     artifacts::Libraries, contracts::ArtifactContracts, Artifact, ArtifactId, ProjectCompileOutput,
 };
@@ -328,6 +328,8 @@ impl MultiContractRunnerBuilder {
                 continue;
             };
 
+            let name = id.name.clone();
+
             let LinkOutput { libs_to_deploy, libraries } =
                 linker.link_with_nonce_or_address(Default::default(), evm_opts.sender, 1, id)?;
 
@@ -342,7 +344,15 @@ impl MultiContractRunnerBuilder {
                 .map(|b| b.into_owned())
                 .filter(|b| !b.is_empty())
             else {
-                known_contracts.insert(id.clone(), (abi.clone(), vec![]));
+                known_contracts.insert(
+                    id.clone(),
+                    ContractData {
+                        abi: abi.clone(),
+                        bytecode: Bytes::new(),
+                        deployed_bytecode: Bytes::new(),
+                        name,
+                    },
+                );
                 continue;
             };
 
@@ -352,17 +362,30 @@ impl MultiContractRunnerBuilder {
             {
                 deployable_contracts.insert(
                     id.clone(),
-                    TestContract { abi: abi.clone(), bytecode, libs_to_deploy, libraries },
+                    TestContract {
+                        abi: abi.clone(),
+                        bytecode: bytecode.clone(),
+                        libs_to_deploy,
+                        libraries,
+                    },
                 );
             }
 
             if let Some(bytes) = linked_contract.get_deployed_bytecode_bytes() {
-                known_contracts.insert(id.clone(), (abi.clone(), bytes.into_owned().into()));
+                known_contracts.insert(
+                    id.clone(),
+                    ContractData {
+                        abi: abi.clone(),
+                        bytecode,
+                        deployed_bytecode: bytes.into_owned(),
+                        name,
+                    },
+                );
             }
         }
 
         let revert_decoder =
-            RevertDecoder::new().with_abis(known_contracts.values().map(|(abi, _)| abi));
+            RevertDecoder::new().with_abis(known_contracts.values().map(|c| &c.abi));
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,

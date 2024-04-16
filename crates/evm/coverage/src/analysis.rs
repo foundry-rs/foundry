@@ -45,13 +45,10 @@ impl<'a> ContractVisitor<'a> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
 
-        // TODO(onbjerg): Re-enable constructor parsing when we walk both the deployment and runtime
-        // sourcemaps. Currently this fails because we are trying to look for anchors in the runtime
-        // sourcemap.
         // TODO(onbjerg): Figure out why we cannot find anchors for the receive function
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
-        if kind == "constructor" || kind == "receive" {
+        if kind == "receive" {
             return Ok(())
         }
 

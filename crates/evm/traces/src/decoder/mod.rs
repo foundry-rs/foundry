@@ -56,8 +56,8 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
         trace!(target: "evm::traces", len=contracts.len(), "collecting known contract ABIs");
-        for (abi, _) in contracts.values() {
-            self.decoder.collect_abi(abi, None);
+        for contract in contracts.values() {
+            self.decoder.collect_abi(&contract.abi, None);
         }
         self
     }

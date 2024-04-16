@@ -118,7 +118,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
         let timestamp = self.block_env.timestamp.to::<u64>();
-        let base_fee = if (self.cfg_env.handler_cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
+        let base_fee = if self.cfg_env.handler_cfg.spec_id.is_enabled_in(SpecId::LONDON) {
             Some(self.block_env.basefee.to::<u128>())
         } else {
             None
@@ -208,11 +208,13 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> EnvWithHandlerCfg {
-        EnvWithHandlerCfg::new_with_cfg_env(
-            self.cfg_env.clone(),
-            self.block_env.clone(),
-            tx.to_revm_tx_env(),
-        )
+        let mut tx_env = tx.to_revm_tx_env();
+        if self.cfg_env.handler_cfg.is_optimism {
+            tx_env.optimism.enveloped_tx =
+                Some(alloy_rlp::encode(&tx.transaction.transaction).into());
+        }
+
+        EnvWithHandlerCfg::new_with_cfg_env(self.cfg_env.clone(), self.block_env.clone(), tx_env)
     }
 }
 

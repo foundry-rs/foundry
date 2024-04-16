@@ -334,82 +334,63 @@ impl<'a> ContractRunner<'a> {
 
         // Run unit test
         let mut executor = self.executor.clone();
-        let start = Instant::now();
-        let debug_arena;
-        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
-            match executor.execute_test(
-                self.sender,
-                address,
-                func,
-                &[],
-                U256::ZERO,
-                Some(self.revert_decoder),
-            ) {
-                Ok(res) => {
-                    let RawCallResult {
-                        reverted,
-                        gas_used: gas,
-                        stipend,
-                        logs: execution_logs,
-                        traces: execution_trace,
-                        coverage: execution_coverage,
-                        labels: new_labels,
-                        state_changeset,
-                        debug,
-                        cheatcodes,
-                        ..
-                    } = res.raw;
+        let start: Instant = Instant::now();
+        let (raw_call_result, reason) = match executor.execute_test(
+            self.sender,
+            address,
+            func,
+            &[],
+            U256::ZERO,
+            Some(self.revert_decoder),
+        ) {
+            Ok(res) => (res.raw, None),
+            Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+            Err(EvmError::SkipError) => {
+                return TestResult {
+                    status: TestStatus::Skipped,
+                    reason: None,
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Standard(0),
+                    duration: start.elapsed(),
+                    ..Default::default()
+                }
+            }
+            Err(err) => {
+                return TestResult {
+                    status: TestStatus::Failure,
+                    reason: Some(err.to_string()),
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Standard(0),
+                    duration: start.elapsed(),
+                    ..Default::default()
+                }
+            }
+        };
 
-                    let breakpoints = cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
-                    traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses.extend(new_labels);
-                    logs.extend(execution_logs);
-                    debug_arena = debug;
-                    coverage = merge_coverages(coverage, execution_coverage);
+        let RawCallResult {
+            reverted,
+            gas_used: gas,
+            stipend,
+            logs: execution_logs,
+            traces: execution_trace,
+            coverage: execution_coverage,
+            labels: new_labels,
+            state_changeset,
+            debug,
+            cheatcodes,
+            ..
+        } = raw_call_result;
 
-                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
-                }
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr { raw, reason } = *err;
-                    traces.extend(raw.traces.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses.extend(raw.labels);
-                    logs.extend(raw.logs);
-                    debug_arena = raw.debug;
-                    (
-                        raw.reverted,
-                        Some(reason),
-                        raw.gas_used,
-                        raw.stipend,
-                        None,
-                        raw.state_changeset,
-                        Default::default(),
-                    )
-                }
-                Err(EvmError::SkipError) => {
-                    return TestResult {
-                        status: TestStatus::Skipped,
-                        reason: None,
-                        decoded_logs: decode_console_logs(&logs),
-                        traces,
-                        labeled_addresses,
-                        kind: TestKind::Standard(0),
-                        duration: start.elapsed(),
-                        ..Default::default()
-                    }
-                }
-                Err(err) => {
-                    return TestResult {
-                        status: TestStatus::Failure,
-                        reason: Some(err.to_string()),
-                        decoded_logs: decode_console_logs(&logs),
-                        traces,
-                        labeled_addresses,
-                        kind: TestKind::Standard(0),
-                        duration: start.elapsed(),
-                        ..Default::default()
-                    }
-                }
-            };
+        let breakpoints = cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
+        let debug_arena = debug;
+        traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
+        labeled_addresses.extend(new_labels);
+        logs.extend(execution_logs);
+        coverage = merge_coverages(coverage, execution_coverage);
 
         let success = executor.is_success(
             setup.address,

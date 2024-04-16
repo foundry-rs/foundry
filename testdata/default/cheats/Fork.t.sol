@@ -111,4 +111,10 @@ contract ForkTest is DSTest {
         uint256 expected = block.chainid;
         assertEq(newChainId, expected);
     }
+
+    // ensures forks change chain ids automatically
+    function testCanAutoUpdateChainId() public {
+        vm.createSelectFork("https://polygon-pokt.nodies.app"); // Polygon mainnet RPC URL
+        assertEq(block.chainid, 137);
+    }
 }
