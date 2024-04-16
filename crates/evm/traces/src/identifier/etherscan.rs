@@ -104,7 +104,7 @@ impl TraceIdentifier for EtherscanIdentifier {
             return Vec::new()
         }
 
-        let mut resolved = Vec::new();
+        let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
             self.client.clone(),
             Duration::from_secs(1),
@@ -113,47 +113,42 @@ impl TraceIdentifier for EtherscanIdentifier {
         );
 
         for (addr, _) in addresses {
-            if self.contracts.contains_key(addr) {
-                resolved.push(*addr);
+            if let Some(metadata) = self.contracts.get(addr) {
+                let label = metadata.contract_name.clone();
+                let abi = metadata.abi().ok().map(Cow::Owned);
+
+                identities.push(AddressIdentity {
+                    address: *addr,
+                    label: Some(label.clone()),
+                    contract: Some(label),
+                    abi,
+                    artifact_id: None,
+                });
             } else {
                 fetcher.push(*addr);
             }
         }
 
-        let resolved = resolved
-            .into_iter()
-            .map(|addr| {
-                let metadata = self.contracts.get(&addr).unwrap();
-                let label = metadata.contract_name.clone();
-                let abi = metadata.abi().ok().map(Cow::Owned);
+        let fetched_identities = RuntimeOrHandle::new().block_on(
+            fetcher
+                .map(|(address, metadata)| {
+                    let label = metadata.contract_name.clone();
+                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    self.contracts.insert(address, metadata);
 
-                AddressIdentity {
-                    address: addr,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi,
-                    artifact_id: None,
-                }
-            })
-            .collect::<Vec<AddressIdentity<'_>>>();
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi,
+                        artifact_id: None,
+                    }
+                })
+                .collect::<Vec<AddressIdentity<'_>>>(),
+        );
 
-        let fut = fetcher
-            .map(|(address, metadata)| {
-                let label = metadata.contract_name.clone();
-                let abi = metadata.abi().ok().map(Cow::Owned);
-                self.contracts.insert(address, metadata);
-
-                AddressIdentity {
-                    address,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi,
-                    artifact_id: None,
-                }
-            })
-            .collect::<Vec<AddressIdentity<'_>>>();
-
-        RuntimeOrHandle::new().block_on(fut).into_iter().chain(resolved).collect()
+        identities.extend(fetched_identities);
+        identities
     }
 }
 
