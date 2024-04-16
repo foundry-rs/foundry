@@ -8,7 +8,7 @@ FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 BINS=(forge cast anvil chisel)
 
-export RUSTFLAGS="-C target-cpu=native"
+export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
 
 main() {
   need_cmd git
