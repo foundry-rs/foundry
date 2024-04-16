@@ -1792,6 +1792,7 @@ impl Default for BackendInner {
 pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
     current.block = fork.block;
     current.cfg = fork.cfg;
+    current.tx.chain_id = fork.tx.chain_id;
 }
 
 /// Clones the data of the given `accounts` from the `active` database into the `fork_db`

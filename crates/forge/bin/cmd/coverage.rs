@@ -64,6 +64,10 @@ pub struct CoverageArgs {
     )]
     report_file: Option<PathBuf>,
 
+    /// Whether to include libraries in the coverage report.
+    #[arg(long)]
+    include_libs: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -162,7 +166,8 @@ impl CoverageArgs {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
             // Filter out dependencies
-            if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
+            if !self.include_libs && project_paths.has_library_ancestor(std::path::Path::new(&path))
+            {
                 continue
             }
 
