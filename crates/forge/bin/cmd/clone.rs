@@ -21,6 +21,30 @@ use std::{
     time::Duration,
 };
 
+/// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
+/// cloned contract. The metadata can be serialized to a metadata file in the cloned project root.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneMetadata {
+    /// The path to the source file that contains the contract declaration.
+    /// The path is relative to the root directory of the project.
+    pub path: PathBuf,
+    /// The name of the contract in the file.
+    pub target_contract: String,
+    /// The address of the contract on the blockchian.
+    pub address: Address,
+    /// The chain id.
+    pub chain_id: ChainId,
+    /// The transaction hash of the creation transaction.
+    pub creation_transaction: TxHash,
+    /// The address of the deployer, i.e., sender of the creation transaction.
+    pub deployer: Address,
+    /// The constructor arguments of the contract on chain.
+    pub constructor_arguments: Bytes,
+    /// The storage layout of the contract on chain.
+    pub storage_layout: StorageLayout,
+}
+
 /// CLI arguments for `forge clone`.
 ///
 /// `forge clone` clones an on-chain contract from block explorers (e.g., Etherscan) in the
@@ -54,30 +78,6 @@ pub struct CloneArgs {
     opts: DependencyInstallOpts,
 }
 
-/// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
-/// cloned contract. The metadata can be serialized to a metadata file in the cloned project root.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloneMetadata {
-    /// The path to the source file that contains the contract declaration.
-    /// The path is relative to the root directory of the project.
-    pub path: PathBuf,
-    /// The name of the contract in the file.
-    pub target_contract: String,
-    /// The address of the contract on the blockchian.
-    pub address: Address,
-    /// The chain id.
-    pub chain_id: ChainId,
-    /// The transaction hash of the creation transaction.
-    pub creation_transaction: TxHash,
-    /// The address of the deployer, i.e., sender of the creation transaction.
-    pub deployer: Address,
-    /// The constructor arguments of the contract on chain.
-    pub constructor_arguments: Bytes,
-    /// The storage layout of the contract on chain.
-    pub storage_layout: StorageLayout,
-}
-
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
         let CloneArgs { address, root, opts, etherscan, no_remappings_txt } = self;
@@ -106,7 +106,7 @@ impl CloneArgs {
         p_println!(!opts.quiet => "Collecting the creation information of {} from Etherscan...", address);
         if etherscan_api_key.is_empty() {
             p_println!(!opts.quiet => "Waiting for 3 seconds to avoid rate limit...");
-            std::thread::sleep(Duration::from_secs(3));
+            tokio::time::sleep(Duration::from_secs(3)).await;
         }
         Self::collect_compilation_metadata(&meta, chain, address, &root, &client, opts.quiet)
             .await?;
@@ -126,9 +126,9 @@ impl CloneArgs {
     ///
     /// * `address` - the address of the contract to be cloned.
     /// * `client` - the client of the block explorer.
-    pub(crate) async fn collect_metadata_from_client(
+    pub(crate) async fn collect_metadata_from_client<C: EtherscanClient>(
         address: Address,
-        client: &impl EtherscanClient,
+        client: &C,
     ) -> Result<Metadata> {
         let mut meta = client.contract_source_code(address).await?;
         eyre::ensure!(meta.items.len() == 1, "contract not found or ill-formed");
