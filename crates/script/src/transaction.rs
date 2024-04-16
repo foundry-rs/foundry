@@ -1,9 +1,9 @@
-use super::{artifacts::ArtifactInfo, ScriptResult};
+use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, provider::alloy::RpcUrl, SELECTOR_LEN};
+use foundry_common::{fmt::format_token_raw, provider::alloy::RpcUrl, ContractData, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -61,7 +61,7 @@ impl TransactionWithMetadata {
         transaction: TransactionRequest,
         rpc: RpcUrl,
         result: &ScriptResult,
-        local_contracts: &BTreeMap<Address, ArtifactInfo>,
+        local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
         additional_contracts: Vec<AdditionalContract>,
         is_fixed_gas_limit: bool,
@@ -117,7 +117,7 @@ impl TransactionWithMetadata {
         &mut self,
         is_create2: bool,
         address: Address,
-        contracts: &BTreeMap<Address, ArtifactInfo>,
+        contracts: &BTreeMap<Address, &ContractData>,
     ) -> Result<()> {
         if is_create2 {
             self.opcode = CallKind::Create2;
@@ -126,7 +126,7 @@ impl TransactionWithMetadata {
         }
 
         let info = contracts.get(&address);
-        self.contract_name = info.map(|info| info.contract_name.clone());
+        self.contract_name = info.map(|info| info.name.clone());
         self.contract_address = Some(address);
 
         let Some(data) = self.transaction.input.input() else { return Ok(()) };
@@ -143,11 +143,11 @@ impl TransactionWithMetadata {
         };
 
         // The constructor args start after bytecode.
-        let contains_constructor_args = creation_code.len() > info.code.len();
+        let contains_constructor_args = creation_code.len() > info.bytecode.len();
         if !contains_constructor_args {
             return Ok(());
         }
-        let constructor_args = &creation_code[info.code.len()..];
+        let constructor_args = &creation_code[info.bytecode.len()..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
         let values = constructor.abi_decode_input(constructor_args, false).map_err(|e| {
@@ -170,7 +170,7 @@ impl TransactionWithMetadata {
     fn set_call(
         &mut self,
         target: Address,
-        local_contracts: &BTreeMap<Address, ArtifactInfo>,
+        local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
     ) -> Result<()> {
         self.opcode = CallKind::Call;
@@ -184,7 +184,7 @@ impl TransactionWithMetadata {
 
         let function = if let Some(info) = local_contracts.get(&target) {
             // This CALL is made to a local contract.
-            self.contract_name = Some(info.contract_name.clone());
+            self.contract_name = Some(info.name.clone());
             info.abi.functions().find(|function| function.selector() == selector)
         } else {
             // This CALL is made to an external contract; try to decode it from the given decoder.

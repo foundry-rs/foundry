@@ -14,12 +14,11 @@ use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compile::{self, ContractSources, ProjectCompiler},
     provider::alloy::try_get_http_provider,
-    ContractsByArtifact,
+    ContractData, ContractsByArtifact,
 };
 use foundry_compilers::{
-    artifacts::{BytecodeObject, ContractBytecode, ContractBytecodeSome, Libraries},
+    artifacts::{BytecodeObject, Libraries},
     cache::SolFilesCache,
-    contracts::ArtifactContracts,
     info::ContractInfo,
     ArtifactId, ProjectCompileOutput,
 };
@@ -85,7 +84,7 @@ pub struct LinkedBuildData {
     /// Original build data, might be used to relink this object with different libraries.
     pub build_data: BuildData,
     /// Known fully linked contracts.
-    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+    pub known_contracts: ContractsByArtifact,
     /// Libraries used to link the contracts.
     pub libraries: Libraries,
     /// Libraries that need to be deployed by sender before script execution.
@@ -102,47 +101,35 @@ impl LinkedBuildData {
             &link_output.libraries,
         )?;
 
-        let highlevel_known_contracts = build_data
-            .get_linker()
-            .get_linked_artifacts(&link_output.libraries)?
-            .iter()
-            .filter_map(|(id, contract)| {
-                ContractBytecodeSome::try_from(ContractBytecode::from(contract.clone()))
-                    .ok()
-                    .map(|tc| (id.clone(), tc))
-            })
-            .filter(|(_, tc)| tc.bytecode.object.is_non_empty_bytecode())
-            .collect();
+        let known_contracts = ContractsByArtifact(
+            build_data
+                .get_linker()
+                .get_linked_artifacts(&link_output.libraries)?
+                .into_iter()
+                .filter_map(|(id, contract)| {
+                    let name = id.name.clone();
+                    let bytecode = contract.bytecode.and_then(|b| b.into_bytes())?;
+                    let deployed_bytecode =
+                        contract.deployed_bytecode.and_then(|b| b.into_bytes())?;
+                    let abi = contract.abi?;
+
+                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
+                })
+                .collect(),
+        );
 
         Ok(Self {
             build_data,
-            highlevel_known_contracts,
+            known_contracts,
             libraries: link_output.libraries,
             predeploy_libraries: link_output.libs_to_deploy,
             sources,
         })
     }
 
-    /// Flattens the contracts into  (`id` -> (`JsonAbi`, `Vec<u8>`)) pairs
-    pub fn get_flattened_contracts(&self, deployed_code: bool) -> ContractsByArtifact {
-        ContractsByArtifact(
-            self.highlevel_known_contracts
-                .iter()
-                .filter_map(|(id, c)| {
-                    let bytecode = if deployed_code {
-                        c.deployed_bytecode.bytes()
-                    } else {
-                        c.bytecode.bytes()
-                    };
-                    bytecode.cloned().map(|code| (id.clone(), (c.abi.clone(), code.into())))
-                })
-                .collect(),
-        )
-    }
-
     /// Fetches target bytecode from linked contracts.
-    pub fn get_target_contract(&self) -> Result<ContractBytecodeSome> {
-        self.highlevel_known_contracts
+    pub fn get_target_contract(&self) -> Result<ContractData> {
+        self.known_contracts
             .get(&self.build_data.target)
             .cloned()
             .ok_or_eyre("target not found in linked artifacts")

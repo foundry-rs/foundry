@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, BytecodeReporter, ContractId,
-        CoverageReport, CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
+        CoverageReport, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter,
     },
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -271,21 +271,26 @@ impl CoverageArgs {
                 items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
             }
 
-            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
+            let anchors = source_maps
                 .iter()
                 .filter(|(contract_id, _)| contract_id.version == version)
-                .filter_map(|(contract_id, (_, deployed_source_map))| {
+                .filter_map(|(contract_id, (creation_source_map, deployed_source_map))| {
+                    let creation_code_anchors = find_anchors(
+                        &bytecodes.get(contract_id)?.0,
+                        creation_source_map,
+                        &ic_pc_maps.get(contract_id)?.0,
+                        &source_analysis.items,
+                        &items_by_source_id,
+                    );
+                    let deployed_code_anchors = find_anchors(
+                        &bytecodes.get(contract_id)?.1,
+                        deployed_source_map,
+                        &ic_pc_maps.get(contract_id)?.1,
+                        &source_analysis.items,
+                        &items_by_source_id,
+                    );
                     // TODO: Creation source map/bytecode as well
-                    Some((
-                        contract_id.clone(),
-                        find_anchors(
-                            &bytecodes.get(contract_id)?.1,
-                            deployed_source_map,
-                            &ic_pc_maps.get(contract_id)?.1,
-                            &source_analysis.items,
-                            &items_by_source_id,
-                        ),
-                    ))
+                    Some((contract_id.clone(), (creation_code_anchors, deployed_code_anchors)))
                 })
                 .collect();
             report.add_items(version, source_analysis.items);
@@ -345,17 +350,26 @@ impl CoverageArgs {
             .filter_map(|mut result| result.coverage.take())
             .flat_map(|hit_maps| {
                 hit_maps.0.into_values().filter_map(|map| {
-                    Some((known_contracts.find_by_code(map.bytecode.as_ref())?.0, map))
+                    if let Some((id, _)) =
+                        known_contracts.find_by_deployed_code(map.bytecode.as_ref())
+                    {
+                        Some((id, map, true))
+                    } else if let Some((id, _)) =
+                        known_contracts.find_by_creation_code(map.bytecode.as_ref())
+                    {
+                        Some((id, map, false))
+                    } else {
+                        None
+                    }
                 })
             });
-        for (artifact_id, hits) in data {
+        for (artifact_id, hits, is_deployed_code) in data {
             // TODO: Note down failing tests
             if let Some(source_id) = report.get_source_id(
                 artifact_id.version.clone(),
                 artifact_id.source.to_string_lossy().to_string(),
             ) {
                 let source_id = *source_id;
-                // TODO: Distinguish between creation/runtime in a smart way
                 report.add_hit_map(
                     &ContractId {
                         version: artifact_id.version.clone(),
@@ -363,6 +377,7 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
+                    is_deployed_code,
                 )?;
             }
         }
