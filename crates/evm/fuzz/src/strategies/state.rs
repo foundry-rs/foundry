@@ -46,24 +46,24 @@ impl EvmFuzzState {
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
-        // Mine values from call result.
-        // Limit the number of values mined from call results to invariant run
-        // depth (assuming all selectors return values so there's at least one result scraped
-        // from each selector call that doesn't revert).
-        dict.mine_value_from_result(result, run_depth);
+        // Insert sample values from call result.
+        let result_chunks = result.chunks_exact(32);
+        for chunk in result_chunks {
+            dict.insert_sample_value(chunk.try_into().unwrap(), run_depth);
+        }
 
-        // Insert log topics and data.
+        // Insert sample values from log topics and data.
         for log in logs {
             for topic in log.topics() {
-                dict.insert_value(topic.0);
+                dict.insert_sample_value(topic.0, run_depth);
             }
             let chunks = log.data.data.chunks_exact(32);
             let rem = chunks.remainder();
             for chunk in chunks {
-                dict.insert_value(chunk.try_into().unwrap());
+                dict.insert_sample_value(chunk.try_into().unwrap(), run_depth);
             }
             if !rem.is_empty() {
-                dict.insert_value(B256::right_padding_from(rem).0);
+                dict.insert_sample_value(B256::right_padding_from(rem).0, run_depth);
             }
         }
 
@@ -127,8 +127,8 @@ pub struct FuzzDictionary {
     new_values: IndexSet<[u8; 32]>,
     /// New addresses added to the dictionary since container initialization.
     new_addreses: IndexSet<Address>,
-    /// Count of new keys added to the dictionary by mining return values.
-    new_mined_values: u32,
+    /// Sample values that are collected from result and event logs and used across invariant runs.
+    sample_values: IndexSet<[u8; 32]>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -152,7 +152,7 @@ impl FuzzDictionary {
             config,
             new_values: IndexSet::new(),
             new_addreses: IndexSet::new(),
-            new_mined_values: 0,
+            sample_values: IndexSet::new(),
         }
     }
 
@@ -164,24 +164,15 @@ impl FuzzDictionary {
         }
     }
 
-    pub fn mine_value_from_result(&mut self, result: &Bytes, limit: u32) {
-        if self.new_mined_values < limit {
-            let result_chunks = result.chunks_exact(32);
-            let mut new_values = false;
-            for chunk in result_chunks {
-                let value = chunk.try_into().unwrap();
-                // Add value only if it is not already in new values collected during the run.
-                // New values are reverted at the end of run, while mined values persist.
-                if !self.new_values.contains(&value) {
-                    self.state_values.insert(value);
-                    new_values = true;
-                }
-            }
-            // Update count if at least one unique value was extracted from call result.
-            if new_values {
-                self.new_mined_values += 1;
-            }
+    /// Insert sample values that are reused across multiple runs.
+    /// The number of samples is limited to invariant run depth.
+    pub fn insert_sample_value(&mut self, value: [u8; 32], limit: u32) {
+        // Insert new samples only if limit not reached
+        // This is to make sure we have a fixed data set shared by all runs.
+        if self.sample_values.len() < usize::try_from(limit).unwrap() {
+            self.sample_values.insert(value);
         }
+        self.insert_value(value);
     }
 
     pub fn insert_address(&mut self, address: Address) {
@@ -204,12 +195,16 @@ impl FuzzDictionary {
 
     pub fn revert(&mut self) {
         // Revert new values collected during the run.
-        // Retain the new values mined from return functions and use in subsequent runs.
         for key in self.new_values.iter() {
             self.state_values.swap_remove(key);
         }
         for address in self.new_addreses.iter() {
             self.addresses.swap_remove(address);
+        }
+
+        // Add samples collected to be used in subsequent runs.
+        for key in self.sample_values.iter() {
+            self.state_values.insert(key.to_owned());
         }
 
         self.new_values.clear();
