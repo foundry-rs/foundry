@@ -371,6 +371,17 @@ pub enum EthRequest {
     )]
     DropTransaction(B256),
 
+    /// Removes transactions from the pool
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_dropAllTransactions",
+            alias = "hardhat_dropAllTransactions",
+            with = "empty_params"
+        )
+    )]
+    DropAllTransactions(),
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reset", alias = "hardhat_reset"))]
     Reset(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<Forking>>>),
