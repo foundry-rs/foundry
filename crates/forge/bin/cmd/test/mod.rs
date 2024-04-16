@@ -373,8 +373,6 @@ impl TestArgs {
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
         // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
-        // Because users can enable forking through cheat codes, we cannot simply disable etherscan
-        // for non-forking tests here.
         if !self.gas_report {
             identifier = identifier.with_etherscan(&config, remote_chain_id)?;
         }
