@@ -43,20 +43,15 @@ pub struct CloneArgs {
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
     root: PathBuf,
 
-    /// Enable git for the cloned project, default is false.
-    #[arg(long)]
-    pub enable_git: bool,
-
     /// Do not generaet the remappings.txt file. Instead, keep the remappings in the configuration.
     #[arg(long)]
     pub no_remappings_txt: bool,
 
-    /// Do not print any messages.
-    #[arg(short, long)]
-    pub quiet: bool,
-
     #[command(flatten)]
     etherscan: EtherscanOpts,
+
+    #[command(flatten)]
+    opts: DependencyInstallOpts,
 }
 
 /// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
@@ -85,39 +80,43 @@ pub struct CloneMetadata {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let CloneArgs { address, quiet, root, enable_git, etherscan, no_remappings_txt } = self;
+        let CloneArgs { address, root, opts, etherscan, no_remappings_txt } = self;
 
-        // get the chain and api key from the config
+        // step 0. get the chain and api key from the config
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, etherscan_api_key.clone())?;
 
-        // get the metadata from client
-        p_println!(!quiet => "Downloading the source code of {} from Etherscan...", address);
+        // step 1. get the metadata from client
+        p_println!(!opts.quiet => "Downloading the source code of {} from Etherscan...", address);
         let meta = Self::collect_metadata_from_client(address, &client).await?;
 
-        // initialize an empty project
-        Self::init_an_empty_project(&root, enable_git, quiet)?;
+        // step 2. initialize an empty project
+        Self::init_an_empty_project(&root, opts)?;
         // canonicalize the root path
         // note that at this point, the root directory must have been created
         let root = dunce::canonicalize(&root)?;
 
-        // parse the metadata
+        // step 3. parse the metadata
         Self::parse_metadata(&meta, chain, &root, no_remappings_txt).await?;
 
-        // collect the compilation metadata
-        p_println!(!quiet => "Collecting the creation information of {} from Etherscan...", address);
-        // if the etherscan api key is not set, we need to wait for 5 seconds between calls,
-        // otherwise 1 second
-        std::thread::sleep(Duration::from_secs(if etherscan_api_key.is_empty() { 5 } else { 1 }));
-        Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
+        // step 4. collect the compilation metadata
+        // if the etherscan api key is not set, we need to wait for 3 seconds between calls
+        p_println!(!opts.quiet => "Collecting the creation information of {} from Etherscan...", address);
+        if etherscan_api_key.is_empty() {
+            p_println!(!opts.quiet => "Waiting for 3 seconds to avoid rate limit...");
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        Self::collect_compilation_metadata(&meta, chain, address, &root, &client, opts.quiet)
+            .await?;
 
-        // Git add and commit the changes if enabled
-        if enable_git {
-            let git = Git::new(&root).quiet(true);
+        // step 5. git add and commit the changes if needed
+        if !opts.no_commit {
+            let git = Git::new(&root).quiet(opts.quiet);
             git.add(Some("--all"))?;
-            git.commit("chore: forge clone")?;
+            let msg = format!("chore: forge clone {}", address);
+            git.commit(&msg)?;
         }
 
         Ok(())
@@ -143,9 +142,8 @@ impl CloneArgs {
     /// * `root` - the root directory of the project.
     /// * `enable_git` - whether to enable git for the project.
     /// * `quiet` - whether to print messages.
-    pub(crate) fn init_an_empty_project(root: &Path, enable_git: bool, quiet: bool) -> Result<()> {
+    pub(crate) fn init_an_empty_project(root: &Path, opts: DependencyInstallOpts) -> Result<()> {
         // let's try to init the project with default init args
-        let opts = DependencyInstallOpts { no_git: !enable_git, quiet, ..Default::default() };
         let init_args = InitArgs { root: root.to_path_buf(), opts, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
@@ -173,9 +171,10 @@ impl CloneArgs {
         address: Address,
         root: &PathBuf,
         client: &impl EtherscanClient,
+        quiet: bool,
     ) -> Result<()> {
         // compile the cloned contract
-        let compile_output = compile_project(root)?;
+        let compile_output = compile_project(root, quiet)?;
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
@@ -476,11 +475,11 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
 
 /// Compile the project in the root directory, and return the compilation result.
 /// XXX (ZZ): disable output when the quite flag is set.
-pub fn compile_project(root: &PathBuf) -> Result<ProjectCompileOutput> {
+pub fn compile_project(root: &PathBuf, quiet: bool) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root);
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
-    let compiler = ProjectCompiler::new();
+    let compiler = ProjectCompiler::new().quiet_if(quiet);
     compiler.compile(&project)
 }
 
@@ -538,7 +537,7 @@ impl EtherscanClient for Client {
 mod tests {
     use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-    use crate::cmd::clone::compile_project;
+    use crate::cmd::{clone::compile_project, install::DependencyInstallOpts};
 
     use super::CloneArgs;
     use alloy_primitives::Address;
@@ -552,7 +551,7 @@ mod tests {
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         println!("project_root: {:#?}", root);
-        compile_project(root).expect("compilation failure")
+        compile_project(root, false).expect("compilation failure")
     }
 
     fn assert_compilation_result(
@@ -644,7 +643,7 @@ mod tests {
         let mut project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let client = mock_etherscan(address);
         let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
-        CloneArgs::init_an_empty_project(&project_root, false, false).unwrap();
+        CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default()).unwrap();
         project_root = dunce::canonicalize(&project_root).unwrap();
         CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false).await.unwrap();
         std::thread::sleep(Duration::from_secs(5));
@@ -654,6 +653,7 @@ mod tests {
             address,
             &project_root,
             &client,
+            false,
         )
         .await
         .unwrap();
