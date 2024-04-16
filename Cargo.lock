@@ -235,6 +235,9 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-trace",
  "alloy-transport",
+ "alloy-transport-http",
+ "alloy-transport-ipc",
+ "alloy-transport-ws",
  "async-stream",
  "async-trait",
  "auto_impl",
@@ -242,9 +245,11 @@ dependencies = [
  "futures",
  "futures-utils-wasm",
  "lru",
+ "reqwest 0.12.3",
  "serde_json",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -297,14 +302,18 @@ dependencies = [
  "alloy-pubsub",
  "alloy-transport",
  "alloy-transport-http",
+ "alloy-transport-ipc",
+ "alloy-transport-ws",
  "futures",
  "pin-project",
+ "reqwest 0.12.3",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
  "tower",
  "tracing",
+ "url",
 ]
 
 [[package]]
