@@ -70,9 +70,9 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub via_ir: bool,
 
-    /// Whether to append the metadata hash to the bytecode.
-    /// This is equivalent to setting [Config::bytecode_hash] to `none` and
-    /// [Config::cbor_metadata] to `false`.
+    /// Do not append any metadata to the bytecode.
+    ///
+    /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub no_metadata: bool,
