@@ -70,6 +70,13 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Do not append any metadata to the bytecode.
+    ///
+    /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub no_metadata: bool,
+
     /// The path to the contract artifacts folder.
     #[arg(
         long = "out",
@@ -204,9 +211,15 @@ impl Provider for CoreBuildArgs {
             dict.insert("via_ir".to_string(), true.into());
         }
 
+        if self.no_metadata {
+            dict.insert("bytecode_hash".to_string(), "none".into());
+            dict.insert("cbor_metadata".to_string(), false.into());
+        }
+
         if self.force {
             dict.insert("force".to_string(), self.force.into());
         }
+
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());
