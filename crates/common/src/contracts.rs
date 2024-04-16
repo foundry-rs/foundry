@@ -32,6 +32,26 @@ type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, ContractData>);
 
 impl ContractsByArtifact {
+    /// Creates a new instance by collecting all artifacts with present bytecode from an iterator.
+    ///
+    /// It is recommended to use this method with an output of
+    /// [foundry_linking::Linker::get_linked_artifacts].
+    pub fn new(artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecode)>) -> Self {
+        Self(
+            artifacts
+                .into_iter()
+                .filter_map(|(id, artifact)| {
+                    let name = id.name.clone();
+                    let bytecode = artifact.bytecode.and_then(|b| b.into_bytes())?;
+                    let deployed_bytecode =
+                        artifact.deployed_bytecode.and_then(|b| b.into_bytes())?;
+                    let abi = artifact.abi?;
+
+                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
+                })
+                .collect(),
+        )
+    }
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter()

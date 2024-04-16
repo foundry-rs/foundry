@@ -290,10 +290,8 @@ test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
-    let mut cheats_config = config.runner.cheats_config.as_ref().clone();
-    let path = cheats_config.root.join("out/default/Issue6554.t.sol");
-    cheats_config.fs_permissions.add(PathPermission::read_write(path));
-    config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+    let path = config.runner.config.__root.0.join("out/default/Issue6554.t.sol");
+    config.runner.config.fs_permissions.add(PathPermission::read_write(path));
 });
 
 // https://github.com/foundry-rs/foundry/issues/6759
@@ -307,16 +305,14 @@ test_repro!(6616);
 
 // https://github.com/foundry-rs/foundry/issues/5529
 test_repro!(5529; |config| {
-  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
-  cheats_config.always_use_create_2_factory = true;
-  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+  config.runner.config.always_use_create_2_factory = true;
+  config.runner.evm_opts.always_use_create_2_factory = true;
 });
 
 // https://github.com/foundry-rs/foundry/issues/6634
 test_repro!(6634; |config| {
-  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
-  cheats_config.always_use_create_2_factory = true;
-  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+  config.runner.config.always_use_create_2_factory = true;
+  config.runner.evm_opts.always_use_create_2_factory = true;
 });
 
 test_repro!(7481);

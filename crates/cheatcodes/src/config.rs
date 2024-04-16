@@ -1,8 +1,8 @@
 use super::Result;
 use crate::{script::ScriptWallets, Vm::Rpc};
 use alloy_primitives::Address;
-use foundry_common::fs::normalize_path;
-use foundry_compilers::{utils::canonicalize, ArtifactId, ProjectPathsConfig};
+use foundry_common::{fs::normalize_path, ContractsByArtifact};
+use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoints,
@@ -12,6 +12,7 @@ use semver::Version;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -47,7 +48,7 @@ pub struct CheatsConfig {
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
-    pub available_artifacts: Option<Vec<ArtifactId>>,
+    pub available_artifacts: Option<Arc<ContractsByArtifact>>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
 }
@@ -57,7 +58,7 @@ impl CheatsConfig {
     pub fn new(
         config: &Config,
         evm_opts: EvmOpts,
-        available_artifacts: Option<Vec<ArtifactId>>,
+        available_artifacts: Option<Arc<ContractsByArtifact>>,
         script_wallets: Option<ScriptWallets>,
         running_version: Option<Version>,
     ) -> Self {
