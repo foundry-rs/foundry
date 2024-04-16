@@ -248,7 +248,13 @@ impl<'a> InvariantExecutor<'a> {
                         call_result.state_changeset.to_owned().expect("no changesets");
 
                     if !&call_result.reverted {
-                        collect_data(&mut state_changeset, sender, &call_result, &fuzz_state);
+                        collect_data(
+                            &mut state_changeset,
+                            sender,
+                            &call_result,
+                            &fuzz_state,
+                            self.config.depth,
+                        );
                     }
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts
@@ -670,6 +676,7 @@ fn collect_data(
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: &EvmFuzzState,
+    run_depth: u32,
 ) {
     // Verify it has no code.
     let mut has_code = false;
@@ -684,7 +691,12 @@ fn collect_data(
         sender_changeset = state_changeset.remove(sender);
     }
 
-    fuzz_state.collect_state_from_call(&call_result.result, &call_result.logs, &*state_changeset);
+    fuzz_state.collect_state_from_call(
+        &call_result.result,
+        &call_result.logs,
+        &*state_changeset,
+        run_depth,
+    );
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
