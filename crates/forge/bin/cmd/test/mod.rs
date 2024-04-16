@@ -423,7 +423,7 @@ impl TestArgs {
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
-                shell::println(result.short_success_result(name))?;
+                shell::println(result.short_result(name))?;
 
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {

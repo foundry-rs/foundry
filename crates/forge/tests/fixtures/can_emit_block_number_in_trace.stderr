@@ -3,7 +3,7 @@ Compiling 1 files
 Compiler run successful!
 
 Ran 4 tests for test/Contract.t.sol:BlockNumberTraceTest
-[FAIL. Reason: EvmError: Revert] testRevertFork() (gas: 9550)
+[FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626899) (gas: 9550)
 [FAIL. Reason: assertion failed] testRevertLocal() (gas: 3070)
 [PASS] testSuccessFork() (gas: 9598)
 [PASS] testSuccessLocal() (gas: 3048)

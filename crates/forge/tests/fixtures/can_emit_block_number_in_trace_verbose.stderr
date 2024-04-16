@@ -3,7 +3,7 @@ Compiling 1 files
 Compiler run successful!
 
 Ran 4 tests for test/Contract.t.sol:BlockNumberTraceTest
-[FAIL. Reason: EvmError: Revert] testRevertFork() (gas: 9550)
+[FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626899) (gas: 9550)
 Traces:
   [9550] BlockNumberTraceTest::testRevertFork()
     ├─ [0] VM::createSelectFork("<url>", 19626899 [1.962e7])
