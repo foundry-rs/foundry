@@ -98,21 +98,8 @@ impl LinkedBuildData {
             &link_output.libraries,
         )?;
 
-        let known_contracts = ContractsByArtifact(
-            build_data
-                .get_linker()
-                .get_linked_artifacts(&link_output.libraries)?
-                .into_iter()
-                .filter_map(|(id, contract)| {
-                    let name = id.name.clone();
-                    let bytecode = contract.bytecode.and_then(|b| b.into_bytes())?;
-                    let deployed_bytecode =
-                        contract.deployed_bytecode.and_then(|b| b.into_bytes())?;
-                    let abi = contract.abi?;
-
-                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
-                })
-                .collect(),
+        let known_contracts = ContractsByArtifact::new(
+            build_data.get_linker().get_linked_artifacts(&link_output.libraries)?,
         );
 
         Ok(Self {
