@@ -2834,7 +2834,7 @@ mod tests {
 
             let config = Config::load();
             let paths_config = config.project_paths();
-            assert_eq!(paths_config.tests, PathBuf::from(r"mytest"));
+            assert_eq!(paths_config.tests, PathBuf::from(r"./mytest"));
             Ok(())
         });
     }
