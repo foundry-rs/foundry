@@ -366,7 +366,7 @@ fn update_config_by_metadata(
         update_if_needed!(["optimizer_details", "deduplicate"], detail.deduplicate);
         update_if_needed!(["optimizer_details", "cse"], detail.cse);
         update_if_needed!(["optimizer_details", "constantOptimizer"], detail.constant_optimizer);
-        // XXX (ZZ): simpleCounterForLoopUncheckedIncrement seems not supported by fourndry
+        update_if_needed!(["optimizer_details", "simpleCounterForLoopUncheckedIncrement"], detail.simple_counter_for_loop_unchecked_increment);
         update_if_needed!(["optimizer_details", "yul"], detail.yul);
 
         if let Some(yul_detail) = detail.yul_details {
@@ -474,7 +474,6 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
 }
 
 /// Compile the project in the root directory, and return the compilation result.
-/// XXX (ZZ): disable output when the quite flag is set.
 pub fn compile_project(root: &PathBuf, quiet: bool) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root).sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);

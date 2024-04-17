@@ -138,7 +138,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.6", default-features = false }
-foundry-compilers = { version = "0.3.14", default-features = false }
+foundry-compilers = { version = "0.3.16", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg

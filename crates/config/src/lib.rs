@@ -4541,6 +4541,7 @@ mod tests {
                 deduplicate: None,
                 cse: None,
                 constant_optimizer: Some(true),
+                simple_counter_for_loop_unchecked_increment: Some(true),
                 yul: Some(true),
                 yul_details: Some(YulDetails {
                     stack_allocation: None,
