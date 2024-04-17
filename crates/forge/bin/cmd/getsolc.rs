@@ -2,6 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{artifacts::Source, utils, Graph, Project};
 use std::path::PathBuf;
+use yansi::Paint;
 
 /// CLI arguments for `forge get-solc`.
 #[derive(Clone, Debug, Parser)]
@@ -27,6 +28,6 @@ pub fn get_solc_from_path(path: PathBuf) -> Result<()> {
     let (versions, _) = graph.into_sources_by_version(project.offline)?;
     let sources_by_version = versions.get(&project)?;
     let solc_info: Vec<_> = sources_by_version.keys().map(|solc| solc.solc.clone()).collect();
-    println!("found solc {:?}", solc_info);
+    println!("found solc {}\n", Paint::green(format!("{:?}", solc_info)));
     Ok(())
 }
