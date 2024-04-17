@@ -27,8 +27,24 @@ pub fn get_solc_from_path(path: PathBuf) -> Result<()> {
     let graph = Graph::resolve_sources(&project.paths, sources)?;
     let (versions, _) = graph.into_sources_by_version(project.offline)?;
     let sources_by_version = versions.get(&project)?;
-    let solcs: Vec<_> =
+    let versions: Vec<_> =
         sources_by_version.keys().map(|solc| solc.version_short().unwrap()).collect();
-    println!("found solc {}\n", Paint::green(format!("{:?}", solcs)));
+    if versions.len() == 1 {
+        let version = &versions[0];
+        println!(
+            "Solc {}",
+            Paint::green(format!("{}.{}.{}", version.major, version.minor, version.patch))
+        );
+    } else {
+        let formatted_versions: Vec<_> = versions
+            .iter()
+            .map(|version| {
+                Paint::green(format!("{}.{}.{}", version.major, version.minor, version.patch))
+                    .to_string()
+            })
+            .collect();
+        let versions_str = formatted_versions.join(", ");
+        println!("Solcs {}", versions_str);
+    }
     Ok(())
 }
