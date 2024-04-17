@@ -31,9 +31,6 @@ pub struct BuildData {
     pub output: ProjectCompileOutput,
     /// Id of target contract artifact.
     pub target: ArtifactId,
-    /// Artifact ids of the contracts. Passed to cheatcodes to enable usage of
-    /// `vm.getDeployedCode`.
-    pub artifact_ids: Vec<ArtifactId>,
 }
 
 impl BuildData {
@@ -99,21 +96,8 @@ impl LinkedBuildData {
             &link_output.libraries,
         )?;
 
-        let known_contracts = ContractsByArtifact(
-            build_data
-                .get_linker()
-                .get_linked_artifacts(&link_output.libraries)?
-                .into_iter()
-                .filter_map(|(id, contract)| {
-                    let name = id.name.clone();
-                    let bytecode = contract.bytecode.and_then(|b| b.into_bytes())?;
-                    let deployed_bytecode =
-                        contract.deployed_bytecode.and_then(|b| b.into_bytes())?;
-                    let abi = contract.abi?;
-
-                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
-                })
-                .collect(),
+        let known_contracts = ContractsByArtifact::new(
+            build_data.get_linker().get_linked_artifacts(&link_output.libraries)?,
         );
 
         Ok(Self {
@@ -169,8 +153,6 @@ impl PreprocessedState {
 
         let mut target_id: Option<ArtifactId> = None;
 
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
-
         // Find target artfifact id by name and path in compilation artifacts.
         for (id, contract) in output.artifact_ids().filter(|(id, _)| id.source == target_path) {
             if let Some(name) = &target_name {
@@ -207,12 +189,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData {
-                output,
-                target,
-                project_root: project.root().clone(),
-                artifact_ids,
-            },
+            build_data: BuildData { output, target, project_root: project.root().clone() },
         })
     }
 }
