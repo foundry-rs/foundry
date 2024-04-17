@@ -105,8 +105,8 @@ impl CloneArgs {
         // if the etherscan api key is not set, we need to wait for 3 seconds between calls
         p_println!(!opts.quiet => "Collecting the creation information of {} from Etherscan...", address);
         if etherscan_api_key.is_empty() {
-            p_println!(!opts.quiet => "Waiting for 3 seconds to avoid rate limit...");
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            p_println!(!opts.quiet => "Waiting for 5 seconds to avoid rate limit...");
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
         Self::collect_compilation_metadata(&meta, chain, address, &root, &client, opts.quiet)
             .await?;
@@ -165,12 +165,12 @@ impl CloneArgs {
     /// * `address` - the address of the contract to be cloned.
     /// * `root` - the root directory of the cloned project.
     /// * `client` - the client of the block explorer.
-    pub(crate) async fn collect_compilation_metadata(
+    pub(crate) async fn collect_compilation_metadata<C: EtherscanClient>(
         meta: &Metadata,
         chain: Chain,
         address: Address,
         root: &PathBuf,
-        client: &impl EtherscanClient,
+        client: &C,
         quiet: bool,
     ) -> Result<()> {
         // compile the cloned contract
@@ -412,7 +412,8 @@ fn update_config_by_metadata(
 fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemapping>, bool)> {
     // get config
     let path_config = ProjectPathsConfig::builder().build_with_root(root);
-    let src_dir = root.join(path_config.sources).canonicalize()?;
+    // we will canonicalize the sources directory later
+    let src_dir = &path_config.sources;
     let contract_name = &meta.contract_name;
     let source_tree = meta.source_tree();
 
@@ -440,8 +441,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
     });
     // move contract sources to the `src` directory
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
-        if std::fs::metadata(&src_dir).is_err() {
-            std::fs::create_dir(&src_dir)?;
+        if std::fs::metadata(root.join(src_dir)).is_err() {
+            std::fs::create_dir(root.join(src_dir))?;
         }
         let entry = entry?;
         let folder_name = entry.file_name().to_string_lossy().to_string();
@@ -478,7 +479,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
 
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &PathBuf, quiet: bool) -> Result<ProjectCompileOutput> {
-    let mut config = Config::load_with_root(root).sanitized();
+    let mut config = Config::load_with_root(root);
+    config = config.sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet_if(quiet);
