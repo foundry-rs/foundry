@@ -476,7 +476,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
 /// Compile the project in the root directory, and return the compilation result.
 /// XXX (ZZ): disable output when the quite flag is set.
 pub fn compile_project(root: &PathBuf, quiet: bool) -> Result<ProjectCompileOutput> {
-    let mut config = Config::load_with_root(root);
+    let mut config = Config::load_with_root(root).sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet_if(quiet);
