@@ -104,6 +104,7 @@ impl TraceIdentifier for EtherscanIdentifier {
             return Vec::new()
         }
 
+        let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
             self.client.clone(),
             Duration::from_secs(1),
@@ -112,28 +113,42 @@ impl TraceIdentifier for EtherscanIdentifier {
         );
 
         for (addr, _) in addresses {
-            if !self.contracts.contains_key(addr) {
-                fetcher.push(*addr);
-            }
-        }
-
-        let fut = fetcher
-            .map(|(address, metadata)| {
+            if let Some(metadata) = self.contracts.get(addr) {
                 let label = metadata.contract_name.clone();
                 let abi = metadata.abi().ok().map(Cow::Owned);
-                self.contracts.insert(address, metadata);
 
-                AddressIdentity {
-                    address,
+                identities.push(AddressIdentity {
+                    address: *addr,
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi,
                     artifact_id: None,
-                }
-            })
-            .collect();
+                });
+            } else {
+                fetcher.push(*addr);
+            }
+        }
 
-        RuntimeOrHandle::new().block_on(fut)
+        let fetched_identities = RuntimeOrHandle::new().block_on(
+            fetcher
+                .map(|(address, metadata)| {
+                    let label = metadata.contract_name.clone();
+                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    self.contracts.insert(address, metadata);
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi,
+                        artifact_id: None,
+                    }
+                })
+                .collect::<Vec<AddressIdentity<'_>>>(),
+        );
+
+        identities.extend(fetched_identities);
+        identities
     }
 }
 

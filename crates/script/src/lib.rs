@@ -18,12 +18,11 @@ use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::SkipBuildFilter,
-    errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     provider::alloy::RpcUrl,
-    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
-use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
+use foundry_compilers::ArtifactId;
 use foundry_config::{
     figment,
     figment::{
@@ -46,10 +45,9 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use yansi::Paint;
 
-mod artifacts;
 mod broadcast;
 mod build;
 mod execute;
@@ -269,7 +267,7 @@ impl ScriptArgs {
 
             pre_simulation.args.check_contract_sizes(
                 &pre_simulation.execution_result,
-                &pre_simulation.build_data.highlevel_known_contracts,
+                &pre_simulation.build_data.known_contracts,
             )?;
 
             pre_simulation.fill_metadata().await?.bundle().await?
@@ -357,25 +355,18 @@ impl ScriptArgs {
     fn check_contract_sizes(
         &self,
         result: &ScriptResult,
-        known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+        known_contracts: &ContractsByArtifact,
     ) -> Result<()> {
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
         // From artifacts
-        for (artifact, bytecode) in known_contracts.iter() {
-            if bytecode.bytecode.object.is_unlinked() {
-                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into());
-            }
-            let init_code = bytecode.bytecode.object.as_bytes().unwrap();
-            // Ignore abstract contracts
-            if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
-                if deployed_code.object.is_unlinked() {
-                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into());
-                }
-                let deployed_code = deployed_code.object.as_bytes().unwrap();
-                bytecodes.push((artifact.name.clone(), init_code, deployed_code));
-            }
+        for (artifact, contract) in known_contracts.iter() {
+            bytecodes.push((
+                artifact.name.clone(),
+                &contract.bytecode,
+                &contract.deployed_bytecode,
+            ));
         }
 
         // From traces

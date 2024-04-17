@@ -166,6 +166,12 @@ impl Pool {
         dropped
     }
 
+    /// Removes all transactions from the pool
+    pub fn clear(&self) {
+        let mut pool = self.inner.write();
+        pool.clear();
+    }
+
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
         let mut listener = self.transaction_listener.lock();
@@ -209,6 +215,12 @@ impl PoolInner {
     /// Returns an iterator over transactions that are ready.
     fn ready_transactions(&self) -> TransactionsIterator {
         self.ready_transactions.get_transactions()
+    }
+
+    /// Clears
+    fn clear(&mut self) {
+        self.ready_transactions.clear();
+        self.pending_transactions.clear();
     }
 
     /// checks both pools for the matching transaction

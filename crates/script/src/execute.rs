@@ -17,9 +17,8 @@ use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::alloy::{get_http_provider, RpcUrl},
-    shell, ContractsByArtifact,
+    shell, ContractData, ContractsByArtifact,
 };
-use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
@@ -62,11 +61,7 @@ impl LinkedState {
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 
-        let ContractBytecodeSome { abi, bytecode, .. } = build_data.get_target_contract()?;
-
-        let bytecode = bytecode.into_bytes().ok_or_else(|| {
-            eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
-        })?;
+        let ContractData { abi, bytecode, .. } = build_data.get_target_contract()?;
 
         let (func, calldata) = args.get_method_and_calldata(&abi)?;
 
@@ -301,8 +296,7 @@ impl ExecutedState {
     pub async fn prepare_simulation(self) -> Result<PreSimulationState> {
         let returns = self.get_returns()?;
 
-        let known_contracts = self.build_data.get_flattened_contracts(true);
-        let decoder = self.build_trace_decoder(&known_contracts)?;
+        let decoder = self.build_trace_decoder(&self.build_data.known_contracts)?;
 
         let txs = self.execution_result.transactions.clone().unwrap_or_default();
         let rpc_data = RpcData::from_transactions(&txs);

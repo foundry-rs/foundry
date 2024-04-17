@@ -139,7 +139,7 @@ pub enum EthRequest {
     EthGetProof(Address, Vec<B256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
-    #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
+    #[cfg_attr(feature = "serde", serde(rename = "eth_sign", alias = "personal_sign"))]
     EthSign(Address, Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
@@ -370,6 +370,17 @@ pub enum EthRequest {
         )
     )]
     DropTransaction(B256),
+
+    /// Removes transactions from the pool
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_dropAllTransactions",
+            alias = "hardhat_dropAllTransactions",
+            with = "empty_params"
+        )
+    )]
+    DropAllTransactions(),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reset", alias = "hardhat_reset"))]
@@ -1503,6 +1514,18 @@ true}]}"#;
 
         // this case deviates from the spec, but we're supporting this for legacy reasons: <https://github.com/foundry-rs/foundry/issues/1868>
         let s = r#"{"method": "eth_getBlockByNumber", "params": [0, true]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_sign() {
+        let s = r#"{"method": "eth_sign", "params":
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x00"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "personal_sign", "params":
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x00"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

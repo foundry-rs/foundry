@@ -12,14 +12,15 @@ use crate::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
         ExpectedRevert, ExpectedRevertKind,
     },
-    CheatsConfig, CheatsCtxt, Error, Result, Vm,
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
+use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, SELECTOR_LEN};
 use foundry_evm_core::{
+    abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
 };
@@ -601,6 +602,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             if !ranges.iter().any(|range| {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
+                                // SPECIAL CASE: When the compiler attempts to store the selector for
+                                // `stopExpectSafeMemory`, this is allowed. It will do so at the current free memory
+                                // pointer, which could have been updated to the exclusive upper bound during
+                                // execution.
+                                let value = try_or_continue!(interpreter.stack().peek(1)).to_be_bytes::<32>();
+                                let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
+                                if value[0..SELECTOR_LEN] == selector {
+                                    return
+                                }
+
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
                                 return
                             }
@@ -640,11 +651,48 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
                         ////////////////////////////////////////////////////////////////
 
+                        opcode::CALL => {
+                            // The destination offset of the operation is the fifth element on the stack.
+                            let dest_offset = try_or_continue!(interpreter.stack().peek(5)).saturating_to::<u64>();
+
+                            // The size of the data that will be copied is the sixth element on the stack.
+                            let size = try_or_continue!(interpreter.stack().peek(6)).saturating_to::<u64>();
+
+                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                            // memory outside of the expected ranges has been touched. If the opcode
+                            // only reads from memory, this is okay as long as the memory is not expanded.
+                            let fail_cond = !ranges.iter().any(|range| {
+                                range.contains(&dest_offset) &&
+                                    range.contains(&(dest_offset + size.saturating_sub(1)))
+                            });
+
+                            // If the failure condition is met, set the output buffer to a revert string
+                            // that gives information about the allowed ranges and revert.
+                            if fail_cond {
+                                // SPECIAL CASE: When a call to `stopExpectSafeMemory` is performed, this is allowed.
+                                // It allocated calldata at the current free memory pointer, and will attempt to read
+                                // from this memory region to perform the call.
+                                let to = Address::from_word(try_or_continue!(interpreter.stack().peek(1)).to_be_bytes::<32>().into());
+                                if to == CHEATCODE_ADDRESS {
+                                    let args_offset = try_or_continue!(interpreter.stack().peek(3)).saturating_to::<usize>();
+                                    let args_size = try_or_continue!(interpreter.stack().peek(4)).saturating_to::<usize>();
+                                    let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
+                                    let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
+                                    if memory_word[0..SELECTOR_LEN] == selector {
+                                        return
+                                    }
+                                }
+
+                                disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                                return
+                            }
+                        }
+
                         $(opcode::$opcode => {
-                            // The destination offset of the operation is at the top of the stack.
+                            // The destination offset of the operation.
                             let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).saturating_to::<u64>();
 
-                            // The size of the data that will be copied is the third item on the stack.
+                            // The size of the data that will be copied.
                             let size = try_or_continue!(interpreter.stack().peek($size_depth)).saturating_to::<u64>();
 
                             // If none of the allowed ranges contain [dest_offset, dest_offset + size),
@@ -678,7 +726,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 (CODECOPY, 0, 2, true),
                 (RETURNDATACOPY, 0, 2, true),
                 (EXTCODECOPY, 1, 3, true),
-                (CALL, 5, 6, true),
                 (CALLCODE, 5, 6, true),
                 (STATICCALL, 4, 5, true),
                 (DELEGATECALL, 4, 5, true),
@@ -1342,15 +1389,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let address = self.allow_cheatcodes_on_create(ecx, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // If the create scheme is create2, and the caller is the DEFAULT_CREATE2_DEPLOYER then
-            // we must add 1 to the depth to account for the call to the create2 factory.
-            let mut depth = ecx.journaled_state.depth();
-            if let CreateScheme::Create2 { salt: _ } = call.scheme {
-                if call.caller == DEFAULT_CREATE2_DEPLOYER {
-                    depth += 1;
-                }
-            }
-
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs_stack.push(vec![AccountAccess {
@@ -1369,7 +1407,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on create_end
                 storageAccesses: vec![],    // updated on create_end
-                depth,
+                depth: ecx.journaled_state.depth(),
             }]);
         }
 

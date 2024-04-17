@@ -308,8 +308,8 @@ pub fn load_contracts(
         .contracts
         .iter()
         .filter_map(|(addr, name)| {
-            if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                return Some((*addr, (name.clone(), abi.clone())));
+            if let Ok(Some((_, contract))) = contracts.find_by_name_or_identifier(name) {
+                return Some((*addr, (name.clone(), contract.abi.clone())));
             }
             None
         })
