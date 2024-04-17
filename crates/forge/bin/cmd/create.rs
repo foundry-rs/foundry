@@ -88,7 +88,7 @@ impl CreateArgs {
         let project = self.opts.project()?;
 
         let target_path = if let Some(ref mut path) = self.contract.path {
-            canonicalize(project.root().join(&path))?
+            canonicalize(project.root().join(path))?
         } else {
             project.find_contract_path(&self.contract.name)?
         };
