@@ -3767,7 +3767,6 @@ dependencies = [
  "semver 1.0.22",
  "serde",
  "serde_json",
- "solang-parser",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3780,7 +3779,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.15"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8caca67f174741b05c2f4188d3ee93420342130eb2a768abb9b885bb8b918df2"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

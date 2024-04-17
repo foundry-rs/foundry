@@ -13,13 +13,12 @@ use foundry_compilers::{
     },
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
+    Artifact, ArtifactId, FileFilter, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
 use rustc_hash::FxHashMap;
-use solang_parser::pt::SourceUnitPart;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,

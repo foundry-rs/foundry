@@ -9,7 +9,7 @@ use foundry_common::{
     compile::{compile_target, ProjectCompiler},
     selectors::{import_selectors, SelectorImportData},
 };
-use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo, utils::find_contract_path};
+use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
@@ -72,7 +72,7 @@ impl SelectorsSubcommands {
 
                 let project = build_args.project()?;
                 let output = if let Some(name) = &contract {
-                    let target_path = find_contract_path(&project, name)?;
+                    let target_path = project.find_contract_path(name)?;
                     compile_target(&target_path, &project, false)?
                 } else {
                     ProjectCompiler::new().compile(&project)?
