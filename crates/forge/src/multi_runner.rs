@@ -52,7 +52,7 @@ pub struct MultiContractRunner {
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Project config.
-    pub config: Config,
+    pub config: Arc<Config>,
     /// Whether to collect coverage info
     pub coverage: bool,
     /// Whether to collect debug info
@@ -242,7 +242,7 @@ pub struct MultiContractRunnerBuilder {
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Project config.
-    pub config: Config,
+    pub config: Arc<Config>,
     /// Whether or not to collect coverage info
     pub coverage: bool,
     /// Whether or not to collect debug info
@@ -254,7 +254,7 @@ pub struct MultiContractRunnerBuilder {
 }
 
 impl MultiContractRunnerBuilder {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Arc<Config>) -> Self {
         Self {
             config,
             sender: Default::default(),

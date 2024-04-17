@@ -27,7 +27,11 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use rustc_hash::FxHashMap;
 use semver::Version;
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{mpsc::channel, Arc},
+};
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
@@ -100,7 +104,7 @@ impl CoverageArgs {
         let report = self.prepare(&config, output.clone())?;
 
         p_println!(!self.opts.silent => "Running tests...");
-        self.collect(project, output, report, config, evm_opts).await
+        self.collect(project, output, report, Arc::new(config), evm_opts).await
     }
 
     /// Builds the project.
@@ -307,7 +311,7 @@ impl CoverageArgs {
         project: Project,
         output: ProjectCompileOutput,
         mut report: CoverageReport,
-        config: Config,
+        config: Arc<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let root = project.paths.root;
@@ -320,7 +324,7 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_test_options(TestOptions {
-                fuzz: config.fuzz,
+                fuzz: config.fuzz.clone(),
                 invariant: config.invariant,
                 ..Default::default()
             })

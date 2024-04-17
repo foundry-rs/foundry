@@ -1,5 +1,7 @@
 //! Regression tests for previous issues.
 
+use std::sync::Arc;
+
 use crate::{
     config::*,
     test_helpers::{ForgeTestData, TEST_DATA_DEFAULT},
@@ -8,7 +10,7 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{address, Address, U256};
 use forge::result::TestStatus;
-use foundry_config::{fs_permissions::PathPermission, FsPermissions};
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
     traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},
@@ -291,7 +293,11 @@ test_repro!(6538);
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
     let path = config.runner.config.__root.0.join("out/default/Issue6554.t.sol");
-    config.runner.config.fs_permissions.add(PathPermission::read_write(path));
+
+    let mut prj_config = Config::clone(&config.runner.config);
+    prj_config.fs_permissions.add(PathPermission::read_write(path));
+    config.runner.config = Arc::new(prj_config);
+
 });
 
 // https://github.com/foundry-rs/foundry/issues/6759
@@ -305,14 +311,18 @@ test_repro!(6616);
 
 // https://github.com/foundry-rs/foundry/issues/5529
 test_repro!(5529; |config| {
-  config.runner.config.always_use_create_2_factory = true;
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.always_use_create_2_factory = true;
   config.runner.evm_opts.always_use_create_2_factory = true;
+  config.runner.config = Arc::new(prj_config);
 });
 
 // https://github.com/foundry-rs/foundry/issues/6634
 test_repro!(6634; |config| {
-  config.runner.config.always_use_create_2_factory = true;
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.always_use_create_2_factory = true;
   config.runner.evm_opts.always_use_create_2_factory = true;
+  config.runner.config = Arc::new(prj_config);
 });
 
 test_repro!(7481);

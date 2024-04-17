@@ -34,7 +34,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::mpsc::channel,
+    sync::{mpsc::channel, Arc},
     time::Instant,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -273,6 +273,8 @@ impl TestArgs {
         // Clone the output only if we actually need it later for the debugger.
         let output_clone = should_debug.then(|| output.clone());
 
+        let config = Arc::new(config);
+
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
@@ -332,7 +334,7 @@ impl TestArgs {
     pub async fn run_tests(
         &self,
         mut runner: MultiContractRunner,
-        config: Config,
+        config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
     ) -> eyre::Result<TestOutcome> {
