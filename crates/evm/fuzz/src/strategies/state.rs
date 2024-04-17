@@ -9,6 +9,7 @@ use foundry_evm_core::utils::StateChangeset;
 use indexmap::IndexSet;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use proptest::prelude::{BoxedStrategy, Strategy};
+use rand::Rng;
 use revm::{
     db::{CacheDB, DatabaseRef},
     interpreter::opcode::{self, spec_opcode_gas},
@@ -167,11 +168,12 @@ impl FuzzDictionary {
     /// Insert sample values that are reused across multiple runs.
     /// The number of samples is limited to invariant run depth.
     pub fn insert_sample_value(&mut self, value: [u8; 32], limit: u32) {
-        // Insert new samples only if limit not reached
+        // Collect new samples only if limit not reached.
         // This is to make sure we have a fixed data set shared by all runs.
         if self.sample_values.len() < usize::try_from(limit).unwrap() {
             self.sample_values.insert(value);
         }
+        // Add sample also to current run values.
         self.insert_value(value);
     }
 
@@ -185,7 +187,17 @@ impl FuzzDictionary {
 
     #[inline]
     pub fn values(&self) -> &IndexSet<[u8; 32]> {
-        &self.state_values
+        if self.sample_values.is_empty() {
+            &self.state_values
+        } else {
+            let rand_index = rand::thread_rng().gen_range(0..100);
+            // Apply a weight of 40 to collected samples.
+            if rand_index < 40 {
+                &self.sample_values
+            } else {
+                &self.state_values
+            }
+        }
     }
 
     #[inline]
@@ -200,11 +212,6 @@ impl FuzzDictionary {
         }
         for address in self.new_addreses.iter() {
             self.addresses.swap_remove(address);
-        }
-
-        // Add samples collected to be used in subsequent runs.
-        for key in self.sample_values.iter() {
-            self.state_values.insert(key.to_owned());
         }
 
         self.new_values.clear();
