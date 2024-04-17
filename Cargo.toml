@@ -137,7 +137,7 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.5", default-features = false }
+foundry-block-explorers = { version = "0.2.6", default-features = false }
 foundry-compilers = { version = "0.3.17", default-features = false }
 
 ## revm
@@ -146,7 +146,7 @@ revm = { version = "8", default-features = false }
 revm-primitives = { version = "3", default-features = false }
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "413b892", features = [
     "serde",
-] } 
+] }
 
 ## ethers
 ethers = { version = "2.0.14", default-features = false }
@@ -192,7 +192,10 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"

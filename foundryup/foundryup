@@ -8,7 +8,7 @@ FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 BINS=(forge cast anvil chisel)
 
-export RUSTFLAGS="-C target-cpu=native"
+export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
 
 main() {
   need_cmd git
@@ -292,21 +292,21 @@ download() {
   fi
 }
 
-# Banner Function for Foundry 
+# Banner Function for Foundry
 banner() {
   printf '
 
 .xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
- 
+
  ╔═╗ ╔═╗ ╦ ╦ ╔╗╔ ╔╦╗ ╦═╗ ╦ ╦         Portable and modular toolkit
- ╠╣  ║ ║ ║ ║ ║║║  ║║ ╠╦╝ ╚╦╝    for Ethereum Application Development 
+ ╠╣  ║ ║ ║ ║ ║║║  ║║ ╠╦╝ ╚╦╝    for Ethereum Application Development
  ╚   ╚═╝ ╚═╝ ╝╚╝ ═╩╝ ╩╚═  ╩                 written in Rust.
 
 .xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
 
 Repo       : https://github.com/foundry-rs/
-Book       : https://book.getfoundry.sh/                      
-Chat       : https://t.me/foundry_rs/                         
+Book       : https://book.getfoundry.sh/
+Chat       : https://t.me/foundry_rs/
 Support    : https://t.me/foundry_support/
 Contribute : https://github.com/orgs/foundry-rs/projects/2/
 

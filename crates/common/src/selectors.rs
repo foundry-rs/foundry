@@ -56,6 +56,7 @@ impl SignEthClient {
     }
 
     async fn get_text(&self, url: &str) -> reqwest::Result<String> {
+        trace!(%url, "GET");
         self.inner
             .get(url)
             .send()
@@ -73,11 +74,12 @@ impl SignEthClient {
     }
 
     /// Sends a new post request
-    async fn post_json<T: Serialize, R: DeserializeOwned>(
+    async fn post_json<T: Serialize + std::fmt::Debug, R: DeserializeOwned>(
         &self,
         url: &str,
         body: &T,
     ) -> reqwest::Result<R> {
+        trace!(%url, body=?serde_json::to_string(body), "POST");
         self.inner
             .post(url)
             .json(body)
@@ -146,7 +148,7 @@ impl SignEthClient {
             .await?
             .pop() // Not returning on the previous line ensures a vector with exactly 1 element
             .unwrap()
-            .ok_or(eyre::eyre!("No signature found"))
+            .ok_or_else(|| eyre::eyre!("No signature found"))
     }
 
     /// Decodes the given function or event selectors using https://api.openchain.xyz
@@ -165,6 +167,9 @@ impl SignEthClient {
         if selectors.is_empty() {
             return Ok(vec![]);
         }
+
+        debug!(len = selectors.len(), "decoding selectors");
+        trace!(?selectors, "decoding selectors");
 
         // exit early if spurious connection
         self.ensure_not_spurious()?;

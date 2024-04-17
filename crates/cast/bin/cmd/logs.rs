@@ -1,5 +1,6 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_json_abi::Event;
+use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use cast::Cast;
@@ -93,6 +94,14 @@ impl LogsArgs {
             return Ok(())
         }
 
+        // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
+        //  currently the alloy `eth_subscribe` impl does not work with all transports, so we use
+        // the builtin transport here for now
+        let url = config.get_rpc_url_or_localhost_http()?;
+        let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
+            .on_builtin(url.as_ref())
+            .await?;
+        let cast = Cast::new(&provider);
         let mut stdout = io::stdout();
         cast.subscribe(filter, &mut stdout, json).await?;
 

@@ -435,8 +435,9 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         // Exclude any artifact without mutable functions.
-        for (artifact, (abi, _)) in self.project_contracts.iter() {
-            if abi
+        for (artifact, contract) in self.project_contracts.iter() {
+            if contract
+                .abi
                 .functions()
                 .filter(|func| {
                     !matches!(
@@ -474,12 +475,14 @@ impl<'a> InvariantExecutor<'a> {
         contract: String,
         selectors: &[FixedBytes<4>],
     ) -> eyre::Result<String> {
-        if let Some((artifact, (abi, _))) =
+        if let Some((artifact, contract_data)) =
             self.project_contracts.find_by_name_or_identifier(&contract)?
         {
             // Check that the selectors really exist for this contract.
             for selector in selectors {
-                abi.functions()
+                contract_data
+                    .abi
+                    .functions()
                     .find(|func| func.selector().as_slice() == selector.as_slice())
                     .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
@@ -563,7 +566,7 @@ impl<'a> InvariantExecutor<'a> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, (abi, _))) =
+                if let Some((_, contract)) =
                     self.project_contracts.find_by_name_or_identifier(identifier)?
                 {
                     combined
@@ -574,10 +577,10 @@ impl<'a> InvariantExecutor<'a> {
                             let (_, contract_abi, _) = entry;
 
                             // Extend the ABI's function list with the new functions.
-                            contract_abi.functions.extend(abi.functions.clone());
+                            contract_abi.functions.extend(contract.abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| (identifier.to_string(), abi.clone(), vec![]));
+                        .or_insert_with(|| (identifier.to_string(), contract.abi.clone(), vec![]));
                 }
             }
         }
