@@ -159,7 +159,7 @@ pub enum ForgeSubcommand {
     #[clap(visible_alias = "vb")]
     VerifyBytecode(VerifyBytecodeArgs),
 
-    /// Gets solc version for the project
+    /// Gets solc version for the given path.
     GetSolc(GetSolcArgs),
 }
 
