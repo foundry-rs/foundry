@@ -51,6 +51,7 @@ pub mod flatten;
 pub mod fmt;
 pub mod geiger;
 pub mod generate;
+pub mod getsolc;
 pub mod init;
 pub mod inspect;
 pub mod install;

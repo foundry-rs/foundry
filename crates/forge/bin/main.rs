@@ -109,6 +109,7 @@ fn main() -> Result<()> {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
         ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
+        ForgeSubcommand::GetSolc(cmd) => cmd.run(),
     }
 }
 
