@@ -1642,7 +1642,7 @@ interface Vm {
 
     /// Returns true if `forge` command was executed in given context.
     #[cheatcode(group = Environment)]
-    function isContext(ForgeContext context) external view returns (bool isContext);
+    function isContext(ForgeContext context) external view returns (bool result);
 
     // ======== Scripts ========
 
@@ -1751,7 +1751,7 @@ interface Vm {
     /// Returns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.
     /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
-    function indexOf(string memory input, string memory key) external pure returns (uint256);
+    function indexOf(string calldata input, string calldata key) external pure returns (uint256);
 
     // ======== JSON Parsing and Manipulation ========
 

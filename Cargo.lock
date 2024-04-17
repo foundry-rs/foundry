@@ -235,6 +235,9 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-trace",
  "alloy-transport",
+ "alloy-transport-http",
+ "alloy-transport-ipc",
+ "alloy-transport-ws",
  "async-stream",
  "async-trait",
  "auto_impl",
@@ -242,9 +245,11 @@ dependencies = [
  "futures",
  "futures-utils-wasm",
  "lru",
+ "reqwest 0.12.3",
  "serde_json",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -297,14 +302,18 @@ dependencies = [
  "alloy-pubsub",
  "alloy-transport",
  "alloy-transport-http",
+ "alloy-transport-ipc",
+ "alloy-transport-ws",
  "futures",
  "pin-project",
+ "reqwest 0.12.3",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
  "tower",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3810,9 +3819,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c141e710b1f6171b9e3765f354f6876f126aa8ceac2b4039264ad6501157eea"
+checksum = "8caca67f174741b05c2f4188d3ee93420342130eb2a768abb9b885bb8b918df2"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
