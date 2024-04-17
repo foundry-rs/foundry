@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -23,7 +24,7 @@ async fn can_dev_get_balance_ws() {
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
-        let balance = provider.get_balance(acc, None).await.unwrap();
+        let balance = provider.get_balance(acc, BlockId::latest()).await.unwrap();
         assert_eq!(balance, genesis_balance);
     }
 }

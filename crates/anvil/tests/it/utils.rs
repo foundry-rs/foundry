@@ -35,9 +35,7 @@ pub async fn deploy_alloy_greeter(
     greeting: String,
     deployer: aAddress,
 ) -> aAddress {
-    let alloy_greeter =
-        AlloyGreeter::deploy_builder(provider, greeting).from(deployer).deploy().await.unwrap();
-    alloy_greeter
+    AlloyGreeter::deploy_builder(provider, greeting).from(deployer).deploy().await.unwrap()
 }
 
 pub fn http_provider(http_endpoint: &str) -> AlloyRetryProvider {

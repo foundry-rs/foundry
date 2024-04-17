@@ -1,7 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -123,7 +123,7 @@ impl EstimateArgs {
 
         req.set_input(data.into());
 
-        let gas = provider.estimate_gas(&req, None).await?;
+        let gas = provider.estimate_gas(&req, BlockId::latest()).await?;
         println!("{gas}");
         Ok(())
     }

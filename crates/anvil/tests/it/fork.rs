@@ -80,7 +80,7 @@ async fn test_fork_eth_get_balance() {
     for _ in 0..10 {
         let addr = Address::random();
         let balance = api.balance(addr, None).await.unwrap();
-        let provider_balance = provider.get_balance(addr, None).await.unwrap();
+        let provider_balance = provider.get_balance(addr, BlockId::latest()).await.unwrap();
         assert_eq!(balance, provider_balance)
     }
 }
@@ -96,13 +96,11 @@ async fn test_fork_eth_get_balance_after_mine() {
 
     let address = Address::random();
 
-    let _balance =
-        provider.get_balance(address, Some(BlockId::Number(number.into()))).await.unwrap();
+    let _balance = provider.get_balance(address, BlockId::Number(number.into())).await.unwrap();
 
     api.evm_mine(None).await.unwrap();
 
-    let _balance =
-        provider.get_balance(address, Some(BlockId::Number(number.into()))).await.unwrap();
+    let _balance = provider.get_balance(address, BlockId::Number(number.into())).await.unwrap();
 }
 
 // <https://github.com/foundry-rs/foundry/issues/4082>
@@ -158,13 +156,13 @@ async fn test_fork_eth_get_nonce() {
     for _ in 0..10 {
         let addr = Address::random();
         let api_nonce = api.transaction_count(addr, None).await.unwrap().to::<u64>();
-        let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
+        let provider_nonce = provider.get_transaction_count(addr, BlockId::latest()).await.unwrap();
         assert_eq!(api_nonce, provider_nonce);
     }
 
     let addr = Config::DEFAULT_SENDER;
     let api_nonce = api.transaction_count(addr, None).await.unwrap().to::<u64>();
-    let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
+    let provider_nonce = provider.get_transaction_count(addr, BlockId::latest()).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);
 }
 
@@ -189,20 +187,20 @@ async fn test_fork_reset() {
     let from = accounts[0].address();
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
 
-    let tx = TransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    assert_eq!(tx.transaction_index, 0);
+    assert_eq!(tx.transaction_index, Some(0));
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
 
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(block_number) }))
         .await
@@ -211,11 +209,11 @@ async fn test_fork_reset() {
     // reset block number
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce);
-    let balance = provider.get_balance(from, None).await.unwrap();
+    let balance = provider.get_balance(from, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
-    let balance = provider.get_balance(to, None).await.unwrap();
+    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
 
     // reset to latest
@@ -235,7 +233,7 @@ async fn test_fork_reset_setup() {
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, 0);
 
-    let local_balance = provider.get_balance(dead_addr, None).await.unwrap();
+    let local_balance = provider.get_balance(dead_addr, BlockId::latest()).await.unwrap();
     assert_eq!(local_balance, U256::ZERO);
 
     api.anvil_reset(Some(Forking {
@@ -248,7 +246,7 @@ async fn test_fork_reset_setup() {
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, BLOCK_NUMBER);
 
-    let remote_balance = provider.get_balance(dead_addr, None).await.unwrap();
+    let remote_balance = provider.get_balance(dead_addr, BlockId::latest()).await.unwrap();
     assert_eq!(remote_balance, U256::from(DEAD_BALANCE_AT_BLOCK_NUMBER));
 }
 
@@ -263,30 +261,30 @@ async fn test_fork_snapshotting() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
     let provider = http_provider(&handle.http_endpoint());
-    let tx = TransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
     let tx = WithOtherFields::new(tx);
 
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let provider = handle.http_provider();
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     assert!(api.evm_revert(snapshot).await.unwrap());
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce);
-    let balance = provider.get_balance(from, None).await.unwrap();
+    let balance = provider.get_balance(from, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
-    let balance = provider.get_balance(to, None).await.unwrap();
+    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 }
@@ -303,29 +301,29 @@ async fn test_fork_snapshotting_repeated() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(92u64)).unwrap();
 
-    let tx = TransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
     let tx = WithOtherFields::new(tx);
     let tx_provider = http_provider(&handle.http_endpoint());
     let _ = tx_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     let _second_snapshot = api.evm_snapshot().await.unwrap();
 
     assert!(api.evm_revert(snapshot).await.unwrap());
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce);
-    let balance = provider.get_balance(from, None).await.unwrap();
+    let balance = provider.get_balance(from, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
-    let balance = provider.get_balance(to, None).await.unwrap();
+    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
@@ -353,38 +351,41 @@ async fn test_fork_snapshotting_blocks() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
     // send the transaction
-    let tx = TransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
     let tx = WithOtherFields::new(tx);
     let _ = tx_provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     // revert snapshot
     assert!(api.evm_revert(snapshot).await.unwrap());
 
-    assert_eq!(initial_nonce, provider.get_transaction_count(from, None).await.unwrap());
+    assert_eq!(
+        initial_nonce,
+        provider.get_transaction_count(from, BlockId::latest()).await.unwrap()
+    );
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number);
 
     // repeat transaction
     let _ = tx_provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
 
     // revert again: nothing to revert since snapshot gone
     assert!(!api.evm_revert(snapshot).await.unwrap());
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
@@ -400,11 +401,11 @@ async fn test_separate_states() {
 
     let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
 
-    let remote_balance = provider.get_balance(addr, None).await.unwrap();
+    let remote_balance = provider.get_balance(addr, BlockId::latest()).await.unwrap();
     assert_eq!(remote_balance, U256::from(12556104082473169733500u128));
 
     api.anvil_set_balance(addr, U256::from(1337u64)).await.unwrap();
-    let balance = provider.get_balance(addr, None).await.unwrap();
+    let balance = provider.get_balance(addr, BlockId::latest()).await.unwrap();
     assert_eq!(balance, U256::from(1337u64));
 
     let fork = api.get_fork().unwrap();
@@ -454,32 +455,44 @@ async fn can_reset_properly() {
     let origin_nonce = 1u64;
     origin_api.anvil_set_nonce(account, U256::from(origin_nonce)).await.unwrap();
 
-    assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce,
+        origin_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     let (fork_api, fork_handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.http_provider();
     let fork_tx_provider = http_provider(&fork_handle.http_endpoint());
-    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce,
+        fork_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     let to = Address::random();
-    let to_balance = fork_provider.get_balance(to, None).await.unwrap();
-    let tx = TransactionRequest::default().from(account).to(Some(to)).value(U256::from(1337u64));
+    let to_balance = fork_provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let tx = TransactionRequest::default().from(account).to(to).value(U256::from(1337u64));
     let tx = WithOtherFields::new(tx);
     let tx = fork_tx_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     // nonce incremented by 1
-    assert_eq!(origin_nonce + 1, fork_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce + 1,
+        fork_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     // resetting to origin state
     fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     // nonce reset to origin
-    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce,
+        fork_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     // balance is reset
-    assert_eq!(to_balance, fork_provider.get_balance(to, None).await.unwrap());
+    assert_eq!(to_balance, fork_provider.get_balance(to, BlockId::latest()).await.unwrap());
 
     // tx does not exist anymore
     assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.is_err())
@@ -500,10 +513,8 @@ async fn test_fork_timestamp() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
 
-    let tx = TransactionRequest::default()
-        .to(Some(Address::random()))
-        .value(U256::from(1337u64))
-        .from(from);
+    let tx =
+        TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     let status = tx.inner.inner.inner.receipt.status;
@@ -526,10 +537,8 @@ async fn test_fork_timestamp() {
         provider.get_block(BlockId::Number(BLOCK_NUMBER.into()), false).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
-    let tx = TransactionRequest::default()
-        .to(Some(Address::random()))
-        .value(U256::from(1337u64))
-        .from(from);
+    let tx =
+        TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -544,20 +553,16 @@ async fn test_fork_timestamp() {
         .await
         .unwrap();
     api.evm_set_next_block_timestamp(BLOCK_TIMESTAMP + 1).unwrap();
-    let tx = TransactionRequest::default()
-        .to(Some(Address::random()))
-        .value(U256::from(1337u64))
-        .from(from);
+    let tx =
+        TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP + 1);
 
-    let tx = TransactionRequest::default()
-        .to(Some(Address::random()))
-        .value(U256::from(1337u64))
-        .from(from);
+    let tx =
+        TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -590,17 +595,17 @@ async fn test_fork_can_send_tx() {
 
     api.anvil_set_balance(signer, U256::MAX).await.unwrap();
     api.anvil_impersonate_account(signer).await.unwrap(); // Added until SignerFiller for alloy-provider is fixed.
-    let balance = provider.get_balance(signer, None).await.unwrap();
+    let balance = provider.get_balance(signer, BlockId::latest()).await.unwrap();
     assert_eq!(balance, U256::MAX);
 
     let addr = Address::random();
     let val = U256::from(1337u64);
-    let tx = TransactionRequest::default().to(Some(addr)).value(val).from(signer);
+    let tx = TransactionRequest::default().to(addr).value(val).from(signer);
     let tx = WithOtherFields::new(tx);
     // broadcast it via the eth_sendTransaction API
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let balance = provider.get_balance(addr, None).await.unwrap();
+    let balance = provider.get_balance(addr, BlockId::latest()).await.unwrap();
     assert_eq!(balance, val);
 }
 
@@ -635,7 +640,7 @@ async fn test_fork_nft_set_approve_all() {
     let approval = nouns.setApprovalForAll(nouns_addr, true);
     let tx = TransactionRequest::default()
         .from(owner)
-        .to(Some(nouns_addr))
+        .to(nouns_addr)
         .with_input(approval.calldata().to_owned());
     let tx = WithOtherFields::new(tx);
     api.anvil_impersonate_account(owner).await.unwrap();
@@ -651,7 +656,7 @@ async fn test_fork_nft_set_approve_all() {
     let call = nouns.transferFrom(real_owner._0, signer, token_id);
     let tx = TransactionRequest::default()
         .from(real_owner._0)
-        .to(Some(nouns_addr))
+        .to(nouns_addr)
         .with_input(call.calldata().to_owned());
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -712,7 +717,7 @@ async fn test_fork_can_send_opensea_tx() {
     let to: Address = "0x00000000006c3852cbef3e08e8df289169ede581".parse().unwrap();
     let tx = TransactionRequest::default()
         .from(sender)
-        .to(Some(to))
+        .to(to)
         .value(U256::from(20000000000000000u64))
         .with_input(input)
         .with_gas_price(22180711707u128)
@@ -737,7 +742,7 @@ async fn test_fork_base_fee() {
 
     let addr = Address::random();
     let val = U256::from(1337u64);
-    let tx = TransactionRequest::default().from(from).to(Some(addr)).value(val);
+    let tx = TransactionRequest::default().from(from).to(addr).value(val);
     let tx = WithOtherFields::new(tx);
     let _res = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 }
@@ -803,9 +808,9 @@ async fn test_fork_call() {
     let block_number = 14746300u64;
 
     let provider = http_provider(rpc::next_http_archive_rpc_endpoint().as_str());
-    let tx = TransactionRequest::default().to(Some(to)).with_input(input.clone());
+    let tx = TransactionRequest::default().to(to).with_input(input.clone());
     let tx = WithOtherFields::new(tx);
-    let res0 = provider.call(&tx, Some(BlockId::Number(block_number.into()))).await.unwrap();
+    let res0 = provider.call(&tx, BlockId::Number(block_number.into())).await.unwrap();
 
     let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 
@@ -959,7 +964,7 @@ async fn can_impersonate_in_fork() {
     // fund the impersonated account
     api.anvil_set_balance(token_holder, U256::from(1e18)).await.unwrap();
 
-    let tx = TransactionRequest::default().from(token_holder).to(Some(to)).value(val);
+    let tx = TransactionRequest::default().from(token_holder).to(to).value(val);
     let tx = WithOtherFields::new(tx);
     let res = provider.send_transaction(tx.clone()).await;
     res.unwrap_err();
@@ -971,7 +976,7 @@ async fn can_impersonate_in_fork() {
     let status = res.inner.inner.inner.receipt.status;
     assert!(status);
 
-    let balance = provider.get_balance(to, None).await.unwrap();
+    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, val);
 
     api.anvil_stop_impersonating_account(token_holder).await.unwrap();
@@ -1089,10 +1094,8 @@ async fn test_fork_reset_moonbeam() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
 
-    let tx = TransactionRequest::default()
-        .to(Some(Address::random()))
-        .value(U256::from(1337u64))
-        .from(from);
+    let tx =
+        TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     api.anvil_impersonate_account(from).await.unwrap();
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -1107,10 +1110,8 @@ async fn test_fork_reset_moonbeam() {
     .await
     .unwrap();
 
-    let tx = TransactionRequest::default()
-        .to(Some(Address::random()))
-        .value(U256::from(1337u64))
-        .from(from);
+    let tx =
+        TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     let status = tx.inner.inner.inner.receipt.status;

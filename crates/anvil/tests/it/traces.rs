@@ -32,7 +32,7 @@ async fn test_get_transfer_parity_traces() {
     let to = accounts[1].address();
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
     // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::default().to(Some(to)).value(amount).from(from);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
     let tx = WithOtherFields::new(tx);
 
     // broadcast it via the eth_sendTransaction API
@@ -166,7 +166,7 @@ async fn test_trace_address_fork() {
     let from: Address = "0x2e4777139254ff76db957e284b186a4507ff8c67".parse().unwrap();
     let to: Address = "0xe2f2a5c287993345a840db3b0845fbc70f5935a5".parse().unwrap();
     let tx = TransactionRequest::default()
-        .to(Some(to))
+        .to(to)
         .from(from)
         .with_input(input.into())
         .with_gas_limit(300_000);
@@ -364,7 +364,7 @@ async fn test_trace_address_fork2() {
     let from: Address = "0xa009fa1ac416ec02f6f902a3a4a584b092ae6123".parse().unwrap();
     let to: Address = "0x99999999d116ffa7d76590de2f427d8e15aeb0b8".parse().unwrap();
     let tx = TransactionRequest::default()
-        .to(Some(to))
+        .to(to)
         .from(from)
         .with_input(input.into())
         .with_gas_limit(350_000);

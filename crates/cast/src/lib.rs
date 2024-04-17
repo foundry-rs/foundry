@@ -117,6 +117,7 @@ where
         func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
+        let block = block.unwrap_or(BlockId::latest());
         let res = self.provider.call(req, block).await?;
 
         let mut decoded = vec![];
@@ -130,9 +131,7 @@ where
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
                         if let Some(addr) = req.to {
-                            if let Ok(code) =
-                                self.provider.get_code_at(addr, block.unwrap_or_default()).await
-                            {
+                            if let Ok(code) = self.provider.get_code_at(addr, block).await {
                                 if code.is_empty() {
                                     eyre::bail!("contract {addr:?} does not have any code")
                                 }
@@ -186,7 +185,8 @@ where
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let access_list = self.provider.create_access_list(req, block).await?;
+        let access_list =
+            self.provider.create_access_list(req, block.unwrap_or(BlockId::latest())).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -208,7 +208,7 @@ where
     }
 
     pub async fn balance(&self, who: Address, block: Option<BlockId>) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block).await?)
+        Ok(self.provider.get_balance(who, block.unwrap_or(BlockId::latest())).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -452,7 +452,7 @@ where
     /// # }
     /// ```
     pub async fn nonce(&self, who: Address, block: Option<BlockId>) -> Result<u64> {
-        Ok(self.provider.get_transaction_count(who, block).await?)
+        Ok(self.provider.get_transaction_count(who, block.unwrap_or(BlockId::latest())).await?)
     }
 
     /// # Example
@@ -475,7 +475,10 @@ where
     pub async fn implementation(&self, who: Address, block: Option<BlockId>) -> Result<String> {
         let slot =
             B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
-        let value = self.provider.get_storage_at(who, slot.into(), block).await?;
+        let value = self
+            .provider
+            .get_storage_at(who, slot.into(), block.unwrap_or(BlockId::latest()))
+            .await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
@@ -500,7 +503,10 @@ where
     pub async fn admin(&self, who: Address, block: Option<BlockId>) -> Result<String> {
         let slot =
             B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
-        let value = self.provider.get_storage_at(who, slot.into(), block).await?;
+        let value = self
+            .provider
+            .get_storage_at(who, slot.into(), block.unwrap_or(BlockId::latest()))
+            .await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
     }
@@ -732,7 +738,11 @@ where
     ) -> Result<String> {
         Ok(format!(
             "{:?}",
-            B256::from(self.provider.get_storage_at(from, slot.into(), block).await?)
+            B256::from(
+                self.provider
+                    .get_storage_at(from, slot.into(), block.unwrap_or(BlockId::latest()))
+                    .await?
+            )
         ))
     }
 
