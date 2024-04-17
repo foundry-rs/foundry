@@ -1,20 +1,15 @@
 //! Support for compiling [foundry_compilers::Project]
 
-use crate::{
-    compact_to_contract, glob::GlobMatcher, term::SpinnerReporter,
-    TestFunctionExt,
-};
+use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{
-        BytecodeObject, ContractBytecodeSome, Libraries,
-    },
+    artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, FileFilter, Project, ProjectCompileOutput, ProjectPathsConfig,
-    Solc, SolcConfig,
+    Artifact, ArtifactId, FileFilter, Project, ProjectCompileOutput, ProjectPathsConfig, Solc,
+    SolcConfig,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};

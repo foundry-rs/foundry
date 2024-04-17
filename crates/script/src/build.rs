@@ -17,7 +17,6 @@ use foundry_common::{
 };
 use foundry_compilers::{
     artifacts::{BytecodeObject, Libraries},
-    cache::SolFilesCache,
     info::ContractInfo,
     ArtifactId, ProjectCompileOutput,
 };
