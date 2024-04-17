@@ -535,7 +535,7 @@ impl EtherscanClient for Client {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use crate::cmd::{clone::compile_project, install::DependencyInstallOpts};
 
@@ -545,6 +545,7 @@ mod tests {
         contract::{ContractCreationData, ContractMetadata},
         Client,
     };
+    use foundry_common::rpc::next_etherscan_api_key;
     use foundry_compilers::{Artifact, ProjectCompileOutput};
     use foundry_config::Chain;
     use hex::ToHex;
@@ -624,13 +625,12 @@ mod tests {
         // create folder if not exists
         std::fs::create_dir_all(&data_folder).unwrap();
         // create metadata.json and creation_data.json
-        let client = Client::new(Chain::mainnet(), "").unwrap();
+        let client = Client::new(Chain::mainnet(), next_etherscan_api_key()).unwrap();
         let meta = client.contract_source_code(address).await.unwrap();
         // dump json
         let json = serde_json::to_string_pretty(&meta).unwrap();
         // write to metadata.json
         std::fs::write(data_folder.join("metadata.json"), json).unwrap();
-        std::thread::sleep(Duration::from_secs(5));
         let creation_data = client.contract_creation_data(address).await.unwrap();
         // dump json
         let json = serde_json::to_string_pretty(&creation_data).unwrap();
@@ -646,7 +646,6 @@ mod tests {
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default()).unwrap();
         project_root = dunce::canonicalize(&project_root).unwrap();
         CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false).await.unwrap();
-        std::thread::sleep(Duration::from_secs(5));
         CloneArgs::collect_compilation_metadata(
             &meta,
             Chain::mainnet(),

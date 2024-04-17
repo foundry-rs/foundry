@@ -51,6 +51,15 @@ static ALCHEMY_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
     keys
 });
 
+// List of alchemy keys for mainnet
+static ETHERSCAN_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+    let mut keys = vec!["MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6"];
+
+    keys.shuffle(&mut rand::thread_rng());
+
+    keys
+});
+
 /// counts how many times a rpc endpoint was requested for _mainnet_
 static NEXT_RPC_ENDPOINT: AtomicUsize = AtomicUsize::new(0);
 
@@ -109,6 +118,12 @@ pub fn next_http_archive_rpc_endpoint() -> String {
 pub fn next_ws_archive_rpc_endpoint() -> String {
     let idx = next() % ALCHEMY_MAINNET_KEYS.len();
     format!("wss://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+}
+
+/// Returns the next etherscan api key
+pub fn next_etherscan_api_key() -> String {
+    let idx = next() % ETHERSCAN_MAINNET_KEYS.len();
+    ETHERSCAN_MAINNET_KEYS[idx].to_string()
 }
 
 #[cfg(test)]

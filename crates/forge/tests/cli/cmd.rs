@@ -1,6 +1,7 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
+use foundry_common::rpc::next_etherscan_api_key;
 use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
@@ -439,7 +440,13 @@ forgetest!(can_clone, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["clone", "0x044b75f554b886A065b9567891e45c79542d7357"]).arg(prj.root());
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root());
     cmd.assert_non_empty_stdout();
 
     let s = read_string(&foundry_toml);
@@ -450,10 +457,14 @@ forgetest!(can_clone, |prj, cmd| {
 forgetest!(can_clone_quiet, |prj, cmd| {
     prj.wipe();
 
-    // sleep to avoid rate limiting
-    std::thread::sleep(std::time::Duration::from_secs(5));
-
-    cmd.args(["clone", "--quiet", "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec"]).arg(prj.root());
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--quiet",
+        "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec",
+    ])
+    .arg(prj.root());
     cmd.assert_empty_stdout();
 });
 
