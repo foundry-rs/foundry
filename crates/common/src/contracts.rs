@@ -52,6 +52,7 @@ impl ContractsByArtifact {
                 .collect(),
         )
     }
+
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter()
