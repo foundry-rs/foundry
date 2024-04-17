@@ -285,7 +285,7 @@ impl Cheatcode for prevrandaoCall {
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.env.block.prevrandao = Some(*newPrevrandao);
+        ccx.ecx.env.block.prevrandao = Some((*newPrevrandao).into());
         Ok(Default::default())
     }
 }
