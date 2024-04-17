@@ -51,9 +51,16 @@ static ALCHEMY_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
     keys
 });
 
-// List of alchemy keys for mainnet
+// List of etherscan keys for mainnet
 static ETHERSCAN_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
-    let mut keys = vec!["MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6"];
+    let mut keys = vec![
+        "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
+        "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",
+        "ZSMDY6BI2H55MBE3G9CUUQT4XYUDBB6ZSK",
+        "4FYHTY429IXYMJNS4TITKDMUKW5QRYDX61",
+        "QYKNT5RHASZ7PGQE68FNQWH99IXVTVVD2I",
+        "VXMQ117UN58Y4RHWUB8K1UGCEA7UQEWK55",
+    ];
 
     keys.shuffle(&mut rand::thread_rng());
 
