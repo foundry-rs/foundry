@@ -33,8 +33,14 @@ impl<'a> ContractVisitor<'a> {
     pub fn visit(mut self, contract_ast: Node) -> eyre::Result<Self> {
         // Find all functions and walk their AST
         for node in contract_ast.nodes {
-            if node.node_type == NodeType::FunctionDefinition {
-                self.visit_function_definition(node.clone())?;
+            match &node.node_type {
+                NodeType::FunctionDefinition => {
+                    self.visit_function_definition(node)?;
+                }
+                NodeType::ModifierDefinition => {
+                    self.visit_modifier_definition(node)?;
+                }
+                _ => {}
             }
         }
 
@@ -45,15 +51,29 @@ impl<'a> ContractVisitor<'a> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
 
-        // TODO(onbjerg): Re-enable constructor parsing when we walk both the deployment and runtime
-        // sourcemaps. Currently this fails because we are trying to look for anchors in the runtime
-        // sourcemap.
         // TODO(onbjerg): Figure out why we cannot find anchors for the receive function
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
-        if kind == "constructor" || kind == "receive" {
+        if kind == "receive" {
             return Ok(())
         }
+
+        match node.body.take() {
+            Some(body) => {
+                self.push_item(CoverageItem {
+                    kind: CoverageItemKind::Function { name },
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
+                self.visit_block(*body)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn visit_modifier_definition(&mut self, mut node: Node) -> eyre::Result<()> {
+        let name: String =
+            node.attribute("name").ok_or_else(|| eyre::eyre!("Modifier has no name"))?;
 
         match node.body.take() {
             Some(body) => {
@@ -93,7 +113,6 @@ impl<'a> ContractVisitor<'a> {
             NodeType::Break |
             NodeType::Continue |
             NodeType::EmitStatement |
-            NodeType::PlaceholderStatement |
             NodeType::RevertStatement |
             NodeType::YulAssignment |
             NodeType::YulBreak |
@@ -106,6 +125,9 @@ impl<'a> ContractVisitor<'a> {
                 });
                 Ok(())
             }
+
+            // Skip placeholder statements as they are never referenced in source maps.
+            NodeType::PlaceholderStatement => Ok(()),
 
             // Return with eventual subcall
             NodeType::Return => {
@@ -341,12 +363,13 @@ impl<'a> ContractVisitor<'a> {
             NodeType::ForStatement |
             NodeType::IfStatement |
             NodeType::InlineAssembly |
-            NodeType::PlaceholderStatement |
             NodeType::Return |
             NodeType::RevertStatement |
             NodeType::TryStatement |
             NodeType::VariableDeclarationStatement |
             NodeType::WhileStatement => self.visit_statement(node),
+            // Skip placeholder statements as they are never referenced in source maps.
+            NodeType::PlaceholderStatement => Ok(()),
             _ => {
                 warn!("unexpected node type, expected block or statement: {:?}", node.node_type);
                 Ok(())
