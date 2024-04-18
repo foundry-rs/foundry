@@ -159,6 +159,11 @@ impl Executor {
         Ok(self.backend.basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
+    /// Gets the nonce of an account
+    pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
+        Ok(self.backend.basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or_default())
+    }
+
     #[inline]
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
         self.inspector.tracing(tracing);

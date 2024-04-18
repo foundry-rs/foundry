@@ -6,7 +6,7 @@ use crate::{
     ScriptArgs, ScriptConfig,
 };
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
@@ -21,10 +21,13 @@ use foundry_compilers::{
     utils::source_files_iter,
     ArtifactId, ProjectCompileOutput, SOLC_EXTENSIONS,
 };
-use foundry_linking::{LinkOutput, Linker};
+use foundry_config::Config;
+use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_linking::Linker;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
+#[derive(Debug)]
 pub struct BuildData {
     /// Root of the project
     pub project_root: PathBuf,
@@ -41,41 +44,59 @@ impl BuildData {
 
     /// Links the build data with given libraries, using sender and nonce to compute addresses of
     /// missing libraries.
-    pub fn link(
-        self,
-        known_libraries: Libraries,
-        sender: Address,
-        nonce: u64,
-    ) -> Result<LinkedBuildData> {
-        let link_output = self.get_linker().link_with_nonce_or_address(
-            known_libraries,
-            sender,
-            nonce,
+    pub fn link(self, config: &Config, sender: Address, nonce: u64) -> Result<LinkedBuildData> {
+        let known_libraries = config.libraries_with_remappings()?;
+        let (libraries, predeploy_libs) = if let Ok(output) = self.get_linker().link_with_create2(
+            known_libraries.clone(),
+            DEFAULT_CREATE2_DEPLOYER,
+            config.create2_library_salt,
             &self.target,
-        )?;
+        ) {
+            (
+                output.libraries,
+                ScriptPredeployLibraries::Create2(
+                    output.libs_to_deploy,
+                    config.create2_library_salt,
+                ),
+            )
+        } else {
+            let output = self.get_linker().link_with_nonce_or_address(
+                known_libraries,
+                sender,
+                nonce,
+                &self.target,
+            )?;
 
-        LinkedBuildData::new(link_output, self)
+            (output.libraries, ScriptPredeployLibraries::Default(output.libs_to_deploy))
+        };
+
+        LinkedBuildData::new(libraries, predeploy_libs, self)
     }
 
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
     /// to fully link target contract.
     pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        let link_output = self.get_linker().link_with_nonce_or_address(
-            libraries,
-            Address::ZERO,
-            0,
-            &self.target,
-        )?;
+        LinkedBuildData::new(libraries, ScriptPredeployLibraries::Default(Vec::new()), self)
+    }
+}
 
-        if !link_output.libs_to_deploy.is_empty() {
-            eyre::bail!("incomplete libraries set");
+#[derive(Debug)]
+pub enum ScriptPredeployLibraries {
+    Default(Vec<Bytes>),
+    Create2(Vec<Bytes>, B256),
+}
+
+impl ScriptPredeployLibraries {
+    pub fn libraries_count(&self) -> usize {
+        match self {
+            Self::Default(libs) => libs.len(),
+            Self::Create2(libs, _) => libs.len(),
         }
-
-        LinkedBuildData::new(link_output, self)
     }
 }
 
 /// Container for the linked contracts and their dependencies
+#[derive(Debug)]
 pub struct LinkedBuildData {
     /// Original build data, might be used to relink this object with different libraries.
     pub build_data: BuildData,
@@ -84,30 +105,27 @@ pub struct LinkedBuildData {
     /// Libraries used to link the contracts.
     pub libraries: Libraries,
     /// Libraries that need to be deployed by sender before script execution.
-    pub predeploy_libraries: Vec<Bytes>,
+    pub predeploy_libraries: ScriptPredeployLibraries,
     /// Source files of the contracts. Used by debugger.
     pub sources: ContractSources,
 }
 
 impl LinkedBuildData {
-    pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
+    pub fn new(
+        libraries: Libraries,
+        predeploy_libraries: ScriptPredeployLibraries,
+        build_data: BuildData,
+    ) -> Result<Self> {
         let sources = ContractSources::from_project_output(
             &build_data.output,
             &build_data.project_root,
-            &link_output.libraries,
+            &libraries,
         )?;
 
-        let known_contracts = ContractsByArtifact::new(
-            build_data.get_linker().get_linked_artifacts(&link_output.libraries)?,
-        );
+        let known_contracts =
+            ContractsByArtifact::new(build_data.get_linker().get_linked_artifacts(&libraries)?);
 
-        Ok(Self {
-            build_data,
-            known_contracts,
-            libraries: link_output.libraries,
-            predeploy_libraries: link_output.libs_to_deploy,
-            sources,
-        })
+        Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
     }
 
     /// Fetches target bytecode from linked contracts.
@@ -217,8 +235,7 @@ impl CompiledState {
 
         let sender = script_config.evm_opts.sender;
         let nonce = script_config.sender_nonce;
-        let known_libraries = script_config.config.libraries_with_remappings()?;
-        let build_data = build_data.link(known_libraries, sender, nonce)?;
+        let build_data = build_data.link(&script_config.config, sender, nonce)?;
 
         Ok(LinkedState { args, script_config, script_wallets, build_data })
     }

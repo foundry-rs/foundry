@@ -1,6 +1,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
@@ -8,7 +8,7 @@ use foundry_compilers::{
 };
 use semver::Version;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -22,6 +22,8 @@ pub enum LinkerError {
     MissingTargetArtifact,
     #[error(transparent)]
     InvalidAddress(<Address as std::str::FromStr>::Err),
+    #[error("cyclic dependency found, can't link libraries via CREATE2")]
+    CyclicDependency,
 }
 
 pub struct Linker<'a> {
@@ -168,6 +170,66 @@ impl<'a> Linker<'a> {
                 Ok(self.link(id, &libraries)?.get_bytecode_bytes().unwrap().into_owned())
             })
             .collect::<Result<Vec<_>, LinkerError>>()?;
+
+        Ok(LinkOutput { libraries, libs_to_deploy })
+    }
+
+    pub fn link_with_create2(
+        &'a self,
+        libraries: Libraries,
+        sender: Address,
+        salt: B256,
+        target: &'a ArtifactId,
+    ) -> Result<LinkOutput, LinkerError> {
+        // Library paths in `link_references` keys are always stripped, so we have to strip
+        // user-provided paths to be able to match them correctly.
+        let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
+
+        let mut needed_libraries = BTreeSet::new();
+        self.collect_dependencies(target, &mut needed_libraries)?;
+
+        let mut needed_libraries = needed_libraries
+            .into_iter()
+            .filter(|id| {
+                // Filter out already provided libraries.
+                let (file, name) = self.convert_artifact_id_to_lib_path(id);
+                !libraries.libs.contains_key(&file) || !libraries.libs[&file].contains_key(&name)
+            })
+            .map(|id| {
+                // Link library with provided libs and extract bytecode object (possibly unlinked).
+                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap().object;
+                (id, bytecode)
+            })
+            .collect::<HashMap<_, _>>();
+
+        let mut libs_to_deploy = Vec::new();
+
+        // Iteratively compute addresses and link libraries until we have no unlinked libraries
+        // left.
+        while !needed_libraries.is_empty() {
+            // Find any library which is fully linked.
+            let deployable = needed_libraries
+                .iter()
+                .find(|(_, bytecode)| !bytecode.is_unlinked())
+                .map(|(id, _)| *id);
+
+            // If we haven't found any deployable library, it means we have a cyclic dependency.
+            let Some(id) = deployable else {
+                return Err(LinkerError::CyclicDependency);
+            };
+            let bytecode = needed_libraries.remove(id).unwrap();
+            let code = bytecode.into_bytes().unwrap();
+            let address = sender.create2_from_code(salt, code.as_ref());
+            libs_to_deploy.push(code);
+
+            let (file, name) = self.convert_artifact_id_to_lib_path(id);
+
+            for (_, bytecode) in needed_libraries.iter_mut() {
+                bytecode.link(file.to_string_lossy(), name.clone(), address);
+            }
+
+            libraries.libs.entry(file).or_default().insert(name, address.to_checksum(None));
+        }
 
         Ok(LinkOutput { libraries, libs_to_deploy })
     }
