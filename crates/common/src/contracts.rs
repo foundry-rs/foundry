@@ -45,6 +45,13 @@ impl ContractsByArtifact {
                     let bytecode = artifact.bytecode.and_then(|b| b.into_bytes())?;
                     let deployed_bytecode =
                         artifact.deployed_bytecode.and_then(|b| b.into_bytes())?;
+                    
+                    if bytecode.is_empty() {
+                        return None;
+                    }
+                    if deployed_bytecode.is_empty() {
+                        return None;
+                    }
                     let abi = artifact.abi?;
 
                     Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
