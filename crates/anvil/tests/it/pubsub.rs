@@ -269,7 +269,7 @@ async fn test_subscriptions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-// TODO: Fix this, num >= 18 breaks the test.
+// TODO: Fix this, num >= 18 breaks the test. It gets stuck endlessly.
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -284,10 +284,8 @@ async fn test_sub_new_heads_fast() {
             mine_api.mine_one().await;
         }
     });
-    println!("Collecting blocks...");
     // collect all the blocks
     let blocks = blocks.into_stream().take(num as usize).collect::<Vec<_>>().await;
-    println!("Got {} blocks", blocks.len());
     let block_numbers = blocks.into_iter().map(|b| b.header.number.unwrap()).collect::<Vec<_>>();
 
     let numbers = (1..=num).collect::<Vec<_>>();
