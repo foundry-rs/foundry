@@ -61,21 +61,21 @@ pub struct CloneMetadata {
 #[derive(Clone, Debug, Parser)]
 pub struct CloneArgs {
     /// The contract address to clone.
-    address: Address,
+    pub address: Address,
 
     /// The root directory of the cloned project.
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
-    root: PathBuf,
+    pub root: PathBuf,
 
     /// Do not generaet the remappings.txt file. Instead, keep the remappings in the configuration.
     #[arg(long)]
     pub no_remappings_txt: bool,
 
     #[command(flatten)]
-    etherscan: EtherscanOpts,
+    pub etherscan: EtherscanOpts,
 
     #[command(flatten)]
-    opts: DependencyInstallOpts,
+    pub opts: DependencyInstallOpts,
 }
 
 impl CloneArgs {
@@ -543,20 +543,11 @@ impl EtherscanClient for Client {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::PathBuf};
-
-    use crate::cmd::{clone::compile_project, install::DependencyInstallOpts};
-
-    use super::CloneArgs;
-    use alloy_primitives::Address;
-    use foundry_block_explorers::{
-        contract::{ContractCreationData, ContractMetadata},
-        Client,
-    };
+    use super::*;
     use foundry_common::rpc::next_etherscan_api_key;
-    use foundry_compilers::{Artifact, ProjectCompileOutput};
-    use foundry_config::Chain;
+    use foundry_compilers::Artifact;
     use hex::ToHex;
+    use std::collections::BTreeMap;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         println!("project_root: {:#?}", root);
