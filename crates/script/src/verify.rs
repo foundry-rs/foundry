@@ -106,15 +106,11 @@ impl VerifyBundle {
         libraries: &[String],
     ) -> Option<VerifyArgs> {
         for (artifact, contract) in self.known_contracts.iter() {
-            // Avoid comparing to empty bytecode.
-            if contract.bytecode.is_empty() {
-                continue;
-            }
+            let Some(bytecode) = contract.bytecode.as_ref() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
-            if data.split_at(create2_offset).1.starts_with(&contract.bytecode) {
-                let constructor_args =
-                    data.split_at(create2_offset + contract.bytecode.len()).1.to_vec();
+            if data.split_at(create2_offset).1.starts_with(bytecode) {
+                let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
 
                 let contract = ContractInfo {
                     path: Some(

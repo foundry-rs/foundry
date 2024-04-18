@@ -131,6 +131,7 @@ impl TransactionWithMetadata {
 
         let Some(data) = self.transaction.input.input() else { return Ok(()) };
         let Some(info) = info else { return Ok(()) };
+        let Some(bytecode) = info.bytecode.as_ref() else { return Ok(()) };
 
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {
@@ -143,11 +144,11 @@ impl TransactionWithMetadata {
         };
 
         // The constructor args start after bytecode.
-        let contains_constructor_args = creation_code.len() > info.bytecode.len();
+        let contains_constructor_args = creation_code.len() > bytecode.len();
         if !contains_constructor_args {
             return Ok(());
         }
-        let constructor_args = &creation_code[info.bytecode.len()..];
+        let constructor_args = &creation_code[bytecode.len()..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
         let values = constructor.abi_decode_input(constructor_args, false).map_err(|e| {
