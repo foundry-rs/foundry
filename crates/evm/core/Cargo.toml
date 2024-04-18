@@ -19,12 +19,7 @@ foundry-macros.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = [
-    "serde",
-    "getrandom",
-    "arbitrary",
-    "rlp",
-] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-genesis.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
@@ -59,3 +54,6 @@ thiserror = "1"
 tokio = { version = "1", features = ["time", "macros"] }
 tracing = "0.1"
 url = "2"
+
+[dev-dependencies]
+foundry-test-utils.workspace = true
