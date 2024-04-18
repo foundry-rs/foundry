@@ -175,7 +175,7 @@ impl CheatsConfig {
                 // check if it's a URL or a path to an existing file to an ipc socket
                 if url_or_alias.starts_with("http") ||
                     url_or_alias.starts_with("ws") ||
-                    // check for existing ip file
+                    // check for existing ipc file
                     Path::new(url_or_alias).exists()
                 {
                     Ok(url_or_alias.into())
