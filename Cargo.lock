@@ -101,6 +101,7 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-pubsub",
  "alloy-rpc-types",
  "alloy-sol-types",
  "alloy-transport",

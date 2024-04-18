@@ -1,6 +1,18 @@
 //! tests for subscriptions
 
-use crate::utils::{ethers_http_provider, ethers_ws_provider};
+use crate::utils::{
+    connect_pubsub, connect_pubsub_with_signer, ethers_http_provider, ethers_ws_provider,
+    http_provider, http_provider_with_signer,
+};
+use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
+use alloy_primitives::{Address as aAddress, U256 as rU256};
+use alloy_provider::{
+    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, SignerFiller},
+    Identity, Provider, ProviderBuilder, RootProvider,
+};
+use alloy_rpc_types::{Filter as AlloyFilter, TransactionRequest as CallRequest, WithOtherFields};
+use alloy_sol_types::sol;
+use alloy_transport::BoxTransport;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
@@ -18,216 +30,218 @@ use std::sync::Arc;
 async fn test_sub_new_heads() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    // let provider = ws_provider(&handle.ws_endpoint());
+    let provider = connect_pubsub(&handle.ws_endpoint()).await;
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 
     // mine a block every 1 seconds
     api.anvil_set_interval_mining(1).unwrap();
 
-    let blocks = blocks.take(3).collect::<Vec<_>>().await;
-    let block_numbers = blocks.into_iter().map(|b| b.number.unwrap().as_u64()).collect::<Vec<_>>();
+    let blocks = blocks.into_stream().take(3).collect::<Vec<_>>().await;
+    let block_numbers = blocks.into_iter().map(|b| b.header.number.unwrap()).collect::<Vec<_>>();
 
     assert_eq!(block_numbers, vec![1, 2, 3]);
 }
 
+sol!(
+    #[sol(rpc)]
+    EmitLogs,
+    "test-data/emit_logs.json"
+);
+// FIXME: Use .legacy() in tx when implemented in alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_logs_legacy() {
-    abigen!(EmitLogs, "test-data/emit_logs.json");
-
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider = connect_pubsub(&handle.ws_endpoint()).await;
 
     let msg = "First Message".to_string();
-    let contract =
-        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().legacy().send().await.unwrap();
+    let contract_addr = EmitLogs::deploy_builder(provider.clone(), msg.clone())
+        .from(wallet.address())
+        .deploy()
+        .await
+        .unwrap();
+    let contract = EmitLogs::new(contract_addr, provider.clone());
 
-    let val = contract.get_value().call().await.unwrap();
-    assert_eq!(val, msg);
+    let val = contract.getValue().call().await.unwrap();
+    assert_eq!(val._0, msg);
 
     // subscribe to events from the contract
-    let filter = Filter::new().address(ValueOrArray::Value(contract.address()));
-    let mut logs_sub = client.subscribe_logs(&filter).await.unwrap();
+    let filter = AlloyFilter::new().address(contract.address().to_owned());
+    let logs_sub = provider.subscribe_logs(&filter).await.unwrap();
 
     // send a tx triggering an event
+    // FIXME: Use .legacy() in tx
     let receipt = contract
-        .set_value("Next Message".to_string())
-        .legacy()
+        .setValue("Next Message".to_string())
         .send()
         .await
         .unwrap()
+        .get_receipt()
         .await
-        .unwrap()
         .unwrap();
 
+    let mut logs_sub = logs_sub.into_stream();
     // get the emitted event
     let log = logs_sub.next().await.unwrap();
 
     // ensure the log in the receipt is the same as received via subscription stream
-    assert_eq!(receipt.logs[0], log);
+    assert_eq!(receipt.inner.logs()[0], log);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_logs() {
-    abigen!(EmitLogs, "test-data/emit_logs.json");
-
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider = connect_pubsub(&handle.ws_endpoint()).await;
 
     let msg = "First Message".to_string();
-    let contract =
-        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().send().await.unwrap();
+    let contract_addr = EmitLogs::deploy_builder(provider.clone(), msg.clone())
+        .from(wallet.address())
+        .deploy()
+        .await
+        .unwrap();
+    let contract = EmitLogs::new(contract_addr, provider.clone());
 
-    let val = contract.get_value().call().await.unwrap();
-    assert_eq!(val, msg);
+    let val = contract.getValue().call().await.unwrap();
+    assert_eq!(val._0, msg);
 
     // subscribe to events from the contract
-    let filter = Filter::new().address(ValueOrArray::Value(contract.address()));
-    let mut logs_sub = client.subscribe_logs(&filter).await.unwrap();
+    let filter = AlloyFilter::new().address(contract.address().to_owned());
+    let logs_sub = provider.subscribe_logs(&filter).await.unwrap();
 
     // send a tx triggering an event
     let receipt = contract
-        .set_value("Next Message".to_string())
+        .setValue("Next Message".to_string())
         .send()
         .await
         .unwrap()
+        .get_receipt()
         .await
-        .unwrap()
         .unwrap();
 
+    let mut logs_sub = logs_sub.into_stream();
     // get the emitted event
     let log = logs_sub.next().await.unwrap();
 
     // ensure the log in the receipt is the same as received via subscription stream
-    assert_eq!(receipt.logs[0], log);
+    assert_eq!(receipt.inner.logs()[0], log);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_logs_impersonated() {
-    abigen!(EmitLogs, "test-data/emit_logs.json");
-
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider =
+        connect_pubsub_with_signer(&handle.ws_endpoint(), EthereumSigner::from(wallet.clone()))
+            .await;
 
     // impersonate account
-    let impersonate = Address::random();
-    let funding = U256::from(1e18 as u64);
-    api.anvil_set_balance(impersonate.to_alloy(), funding.to_alloy()).await.unwrap();
-    api.anvil_impersonate_account(impersonate.to_alloy()).await.unwrap();
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let impersonate = aAddress::random();
+    let funding = rU256::from(1e18 as u64);
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+    api.anvil_impersonate_account(impersonate).await.unwrap();
 
     let msg = "First Message".to_string();
-    let contract =
-        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().send().await.unwrap();
+    let contract = EmitLogs::deploy(provider.clone(), msg.clone()).await.unwrap();
 
-    let _val = contract.get_value().call().await.unwrap();
+    let _val = contract.getValue().call().await.unwrap();
 
     // subscribe to events from the impersonated account
-    let filter = Filter::new().address(ValueOrArray::Value(contract.address()));
-    let mut logs_sub = client.subscribe_logs(&filter).await.unwrap();
+    let filter = AlloyFilter::new().address(contract.address().to_owned());
+    let logs_sub = provider.subscribe_logs(&filter).await.unwrap();
 
     // send a tx triggering an event
-    let data = contract.set_value("Next Message".to_string()).tx.data().cloned().unwrap();
+    let data = contract.setValue("Next Message".to_string());
+    let data = data.calldata().clone();
 
-    let tx = TransactionRequest::new().from(impersonate).to(contract.address()).data(data);
+    let tx =
+        CallRequest::default().from(impersonate).to(*contract.address()).with_input(data.into());
 
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let tx = WithOtherFields::new(tx);
+    let provider = http_provider(&handle.http_endpoint());
 
-    let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
+    let mut logs_sub = logs_sub.into_stream();
     // get the emitted event
     let log = logs_sub.next().await.unwrap();
     // ensure the log in the receipt is the same as received via subscription stream
-    assert_eq!(receipt.logs[0], log);
+    assert_eq!(receipt.inner.inner.logs()[0], log);
 }
 
+// FIXME: Use legacy() in tx when implemented in alloy
 #[tokio::test(flavor = "multi_thread")]
 async fn test_filters_legacy() {
-    abigen!(EmitLogs, "test-data/emit_logs.json");
-
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider =
+        connect_pubsub_with_signer(&handle.ws_endpoint(), EthereumSigner::from(wallet.clone()))
+            .await;
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
-    let contract =
-        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().legacy().send().await.unwrap();
 
-    let filter = contract.value_changed_filter();
-    let mut stream = filter.stream().await.unwrap();
+    // FIXME: Use legacy() in tx when implemented in alloy
+    let contract = EmitLogs::deploy(provider.clone(), msg.clone()).await.unwrap();
+
+    let stream = contract.ValueChanged_filter().subscribe().await.unwrap();
 
     // send a tx triggering an event
+    // FIXME: Use legacy() in tx when implemented in alloy
     let _receipt = contract
-        .set_value("Next Message".to_string())
-        .legacy()
+        .setValue("Next Message".to_string())
         .send()
         .await
         .unwrap()
+        .get_receipt()
         .await
-        .unwrap()
         .unwrap();
 
+    let mut log = stream.into_stream();
     // get the emitted event
-    let log = stream.next().await.unwrap().unwrap();
-    assert_eq!(
-        log,
-        ValueChangedFilter {
-            author: from,
-            old_value: "First Message".to_string(),
-            new_value: "Next Message".to_string(),
-        },
-    );
+    let (value_changed, _log) = log.next().await.unwrap().unwrap();
+
+    assert_eq!(value_changed.author, from);
+    assert_eq!(value_changed.oldValue, "First Message".to_string());
+    assert_eq!(value_changed.newValue, "Next Message".to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_filters() {
-    abigen!(EmitLogs, "test-data/emit_logs.json");
-
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider =
+        connect_pubsub_with_signer(&handle.ws_endpoint(), EthereumSigner::from(wallet.clone()))
+            .await;
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
     let from = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
     let msg = "First Message".to_string();
-    let contract =
-        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().send().await.unwrap();
 
-    let filter = contract.value_changed_filter();
-    let mut stream = filter.stream().await.unwrap();
+    let contract = EmitLogs::deploy(provider.clone(), msg.clone()).await.unwrap();
+
+    let stream = contract.ValueChanged_filter().subscribe().await.unwrap();
 
     // send a tx triggering an event
     let _receipt = contract
-        .set_value("Next Message".to_string())
+        .setValue("Next Message".to_string())
         .send()
         .await
         .unwrap()
+        .get_receipt()
         .await
-        .unwrap()
         .unwrap();
 
+    let mut log = stream.into_stream();
     // get the emitted event
-    let log = stream.next().await.unwrap().unwrap();
-    assert_eq!(
-        log,
-        ValueChangedFilter {
-            author: from,
-            old_value: "First Message".to_string(),
-            new_value: "Next Message".to_string(),
-        },
-    );
+    let (value_changed, _log) = log.next().await.unwrap().unwrap();
+
+    assert_eq!(value_changed.author, from);
+    assert_eq!(value_changed.oldValue, "First Message".to_string());
+    assert_eq!(value_changed.newValue, "Next Message".to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -235,7 +249,6 @@ async fn test_subscriptions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(std::time::Duration::from_secs(1)))).await;
     let ws = Ws::connect(handle.ws_endpoint()).await.unwrap();
-
     // Subscribing requires sending the sub request and then subscribing to
     // the returned sub_id
     let sub_id: U256 = ws.request("eth_subscribe", ["newHeads"]).await.unwrap();
