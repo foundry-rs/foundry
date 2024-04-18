@@ -144,32 +144,21 @@ async fn test_respect_base_fee() {
     let base_fee = 50u128;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
-
     let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let tx =
         TransactionRequest::default().with_to(Address::random().into()).with_value(U256::from(100));
     let mut tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
-
     let mut underpriced = tx.clone();
     underpriced.set_gas_price(base_fee - 1);
-    let res = provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await;
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await;
     assert!(res.is_err());
     assert!(res.unwrap_err().to_string().contains("max fee per gas less than block base fee"));
 
     tx.set_gas_price(base_fee);
-    let res = provider_with_signer
-        .send_transaction(tx.clone())
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -180,7 +169,6 @@ async fn test_tip_above_fee_cap() {
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
 
-    let provider = http_provider(&handle.http_endpoint());
     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let tx = TransactionRequest::default()

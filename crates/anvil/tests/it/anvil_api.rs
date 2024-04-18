@@ -64,11 +64,7 @@ async fn can_set_storage() {
 async fn can_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
-
     let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -86,37 +82,31 @@ async fn can_impersonate_account() {
         .with_value(val);
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider.send_transaction(tx.clone()).await;
+    res.unwrap_err();
+
     api.anvil_impersonate_account(impersonate).await.unwrap();
     assert!(api.accounts().unwrap().contains(&impersonate));
 
-    let res = provider_with_signer
-        .send_transaction(tx.clone())
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, 1);
 
     let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
-    assert_eq!(balance, val.into());
+    assert_eq!(balance, val);
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider.send_transaction(tx).await;
+    res.unwrap_err();
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_auto_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
 
     let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -134,17 +124,12 @@ async fn can_auto_impersonate_account() {
         .with_value(val);
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider.send_transaction(tx.clone()).await;
+    res.unwrap_err();
 
     api.anvil_auto_impersonate_account(true).await.unwrap();
 
-    let res = provider_with_signer
-        .send_transaction(tx.clone())
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, BlockId::latest()).await.unwrap();
@@ -154,7 +139,8 @@ async fn can_auto_impersonate_account() {
     assert_eq!(balance, val.into());
 
     api.anvil_auto_impersonate_account(false).await.unwrap();
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider.send_transaction(tx).await;
+    res.unwrap_err();
 
     // explicitly impersonated accounts get returned by `eth_accounts`
     api.anvil_impersonate_account(impersonate).await.unwrap();
@@ -165,19 +151,11 @@ async fn can_auto_impersonate_account() {
 async fn can_impersonate_contract() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
-
     let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
-    let greeter_contract_builder =
-        AlloyGreeter::deploy_builder(&provider_with_signer, "Hello World!".to_string())
-            .from(wallet.address());
-    let greeter_contract_address = greeter_contract_builder.deploy().await.unwrap();
-    let greeter_contract = AlloyGreeter::new(greeter_contract_address, &provider);
-
-    let impersonate = greeter_contract_address;
+    let greeter_contract =
+        AlloyGreeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
+    let impersonate = greeter_contract.address().to_owned();
 
     let to = Address::random();
     let val = U256::from(1337);
@@ -189,32 +167,25 @@ async fn can_impersonate_contract() {
         TransactionRequest::default().with_from(impersonate).with_to(to.into()).with_value(val);
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let res = provider.send_transaction(tx.clone()).await;
+    res.unwrap_err();
 
-    let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
-    let greeting = _0;
+    let greeting = greeter_contract.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
 
-    let res = provider_with_signer
-        .send_transaction(tx.clone())
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, impersonate);
 
     let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, val.into());
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+    let res = provider.send_transaction(tx).await;
+    res.unwrap_err();
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
-
-    let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
-    let greeting = _0;
+    let greeting = greeter_contract.greet().call().await.unwrap()._0;
     assert_eq!("Hello World!", greeting);
 }
 

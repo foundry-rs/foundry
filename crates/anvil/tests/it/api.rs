@@ -98,11 +98,9 @@ async fn can_get_block_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumSigner = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
-
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = accounts[0].clone().into();
 
     let provider = http_provider(&handle.http_endpoint());
     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
@@ -126,14 +124,11 @@ async fn can_get_block_by_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumSigner = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
-
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = accounts[0].clone().into();
 
     let provider = http_provider(&handle.http_endpoint());
     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
