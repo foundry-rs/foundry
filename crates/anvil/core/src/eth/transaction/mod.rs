@@ -6,7 +6,7 @@ use alloy_consensus::{
     TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy,
     TxReceipt,
 };
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
@@ -920,6 +920,36 @@ impl Decodable for TypedTransaction {
             Ok(TxEnvelope::decode(buf)?.into())
         } else {
             Ok(Self::Deposit(DepositTransaction::decode(&mut h_decode_copy)?))
+        }
+    }
+}
+
+impl Encodable2718 for TypedTransaction {
+    fn type_flag(&self) -> Option<u8> {
+        self.r#type()
+    }
+
+    fn encode_2718_len(&self) -> usize {
+        match self {
+            TypedTransaction::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            TypedTransaction::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            TypedTransaction::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            TypedTransaction::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            TypedTransaction::Deposit(tx) => 1 + tx.length(),
+        }
+    }
+
+    fn encode_2718(&self, out: &mut dyn BufMut) {
+        match self {
+            // Legacy transactions have no difference between network and 2718
+            TypedTransaction::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            TypedTransaction::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            TypedTransaction::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            TypedTransaction::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            TypedTransaction::Deposit(tx) => {
+                out.put_u8(0x7E);
+                tx.encode(out);
+            }
         }
     }
 }

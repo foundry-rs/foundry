@@ -5,6 +5,7 @@ use super::{
 use alloy_consensus::Header;
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_eips::eip2718::Encodable2718;
 
 // Type alias to optionally support impersonated transactions
 #[cfg(not(feature = "impersonated-tx"))]
@@ -47,7 +48,7 @@ impl Block {
         let ommers_hash =
             B256::from_slice(alloy_primitives::utils::keccak256(encoded_ommers).as_slice());
         let transactions_root =
-            trie::ordered_trie_root(transactions.iter().map(|r| Bytes::from(alloy_rlp::encode(r))));
+            trie::ordered_trie_root(transactions.iter().map(|r| r.transaction.encoded_2718()));
 
         Self {
             header: Header {
