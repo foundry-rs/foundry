@@ -1,11 +1,11 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_common::rpc::next_etherscan_api_key;
 use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
+    rpc::next_etherscan_api_key,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
 use semver::Version;
@@ -796,7 +796,7 @@ forgetest!(
             .to_string();
         println!("project root: \"{root}\"");
 
-        let eth_rpc_url = foundry_common::rpc::next_http_archive_rpc_endpoint();
+        let eth_rpc_url = foundry_test_utils::rpc::next_http_archive_rpc_endpoint();
         let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
         cmd.args([

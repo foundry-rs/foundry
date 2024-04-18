@@ -20,7 +20,6 @@ pub mod fs;
 pub mod glob;
 pub mod provider;
 pub mod retry;
-pub mod rpc;
 pub mod runtime_client;
 pub mod selectors;
 pub mod serde_helpers;

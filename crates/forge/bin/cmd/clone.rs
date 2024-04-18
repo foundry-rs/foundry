@@ -544,8 +544,8 @@ impl EtherscanClient for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_common::rpc::next_etherscan_api_key;
     use foundry_compilers::Artifact;
+    use foundry_test_utils::rpc::next_etherscan_api_key;
     use hex::ToHex;
     use std::collections::BTreeMap;
 

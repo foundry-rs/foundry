@@ -6,6 +6,8 @@ extern crate tracing;
 // Macros useful for testing.
 mod macros;
 
+pub mod rpc;
+
 pub mod fd_lock;
 
 mod filter;
