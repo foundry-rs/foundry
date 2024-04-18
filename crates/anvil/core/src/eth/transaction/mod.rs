@@ -941,7 +941,6 @@ impl Encodable2718 for TypedTransaction {
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
         match self {
-            // Legacy transactions have no difference between network and 2718
             TypedTransaction::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             TypedTransaction::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             TypedTransaction::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
