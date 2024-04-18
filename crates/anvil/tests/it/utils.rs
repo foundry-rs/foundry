@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_network::EthereumSigner;
+use alloy_network::{Ethereum, EthereumSigner};
 use alloy_primitives::Bytes;
 use ethers::{
     addressbook::contract,
@@ -52,6 +52,33 @@ pub fn ws_provider_with_signer(
     AlloyProviderBuilder::new(ws_endpoint)
         .build_with_signer(signer)
         .expect("failed to build Alloy WS provider with signer")
+}
+
+pub async fn connect_pubsub(conn_str: &str) -> RootProvider<BoxTransport> {
+    alloy_provider::ProviderBuilder::new().on_builtin(conn_str).await.unwrap()
+}
+
+use alloy_provider::{
+    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, SignerFiller},
+    Identity, RootProvider,
+};
+use alloy_transport::BoxTransport;
+type PubsubSigner = FillProvider<
+    JoinFill<
+        JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+        SignerFiller<EthereumSigner>,
+    >,
+    RootProvider<BoxTransport>,
+    BoxTransport,
+    Ethereum,
+>;
+pub async fn connect_pubsub_with_signer(conn_str: &str, signer: EthereumSigner) -> PubsubSigner {
+    alloy_provider::ProviderBuilder::new()
+        .with_recommended_fillers()
+        .signer(signer)
+        .on_builtin(conn_str)
+        .await
+        .unwrap()
 }
 
 pub async fn ipc_provider(ipc_endpoint: &str) -> AlloyRetryProvider {
