@@ -24,7 +24,6 @@ vergen = { workspace = true, default-features = false, features = [
 
 [dependencies]
 # foundry internal
-alloy-contract.workspace = true
 anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
@@ -39,6 +38,7 @@ k256.workspace = true
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
+alloy-contract = { workspace = true }
 alloy-network.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true

@@ -2037,7 +2037,7 @@ impl Backend {
         let inner = TransactionReceipt {
             inner,
             transaction_hash: info.transaction_hash,
-            transaction_index: info.transaction_index,
+            transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),
             gas_used: info.gas_used,
             contract_address: info.contract_address,

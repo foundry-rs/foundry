@@ -4546,6 +4546,7 @@ mod tests {
                     stack_allocation: None,
                     optimizer_steps: Some("dhfoDgvulfnTUtnIf".to_string()),
                 }),
+                simple_counter_for_loop_unchecked_increment: None,
             }),
             ..Default::default()
         };

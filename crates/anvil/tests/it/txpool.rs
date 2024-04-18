@@ -3,7 +3,7 @@
 use crate::utils::http_provider;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
-use alloy_provider::Provider;
+use alloy_provider::{txpool::TxPoolApi, Provider};
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use anvil::{spawn, NodeConfig};
 
@@ -33,20 +33,20 @@ async fn geth_txpool() {
     }
 
     // we gave a 20s block time, should be plenty for us to get the txpool's content
-    // let status = provider.txpool_status().await.unwrap();
-    // assert_eq!(status.pending.as_u64(), 10);
-    // assert_eq!(status.queued.as_u64(), 0);
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 10);
+    assert_eq!(status.queued, 0);
 
-    // let inspect = provider.txpool_inspect().await.unwrap();
-    // assert!(inspect.queued.is_empty());
-    // let summary = inspect.pending.get(&account).unwrap();
-    // for i in 0..10 {
-    //     let tx_summary = summary.get(&i.to_string()).unwrap();
-    //     assert_eq!(tx_summary.gas_price, gas_price);
-    //     assert_eq!(tx_summary.value, value.into());
-    //     assert_eq!(tx_summary.gas, 21000.into());
-    //     assert_eq!(tx_summary.to.unwrap(), account);
-    // }
+    let inspect = provider.txpool_inspect().await.unwrap();
+    assert!(inspect.queued.is_empty());
+    let summary = inspect.pending.get(&account).unwrap();
+    for i in 0..10 {
+        let tx_summary = summary.get(&i.to_string()).unwrap();
+        assert_eq!(tx_summary.gas_price, gas_price);
+        assert_eq!(tx_summary.value, value);
+        assert_eq!(tx_summary.gas, 21000);
+        assert_eq!(tx_summary.to.unwrap(), account);
+    }
 
     // let content = provider.txpool_content().await.unwrap();
     // assert!(content.queued.is_empty());

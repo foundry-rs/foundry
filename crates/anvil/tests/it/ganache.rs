@@ -41,7 +41,7 @@ fn wallet(key_str: &str) -> LocalWallet {
 async fn test_ganache_block_number() {
     let provider = http_provider("http://127.0.0.1:8545");
 
-    let balance = provider.get_balance(Address::random(), Some(BlockId::number(100)).into()).await;
+    let balance = provider.get_balance(Address::random(), BlockId::latest()).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

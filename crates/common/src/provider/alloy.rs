@@ -4,7 +4,7 @@ use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_provider::{
-    fillers::{FillProvider, JoinFill, SignerFiller},
+    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, SignerFiller},
     network::{AnyNetwork, EthereumSigner},
     utils::Eip1559Estimation,
     Identity, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
@@ -34,7 +34,10 @@ pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<Runtim
 
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
-    JoinFill<Identity, SignerFiller<EthereumSigner>>,
+    JoinFill<
+        JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+        SignerFiller<EthereumSigner>,
+    >,
     RootProvider<RetryBackoffService<RuntimeTransport>, N>,
     RetryBackoffService<RuntimeTransport>,
     N,
@@ -289,6 +292,7 @@ impl ProviderBuilder {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            .with_recommended_fillers()
             .signer(signer)
             .on_provider(RootProvider::new(client));
 

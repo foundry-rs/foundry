@@ -2,7 +2,7 @@ use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::Result;
 use foundry_cli::{opts::TransactionOpts, utils::parse_function_args};
@@ -67,7 +67,7 @@ pub async fn build_tx<
     req.set_nonce(if let Some(nonce) = tx.nonce {
         nonce.to()
     } else {
-        provider.get_transaction_count(from, None).await?
+        provider.get_transaction_count(from, BlockId::latest()).await?
     });
 
     if tx.legacy || chain.is_legacy() {
@@ -115,7 +115,7 @@ pub async fn build_tx<
     req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
         gas_limit.to()
     } else {
-        provider.estimate_gas(&req, None).await?
+        provider.estimate_gas(&req, BlockId::latest()).await?
     });
 
     Ok((req, func))

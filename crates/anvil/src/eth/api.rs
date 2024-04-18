@@ -2025,9 +2025,9 @@ impl EthApi {
         fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
             let to = tx.to();
-            let gas_price = U256::from(tx.gas_price());
+            let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = U256::from(tx.gas_limit());
+            let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
