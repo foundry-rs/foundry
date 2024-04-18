@@ -1,6 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_compilers::{artifacts::Source, utils, Graph, Project};
+use foundry_compilers::Graph;
+use foundry_config::Config;
 use std::path::PathBuf;
 use yansi::Paint;
 
@@ -15,10 +16,9 @@ pub struct GetSolcArgs {
 impl GetSolcArgs {
     pub fn run(self) -> Result<()> {
         let GetSolcArgs { root } = self;
-        let files = utils::source_files(root);
-        let sources = Source::read_all(files)?;
-        let project = Project::builder().build()?;
-        let graph = Graph::resolve_sources(&project.paths, sources)?;
+        let config = Config::load_with_root(root);
+        let project = config.project()?;
+        let graph = Graph::resolve(&config.project_paths())?;
         let (versions, _) = graph.into_sources_by_version(project.offline)?;
         let sources_by_version = versions.get(&project)?;
         let versions: Vec<_> =
