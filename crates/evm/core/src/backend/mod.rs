@@ -5,6 +5,7 @@ use crate::{
     fork::{CreateFork, ForkId, MultiFork, SharedBackend},
     snapshot::Snapshots,
     utils::configure_tx_env,
+    InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256};
@@ -19,7 +20,7 @@ use revm::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
         ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
-    Database, DatabaseCommit, Inspector, JournaledState,
+    Database, DatabaseCommit, JournaledState,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -188,7 +189,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    fn transact<I: Inspector<Backend>>(
+    fn transact<I: InspectorExt<Backend>>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
@@ -780,7 +781,7 @@ impl Backend {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
-    pub fn inspect<'a, I: Inspector<&'a mut Self>>(
+    pub fn inspect<'a, I: InspectorExt<&'a mut Self>>(
         &'a mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: I,
@@ -1228,7 +1229,7 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<I: Inspector<Backend>>(
+    fn transact<I: InspectorExt<Backend>>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
@@ -1868,7 +1869,7 @@ fn update_env_block(env: &mut Env, fork_block: u64, block: &Block) {
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an optional inspector
-fn commit_transaction<I: Inspector<Backend>>(
+fn commit_transaction<I: InspectorExt<Backend>>(
     tx: WithOtherFields<Transaction>,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
