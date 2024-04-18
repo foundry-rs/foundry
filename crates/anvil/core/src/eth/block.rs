@@ -48,7 +48,7 @@ impl Block {
         let ommers_hash =
             B256::from_slice(alloy_primitives::utils::keccak256(encoded_ommers).as_slice());
         let transactions_root =
-            trie::ordered_trie_root(transactions.iter().map(|r| r.transaction.encoded_2718()));
+            trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
 
         Self {
             header: Header {
