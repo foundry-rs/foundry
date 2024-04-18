@@ -1,22 +1,15 @@
 //! log/event related tests
 
 use crate::{
-    abi::AlloySimpleStorage::{self, AlloySimpleStorageEvents},
-    utils::http_provider_with_signer,
+    abi::AlloySimpleStorage::{self},
+    utils::{http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumSigner;
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use anvil::{spawn, NodeConfig};
-// use ethers::{
-//     middleware::SignerMiddleware,
-//     prelude::{BlockNumber, Filter, FilterKind, Middleware, Signer, H256},
-//     types::Log,
-// };
-use foundry_common::types::ToEthers;
 use futures::StreamExt;
-use std::{str::FromStr, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_past_events() {
@@ -154,7 +147,58 @@ async fn get_all_events() {
     }
 }
 
-// #[tokio::test(flavor = "multi_thread")]
-// async fn watch_events() {
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_events() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
 
-// }
+    let wallet = handle.dev_wallets().next().unwrap();
+    let account = wallet.address();
+    let signer: EthereumSigner = wallet.into();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
+
+    let contract1 =
+        AlloySimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+
+    // Spawn the event listener.
+    let event1 = contract1.event_filter::<AlloySimpleStorage::ValueChanged>();
+    let mut stream1 = event1.watch().await.unwrap().into_stream();
+
+    // Also set up a subscription for the same thing.
+    let ws = ws_provider_with_signer(&handle.ws_endpoint(), signer.clone());
+    let contract2 = AlloySimpleStorage::new(*contract1.address(), ws);
+    let event2 = contract2.event_filter::<AlloySimpleStorage::ValueChanged>();
+    let mut stream2 = event2.watch().await.unwrap().into_stream();
+
+    let num_tx = 3;
+
+    let starting_block_number = provider.get_block_number().await.unwrap();
+    for i in 0..num_tx {
+        contract1
+            .setValue(i.to_string())
+            .from(account)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+
+        let log = stream1.next().await.unwrap().unwrap();
+        let log2 = stream2.next().await.unwrap().unwrap();
+
+        assert_eq!(log.0.newValue, log2.0.newValue);
+        assert_eq!(log.0.newValue, i.to_string());
+        assert_eq!(log.1.block_number.unwrap(), starting_block_number + i + 1);
+
+        let hash = provider
+            .get_block_by_number(BlockNumberOrTag::from(starting_block_number + i + 1), false)
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .hash
+            .unwrap();
+        assert_eq!(log.1.block_hash.unwrap(), hash);
+    }
+}
