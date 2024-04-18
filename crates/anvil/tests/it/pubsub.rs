@@ -258,7 +258,7 @@ async fn test_sub_new_heads_fast() {
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 
-    let num = 17u64;
+    let num = 1000u64;
     let mine_api = api.clone();
     tokio::task::spawn(async move {
         for _ in 0..num {
