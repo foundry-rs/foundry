@@ -355,11 +355,14 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                 }
             }?;
 
-            if deployed {
-                return Ok(artifact.1.deployed_bytecode.clone())
+            let maybe_bytecode = if deployed {
+                artifact.1.deployed_bytecode.clone()
             } else {
-                return Ok(artifact.1.bytecode.clone())
-            }
+                artifact.1.bytecode.clone()
+            };
+
+            return maybe_bytecode
+                .ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"));
         } else {
             match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
                 (Some(file), Some(contract_name)) => {
