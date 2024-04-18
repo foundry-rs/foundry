@@ -48,11 +48,11 @@ async fn geth_txpool() {
         assert_eq!(tx_summary.to.unwrap(), account);
     }
 
-    // let content = provider.txpool_content().await.unwrap();
-    // assert!(content.queued.is_empty());
-    // let content = content.pending.get(&account).unwrap();
+    let content = provider.txpool_content().await.unwrap();
+    assert!(content.queued.is_empty());
+    let content = content.pending.get(&account).unwrap();
 
-    // for nonce in 0..10 {
-    //     assert!(content.contains_key(&nonce.to_string()));
-    // }
+    for nonce in 0..10 {
+        assert!(content.contains_key(&nonce.to_string()));
+    }
 }

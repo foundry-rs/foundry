@@ -1,12 +1,11 @@
 //! genesis.json tests
 
-use std::str::FromStr;
-
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
+use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_apply_genesis() {
