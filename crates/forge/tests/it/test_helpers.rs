@@ -2,8 +2,8 @@
 
 use alloy_primitives::U256;
 use forge::{
-    inspectors::CheatsConfig, revm::primitives::SpecId, MultiContractRunner,
-    MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
+    revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
+    TestOptionsBuilder,
 };
 use foundry_compilers::{
     artifacts::{Libraries, Settings},
@@ -23,6 +23,7 @@ use std::{
     env, fmt,
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 pub const RE_PATH_SEPARATOR: &str = "/";
@@ -185,7 +186,7 @@ impl ForgeTestData {
     /// Builds a base runner
     pub fn base_runner(&self) -> MultiContractRunnerBuilder {
         init_tracing();
-        let mut runner = MultiContractRunnerBuilder::default()
+        let mut runner = MultiContractRunnerBuilder::new(Arc::new(self.config.clone()))
             .sender(self.evm_opts.sender)
             .with_test_options(self.test_opts.clone());
         if self.profile.is_cancun() {
@@ -220,17 +221,14 @@ impl ForgeTestData {
 
         let env = opts.local_evm_env();
         let output = self.output.clone();
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
-        self.base_runner()
-            .with_cheats_config(CheatsConfig::new(
-                &config,
-                opts.clone(),
-                Some(artifact_ids),
-                None,
-                None,
-            ))
+
+        let sender = config.sender;
+
+        let mut builder = self.base_runner();
+        builder.config = Arc::new(config);
+        builder
             .enable_isolation(opts.isolate)
-            .sender(config.sender)
+            .sender(sender)
             .with_test_options(self.test_opts.clone())
             .build(root, output, env, opts.clone())
             .unwrap()

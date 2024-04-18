@@ -94,7 +94,7 @@ impl PreExecutionState {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
-                self.build_data.build_data.artifact_ids.clone(),
+                self.build_data.known_contracts.clone(),
                 self.script_wallets.clone(),
                 self.args.debug,
                 self.build_data.build_data.target.clone(),

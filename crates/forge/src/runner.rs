@@ -31,6 +31,7 @@ use rayon::prelude::*;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap},
+    sync::Arc,
     time::Instant,
 };
 
@@ -249,7 +250,7 @@ impl<'a> ContractRunner<'a> {
         mut self,
         filter: &dyn TestFilter,
         test_options: &TestOptions,
-        known_contracts: Option<&ContractsByArtifact>,
+        known_contracts: Arc<ContractsByArtifact>,
     ) -> SuiteResult {
         info!("starting tests");
         let start = Instant::now();
@@ -278,6 +279,7 @@ impl<'a> ContractRunner<'a> {
                     .into(),
                 warnings,
                 self.contract.libraries.clone(),
+                known_contracts,
             )
         }
 
@@ -315,6 +317,7 @@ impl<'a> ContractRunner<'a> {
                 .into(),
                 warnings,
                 self.contract.libraries.clone(),
+                known_contracts,
             )
         }
 
@@ -336,7 +339,7 @@ impl<'a> ContractRunner<'a> {
         );
 
         let identified_contracts =
-            has_invariants.then(|| load_contracts(setup.traces.clone(), known_contracts));
+            has_invariants.then(|| load_contracts(setup.traces.clone(), &known_contracts));
         let test_results = functions
             .par_iter()
             .map(|&func| {
@@ -352,7 +355,7 @@ impl<'a> ContractRunner<'a> {
                         setup,
                         *invariant_config,
                         func,
-                        known_contracts,
+                        &known_contracts,
                         identified_contracts.as_ref().unwrap(),
                     )
                 } else if func.is_fuzz_test() {
@@ -370,8 +373,13 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let suite_result =
-            SuiteResult::new(duration, test_results, warnings, self.contract.libraries.clone());
+        let suite_result = SuiteResult::new(
+            duration,
+            test_results,
+            warnings,
+            self.contract.libraries.clone(),
+            known_contracts,
+        );
         info!(
             duration=?suite_result.duration,
             "done. {}/{} successful",
@@ -501,12 +509,10 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         invariant_config: InvariantConfig,
         func: &Function,
-        known_contracts: Option<&ContractsByArtifact>,
+        known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
-        let empty = ContractsByArtifact::default();
-        let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
             setup;
 
@@ -538,7 +544,7 @@ impl<'a> ContractRunner<'a> {
             runner,
             invariant_config,
             identified_contracts,
-            project_contracts,
+            known_contracts,
         );
 
         let invariant_contract =

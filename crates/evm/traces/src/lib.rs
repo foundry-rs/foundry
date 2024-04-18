@@ -12,7 +12,7 @@ use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Write};
+use std::fmt::Write;
 use yansi::{Color, Paint};
 
 /// Call trace address identifiers.
@@ -293,12 +293,8 @@ fn trace_color(trace: &CallTrace) -> Color {
 }
 
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
-pub fn load_contracts(
-    traces: Traces,
-    known_contracts: Option<&ContractsByArtifact>,
-) -> ContractsByAddress {
-    let Some(contracts) = known_contracts else { return BTreeMap::new() };
-    let mut local_identifier = LocalTraceIdentifier::new(contracts);
+pub fn load_contracts(traces: Traces, known_contracts: &ContractsByArtifact) -> ContractsByAddress {
+    let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
     let mut decoder = CallTraceDecoderBuilder::new().build();
     for (_, trace) in &traces {
         decoder.identify(trace, &mut local_identifier);
@@ -308,7 +304,7 @@ pub fn load_contracts(
         .contracts
         .iter()
         .filter_map(|(addr, name)| {
-            if let Ok(Some((_, contract))) = contracts.find_by_name_or_identifier(name) {
+            if let Ok(Some((_, contract))) = known_contracts.find_by_name_or_identifier(name) {
                 return Some((*addr, (name.clone(), contract.abi.clone())));
             }
             None
