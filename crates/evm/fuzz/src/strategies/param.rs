@@ -18,7 +18,8 @@ const MAX_ARRAY_LEN: usize = 256;
 /// `fixture_owner` function can be used in a fuzzed test function with a signature like
 /// `function testFuzz_ownerAddress(address owner, uint amount)`.
 ///
-/// Fuzzer will panic if the type of fixtures is different than the parameter type.
+/// Fuzzer will reject value and raise error if the fixture type is not of the same type as
+/// parameter to fuzz.
 ///
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param(
@@ -27,7 +28,18 @@ pub fn fuzz_param(
 ) -> BoxedStrategy<DynSolValue> {
     match *param {
         DynSolType::Address => {
-            fixture_strategy!(fuzz_fixtures, DynSolValue::type_strategy(&DynSolType::Address))
+            fixture_strategy!(
+                fuzz_fixtures,
+                |fixture: Option<&DynSolValue>| {
+                    if let Some(val @ DynSolValue::Address(_)) = fixture {
+                        Some(val.clone())
+                    } else {
+                        error!("{:?} is not a valid address fixture", fixture.unwrap());
+                        None
+                    }
+                },
+                DynSolValue::type_strategy(&DynSolType::Address)
+            )
         }
         DynSolType::Int(n @ 8..=256) => super::IntStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Int(x, n))
@@ -37,14 +49,44 @@ pub fn fuzz_param(
             .boxed(),
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
         DynSolType::Bytes => {
-            fixture_strategy!(fuzz_fixtures, DynSolValue::type_strategy(&DynSolType::Bytes))
+            fixture_strategy!(
+                fuzz_fixtures,
+                |fixture: Option<&DynSolValue>| {
+                    if let Some(val @ DynSolValue::Bytes(_)) = fixture {
+                        Some(val.clone())
+                    } else {
+                        error!("{:?} is not a valid bytes fixture", fixture.unwrap());
+                        None
+                    }
+                },
+                DynSolValue::type_strategy(&DynSolType::Bytes)
+            )
         }
         DynSolType::FixedBytes(size @ 1..=32) => fixture_strategy!(
             fuzz_fixtures,
+            |fixture: Option<&DynSolValue>| {
+                if let Some(val @ DynSolValue::FixedBytes(_, _)) = fixture {
+                    if let Some(val) = val.as_fixed_bytes() {
+                        if val.1 == size {
+                            return Some(DynSolValue::FixedBytes(B256::from_slice(val.0), val.1))
+                        }
+                    }
+                }
+                error!("{:?} is not a valid fixed bytes fixture", fixture.unwrap());
+                None
+            },
             DynSolValue::type_strategy(&DynSolType::FixedBytes(size))
         ),
         DynSolType::String => fixture_strategy!(
             fuzz_fixtures,
+            |fixture: Option<&DynSolValue>| {
+                if let Some(val @ DynSolValue::String(_)) = fixture {
+                    Some(val.clone())
+                } else {
+                    error!("{:?} is not a valid string fixture", fixture.unwrap());
+                    None
+                }
+            },
             DynSolValue::type_strategy(&DynSolType::String).prop_map(move |value| {
                 DynSolValue::String(
                     value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),

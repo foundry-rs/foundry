@@ -79,7 +79,7 @@ impl ValueTree for UintValueTree {
 /// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
 /// `function testFuzz_uint32(uint32 amount)`.
 ///
-/// If fixture is not a valid uint type then fuzzer will panic.
+/// If fixture is not a valid uint type then error is raised and random value generated.
 #[derive(Debug)]
 pub struct UintStrategy {
     /// Bit size of uint (e.g. 256)
@@ -125,14 +125,16 @@ impl UintStrategy {
         }
 
         // Generate value tree from fixture.
-        // If fixture is not a valid type, raise error and generate random value.
         let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
         if let Some(uint_fixture) = fixture.as_uint() {
             if uint_fixture.1 == self.bits {
                 return Ok(UintValueTree::new(uint_fixture.0, false));
             }
         }
-        panic!("{:?} is not a valid {} fixture", fixture, DynSolType::Uint(self.bits));
+
+        // If fixture is not a valid type, raise error and generate random value.
+        error!("{:?} is not a valid {} fixture", fixture, DynSolType::Uint(self.bits));
+        self.generate_random_tree(runner)
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {

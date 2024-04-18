@@ -19,9 +19,9 @@ pub use invariants::{fuzz_contract_with_calldata, invariant_strat, override_call
 /// Macro to create strategy with fixtures.
 /// 1. A default strategy if no fixture defined for current parameter.
 /// 2. A weighted strategy that use fixtures and default strategy values for current parameter.
-/// If fixture is not of the same type as fuzzed parameter then fuzzer will panic.
+/// If fixture is not of the same type as fuzzed parameter then value is rejected and error raised.
 macro_rules! fixture_strategy {
-    ($fixtures:ident, $default_strategy:expr) => {
+    ($fixtures:ident, $strategy_value:expr, $default_strategy:expr) => {
         if let Some(fixtures) = $fixtures {
             proptest::prop_oneof![
                 50 => {
@@ -29,10 +29,10 @@ macro_rules! fixture_strategy {
                         fixtures.iter().enumerate().map(|(_, value)| value.to_owned()).collect();
                     let custom_fixtures_len = custom_fixtures.len();
                     any::<prop::sample::Index>()
-                        .prop_map(move |index| {
+                        .prop_filter_map("invalid fixture", move |index| {
                             let index = index.index(custom_fixtures_len);
-                            custom_fixtures.get(index).unwrap().clone()
-                        })
+                            $strategy_value(custom_fixtures.get(index))
+                    })
                 },
                 50 => $default_strategy
             ].boxed()
