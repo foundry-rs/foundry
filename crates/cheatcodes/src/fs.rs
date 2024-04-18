@@ -545,7 +545,6 @@ fn prompt(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::Bytes;
     use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {
