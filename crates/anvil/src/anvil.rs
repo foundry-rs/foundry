@@ -4,8 +4,6 @@ use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use foundry_cli::utils;
 
-// TODO: parity dependencies are not compatible with a different global allocator.
-#[cfg(any())]
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;

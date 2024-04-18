@@ -105,6 +105,4 @@ default = ["cli"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-# TODO: parity dependencies are not compatible with a different global allocator.
-# jemalloc = ["dep:tikv-jemallocator"]
-jemalloc = []
+jemalloc = ["dep:tikv-jemallocator"]
