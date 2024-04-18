@@ -3,9 +3,9 @@ use super::{
     trie,
 };
 use alloy_consensus::Header;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use alloy_eips::eip2718::Encodable2718;
 
 // Type alias to optionally support impersonated transactions
 #[cfg(not(feature = "impersonated-tx"))]
