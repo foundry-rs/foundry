@@ -1,6 +1,6 @@
 use super::fuzz_param_from_state;
 use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
-use alloy_dyn_abi::JsonAbiExt;
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -15,7 +15,7 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{fmt, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -41,30 +41,38 @@ impl EvmFuzzState {
     /// [EvmFuzzState] according to the given [FuzzDictionaryConfig].
     pub fn collect_state_from_call(
         &self,
+        function: &Option<Function>,
         result: &Bytes,
         logs: &[Log],
         state_changeset: &StateChangeset,
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
-        // Insert sample values from call result.
-        let result_chunks = result.chunks_exact(32);
-        for chunk in result_chunks {
-            dict.insert_sample_value(chunk.try_into().unwrap(), run_depth);
+
+        match function {
+            Some(func) => {
+                // Decode result and collect samples to be used in subsequent fuzz runs.
+                if !result.is_empty() {
+                    if let Ok(decoded_result) = func.abi_decode_output(result, true) {
+                        dict.insert_sample_value(decoded_result, run_depth);
+                    }
+                }
+            }
+            None => {}
         }
 
         // Insert sample values from log topics and data.
         for log in logs {
             for topic in log.topics() {
-                dict.insert_sample_value(topic.0, run_depth);
+                dict.insert_value(topic.0);
             }
             let chunks = log.data.data.chunks_exact(32);
             let rem = chunks.remainder();
             for chunk in chunks {
-                dict.insert_sample_value(chunk.try_into().unwrap(), run_depth);
+                dict.insert_value(chunk.try_into().unwrap());
             }
             if !rem.is_empty() {
-                dict.insert_sample_value(B256::right_padding_from(rem).0, run_depth);
+                dict.insert_value(B256::right_padding_from(rem).0);
             }
         }
 
@@ -128,8 +136,8 @@ pub struct FuzzDictionary {
     new_values: IndexSet<[u8; 32]>,
     /// New addresses added to the dictionary since container initialization.
     new_addreses: IndexSet<Address>,
-    /// Sample values that are collected from result and event logs and used across invariant runs.
-    sample_values: IndexSet<[u8; 32]>,
+    /// Sample typed values that are collected from call result and used across invariant runs.
+    sample_values: HashMap<DynSolType, IndexSet<[u8; 32]>>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -153,7 +161,7 @@ impl FuzzDictionary {
             config,
             new_values: IndexSet::new(),
             new_addreses: IndexSet::new(),
-            sample_values: IndexSet::new(),
+            sample_values: HashMap::new(),
         }
     }
 
@@ -167,14 +175,25 @@ impl FuzzDictionary {
 
     /// Insert sample values that are reused across multiple runs.
     /// The number of samples is limited to invariant run depth.
-    pub fn insert_sample_value(&mut self, value: [u8; 32], limit: u32) {
-        // Collect new samples only if limit not reached.
-        // This is to make sure we have a fixed data set shared by all runs.
-        if self.sample_values.len() < usize::try_from(limit).unwrap() {
-            self.sample_values.insert(value);
+    pub fn insert_sample_value(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
+        for sample in sample_values {
+            let sample_type = sample.as_type().unwrap();
+            let sample_value = sample.as_word().unwrap().into();
+
+            if let Some(values) = self.sample_values.get_mut(&sample_type) {
+                if values.len() < limit as usize {
+                    values.insert(sample_value);
+                } else {
+                    // Insert as state value (will be removed at the end of the run).
+                    self.insert_value(sample_value);
+                }
+            } else {
+                self.sample_values
+                    .entry(sample_type)
+                    .or_insert(IndexSet::new())
+                    .insert(sample_value);
+            }
         }
-        // Add sample also to current run values.
-        self.insert_value(value);
     }
 
     pub fn insert_address(&mut self, address: Address) {
@@ -186,17 +205,22 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn values(&self) -> &IndexSet<[u8; 32]> {
-        if self.sample_values.is_empty() {
-            &self.state_values
-        } else {
-            let rand_index = rand::thread_rng().gen_range(0..100);
-            // Apply a weight of 40 to collected samples.
-            if rand_index < 40 {
-                &self.sample_values
-            } else {
-                &self.state_values
+    pub fn values(&self, param: Option<DynSolType>) -> &IndexSet<[u8; 32]> {
+        match param {
+            Some(param_type) => {
+                if let Some(typed_samples) = self.sample_values.get(&param_type) {
+                    // If we have sample values collected for this type then
+                    // use them with a weight of 50.
+                    if rand::thread_rng().gen_range(0..100) < 50 {
+                        typed_samples
+                    } else {
+                        &self.state_values
+                    }
+                } else {
+                    &self.state_values
+                }
             }
+            None => &self.state_values,
         }
     }
 

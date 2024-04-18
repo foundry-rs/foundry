@@ -15,7 +15,7 @@ pub fn override_call_strat(
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,
     calldata_fuzz_config: CalldataFuzzDictionary,
-) -> SBoxedStrategy<(Address, Bytes)> {
+) -> SBoxedStrategy<(Address, Bytes, Option<Function>)> {
     let contracts_ref = contracts.targets.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
@@ -167,17 +167,22 @@ pub fn fuzz_contract_with_calldata(
     calldata_fuzz_config: &CalldataFuzzDictionary,
     contract: Address,
     func: Function,
-) -> impl Strategy<Value = (Address, Bytes)> {
+) -> impl Strategy<Value = (Address, Bytes, Option<Function>)> {
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
     #[allow(clippy::arc_with_non_send_sync)]
     prop_oneof![
         60 => fuzz_calldata_with_config(func.clone(), Some(calldata_fuzz_config)),
-        40 => fuzz_calldata_from_state(func, fuzz_state),
+        40 => fuzz_calldata_from_state(func.clone(), fuzz_state),
     ]
     .prop_map(move |calldata| {
         trace!(input=?calldata);
-        (contract, calldata)
+        if !func.outputs.is_empty() {
+            // If function has outputs then return it for decoding result.
+            (contract, calldata, Some(func.clone()))
+        } else {
+            (contract, calldata, None)
+        }
     })
 }

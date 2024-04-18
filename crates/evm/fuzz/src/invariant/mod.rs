@@ -29,7 +29,7 @@ impl FuzzRunIdentifiedContracts {
 }
 
 /// (Sender, (TargetContract, Calldata))
-pub type BasicTxDetails = (Address, (Address, Bytes));
+pub type BasicTxDetails = (Address, (Address, Bytes, Option<Function>));
 
 /// Test contract which is testing its invariants.
 #[derive(Clone, Debug)]

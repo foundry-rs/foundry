@@ -2,6 +2,7 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
@@ -220,7 +221,8 @@ impl<'a> InvariantExecutor<'a> {
             let mut assume_rejects_counter = 0;
 
             while current_run < self.config.depth {
-                let (sender, (address, calldata)) = inputs.last().expect("no input generated");
+                let (sender, (address, calldata, func)) =
+                    inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = if self.config.preserve_state {
@@ -251,6 +253,7 @@ impl<'a> InvariantExecutor<'a> {
                         collect_data(
                             &mut state_changeset,
                             sender,
+                            func,
                             &call_result,
                             &fuzz_state,
                             self.config.depth,
@@ -338,7 +341,7 @@ impl<'a> InvariantExecutor<'a> {
         });
 
         trace!(target: "forge::test::invariant::calldata_address_fuzz_dictionary", "{:?}", calldata_fuzz_dictionary.inner.addresses);
-        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values().iter().map(hex::encode).collect::<Vec<_>>());
+        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values(None).iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, error) = failures.into_inner().into_inner();
 
@@ -674,6 +677,7 @@ impl<'a> InvariantExecutor<'a> {
 fn collect_data(
     state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
+    function: &Option<Function>,
     call_result: &RawCallResult,
     fuzz_state: &EvmFuzzState,
     run_depth: u32,
@@ -692,6 +696,7 @@ fn collect_data(
     }
 
     fuzz_state.collect_state_from_call(
+        function,
         &call_result.result,
         &call_result.logs,
         &*state_changeset,

@@ -87,10 +87,11 @@ pub fn fuzz_param_from_state(
     // Value strategy that uses the state.
     let value = || {
         let state = state.clone();
+        let param = param.clone();
         // Use `Index` instead of `Selector` to not iterate over the entire dictionary.
         any::<prop::sample::Index>().prop_map(move |index| {
             let state = state.dictionary_read();
-            let values = state.values();
+            let values = state.values(Some(param.clone()));
             let index = index.index(values.len());
             *values.iter().nth(index).unwrap()
         })
