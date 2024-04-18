@@ -45,7 +45,7 @@ impl ContractsByArtifact {
                     let bytecode = artifact.bytecode.and_then(|b| b.into_bytes())?;
                     let deployed_bytecode =
                         artifact.deployed_bytecode.and_then(|b| b.into_bytes())?;
-                    
+
                     if bytecode.is_empty() {
                         return None;
                     }
