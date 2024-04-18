@@ -60,7 +60,7 @@ async fn test_geth_low_gas_limit() {
     let gas_limit = 21_000u128 - 1;
     let tx = TransactionRequest::default()
         .from(account)
-        .to(Address::random().into())
+        .to(Address::random())
         .value(U256::from(1337u64))
         .gas_limit(gas_limit);
     let tx = WithOtherFields::new(tx);

@@ -136,7 +136,7 @@ async fn can_auto_impersonate_account() {
     assert_eq!(nonce, 1);
 
     let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
-    assert_eq!(balance, val.into());
+    assert_eq!(balance, val);
 
     api.anvil_auto_impersonate_account(false).await.unwrap();
     let res = provider.send_transaction(tx).await;
@@ -179,7 +179,7 @@ async fn can_impersonate_contract() {
     assert_eq!(res.from, impersonate);
 
     let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
-    assert_eq!(balance, val.into());
+    assert_eq!(balance, val);
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
     let res = provider.send_transaction(tx).await;
