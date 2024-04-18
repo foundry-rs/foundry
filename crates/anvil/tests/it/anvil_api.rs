@@ -3,9 +3,9 @@
 use crate::{
     abi::{AlloyBUSD, AlloyGreeter, AlloyMulticallContract},
     fork::fork_config,
-    utils::{http_provider, http_provider_with_signer},
+    utils::http_provider,
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, WithOtherFields};

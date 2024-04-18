@@ -1,6 +1,6 @@
 //! Gas related tests
 
-use crate::utils::http_provider;
+use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
@@ -19,15 +19,14 @@ async fn test_basefee_full_block() {
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
 
-    let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let tx = TransactionRequest::default()
         .with_to(Address::random().into())
         .with_value(U256::from(1337));
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
         .get_block(BlockId::latest(), false)
@@ -38,7 +37,7 @@ async fn test_basefee_full_block() {
         .base_fee_per_gas
         .unwrap();
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
         .get_block(BlockId::latest(), false)
@@ -67,22 +66,21 @@ async fn test_basefee_half_block() {
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
 
-    let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let tx = TransactionRequest::default()
         .with_to(Address::random().into())
         .with_value(U256::from(1337));
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let tx = TransactionRequest::default()
         .with_to(Address::random().into())
         .with_value(U256::from(1337));
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
         .get_block(BlockId::latest(), false)
@@ -104,15 +102,14 @@ async fn test_basefee_empty_block() {
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
 
-    let provider = http_provider(&handle.http_endpoint());
-    let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let tx = TransactionRequest::default()
         .with_to(Address::random().into())
         .with_value(U256::from(1337));
     let tx = WithOtherFields::new(tx);
 
-    provider_with_signer.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
         .get_block(BlockId::latest(), false)
@@ -153,7 +150,7 @@ async fn test_respect_base_fee() {
     let mut underpriced = tx.clone();
     underpriced.set_gas_price(base_fee - 1);
 
-    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await;
+    let res = provider.send_transaction(tx.clone()).await;
     assert!(res.is_err());
     assert!(res.unwrap_err().to_string().contains("max fee per gas less than block base fee"));
 

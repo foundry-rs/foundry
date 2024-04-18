@@ -513,7 +513,7 @@ async fn call_past_state() {
     let gas_price = api.gas_price().unwrap().to::<u128>();
     let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
 
-    let _set_tx = set_tx.send().await.unwrap();
+    let _set_tx = set_tx.send().await.unwrap().get_receipt().await.unwrap();
 
     // assert new value
     let value = contract.getValue().call().await.unwrap();
