@@ -767,7 +767,7 @@ impl Config {
             self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
-    /// Returns the `ProjectPathsConfig`  sub set of the config.
+    /// Returns the `ProjectPathsConfig` sub set of the config.
     ///
     /// **NOTE**: this uses the paths as they are and does __not__ modify them, see
     /// `[Self::sanitized]`

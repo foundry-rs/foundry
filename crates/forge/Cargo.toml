@@ -79,6 +79,8 @@ solang-parser.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["time"] }
+toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.22.4"
 watchexec = "2.3.2"
 evm-disassembler.workspace = true
 rustc-hash.workspace = true
@@ -96,6 +98,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
+mockall = "0.12"
 criterion = "0.5"
 globset = "0.4"
 paste = "1.0"
