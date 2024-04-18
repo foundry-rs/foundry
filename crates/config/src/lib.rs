@@ -1028,11 +1028,18 @@ impl Config {
     }
 
     /// Returns the `Optimizer` based on the configured settings
+    ///
+    /// Note: optimizer details can be set independently of `enabled`
+    /// See also: <https://github.com/foundry-rs/foundry/issues/7689>
+    /// and  <https://github.com/ethereum/solidity/blob/bbb7f58be026fdc51b0b4694a6f25c22a1425586/docs/using-the-compiler.rst?plain=1#L293-L294>
     pub fn optimizer(&self) -> Optimizer {
-        // only configure optimizer settings if optimizer is enabled
-        let details = if self.optimizer { self.optimizer_details.clone() } else { None };
-
-        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs), details }
+        Optimizer {
+            enabled: Some(self.optimizer),
+            runs: Some(self.optimizer_runs),
+            // we always set the details because `enabled` is effectively a specific details profile
+            // that can still be modified
+            details: self.optimizer_details.clone(),
+        }
     }
 
     /// returns the [`foundry_compilers::ConfigurableArtifacts`] for this config, that includes the

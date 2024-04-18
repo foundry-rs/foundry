@@ -6,6 +6,7 @@ use alloy_primitives::{Address, Bytes, Log, U256};
 use foundry_evm_core::{
     backend::{update_state, DatabaseExt},
     debug::DebugArena,
+    InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
@@ -762,5 +763,22 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         call_inspectors!([&mut self.tracer], |inspector| Inspector::<DB>::selfdestruct(
             inspector, contract, target, value
         ));
+    }
+}
+
+impl<DB: DatabaseExt + DatabaseCommit> InspectorExt<&mut DB> for InspectorStack {
+    fn should_use_create2_factory(
+        &mut self,
+        ecx: &mut EvmContext<&mut DB>,
+        inputs: &mut CreateInputs,
+    ) -> bool {
+        call_inspectors_adjust_depth!(
+            [&mut self.cheatcodes],
+            |inspector| { inspector.should_use_create2_factory(ecx, inputs).then_some(true) },
+            self,
+            ecx
+        );
+
+        false
     }
 }

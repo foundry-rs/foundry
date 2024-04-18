@@ -241,8 +241,8 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
-    function indexOf(string memory input, string memory key) external pure returns (uint256);
-    function isContext(ForgeContext context) external view returns (bool isContext);
+    function indexOf(string calldata input, string calldata key) external pure returns (uint256);
+    function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);

@@ -12,16 +12,18 @@ use crate::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
         ExpectedRevert, ExpectedRevertKind,
     },
-    CheatsConfig, CheatsCtxt, Error, Result, Vm,
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl};
+use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, SELECTOR_LEN};
 use foundry_evm_core::{
-    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
+    abi::Vm::stopExpectSafeMemoryCall,
+    backend::{DatabaseExt, RevertDiagnostic},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    InspectorExt,
 };
 use itertools::Itertools;
 use revm::{
@@ -601,6 +603,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             if !ranges.iter().any(|range| {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
+                                // SPECIAL CASE: When the compiler attempts to store the selector for
+                                // `stopExpectSafeMemory`, this is allowed. It will do so at the current free memory
+                                // pointer, which could have been updated to the exclusive upper bound during
+                                // execution.
+                                let value = try_or_continue!(interpreter.stack().peek(1)).to_be_bytes::<32>();
+                                let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
+                                if value[0..SELECTOR_LEN] == selector {
+                                    return
+                                }
+
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
                                 return
                             }
@@ -640,11 +652,48 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
                         ////////////////////////////////////////////////////////////////
 
+                        opcode::CALL => {
+                            // The destination offset of the operation is the fifth element on the stack.
+                            let dest_offset = try_or_continue!(interpreter.stack().peek(5)).saturating_to::<u64>();
+
+                            // The size of the data that will be copied is the sixth element on the stack.
+                            let size = try_or_continue!(interpreter.stack().peek(6)).saturating_to::<u64>();
+
+                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                            // memory outside of the expected ranges has been touched. If the opcode
+                            // only reads from memory, this is okay as long as the memory is not expanded.
+                            let fail_cond = !ranges.iter().any(|range| {
+                                range.contains(&dest_offset) &&
+                                    range.contains(&(dest_offset + size.saturating_sub(1)))
+                            });
+
+                            // If the failure condition is met, set the output buffer to a revert string
+                            // that gives information about the allowed ranges and revert.
+                            if fail_cond {
+                                // SPECIAL CASE: When a call to `stopExpectSafeMemory` is performed, this is allowed.
+                                // It allocated calldata at the current free memory pointer, and will attempt to read
+                                // from this memory region to perform the call.
+                                let to = Address::from_word(try_or_continue!(interpreter.stack().peek(1)).to_be_bytes::<32>().into());
+                                if to == CHEATCODE_ADDRESS {
+                                    let args_offset = try_or_continue!(interpreter.stack().peek(3)).saturating_to::<usize>();
+                                    let args_size = try_or_continue!(interpreter.stack().peek(4)).saturating_to::<usize>();
+                                    let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
+                                    let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
+                                    if memory_word[0..SELECTOR_LEN] == selector {
+                                        return
+                                    }
+                                }
+
+                                disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                                return
+                            }
+                        }
+
                         $(opcode::$opcode => {
-                            // The destination offset of the operation is at the top of the stack.
+                            // The destination offset of the operation.
                             let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).saturating_to::<u64>();
 
-                            // The size of the data that will be copied is the third item on the stack.
+                            // The size of the data that will be copied.
                             let size = try_or_continue!(interpreter.stack().peek($size_depth)).saturating_to::<u64>();
 
                             // If none of the allowed ranges contain [dest_offset, dest_offset + size),
@@ -678,7 +727,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 (CODECOPY, 0, 2, true),
                 (RETURNDATACOPY, 0, 2, true),
                 (EXTCODECOPY, 1, 3, true),
-                (CALL, 5, 6, true),
                 (CALLCODE, 5, 6, true),
                 (STATICCALL, 4, 5, true),
                 (DELEGATECALL, 4, 5, true),
@@ -1280,22 +1328,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 ecx.env.tx.caller = broadcast.new_origin;
 
                 if ecx.journaled_state.depth() == broadcast.depth {
-                    let (bytecode, to, nonce) = process_broadcast_create(
-                        broadcast.new_origin,
-                        call.init_code.clone(),
-                        ecx,
-                        call,
-                    );
+                    call.caller = broadcast.new_origin;
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
+
+                    let account = &ecx.journaled_state.state()[&broadcast.new_origin];
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
-                            to,
+                            to: None,
                             value: Some(call.value),
-                            input: TransactionInput::new(bytecode),
-                            nonce: Some(nonce),
+                            input: TransactionInput::new(call.init_code.clone()),
+                            nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
                                 Some(call.gas_limit as u128)
                             } else {
@@ -1304,6 +1349,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ..Default::default()
                         },
                     });
+
                     let kind = match call.scheme {
                         CreateScheme::Create => "create",
                         CreateScheme::Create2 { .. } => "create2",
@@ -1311,29 +1357,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
                 }
             }
-        }
-
-        // Apply the Create2 deployer
-        if self.broadcast.is_some() || self.config.always_use_create_2_factory {
-            match apply_create2_deployer(
-                ecx,
-                call,
-                self.prank.as_ref(),
-                self.broadcast.as_ref(),
-                self.recorded_account_diffs_stack.as_mut(),
-            ) {
-                Ok(_) => {}
-                Err(err) => {
-                    return Some(CreateOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::Revert,
-                            output: Error::encode(err),
-                            gas,
-                        },
-                        address: None,
-                    })
-                }
-            };
         }
 
         // allow cheatcodes from the address of the new contract
@@ -1479,6 +1502,29 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 }
 
+impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
+    fn should_use_create2_factory(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        inputs: &mut CreateInputs,
+    ) -> bool {
+        if let CreateScheme::Create2 { .. } = inputs.scheme {
+            let target_depth = if let Some(prank) = &self.prank {
+                prank.depth
+            } else if let Some(broadcast) = &self.broadcast {
+                broadcast.depth
+            } else {
+                1
+            };
+
+            ecx.journaled_state.depth() == target_depth &&
+                (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+        } else {
+            false
+        }
+    }
+}
+
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
 /// and sets the return range to the revert string's location in memory.
 ///
@@ -1505,110 +1551,6 @@ fn disallowed_mem_write(
             result: InstructionResult::Revert,
         },
     };
-}
-
-/// Applies the default CREATE2 deployer for contract creation.
-///
-/// This function is invoked during the contract creation process and updates the caller of the
-/// contract creation transaction to be the `DEFAULT_CREATE2_DEPLOYER` if the `CreateScheme` is
-/// `Create2` and the current execution depth matches the depth at which the `prank` or `broadcast`
-/// was started, or the default depth of 1 if no prank or broadcast is currently active.
-///
-/// Returns a `DatabaseError::MissingCreate2Deployer` if the `DEFAULT_CREATE2_DEPLOYER` account is
-/// not found or if it does not have any associated bytecode.
-fn apply_create2_deployer<DB: DatabaseExt>(
-    ecx: &mut InnerEvmContext<DB>,
-    call: &mut CreateInputs,
-    prank: Option<&Prank>,
-    broadcast: Option<&Broadcast>,
-    diffs_stack: Option<&mut Vec<Vec<AccountAccess>>>,
-) -> Result<(), DB::Error> {
-    if let CreateScheme::Create2 { salt } = call.scheme {
-        let mut base_depth = 1;
-        if let Some(prank) = &prank {
-            base_depth = prank.depth;
-        } else if let Some(broadcast) = &broadcast {
-            base_depth = broadcast.depth;
-        }
-
-        // If the create scheme is Create2 and the depth equals the broadcast/prank/default
-        // depth, then use the default create2 factory as the deployer
-        if ecx.journaled_state.depth() == base_depth {
-            // Record the call to the create2 factory in the state diff
-            if let Some(recorded_account_diffs_stack) = diffs_stack {
-                let calldata = [&salt.to_be_bytes::<32>()[..], &call.init_code[..]].concat();
-                recorded_account_diffs_stack.push(vec![AccountAccess {
-                    chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.db.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.env.cfg.chain_id),
-                    },
-                    accessor: call.caller,
-                    account: DEFAULT_CREATE2_DEPLOYER,
-                    kind: crate::Vm::AccountAccessKind::Call,
-                    initialized: true,
-                    oldBalance: U256::ZERO, // updated on create_end
-                    newBalance: U256::ZERO, // updated on create_end
-                    value: call.value,
-                    data: calldata.into(),
-                    reverted: false,
-                    deployedCode: Bytes::new(), // updated on create_end
-                    storageAccesses: vec![],    // updated on create_end
-                    depth: ecx.journaled_state.depth(),
-                }])
-            }
-
-            // Sanity checks for our CREATE2 deployer
-            // TODO: use ecx.load_account
-            let info =
-                &ecx.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, &mut ecx.db)?.0.info;
-            match &info.code {
-                Some(code) if code.is_empty() => return Err(DatabaseError::MissingCreate2Deployer),
-                None if ecx.db.code_by_hash(info.code_hash)?.is_empty() => {
-                    return Err(DatabaseError::MissingCreate2Deployer)
-                }
-                _ => {}
-            }
-
-            call.caller = DEFAULT_CREATE2_DEPLOYER;
-        }
-    }
-    Ok(())
-}
-
-/// Processes the creation of a new contract when broadcasting, preparing the necessary data for the
-/// transaction to deploy the contract.
-///
-/// Returns the transaction calldata and the target address.
-///
-/// If the CreateScheme is Create, then this function returns the input bytecode without
-/// modification and no address since it will be filled in later. If the CreateScheme is Create2,
-/// then this function returns the calldata for the call to the create2 deployer which must be the
-/// salt and init code concatenated.
-fn process_broadcast_create<DB: DatabaseExt>(
-    broadcast_sender: Address,
-    bytecode: Bytes,
-    ecx: &mut InnerEvmContext<DB>,
-    call: &mut CreateInputs,
-) -> (Bytes, Option<Address>, u64) {
-    call.caller = broadcast_sender;
-    match call.scheme {
-        CreateScheme::Create => {
-            (bytecode, None, ecx.journaled_state.account(broadcast_sender).info.nonce)
-        }
-        CreateScheme::Create2 { salt } => {
-            // We have to increment the nonce of the user address, since this create2 will be done
-            // by the create2_deployer
-            let account = ecx.journaled_state.state().get_mut(&broadcast_sender).unwrap();
-            let prev = account.info.nonce;
-            // Touch account to ensure that incremented nonce is committed
-            account.mark_touch();
-            account.info.nonce += 1;
-            debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
-            // Proxy deployer requires the data to be `salt ++ init_code`
-            let calldata = [&salt.to_be_bytes::<32>()[..], &bytecode[..]].concat();
-            (calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev)
-        }
-    }
 }
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
