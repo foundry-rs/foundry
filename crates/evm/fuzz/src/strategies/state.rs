@@ -188,10 +188,7 @@ impl FuzzDictionary {
                     self.insert_value(sample_value);
                 }
             } else {
-                self.sample_values
-                    .entry(sample_type)
-                    .or_insert(IndexSet::new())
-                    .insert(sample_value);
+                self.sample_values.entry(sample_type).or_default().insert(sample_value);
             }
         }
     }
