@@ -1,35 +1,16 @@
 //! tests for subscriptions
 
-use crate::utils::{
-    connect_pubsub, connect_pubsub_with_signer, ethers_http_provider, ethers_ws_provider,
-    http_provider, http_provider_with_signer,
-};
-use alloy_network::{Ethereum, EthereumSigner, TransactionBuilder};
+use crate::utils::{connect_pubsub, connect_pubsub_with_signer, http_provider};
+use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address as aAddress, U256 as rU256};
-use alloy_provider::{
-    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, SignerFiller},
-    Identity, Provider, ProviderBuilder, RootProvider,
-};
+use alloy_provider::Provider;
 use alloy_pubsub::Subscription;
-use alloy_rpc_client::{RpcCall, RpcClient};
 use alloy_rpc_types::{
     Block as AlloyBlock, Filter as AlloyFilter, TransactionRequest as CallRequest, WithOtherFields,
 };
 use alloy_sol_types::sol;
-use alloy_transport::BoxTransport;
-use alloy_transport_ws::WsConnect;
 use anvil::{spawn, NodeConfig};
-use ethers::{
-    contract::abigen,
-    middleware::SignerMiddleware,
-    prelude::{Middleware, Ws},
-    providers::JsonRpcClient,
-    signers::Signer,
-    types::{Address, Block, Filter, TransactionRequest, TxHash, ValueOrArray, U256},
-};
-use foundry_common::types::{ToAlloy, ToEthers};
 use futures::StreamExt;
-use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads() {
