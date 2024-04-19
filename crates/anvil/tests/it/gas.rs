@@ -150,7 +150,7 @@ async fn test_respect_base_fee() {
     let mut underpriced = tx.clone();
     underpriced.set_gas_price(base_fee - 1);
 
-    let res = provider.send_transaction(tx.clone()).await;
+    let res = provider.send_transaction(underpriced).await;
     assert!(res.is_err());
     assert!(res.unwrap_err().to_string().contains("max fee per gas less than block base fee"));
 
