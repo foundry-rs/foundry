@@ -51,7 +51,7 @@ pub fn assert_invariants(
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 targeted_contracts,
-                Some(func),
+                func,
                 calldata,
                 call_result,
                 &inner_sequence,

@@ -743,7 +743,7 @@ fn can_continue(
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 targeted_contracts,
-                None,
+                invariant_contract.invariant_function,
                 calldata,
                 call_result,
                 &[],

@@ -90,7 +90,7 @@ pub struct FailedInvariantCaseData {
     /// Address of the invariant asserter.
     pub addr: Address,
     /// Function data for invariant check.
-    pub func: Option<Bytes>,
+    pub func: Bytes,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
     /// Shrink the failed test case to the smallest sequence.
@@ -104,19 +104,13 @@ impl FailedInvariantCaseData {
     pub fn new(
         invariant_contract: &InvariantContract<'_>,
         targeted_contracts: &FuzzRunIdentifiedContracts,
-        error_func: Option<&Function>,
+        error_func: &Function,
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
         shrink: bool,
         shrink_run_limit: usize,
     ) -> Self {
-        let (func, origin) = if let Some(f) = error_func {
-            (Some(f.selector().to_vec().into()), f.name.as_str())
-        } else {
-            (None, "Revert")
-        };
-
         // Collect abis of fuzzed and invariant contracts to decode custom error.
         let targets = targeted_contracts.targets.lock();
         let abis = targets
@@ -127,6 +121,7 @@ impl FailedInvariantCaseData {
         let revert_reason = RevertDecoder::new()
             .with_abis(abis)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
+        let origin = error_func.name.as_str();
 
         Self {
             logs: call_result.logs,
@@ -138,7 +133,7 @@ impl FailedInvariantCaseData {
             return_reason: "".into(),
             revert_reason,
             addr: invariant_contract.address,
-            func,
+            func: error_func.selector().to_vec().into(),
             inner_sequence: inner_sequence.to_vec(),
             shrink,
             shrink_run_limit,
@@ -195,16 +190,14 @@ impl FailedInvariantCaseData {
             ));
 
             // Checks the invariant.
-            if let Some(func) = &self.func {
-                let error_call_result =
-                    executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
+            let error_call_result =
+                executor.call_raw(CALLER, self.addr, self.func.clone(), U256::ZERO)?;
 
-                traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
+            traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
 
-                logs.extend(error_call_result.logs);
-                if error_call_result.reverted {
-                    break
-                }
+            logs.extend(error_call_result.logs);
+            if error_call_result.reverted {
+                break
             }
         }
 
@@ -246,21 +239,19 @@ impl FailedInvariantCaseData {
             executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
 
             // Checks the invariant. If we revert or fail before the last call, all the better.
-            if let Some(func) = &self.func {
-                let mut call_result =
-                    executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
-                let is_success = executor.is_raw_call_success(
-                    self.addr,
-                    Cow::Owned(call_result.state_changeset.take().unwrap()),
-                    &call_result,
-                    false,
-                );
-                if !is_success {
-                    let mut locked = curr_seq.write();
-                    if new_sequence[..=seq_idx].len() < locked.len() {
-                        // update the curr_sequence if the new sequence is lower than
-                        *locked = new_sequence[..=seq_idx].to_vec();
-                    }
+            let mut call_result =
+                executor.call_raw(CALLER, self.addr, self.func.clone(), U256::ZERO)?;
+            let is_success = executor.is_raw_call_success(
+                self.addr,
+                Cow::Owned(call_result.state_changeset.take().unwrap()),
+                &call_result,
+                false,
+            );
+            if !is_success {
+                let mut locked = curr_seq.write();
+                if new_sequence[..=seq_idx].len() < locked.len() {
+                    // update the curr_sequence if the new sequence is lower than
+                    *locked = new_sequence[..=seq_idx].to_vec();
                 }
             }
         }
@@ -279,12 +270,10 @@ impl FailedInvariantCaseData {
 
         // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
         // break the invariant -- consider emitting a warning.
-        if let Some(func) = &self.func {
-            let error_call_result =
-                executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
-            if error_call_result.reverted {
-                return Ok(vec![]);
-            }
+        let error_call_result =
+            executor.call_raw(CALLER, self.addr, self.func.clone(), U256::ZERO)?;
+        if error_call_result.reverted {
+            return Ok(vec![]);
         }
 
         let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0)?;
