@@ -1074,6 +1074,8 @@ async fn can_override_fork_chain_id() {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6485>
+// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>, remove ignore
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_moonbeam() {
     crate::init_tracing();

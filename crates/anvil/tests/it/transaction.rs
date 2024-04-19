@@ -140,7 +140,7 @@ async fn can_respect_nonces() {
     );
 }
 
-// TODO: Revisit after alloy/#389 is fixed. Remove ignore.
+// TODO: Revisit after https://github.com/alloy-rs/alloy/issues/389 is fixed. Remove ignore.
 #[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
