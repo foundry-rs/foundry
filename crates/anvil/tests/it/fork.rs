@@ -493,7 +493,8 @@ async fn can_reset_properly() {
     assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.is_err())
 }
 
-// TODO: <https://github.com/alloy-rs/alloy/issues/389> didn't fix this.
+// TODO: <https://github.com/alloy-rs/alloy/issues/389> didn't fix this, remove ignore
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_timestamp() {
     let start = std::time::Instant::now();
@@ -847,7 +848,8 @@ async fn test_fork_snapshot_block_timestamp() {
     assert_eq!(initial_block.header.timestamp, latest_block.header.timestamp);
 }
 
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/pull/587> is merged
+// TODO: Revisit after <https://github.com/alloy-rs/alloy/pull/589> is merged, remove ignore
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_uncles_fetch() {
     let (api, handle) = spawn(fork_config()).await;
@@ -1067,6 +1069,8 @@ async fn can_override_fork_chain_id() {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6485>
+// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>, remove ignore
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_moonbeam() {
     crate::init_tracing();

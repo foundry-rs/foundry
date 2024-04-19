@@ -1,6 +1,6 @@
 //! IPC tests
 
-use crate::utils::ipc_provider;
+use crate::utils::{connect_pubsub, ipc_provider};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use anvil::{spawn, NodeConfig};
@@ -36,7 +36,8 @@ async fn can_get_block_number_ipc() {
 async fn test_sub_new_heads_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
-    let provider = ipc_provider(handle.ipc_path().unwrap().as_str()).await;
+    // TODO: update to `ipc_provider` once https://github.com/alloy-rs/alloy/issues/389 is fixed
+    let provider = connect_pubsub(handle.ipc_path().unwrap().as_str()).await;
 
     let blocks = provider.subscribe_blocks().await.unwrap().into_stream();
 
