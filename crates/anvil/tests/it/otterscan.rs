@@ -425,7 +425,7 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let bytecode = contract.into_bytecode_bytes().unwrap();
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let signer: EthereumSigner = wallets[0].clone().into();
     let sender = wallets[0].address();
@@ -443,7 +443,7 @@ contract Contract {
         .await
         .unwrap();
     let contract_address = sender.create(0);
-    let contract = Contract::new(contract_address, &provider);
+    let _contract = Contract::new(contract_address, &provider);
 
     // TODO: currently not possible to capture the receipt
     // let receipt = contract.trigger_revert().send().await.unwrap().get_receipt().await.unwrap();

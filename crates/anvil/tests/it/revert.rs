@@ -1,11 +1,10 @@
-use crate::utils::{http_provider_with_signer, ws_provider_with_signer};
+use crate::utils::ws_provider_with_signer;
 use alloy_network::EthereumSigner;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
 use anvil::{spawn, NodeConfig};
-use foundry_common::shell::println;
 // use ethers::{
 //     contract::{ContractFactory, ContractInstance},
 //     middleware::SignerMiddleware,
