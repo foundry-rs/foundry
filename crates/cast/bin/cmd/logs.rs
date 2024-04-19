@@ -81,13 +81,13 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = if let Some(_) = from_block {
+        let from_block = if from_block.is_some() {
             cast.convert_block_number(from_block).await?
         } else {
             cast.convert_block_number(Some(BlockId::Number(BlockNumberOrTag::Earliest))).await?
         };
 
-        let to_block = if let Some(_) = to_block {
+        let to_block = if to_block.is_some() {
             cast.convert_block_number(to_block).await?
         } else {
             cast.convert_block_number(Some(BlockId::Number(BlockNumberOrTag::Latest))).await?
