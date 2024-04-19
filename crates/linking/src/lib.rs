@@ -275,10 +275,7 @@ impl<'a> Linker<'a> {
 mod tests {
     use super::*;
     use alloy_primitives::fixed_bytes;
-    use foundry_compilers::{
-        artifacts::output_selection::{ContractOutputSelection, OutputSelection},
-        ConfigurableArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig,
-    };
+    use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
     use std::collections::HashMap;
 
     struct LinkerTest {
