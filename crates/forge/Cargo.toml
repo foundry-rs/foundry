@@ -38,6 +38,7 @@ rayon = "1"
 serde.workspace = true
 tracing.workspace = true
 yansi = "0.5"
+humantime-serde = "1.1.1"
 
 # bin
 forge-doc.workspace = true
