@@ -63,6 +63,7 @@ use alloy_provider::{
     Identity, RootProvider,
 };
 use alloy_transport::BoxTransport;
+
 type PubsubSigner = FillProvider<
     JoinFill<
         JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
@@ -72,6 +73,7 @@ type PubsubSigner = FillProvider<
     BoxTransport,
     Ethereum,
 >;
+
 pub async fn connect_pubsub_with_signer(conn_str: &str, signer: EthereumSigner) -> PubsubSigner {
     alloy_provider::ProviderBuilder::new()
         .with_recommended_fillers()

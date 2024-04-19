@@ -2,7 +2,7 @@
 
 use crate::{
     abi::{AlloyMulticallContract, AlloySimpleStorage},
-    utils::{http_provider, http_provider_with_signer},
+    utils::{connect_pubsub_with_signer, http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, ChainId, B256, U256};
@@ -130,7 +130,7 @@ async fn can_get_pending_block() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let provider = connect_pubsub_with_signer(&handle.http_endpoint(), signer).await;
 
     let block = provider.get_block(BlockId::pending(), false).await.unwrap().unwrap();
     assert_eq!(block.header.number.unwrap(), 1);
@@ -144,9 +144,8 @@ async fn can_get_pending_block() {
         .with_from(from)
         .with_to(Some(to).into())
         .with_value(U256::from(100));
-    let tx = WithOtherFields::new(tx);
 
-    let receipt = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    let pending = provider.send_transaction(tx.clone()).await.unwrap().register().await.unwrap();
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
@@ -154,10 +153,10 @@ async fn can_get_pending_block() {
     let block = provider.get_block(BlockId::pending(), false).await.unwrap().unwrap();
     assert_eq!(block.header.number.unwrap(), 1);
     assert_eq!(block.transactions.len(), 1);
-    assert_eq!(block.transactions, BlockTransactions::Hashes(vec![receipt.transaction_hash]));
+    assert_eq!(block.transactions, BlockTransactions::Hashes(vec![*pending.tx_hash()]));
 
     let block = provider.get_block(BlockId::pending(), true).await.unwrap().unwrap();
-    assert_eq!(block.header.gas_limit, 1);
+    assert_eq!(block.header.number.unwrap(), 1);
     assert_eq!(block.transactions.len(), 1);
 }
 
