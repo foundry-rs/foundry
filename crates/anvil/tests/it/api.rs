@@ -165,6 +165,7 @@ async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
@@ -173,23 +174,23 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let multicall_contract_builder =
-        AlloyMulticallContract::deploy_builder(&provider).from(wallet.address());
-    let multicall_contract_address = multicall_contract_builder.deploy().await.unwrap();
-    let pending_multicall_contract =
-        AlloyMulticallContract::new(multicall_contract_address, &provider);
+    let _contract_pending = AlloyMulticallContract::deploy_builder(&provider)
+        .from(wallet.address())
+        .send()
+        .await
+        .unwrap()
+        .register()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = AlloyMulticallContract::new(contract_address, &provider);
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
 
     // Ensure that we can get the block_number from the pending contract
     let AlloyMulticallContract::aggregateReturn { blockNumber: ret_block_number, .. } =
-        pending_multicall_contract
-            .aggregate(vec![])
-            .block(BlockId::pending())
-            .call()
-            .await
-            .unwrap();
+        contract.aggregate(vec![]).block(BlockId::pending()).call().await.unwrap();
     assert_eq!(ret_block_number, U256::from(1));
 
     let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
@@ -209,7 +210,7 @@ async fn can_call_on_pending_block() {
 
         let AlloyMulticallContract::getCurrentBlockTimestampReturn {
             timestamp: ret_timestamp, ..
-        } = pending_multicall_contract
+        } = contract
             .getCurrentBlockTimestamp()
             .block(BlockId::number(anvil_block_number as u64))
             .call()
@@ -219,7 +220,7 @@ async fn can_call_on_pending_block() {
 
         let AlloyMulticallContract::getCurrentBlockGasLimitReturn {
             gaslimit: ret_gas_limit, ..
-        } = pending_multicall_contract
+        } = contract
             .getCurrentBlockGasLimit()
             .block(BlockId::number(anvil_block_number as u64))
             .call()
@@ -229,7 +230,7 @@ async fn can_call_on_pending_block() {
 
         let AlloyMulticallContract::getCurrentBlockCoinbaseReturn {
             coinbase: ret_coinbase, ..
-        } = pending_multicall_contract
+        } = contract
             .getCurrentBlockCoinbase()
             .block(BlockId::number(anvil_block_number as u64))
             .call()
