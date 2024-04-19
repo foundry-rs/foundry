@@ -29,7 +29,7 @@ foundry-compilers = { workspace = true, features = ["full"] }
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-reqwest = { version = "0.11", default-features = false, features = ["json"] }
+reqwest = { workspace = true, features = ["json"] }
 async-trait = "0.1"
 futures = "0.3"
 semver = "1"

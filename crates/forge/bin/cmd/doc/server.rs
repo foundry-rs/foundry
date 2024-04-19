@@ -1,6 +1,7 @@
 use axum::{routing::get_service, Router};
 use forge_doc::mdbook::{utils::fs::get_404_output_file, MDBook};
 use std::{
+    io,
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
 };
@@ -82,18 +83,20 @@ impl Server {
             open(serving_url);
         }
 
-        let _ = thread_handle.join();
-
-        Ok(())
+        match thread_handle.join() {
+            Ok(r) => r.map_err(Into::into),
+            Err(e) => std::panic::resume_unwind(e),
+        }
     }
 }
 
 #[tokio::main]
-async fn serve(build_dir: PathBuf, address: SocketAddr, file_404: &str) {
+async fn serve(build_dir: PathBuf, address: SocketAddr, file_404: &str) -> io::Result<()> {
     let file_404 = build_dir.join(file_404);
     let svc = ServeDir::new(build_dir).not_found_service(ServeFile::new(file_404));
     let app = Router::new().nest_service("/", get_service(svc));
-    hyper::Server::bind(&address).serve(app.into_make_service()).await.unwrap();
+    let tcp_listener = tokio::net::TcpListener::bind(address).await?;
+    axum::serve(tcp_listener, app.into_make_service()).await
 }
 
 fn open<P: AsRef<std::ffi::OsStr>>(path: P) {

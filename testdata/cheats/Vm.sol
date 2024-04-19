@@ -305,6 +305,7 @@ interface Vm {
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
+    function prevrandao(uint256 newPrevrandao) external;
     function projectRoot() external view returns (string memory path);
     function prompt(string calldata promptText) external returns (string memory input);
     function promptAddress(string calldata promptText) external returns (address);

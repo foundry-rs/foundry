@@ -155,13 +155,15 @@ impl CheatsConfig {
     ///
     /// If `url_or_alias` is a known alias in the `ResolvedRpcEndpoints` then it returns the
     /// corresponding URL of that alias. otherwise this assumes `url_or_alias` is itself a URL
-    /// if it starts with a `http` or `ws` scheme
+    /// if it starts with a `http` or `ws` scheme.
+    ///
+    /// If the url is a path to an existing file, it is also considered a valid RPC URL, IPC path.
     ///
     /// # Errors
     ///
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
-    ///    `scheme`
+    ///    `ws` `scheme` and is not a path to an existing file
     pub fn rpc_url(&self, url_or_alias: &str) -> Result<String> {
         match self.rpc_endpoints.get(url_or_alias) {
             Some(Ok(url)) => Ok(url.clone()),
@@ -170,7 +172,12 @@ impl CheatsConfig {
                 err.try_resolve().map_err(Into::into)
             }
             None => {
-                if url_or_alias.starts_with("http") || url_or_alias.starts_with("ws") {
+                // check if it's a URL or a path to an existing file to an ipc socket
+                if url_or_alias.starts_with("http") ||
+                    url_or_alias.starts_with("ws") ||
+                    // check for existing ipc file
+                    Path::new(url_or_alias).exists()
+                {
                     Ok(url_or_alias.into())
                 } else {
                     Err(fmt_err!("invalid rpc url: {url_or_alias}"))

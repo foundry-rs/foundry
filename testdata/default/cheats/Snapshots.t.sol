@@ -93,7 +93,7 @@ contract SnapshotTest is DSTest {
         vm.roll(99);
         assertEq(block.number, 99);
 
-        vm.prevrandao(bytes32(uint256(123)));
+        vm.prevrandao(uint256(123));
         assertEq(block.prevrandao, 123);
 
         assert(vm.revertTo(snapshot));
