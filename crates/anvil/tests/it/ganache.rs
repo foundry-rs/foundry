@@ -48,11 +48,10 @@ async fn test_ganache_block_number() {
 #[ignore]
 async fn test_ganache_deploy() {
     let signer: EthereumSigner = ganache_wallet().into();
-    let provider = http_provider("http://127.0.0.1:8545");
-    let provider_with_signer = http_provider_with_signer("http://127.0.0.1:8545", signer);
+    let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
     let greeter_contract_builder =
-        AlloyGreeter::deploy_builder(&provider_with_signer, "Hello World!".to_string());
+        AlloyGreeter::deploy_builder(&provider, "Hello World!".to_string());
     let greeter_contract_address = greeter_contract_builder.deploy().await.unwrap();
     let greeter_contract = AlloyGreeter::new(greeter_contract_address, &provider);
 
@@ -71,13 +70,11 @@ async fn test_ganache_emit_logs() {
     );
 
     let signer: EthereumSigner = ganache_wallet().into();
-    let provider = ws_provider("ws://127.0.0.1:8545");
-    let provider_with_signer = ws_provider_with_signer("ws://127.0.0.1:8545", signer);
+    let provider = ws_provider_with_signer("ws://127.0.0.1:8545", signer);
 
     let first_msg = "First Message".to_string();
     let next_msg = "Next Message".to_string();
-    let emit_logs_contract_builder =
-        EmitLogs::deploy_builder(&provider_with_signer, first_msg.clone());
+    let emit_logs_contract_builder = EmitLogs::deploy_builder(&provider, first_msg.clone());
     let emit_logs_contract_address = emit_logs_contract_builder.deploy().await.unwrap();
     let emit_logs_contract = EmitLogs::new(emit_logs_contract_address, &provider);
 
@@ -104,11 +101,10 @@ async fn test_ganache_deploy_reverting() {
 
     let wallet = ganache_wallet();
     let signer: EthereumSigner = wallet.into();
-    let provider = http_provider("http://127.0.0.1:8545");
-    let provider_with_signer = http_provider_with_signer("http://127.0.0.1:8545", signer);
+    let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
     // deploy will fail
-    let contract_builder = RevertingConstructor::deploy_builder(&provider_with_signer);
+    let contract_builder = RevertingConstructor::deploy_builder(&provider);
     contract_builder.deploy().await.unwrap_err();
 }
 
@@ -124,11 +120,10 @@ async fn test_ganache_tx_reverting() {
 
     let wallet = ganache_wallet();
     let signer: EthereumSigner = wallet.into();
-    let provider = http_provider("http://127.0.0.1:8545");
-    let provider_with_signer = http_provider_with_signer("http://127.0.0.1:8545", signer);
+    let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
     // deploy successfully
-    let contract_builder = RevertingMethod::deploy_builder(&provider_with_signer);
+    let contract_builder = RevertingMethod::deploy_builder(&provider);
     let contract_address = contract_builder.deploy().await.unwrap();
     let contract = RevertingMethod::new(contract_address, &provider);
     contract.getSecret().call().await.unwrap_err();
