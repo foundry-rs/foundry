@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use alloy_network::EthereumSigner;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions, TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
@@ -232,6 +232,7 @@ contract Contract {
         .unwrap();
     let contract_address = sender.create(0);
     let contract = Contract::new(contract_address, &provider);
+
     let receipt = contract.goodbye().send().await.unwrap().get_receipt().await.unwrap();
 
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
@@ -249,4 +250,158 @@ contract Contract {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_has_code() {}
+async fn can_call_ots_has_code() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    api.mine_one().await;
+
+    let contract_address = sender.create(0);
+
+    // no code in the address before deploying
+    assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(1)).await.unwrap());
+
+    let contract_builder = AlloyMulticallContract::deploy_builder(provider.clone());
+    let contract_receipt = contract_builder.send().await.unwrap().get_receipt().await.unwrap();
+
+    let num = provider.get_block_number().await.unwrap();
+    assert_eq!(num, contract_receipt.block_number.unwrap());
+
+    // code is detected after deploying
+    assert!(api.ots_has_code(contract_address, BlockNumberOrTag::Number(num)).await.unwrap());
+
+    // code is not detected for the previous block
+    assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(num - 1)).await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_call_ots_trace_transaction() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    address payable private owner;
+    constructor() public {
+        owner = payable(msg.sender);
+    }
+    function run() payable public {
+        this.do_staticcall();
+        this.do_call();
+    }
+
+    function do_staticcall() external view returns (bool) {
+        return true;
+    }
+
+    function do_call() external {
+        owner.call{value: address(this).balance}("");
+        address(this).delegatecall(abi.encodeWithSignature("do_delegatecall()"));
+    }
+    
+    function do_delegatecall() internal {
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    sol!(
+        #[sol(rpc)]
+        contract Contract {
+            function run() external payable;
+            function do_staticcall() external view returns (bool);
+            function do_call() external;
+            function do_delegatecall() external;
+        }
+    );
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let signer: EthereumSigner = wallets[0].clone().into();
+    let sender = wallets[0].address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
+
+    // deploy successfully
+    provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().input(bytecode.into()).from(sender),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
+
+    let receipt = contract
+        .run()
+        .from(sender)
+        .value(U256::from(1337))
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let res = api.ots_trace_transaction(receipt.transaction_hash).await.unwrap();
+
+    assert_eq!(
+        res,
+        vec![
+            OtsTrace {
+                r#type: OtsTraceType::Call,
+                depth: 0,
+                from: sender,
+                to: contract_address,
+                value: U256::from(1337),
+                input: Bytes::from_str("0xc0406226").unwrap().0.into()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::StaticCall,
+                depth: 1,
+                from: contract_address,
+                to: contract_address,
+                value: U256::ZERO,
+                input: Bytes::from_str("0x6a6758fe").unwrap().0.into()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::Call,
+                depth: 1,
+                from: contract_address,
+                to: contract_address,
+                value: U256::ZERO,
+                input: Bytes::from_str("0x96385e39").unwrap().0.into()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::Call,
+                depth: 2,
+                from: contract_address,
+                to: sender,
+                value: U256::from(1337),
+                input: Bytes::from_str("0x").unwrap().0.into()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::DelegateCall,
+                depth: 2,
+                from: contract_address,
+                to: contract_address,
+                value: U256::ZERO,
+                input: Bytes::from_str("0xa1325397").unwrap().0.into()
+            },
+        ]
+    );
+}
