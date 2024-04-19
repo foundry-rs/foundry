@@ -81,17 +81,10 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = if from_block.is_some() {
-            cast.convert_block_number(from_block).await?
-        } else {
-            cast.convert_block_number(Some(BlockId::Number(BlockNumberOrTag::Earliest))).await?
-        };
-
-        let to_block = if to_block.is_some() {
-            cast.convert_block_number(to_block).await?
-        } else {
-            cast.convert_block_number(Some(BlockId::Number(BlockNumberOrTag::Latest))).await?
-        };
+        let from_block =
+            cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
+        let to_block =
+            cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
