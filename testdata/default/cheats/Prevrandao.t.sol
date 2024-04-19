@@ -9,14 +9,14 @@ contract PrevrandaoTest is DSTest {
 
     function testPrevrandao() public {
         assertEq(block.prevrandao, 0);
-        vm.prevrandao(bytes32(uint256(10)));
+        vm.prevrandao(uint256(10));
         assertEq(block.prevrandao, 10, "prevrandao cheatcode failed");
     }
 
     function testPrevrandaoFuzzed(uint256 newPrevrandao) public {
         vm.assume(newPrevrandao != block.prevrandao);
         assertEq(block.prevrandao, 0);
-        vm.prevrandao(bytes32(newPrevrandao));
+        vm.prevrandao(newPrevrandao);
         assertEq(block.prevrandao, newPrevrandao);
     }
 
@@ -25,7 +25,7 @@ contract PrevrandaoTest is DSTest {
         uint256 oldPrevrandao = block.prevrandao;
         uint256 snapshot = vm.snapshot();
 
-        vm.prevrandao(bytes32(newPrevrandao));
+        vm.prevrandao(newPrevrandao);
         assertEq(block.prevrandao, newPrevrandao);
 
         assert(vm.revertTo(snapshot));

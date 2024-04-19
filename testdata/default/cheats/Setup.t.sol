@@ -21,7 +21,7 @@ contract VmSetupTest is DSTest {
         vm.chainId(99);
         vm.roll(100);
         vm.fee(1000);
-        vm.prevrandao(bytes32(uint256(10000)));
+        vm.prevrandao(uint256(10000));
         vm.startPrank(address(1337));
     }
 

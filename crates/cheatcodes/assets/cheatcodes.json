@@ -6173,7 +6173,7 @@
     },
     {
       "func": {
-        "id": "prevrandao",
+        "id": "prevrandao_0",
         "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
         "declaration": "function prevrandao(bytes32 newPrevrandao) external;",
         "visibility": "external",
@@ -6185,6 +6185,26 @@
           146,
           85,
           73
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "prevrandao_1",
+        "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function prevrandao(uint256 newPrevrandao) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prevrandao(uint256)",
+        "selector": "0x9cb1c0d4",
+        "selectorBytes": [
+          156,
+          177,
+          192,
+          212
         ]
       },
       "group": "evm",

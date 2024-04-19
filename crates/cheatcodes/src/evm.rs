@@ -277,7 +277,7 @@ impl Cheatcode for feeCall {
     }
 }
 
-impl Cheatcode for prevrandaoCall {
+impl Cheatcode for prevrandao_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
@@ -286,6 +286,19 @@ impl Cheatcode for prevrandaoCall {
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
         ccx.ecx.env.block.prevrandao = Some(*newPrevrandao);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for prevrandao_1Call {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { newPrevrandao } = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::MERGE,
+            "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
+             see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
+        );
+        ccx.ecx.env.block.prevrandao = Some((*newPrevrandao).into());
         Ok(Default::default())
     }
 }
