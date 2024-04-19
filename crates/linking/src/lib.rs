@@ -275,7 +275,10 @@ impl<'a> Linker<'a> {
 mod tests {
     use super::*;
     use alloy_primitives::fixed_bytes;
-    use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
+    use foundry_compilers::{
+        artifacts::output_selection::{ContractOutputSelection, OutputSelection},
+        ConfigurableArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig,
+    };
     use std::collections::HashMap;
 
     struct LinkerTest {
@@ -288,7 +291,7 @@ mod tests {
         fn new(path: impl Into<PathBuf>, strip_prefixes: bool) -> Self {
             let path = path.into();
             let paths = ProjectPathsConfig::builder()
-                .root("../../testdata/default/linking")
+                .root("../../testdata")
                 .lib("../../testdata/lib")
                 .sources(path.clone())
                 .tests(path)
@@ -393,7 +396,7 @@ mod tests {
                         "incorrect library address for dependency {dep_identifier} of {identifier}"
                     );
                 } else {
-                    panic!("Library not found")
+                    panic!("Library {} not found", dep_identifier);
                 }
             }
         }
@@ -409,18 +412,18 @@ mod tests {
     fn link_simple() {
         link_test("../../testdata/default/linking/simple", |linker| {
             linker
-                .assert_dependencies("simple/Simple.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies("default/linking/simple/Simple.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
-                    "simple/Simple.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/simple/Simple.t.sol:LibraryConsumer".to_string(),
                     vec![(
-                        "simple/Simple.t.sol:Lib".to_string(),
+                        "default/linking/simple/Simple.t.sol:Lib".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
+                    "default/linking/simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                     vec![(
-                        "simple/Simple.t.sol:Lib".to_string(),
+                        "default/linking/simple/Simple.t.sol:Lib".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
@@ -432,41 +435,41 @@ mod tests {
     fn link_nested() {
         link_test("../../testdata/default/linking/nested", |linker| {
             linker
-                .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies("default/linking/nested/Nested.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
-                    "nested/Nested.t.sol:NestedLib".to_string(),
+                    "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
-                        "nested/Nested.t.sol:Lib".to_string(),
+                        "default/linking/nested/Nested.t.sol:Lib".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "nested/Nested.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/nested/Nested.t.sol:LibraryConsumer".to_string(),
                     vec![
                         // Lib shows up here twice, because the linker sees it twice, but it should
                         // have the same address and nonce.
                         (
-                            "nested/Nested.t.sol:Lib".to_string(),
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "nested/Nested.t.sol:NestedLib".to_string(),
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                             Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
+                    "default/linking/nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
                     vec![
                         (
-                            "nested/Nested.t.sol:Lib".to_string(),
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "nested/Nested.t.sol:NestedLib".to_string(),
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
@@ -480,92 +483,99 @@ mod tests {
     fn link_duplicate() {
         link_test("../../testdata/default/linking/duplicate", |linker| {
             linker
-                .assert_dependencies("duplicate/Duplicate.t.sol:A".to_string(), vec![])
-                .assert_dependencies("duplicate/Duplicate.t.sol:B".to_string(), vec![])
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:C".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
+                    vec![],
+                )
+                .assert_dependencies(
+                    "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
+                    vec![],
+                )
+                .assert_dependencies(
+                    "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                     vec![(
-                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:D".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                     vec![(
-                        "duplicate/Duplicate.t.sol:B".to_string(),
+                        "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:E".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:E".to_string(),
                     vec![
                         (
-                            "duplicate/Duplicate.t.sol:A".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:C".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:LibraryConsumer".to_string(),
                     vec![
                         (
-                            "duplicate/Duplicate.t.sol:A".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:B".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:C".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                             Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:D".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                             Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:E".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:E".to_string(),
                             Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest"
+                        .to_string(),
                     vec![
                         (
-                            "duplicate/Duplicate.t.sol:A".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:B".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:C".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                             Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:D".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                             Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:E".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:E".to_string(),
                             Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f")
                                 .unwrap(),
                         ),
@@ -580,30 +590,30 @@ mod tests {
         link_test("../../testdata/default/linking/cycle", |linker| {
             linker
                 .assert_dependencies(
-                    "cycle/Cycle.t.sol:Foo".to_string(),
+                    "default/linking/cycle/Cycle.t.sol:Foo".to_string(),
                     vec![
                         (
-                            "cycle/Cycle.t.sol:Foo".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Foo".to_string(),
                             Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
                                 .unwrap(),
                         ),
                         (
-                            "cycle/Cycle.t.sol:Bar".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Bar".to_string(),
                             Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "cycle/Cycle.t.sol:Bar".to_string(),
+                    "default/linking/cycle/Cycle.t.sol:Bar".to_string(),
                     vec![
                         (
-                            "cycle/Cycle.t.sol:Foo".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Foo".to_string(),
                             Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
                                 .unwrap(),
                         ),
                         (
-                            "cycle/Cycle.t.sol:Bar".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Bar".to_string(),
                             Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
                                 .unwrap(),
                         ),
@@ -617,42 +627,42 @@ mod tests {
     fn link_create2_nested() {
         link_test("../../testdata/default/linking/nested", |linker| {
             linker
-                .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies("default/linking/nested/Nested.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
-                    "nested/Nested.t.sol:NestedLib".to_string(),
+                    "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
-                        "nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0x9D9f5BA9151532fe686922fd42369B0D55ffE98f").unwrap(),
+                        "default/linking/nested/Nested.t.sol:Lib".to_string(),
+                        Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "nested/Nested.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/nested/Nested.t.sol:LibraryConsumer".to_string(),
                     vec![
                         // Lib shows up here twice, because the linker sees it twice, but it should
                         // have the same address and nonce.
                         (
-                            "nested/Nested.t.sol:Lib".to_string(),
-                            Address::from_str("0x9D9f5BA9151532fe686922fd42369B0D55ffE98f")
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
+                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
                                 .unwrap(),
                         ),
                         (
-                            "nested/Nested.t.sol:NestedLib".to_string(),
-                            Address::from_str("0x31E092b6cAB55b22a32dfBa098778C324d650e56")
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
+                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
+                    "default/linking/nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
                     vec![
                         (
-                            "nested/Nested.t.sol:Lib".to_string(),
-                            Address::from_str("0x9D9f5BA9151532fe686922fd42369B0D55ffE98f")
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
+                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
                                 .unwrap(),
                         ),
                         (
-                            "nested/Nested.t.sol:NestedLib".to_string(),
-                            Address::from_str("0x31E092b6cAB55b22a32dfBa098778C324d650e56")
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
+                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
                                 .unwrap(),
                         ),
                     ],
