@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{address, Address, Bytes, U256, U64};
+use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider as AlloyProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
@@ -865,14 +865,13 @@ async fn test_fork_uncles_fetch() {
     assert_eq!(count as usize, block.uncles.len());
 
     let hash = BlockId::hash(block.header.hash.unwrap());
-    println!("hash: {:?}", hash);
     let count = provider.get_uncle_count(hash).await.unwrap();
     assert_eq!(count as usize, block.uncles.len());
 
     for (uncle_idx, uncle_hash) in block.uncles.iter().enumerate() {
         // Try with block number
         let uncle = provider
-            .get_uncle(block_with_uncles.into(), U64::from(uncle_idx))
+            .get_uncle(BlockId::number(block_with_uncles), uncle_idx as u64)
             .await
             .unwrap()
             .unwrap();
@@ -880,7 +879,7 @@ async fn test_fork_uncles_fetch() {
 
         // Try with block hash
         let uncle = provider
-            .get_uncle(block.header.hash.unwrap().into(), U64::from(uncle_idx))
+            .get_uncle(BlockId::hash(block.header.hash.unwrap()), uncle_idx as u64)
             .await
             .unwrap()
             .unwrap();

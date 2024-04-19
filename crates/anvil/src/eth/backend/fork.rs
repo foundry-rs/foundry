@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, StorageValue, B256, U256, U64};
+use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
 use alloy_provider::{debug::DebugApi, Provider};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
@@ -535,7 +535,7 @@ impl ClientFork {
         let mut uncles = Vec::with_capacity(block.uncles.len());
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
             let uncle =
-                match self.provider().get_uncle(block_number.into(), U64::from(uncle_idx)).await? {
+                match self.provider().get_uncle(block_number.into(), uncle_idx as u64).await? {
                     Some(u) => u,
                     None => return Ok(None),
                 };

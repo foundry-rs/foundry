@@ -7,7 +7,7 @@ use alloy_primitives::{hex, Address, U256};
 use alloy_provider::{debug::DebugApi, Provider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
 use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingOptions, GethTrace},
+    geth::{GethDebugTracingCallOptions, GethTrace},
     parity::{Action, LocalizedTransactionTrace},
 };
 use alloy_sol_types::sol;
@@ -125,7 +125,7 @@ async fn test_transfer_debug_trace_call() {
         .with_input(calldata);
 
     let traces = http_provider(&handle.http_endpoint())
-        .debug_trace_call(tx, BlockNumberOrTag::Latest, GethDebugTracingOptions::default())
+        .debug_trace_call(tx, BlockNumberOrTag::Latest, GethDebugTracingCallOptions::default())
         .await
         .unwrap();
 
