@@ -20,9 +20,9 @@ pub struct ContractData {
     /// Contract ABI.
     pub abi: JsonAbi,
     /// Contract creation code.
-    pub bytecode: Bytes,
+    pub bytecode: Option<Bytes>,
     /// Contract runtime code.
-    pub deployed_bytecode: Bytes,
+    pub deployed_bytecode: Option<Bytes>,
 }
 
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
@@ -32,16 +32,52 @@ type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, ContractData>);
 
 impl ContractsByArtifact {
+    /// Creates a new instance by collecting all artifacts with present bytecode from an iterator.
+    ///
+    /// It is recommended to use this method with an output of
+    /// [foundry_linking::Linker::get_linked_artifacts].
+    pub fn new(artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecode)>) -> Self {
+        Self(
+            artifacts
+                .into_iter()
+                .filter_map(|(id, artifact)| {
+                    let name = id.name.clone();
+                    let bytecode = artifact.bytecode.and_then(|b| b.into_bytes())?;
+                    let deployed_bytecode =
+                        artifact.deployed_bytecode.and_then(|b| b.into_bytes())?;
+
+                    // Exclude artifacts with present but empty bytecode. Such artifacts are usually
+                    // interfaces and abstract contracts.
+                    let bytecode = (bytecode.len() > 0).then_some(bytecode);
+                    let deployed_bytecode =
+                        (deployed_bytecode.len() > 0).then_some(deployed_bytecode);
+                    let abi = artifact.abi?;
+
+                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
+                })
+                .collect(),
+        )
+    }
+
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
-        self.iter()
-            .find(|(_, contract)| bytecode_diff_score(contract.bytecode.as_ref(), code) <= 0.1)
+        self.iter().find(|(_, contract)| {
+            if let Some(bytecode) = &contract.bytecode {
+                bytecode_diff_score(bytecode.as_ref(), code) <= 0.1
+            } else {
+                false
+            }
+        })
     }
 
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, contract)| {
-            bytecode_diff_score(contract.deployed_bytecode.as_ref(), code) <= 0.1
+            if let Some(deployed_bytecode) = &contract.deployed_bytecode {
+                bytecode_diff_score(deployed_bytecode.as_ref(), code) <= 0.1
+            } else {
+                false
+            }
         })
     }
 

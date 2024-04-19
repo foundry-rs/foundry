@@ -11,7 +11,7 @@ use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
@@ -63,6 +63,8 @@ impl LinkedState {
 
         let ContractData { abi, bytecode, .. } = build_data.get_target_contract()?;
 
+        let bytecode = bytecode.ok_or_eyre("target contract has no bytecode")?;
+
         let (func, calldata) = args.get_method_and_calldata(&abi)?;
 
         ensure_clean_constructor(&abi)?;
@@ -94,7 +96,7 @@ impl PreExecutionState {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
-                self.build_data.build_data.artifact_ids.clone(),
+                self.build_data.known_contracts.clone(),
                 self.script_wallets.clone(),
                 self.args.debug,
                 self.build_data.build_data.target.clone(),

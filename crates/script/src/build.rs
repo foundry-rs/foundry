@@ -8,17 +8,15 @@ use crate::{
 
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
-use eyre::{Context, OptionExt, Result};
+use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
-use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
-    compile::{self, ContractSources, ProjectCompiler},
+    compile::{self, ContractSources},
     provider::alloy::try_get_http_provider,
     ContractData, ContractsByArtifact,
 };
 use foundry_compilers::{
     artifacts::{BytecodeObject, Libraries},
-    cache::SolFilesCache,
     info::ContractInfo,
     ArtifactId, ProjectCompileOutput,
 };
@@ -33,9 +31,6 @@ pub struct BuildData {
     pub output: ProjectCompileOutput,
     /// Id of target contract artifact.
     pub target: ArtifactId,
-    /// Artifact ids of the contracts. Passed to cheatcodes to enable usage of
-    /// `vm.getDeployedCode`.
-    pub artifact_ids: Vec<ArtifactId>,
 }
 
 impl BuildData {
@@ -101,21 +96,8 @@ impl LinkedBuildData {
             &link_output.libraries,
         )?;
 
-        let known_contracts = ContractsByArtifact(
-            build_data
-                .get_linker()
-                .get_linked_artifacts(&link_output.libraries)?
-                .into_iter()
-                .filter_map(|(id, contract)| {
-                    let name = id.name.clone();
-                    let bytecode = contract.bytecode.and_then(|b| b.into_bytes())?;
-                    let deployed_bytecode =
-                        contract.deployed_bytecode.and_then(|b| b.into_bytes())?;
-                    let abi = contract.abi?;
-
-                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
-                })
-                .collect(),
+        let known_contracts = ContractsByArtifact::new(
+            build_data.get_linker().get_linked_artifacts(&link_output.libraries)?,
         );
 
         Ok(Self {
@@ -149,7 +131,6 @@ impl PreprocessedState {
     pub fn compile(self) -> Result<CompiledState> {
         let Self { args, script_config, script_wallets } = self;
         let project = script_config.config.project()?;
-        let filters = args.skip.clone().unwrap_or_default();
 
         let mut target_name = args.target_contract.clone();
 
@@ -157,50 +138,20 @@ impl PreprocessedState {
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
         let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
-            Some(path)
+            path
         } else {
             let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
-                Some(dunce::canonicalize(path)?)
+                dunce::canonicalize(path)?
             } else {
-                None
+                project.find_contract_path(contract.name.as_str())?
             }
         };
 
-        // If we've found target path above, only compile it.
-        // Otherwise, compile everything to match contract by name later.
-        let output = if let Some(target_path) = target_path.clone() {
-            compile::compile_target_with_filter(
-                &target_path,
-                &project,
-                args.opts.silent,
-                args.verify,
-                filters,
-            )
-        } else if !project.paths.has_input_files() {
-            Err(eyre::eyre!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file."))
-        } else {
-            ProjectCompiler::new().compile(&project)
-        }?;
-
-        // If we still don't have target path, find it by name in the compilation cache.
-        let target_path = if let Some(target_path) = target_path {
-            target_path
-        } else {
-            let target_name = target_name.clone().expect("was set above");
-            let cache = SolFilesCache::read_joined(&project.paths)
-                .wrap_err("Could not open compiler cache")?;
-            let (path, _) = get_cached_entry_by_name(&cache, &target_name)
-                .wrap_err("Could not find target contract in cache")?;
-            path
-        };
-
-        let target_path = project.root().join(target_path);
+        let output = compile::compile_target(&target_path, &project, args.opts.silent)?;
 
         let mut target_id: Option<ArtifactId> = None;
-
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
 
         // Find target artfifact id by name and path in compilation artifacts.
         for (id, contract) in output.artifact_ids().filter(|(id, _)| id.source == target_path) {
@@ -238,12 +189,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData {
-                output,
-                target,
-                project_root: project.root().clone(),
-                artifact_ids,
-            },
+            build_data: BuildData { output, target, project_root: project.root().clone() },
         })
     }
 }

@@ -138,7 +138,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.6", default-features = false }
-foundry-compilers = { version = "0.3.14", default-features = false }
+foundry-compilers = { version = "0.3.17", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -192,10 +192,7 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "std",
-] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"
@@ -218,7 +215,8 @@ indexmap = "2.2"
 tikv-jemallocator = "0.5.4"
 num-format = "0.4.4"
 
-axum = "0.6"
-hyper = "0.14"
+axum = "0.7"
+hyper = "1.0"
+reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
-tower-http = "0.4"
+tower-http = "0.5"

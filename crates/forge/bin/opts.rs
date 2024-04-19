@@ -1,6 +1,8 @@
 use crate::cmd::{
     bind::BindArgs, build::BuildArgs, cache::CacheArgs, config, coverage, create::CreateArgs,
     debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate, getsolc::GetSolcArgs,
+    bind::BindArgs, build::BuildArgs, cache::CacheArgs, clone::CloneArgs, config, coverage,
+    create::CreateArgs, debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate,
     init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
     selectors::SelectorsSubcommands, snapshot, test, tree, update,
 };
@@ -51,6 +53,9 @@ pub enum ForgeSubcommand {
     /// Build the project's smart contracts.
     #[command(visible_aliases = ["b", "compile"])]
     Build(BuildArgs),
+
+    /// Clone a contract from Etherscan.
+    Clone(CloneArgs),
 
     /// Debugs a single smart contract as a script.
     #[command(visible_alias = "d")]

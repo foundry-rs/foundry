@@ -19,7 +19,8 @@ impl<'a> LocalTraceIdentifier<'a> {
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
         let mut ordered_ids = known_contracts
             .iter()
-            .map(|(id, contract)| (id, contract.deployed_bytecode.len()))
+            .filter_map(|(id, contract)| Some((id, contract.deployed_bytecode.as_ref()?)))
+            .map(|(id, bytecode)| (id, bytecode.len()))
             .collect::<Vec<_>>();
         ordered_ids.sort_by_key(|(_, len)| *len);
         Self { known_contracts, ordered_ids }
@@ -40,14 +41,16 @@ impl<'a> LocalTraceIdentifier<'a> {
 
         let mut check = |id| {
             let contract = self.known_contracts.get(id)?;
-            let score = bytecode_diff_score(&contract.deployed_bytecode, code);
-            if score == 0.0 {
-                trace!(target: "evm::traces", "found exact match");
-                return Some((id, &contract.abi));
-            }
-            if score < min_score {
-                min_score = score;
-                min_score_id = Some((id, &contract.abi));
+            if let Some(deployed_bytecode) = &contract.deployed_bytecode {
+                let score = bytecode_diff_score(deployed_bytecode, code);
+                if score == 0.0 {
+                    trace!(target: "evm::traces", "found exact match");
+                    return Some((id, &contract.abi));
+                }
+                if score < min_score {
+                    min_score = score;
+                    min_score_id = Some((id, &contract.abi));
+                }
             }
             None
         };

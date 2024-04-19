@@ -4,7 +4,7 @@ use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_primitives::U256;
+use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use foundry_common::fs;
@@ -251,24 +251,14 @@ impl Cheatcode for writeLineCall {
 impl Cheatcode for getCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
-        let object = read_bytecode(state, path)?;
-        if let Some(bin) = object.bytecode {
-            Ok(bin.abi_encode())
-        } else {
-            Err(fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
-        }
+        Ok(get_artifact_code(state, path, false)?.abi_encode())
     }
 }
 
 impl Cheatcode for getDeployedCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
-        let object = read_bytecode(state, path)?;
-        if let Some(bin) = object.deployed_bytecode {
-            Ok(bin.abi_encode())
-        } else {
-            Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
-        }
+        Ok(get_artifact_code(state, path, true)?.abi_encode())
     }
 }
 
@@ -282,9 +272,9 @@ impl Cheatcode for getDeployedCodeCall {
 /// - `path/to/contract.sol:0.8.23`
 /// - `ContractName`
 /// - `ContractName:0.8.23`
-fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
-    if path.ends_with(".json") {
-        Ok(PathBuf::from(path))
+fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
+    let path = if path.ends_with(".json") {
+        PathBuf::from(path)
     } else {
         let mut parts = path.split(':');
 
@@ -314,11 +304,11 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
             None
         };
 
-        // Use available artifacts list if available
-        if let Some(available_ids) = &state.config.available_artifacts {
-            let filtered = available_ids
+        // Use available artifacts list if present
+        if let Some(artifacts) = &state.config.available_artifacts {
+            let filtered = artifacts
                 .iter()
-                .filter(|id| {
+                .filter(|(id, _)| {
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
 
@@ -356,7 +346,7 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
                         .and_then(|version| {
                             let filtered = filtered
                                 .into_iter()
-                                .filter(|id| id.version == *version)
+                                .filter(|(id, _)| id.version == *version)
                                 .collect::<Vec<_>>();
 
                             (filtered.len() == 1).then_some(filtered[0])
@@ -365,31 +355,36 @@ fn get_artifact_path(state: &Cheatcodes, path: &str) -> Result<PathBuf> {
                 }
             }?;
 
-            Ok(artifact.path.clone())
-        } else {
-            let path_in_artifacts =
-                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
-                    (Some(file), Some(contract_name)) => Ok(format!("{file}/{contract_name}.json")),
-                    (None, Some(contract_name)) => {
-                        Ok(format!("{contract_name}.sol/{contract_name}.json"))
-                    }
-                    (Some(file), None) => {
-                        let name = file.replace(".sol", "");
-                        Ok(format!("{file}/{name}.json"))
-                    }
-                    _ => Err(fmt_err!("Invalid artifact path")),
-                }?;
-            Ok(state.config.paths.artifacts.join(path_in_artifacts))
-        }
-    }
-}
+            let maybe_bytecode = if deployed {
+                artifact.1.deployed_bytecode.clone()
+            } else {
+                artifact.1.bytecode.clone()
+            };
 
-/// Reads the bytecode object(s) from the matching artifact
-fn read_bytecode(state: &Cheatcodes, path: &str) -> Result<ContractObject> {
-    let path = get_artifact_path(state, path)?;
+            return maybe_bytecode
+                .ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"));
+        } else {
+            match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                (Some(file), Some(contract_name)) => {
+                    PathBuf::from(format!("{file}/{contract_name}.json"))
+                }
+                (None, Some(contract_name)) => {
+                    PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+                }
+                (Some(file), None) => {
+                    let name = file.replace(".sol", "");
+                    PathBuf::from(format!("{file}/{name}.json"))
+                }
+                _ => return Err(fmt_err!("Invalid artifact path")),
+            }
+        }
+    };
+
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let data = fs::read_to_string(path)?;
-    serde_json::from_str::<ContractObject>(&data).map_err(Into::into)
+    let artifact = serde_json::from_str::<ContractObject>(&data)?;
+    let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
+    maybe_bytecode.ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
 }
 
 impl Cheatcode for ffiCall {
@@ -553,7 +548,6 @@ fn prompt(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::Bytes;
     use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {

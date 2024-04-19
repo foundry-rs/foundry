@@ -1,8 +1,8 @@
 use super::Result;
 use crate::{script::ScriptWallets, Vm::Rpc};
 use alloy_primitives::Address;
-use foundry_common::fs::normalize_path;
-use foundry_compilers::{utils::canonicalize, ArtifactId, ProjectPathsConfig};
+use foundry_common::{fs::normalize_path, ContractsByArtifact};
+use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoints,
@@ -12,6 +12,7 @@ use semver::Version;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -47,7 +48,7 @@ pub struct CheatsConfig {
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
-    pub available_artifacts: Option<Vec<ArtifactId>>,
+    pub available_artifacts: Option<Arc<ContractsByArtifact>>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
 }
@@ -57,7 +58,7 @@ impl CheatsConfig {
     pub fn new(
         config: &Config,
         evm_opts: EvmOpts,
-        available_artifacts: Option<Vec<ArtifactId>>,
+        available_artifacts: Option<Arc<ContractsByArtifact>>,
         script_wallets: Option<ScriptWallets>,
         running_version: Option<Version>,
     ) -> Self {
@@ -154,13 +155,15 @@ impl CheatsConfig {
     ///
     /// If `url_or_alias` is a known alias in the `ResolvedRpcEndpoints` then it returns the
     /// corresponding URL of that alias. otherwise this assumes `url_or_alias` is itself a URL
-    /// if it starts with a `http` or `ws` scheme
+    /// if it starts with a `http` or `ws` scheme.
+    ///
+    /// If the url is a path to an existing file, it is also considered a valid RPC URL, IPC path.
     ///
     /// # Errors
     ///
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
-    ///    `scheme`
+    ///    `ws` `scheme` and is not a path to an existing file
     pub fn rpc_url(&self, url_or_alias: &str) -> Result<String> {
         match self.rpc_endpoints.get(url_or_alias) {
             Some(Ok(url)) => Ok(url.clone()),
@@ -169,7 +172,12 @@ impl CheatsConfig {
                 err.try_resolve().map_err(Into::into)
             }
             None => {
-                if url_or_alias.starts_with("http") || url_or_alias.starts_with("ws") {
+                // check if it's a URL or a path to an existing file to an ipc socket
+                if url_or_alias.starts_with("http") ||
+                    url_or_alias.starts_with("ws") ||
+                    // check for existing ipc file
+                    Path::new(url_or_alias).exists()
+                {
                     Ok(url_or_alias.into())
                 } else {
                     Err(fmt_err!("invalid rpc url: {url_or_alias}"))

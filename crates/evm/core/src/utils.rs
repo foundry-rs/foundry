@@ -1,17 +1,23 @@
+pub use crate::ic::*;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{FixedBytes, U256};
+use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
+pub use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::NamedChain;
+pub use revm::primitives::State as StateChangeset;
 use revm::{
     db::WrapDatabaseRef,
-    primitives::{SpecId, TransactTo},
+    handler::register::EvmHandler,
+    interpreter::{
+        return_ok, CallContext, CallInputs, CallScheme, CreateInputs, CreateOutcome, Gas,
+        InstructionResult, InterpreterResult, Transfer,
+    },
+    primitives::{CreateScheme, EVMError, SpecId, TransactTo, KECCAK_EMPTY},
+    FrameOrResult, FrameResult,
 };
-
-pub use foundry_compilers::utils::RuntimeOrHandle;
-pub use revm::primitives::State as StateChangeset;
-
-pub use crate::ic::*;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -99,6 +105,129 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
+fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
+    let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
+    CallInputs {
+        contract: DEFAULT_CREATE2_DEPLOYER,
+        transfer: Transfer {
+            source: inputs.caller,
+            target: DEFAULT_CREATE2_DEPLOYER,
+            value: inputs.value,
+        },
+        input: calldata.into(),
+        gas_limit: inputs.gas_limit,
+        context: CallContext {
+            caller: inputs.caller,
+            address: DEFAULT_CREATE2_DEPLOYER,
+            code_address: DEFAULT_CREATE2_DEPLOYER,
+            apparent_value: inputs.value,
+            scheme: CallScheme::Call,
+        },
+        is_static: false,
+        return_memory_offset: 0..0,
+    }
+}
+
+/// Used for routing certain CREATE2 invocations through [DEFAULT_CREATE2_DEPLOYER].
+///
+/// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
+/// true. Keeps track of overriden frames and handles outcome in the overriden insert_call_outcome
+/// hook by inserting decoded address directly into interpreter.
+///
+/// Should be installed after [revm::inspector_handle_register] and before any other registers.
+pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
+    handler: &mut EvmHandler<'_, I, DB>,
+) {
+    let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
+
+    let create2_overrides_inner = create2_overrides.clone();
+    let old_handle = handler.execution.create.clone();
+    handler.execution.create =
+        Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+            let CreateScheme::Create2 { salt } = inputs.scheme else {
+                return old_handle(ctx, inputs);
+            };
+            if !ctx.external.should_use_create2_factory(&mut ctx.evm, &mut inputs) {
+                return old_handle(ctx, inputs);
+            }
+
+            // Sanity check that CREATE2 deployer exists.
+            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
+            if code_hash == KECCAK_EMPTY {
+                return Ok(FrameOrResult::Result(FrameResult::Create(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "missing CREATE2 deployer".into(),
+                        gas: Gas::new(inputs.gas_limit),
+                    },
+                    address: None,
+                })))
+            }
+
+            // Generate call inputs for CREATE2 factory.
+            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs);
+
+            // Call inspector to change input or return outcome.
+            if let Some(outcome) = ctx.external.call(&mut ctx.evm, &mut call_inputs) {
+                create2_overrides_inner
+                    .borrow_mut()
+                    .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
+                return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
+            }
+
+            // Push data about current override to the stack.
+            create2_overrides_inner
+                .borrow_mut()
+                .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
+
+            let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
+
+            if let Ok(FrameOrResult::Frame(frame)) = &mut frame_or_result {
+                ctx.external
+                    .initialize_interp(&mut frame.frame_data_mut().interpreter, &mut ctx.evm)
+            }
+            frame_or_result
+        });
+
+    let create2_overrides_inner = create2_overrides.clone();
+    let old_handle = handler.execution.insert_call_outcome.clone();
+
+    handler.execution.insert_call_outcome =
+        Arc::new(move |ctx, frame, shared_memory, mut outcome| {
+            // If we are on the depth of the latest override, handle the outcome.
+            if create2_overrides_inner
+                .borrow()
+                .last()
+                .map_or(false, |(depth, _)| *depth == ctx.evm.journaled_state.depth())
+            {
+                let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
+                outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);
+
+                // Decode address from output.
+                let address = match outcome.instruction_result() {
+                    return_ok!() => Address::try_from(outcome.output().as_ref())
+                        .map_err(|_| {
+                            outcome.result = InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: "invalid CREATE2 factory output".into(),
+                                gas: Gas::new(call_inputs.gas_limit),
+                            };
+                        })
+                        .ok(),
+                    _ => None,
+                };
+                frame
+                    .frame_data_mut()
+                    .interpreter
+                    .insert_create_outcome(CreateOutcome { address, result: outcome.result });
+
+                Ok(())
+            } else {
+                old_handle(ctx, frame, shared_memory, outcome)
+            }
+        });
+}
+
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'a, DB, I>(
     db: DB,
@@ -107,7 +236,7 @@ pub fn new_evm_with_inspector<'a, DB, I>(
 ) -> revm::Evm<'a, I, DB>
 where
     DB: revm::Database,
-    I: revm::Inspector<DB>,
+    I: InspectorExt<DB>,
 {
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
     // performance issues.
@@ -115,6 +244,7 @@ where
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
+    handler.append_handler_register_plain(create2_handler_register);
     revm::Evm::new(context, handler)
 }
 
@@ -126,7 +256,7 @@ pub fn new_evm_with_inspector_ref<'a, DB, I>(
 ) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
 where
     DB: revm::DatabaseRef,
-    I: revm::Inspector<WrapDatabaseRef<DB>>,
+    I: InspectorExt<WrapDatabaseRef<DB>>,
 {
     new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

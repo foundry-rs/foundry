@@ -7,7 +7,6 @@ use forge::{
         analysis::SourceAnalyzer, anchors::find_anchors, BytecodeReporter, ContractId,
         CoverageReport, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter,
     },
-    inspectors::CheatsConfig,
     opts::EvmOpts,
     result::SuiteResult,
     revm::primitives::SpecId,
@@ -28,7 +27,11 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use rustc_hash::FxHashMap;
 use semver::Version;
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{mpsc::channel, Arc},
+};
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
@@ -101,7 +104,7 @@ impl CoverageArgs {
         let report = self.prepare(&config, output.clone())?;
 
         p_println!(!self.opts.silent => "Running tests...");
-        self.collect(project, output, report, config, evm_opts).await
+        self.collect(project, output, report, Arc::new(config), evm_opts).await
     }
 
     /// Builds the project.
@@ -308,29 +311,20 @@ impl CoverageArgs {
         project: Project,
         output: ProjectCompileOutput,
         mut report: CoverageReport,
-        config: Config,
+        config: Arc<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let root = project.paths.root;
 
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
-
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
-        let mut runner = MultiContractRunnerBuilder::default()
+        let mut runner = MultiContractRunnerBuilder::new(config.clone())
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(
-                &config,
-                evm_opts.clone(),
-                Some(artifact_ids),
-                None,
-                None,
-            ))
             .with_test_options(TestOptions {
-                fuzz: config.fuzz,
+                fuzz: config.fuzz.clone(),
                 invariant: config.invariant,
                 ..Default::default()
             })
@@ -338,31 +332,32 @@ impl CoverageArgs {
             .build(&root, output, env, evm_opts)?;
 
         // Run tests
-        let known_contracts = runner.known_contracts.clone();
         let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle = tokio::task::spawn_blocking(move || runner.test(&filter, tx));
 
         // Add hit data to the coverage report
-        let data = rx
-            .into_iter()
-            .flat_map(|(_, suite)| suite.test_results.into_values())
-            .filter_map(|mut result| result.coverage.take())
-            .flat_map(|hit_maps| {
-                hit_maps.0.into_values().filter_map(|map| {
+        let data = rx.into_iter().flat_map(|(_, suite)| {
+            let mut hits = Vec::new();
+            for (_, mut result) in suite.test_results {
+                let Some(hit_maps) = result.coverage.take() else { continue };
+
+                for map in hit_maps.0.into_values() {
                     if let Some((id, _)) =
-                        known_contracts.find_by_deployed_code(map.bytecode.as_ref())
+                        suite.known_contracts.find_by_deployed_code(map.bytecode.as_ref())
                     {
-                        Some((id, map, true))
+                        hits.push((id.clone(), map, true));
                     } else if let Some((id, _)) =
-                        known_contracts.find_by_creation_code(map.bytecode.as_ref())
+                        suite.known_contracts.find_by_creation_code(map.bytecode.as_ref())
                     {
-                        Some((id, map, false))
-                    } else {
-                        None
+                        hits.push((id.clone(), map, false));
                     }
-                })
-            });
+                }
+            }
+
+            hits
+        });
+
         for (artifact_id, hits, is_deployed_code) in data {
             // TODO: Note down failing tests
             if let Some(source_id) = report.get_source_id(

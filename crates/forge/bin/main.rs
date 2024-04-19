@@ -55,6 +55,7 @@ fn main() -> Result<()> {
         ForgeSubcommand::Debug(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::VerifyContract(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyCheck(args) => utils::block_on(args.run()),
+        ForgeSubcommand::Clone(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Cache(cmd) => match cmd.sub {
             CacheSubcommands::Clean(cmd) => cmd.run(),
             CacheSubcommands::Ls(cmd) => cmd.run(),
