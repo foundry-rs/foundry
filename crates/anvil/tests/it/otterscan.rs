@@ -1,10 +1,7 @@
 //! tests for otterscan endpoints
 use crate::{
-    abi::{AlloyMulticallContract, MulticallContract},
-    utils::{
-        ethers_ws_provider, http_provider, http_provider_with_signer, ws_provider_with_signer,
-        ContractInstanceCompat, DeploymentTxFactoryCompat,
-    },
+    abi::AlloyMulticallContract,
+    utils::{http_provider, http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumSigner;
 use alloy_primitives::{Address, Bytes, U256};
@@ -17,16 +14,8 @@ use anvil::{
     },
     spawn, NodeConfig,
 };
-// use ethers::{
-//     abi::Address,
-//     prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
-//     signers::Signer,
-//     types::{Bytes, TransactionRequest},
-//     utils::get_contract_address,
-// };
-use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_compilers::{project_util::TempProject, Artifact};
-use std::{collections::VecDeque, str::FromStr, sync::Arc};
+use std::{collections::VecDeque, str::FromStr};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_erigon_get_header_by_number() {
