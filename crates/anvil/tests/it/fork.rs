@@ -2,10 +2,10 @@
 
 use crate::{
     abi::*,
-    utils::{self, ethers_http_provider, http_provider, http_provider_with_signer},
+    utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, Address, Bytes, U256, U64};
 use alloy_provider::Provider as AlloyProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
@@ -14,13 +14,7 @@ use alloy_rpc_types::{
 use alloy_signer_wallet::LocalWallet;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
-use ethers::{prelude::Middleware, types::Chain};
-use foundry_common::{
-    provider::alloy::get_http_provider,
-    rpc,
-    rpc::next_http_rpc_endpoint,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::{provider::alloy::get_http_provider, rpc, rpc::next_http_rpc_endpoint};
 use foundry_config::Config;
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
@@ -121,7 +115,6 @@ async fn test_fork_eth_get_code_after_mine() {
     let _code = provider.get_code_at(address, BlockId::Number(1.into())).await.unwrap();
 }
 
-// TODO: Revisit after addressbook has been created in alloy-rs/addressbook
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_code() {
     let (api, handle) = spawn(fork_config()).await;
@@ -133,15 +126,20 @@ async fn test_fork_eth_get_code() {
         assert_eq!(code, provider_code)
     }
 
-    // TODO: Revisit after addressbook has been created in alloy-rs/addressbook
-    for address in utils::contract_addresses(Chain::Mainnet) {
+    let addresses: Vec<Address> = vec![
+        "0x6b175474e89094c44da98b954eedeac495271d0f".parse().unwrap(),
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap(),
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse().unwrap(),
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984".parse().unwrap(),
+        "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45".parse().unwrap(),
+    ];
+    for address in addresses {
         let prev_code = api
-            .get_code(address.to_alloy(), Some(BlockNumberOrTag::Number(BLOCK_NUMBER - 10).into()))
+            .get_code(address, Some(BlockNumberOrTag::Number(BLOCK_NUMBER - 10).into()))
             .await
             .unwrap();
-        let code = api.get_code(address.to_alloy(), None).await.unwrap();
-        let provider_code =
-            provider.get_code_at(address.to_alloy(), BlockId::latest()).await.unwrap();
+        let code = api.get_code(address, None).await.unwrap();
+        let provider_code = provider.get_code_at(address, BlockId::latest()).await.unwrap();
         assert_eq!(code, prev_code);
         assert_eq!(code, provider_code);
         assert!(!code.as_ref().is_empty());
@@ -336,7 +334,6 @@ async fn test_fork_snapshotting_repeated() {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6463>
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
@@ -496,7 +493,7 @@ async fn can_reset_properly() {
     assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.is_err())
 }
 
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>
+// TODO: <https://github.com/alloy-rs/alloy/issues/389> didn't fix this.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_timestamp() {
     let start = std::time::Instant::now();
@@ -538,7 +535,7 @@ async fn test_fork_timestamp() {
     let tx =
         TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
-    let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap(); // FIXME: Awaits endlessly here.
 
     let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
@@ -562,7 +559,7 @@ async fn test_fork_timestamp() {
     let tx =
         TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
-    let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
@@ -658,10 +655,6 @@ async fn test_fork_nft_set_approve_all() {
         .with_input(call.calldata().to_owned());
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    // let mut tx: TypedTransaction = call.tx;
-    // tx.set_from(real_owner.to_ethers());
-    // provider.fill_transaction(&mut tx, None).await.unwrap();
-    // let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     let status = tx.inner.inner.inner.receipt.status;
     assert!(status);
 
@@ -790,7 +783,7 @@ async fn test_reset_fork_on_new_blocks() {
         .flat_map(futures::stream::iter);
     // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge
     // cases where the stream immediately returns a block
-    tokio::time::sleep(Chain::Mainnet.average_blocktime_hint().unwrap()).await;
+    tokio::time::sleep(Duration::from_secs(12)).await;
     stream.next().await.unwrap();
     stream.next().await.unwrap();
 
@@ -854,11 +847,11 @@ async fn test_fork_snapshot_block_timestamp() {
     assert_eq!(initial_block.header.timestamp, latest_block.header.timestamp);
 }
 
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/pull/524> is merged
+// TODO: Revisit after <https://github.com/alloy-rs/alloy/pull/587> is merged
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_uncles_fetch() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = http_provider(&handle.http_endpoint());
 
     // Block on ETH mainnet with 2 uncles
     let block_with_uncles = 190u64;
@@ -868,28 +861,30 @@ async fn test_fork_uncles_fetch() {
 
     assert_eq!(block.uncles.len(), 2);
 
-    let count = provider.get_uncle_count(block_with_uncles).await.unwrap();
-    assert_eq!(count.as_usize(), block.uncles.len());
+    let count = provider.get_uncle_count(block_with_uncles.into()).await.unwrap();
+    assert_eq!(count as usize, block.uncles.len());
 
-    let count = provider.get_uncle_count(block.header.hash.unwrap().to_ethers()).await.unwrap();
-    assert_eq!(count.as_usize(), block.uncles.len());
+    let hash = BlockId::hash(block.header.hash.unwrap());
+    println!("hash: {:?}", hash);
+    let count = provider.get_uncle_count(hash).await.unwrap();
+    assert_eq!(count as usize, block.uncles.len());
 
     for (uncle_idx, uncle_hash) in block.uncles.iter().enumerate() {
         // Try with block number
         let uncle = provider
-            .get_uncle(block_with_uncles, (uncle_idx as u64).into())
+            .get_uncle(block_with_uncles.into(), U64::from(uncle_idx))
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(*uncle_hash, uncle.hash.unwrap().to_alloy());
+        assert_eq!(*uncle_hash, uncle.header.hash.unwrap());
 
         // Try with block hash
         let uncle = provider
-            .get_uncle(block.header.hash.unwrap().to_ethers(), (uncle_idx as u64).into())
+            .get_uncle(block.header.hash.unwrap().into(), U64::from(uncle_idx))
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(*uncle_hash, uncle.hash.unwrap().to_alloy());
+        assert_eq!(*uncle_hash, uncle.header.hash.unwrap());
     }
 }
 
