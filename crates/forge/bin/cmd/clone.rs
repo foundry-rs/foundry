@@ -31,7 +31,7 @@ pub struct CloneMetadata {
     pub path: PathBuf,
     /// The name of the contract in the file.
     pub target_contract: String,
-    /// The address of the contract on the blockchian.
+    /// The address of the contract on the blockchain.
     pub address: Address,
     /// The chain id.
     pub chain_id: ChainId,
@@ -67,7 +67,7 @@ pub struct CloneArgs {
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
     pub root: PathBuf,
 
-    /// Do not generaet the remappings.txt file. Instead, keep the remappings in the configuration.
+    /// Do not generate the remappings.txt file. Instead, keep the remappings in the configuration.
     #[arg(long)]
     pub no_remappings_txt: bool,
 
@@ -160,7 +160,7 @@ impl CloneArgs {
     /// Collect the compilation metadata of the cloned contract.
     /// This function compiles the cloned contract and collects the compilation metadata.
     ///
-    /// * `meta` - the metadata of the contract (from Etherscam).
+    /// * `meta` - the metadata of the contract (from Etherscan).
     /// * `chain` - the chain where the contract to be cloned locates.
     /// * `address` - the address of the contract to be cloned.
     /// * `root` - the root directory of the cloned project.
