@@ -1,6 +1,5 @@
 use super::{BasicTxDetails, InvariantContract};
 use crate::executors::{Executor, RawCallResult};
-use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -100,11 +99,9 @@ pub struct FailedInvariantCaseData {
 }
 
 impl FailedInvariantCaseData {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         invariant_contract: &InvariantContract<'_>,
         targeted_contracts: &FuzzRunIdentifiedContracts,
-        error_func: &Function,
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
@@ -121,7 +118,9 @@ impl FailedInvariantCaseData {
         let revert_reason = RevertDecoder::new()
             .with_abis(abis)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
-        let origin = error_func.name.as_str();
+
+        let func = invariant_contract.invariant_function;
+        let origin = func.name.as_str();
 
         Self {
             logs: call_result.logs,
@@ -133,7 +132,7 @@ impl FailedInvariantCaseData {
             return_reason: "".into(),
             revert_reason,
             addr: invariant_contract.address,
-            func: error_func.selector().to_vec().into(),
+            func: func.selector().to_vec().into(),
             inner_sequence: inner_sequence.to_vec(),
             shrink,
             shrink_run_limit,
@@ -214,6 +213,7 @@ impl FailedInvariantCaseData {
         use_calls: &[usize],
         curr_seq: Arc<RwLock<Vec<usize>>>,
     ) -> eyre::Result<()> {
+        println!("try to shrink sequence with len {}", curr_seq.read().len());
         if curr_seq.read().len() == 1 {
             // if current sequence is already the smallest possible, just return
             return Ok(());

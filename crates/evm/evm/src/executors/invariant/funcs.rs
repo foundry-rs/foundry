@@ -31,11 +31,14 @@ pub fn assert_invariants(
         }
     }
 
-    let func = invariant_contract.invariant_function;
     let mut call_result = executor.call_raw(
         CALLER,
         invariant_contract.address,
-        func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
+        invariant_contract
+            .invariant_function
+            .abi_encode_input(&[])
+            .expect("invariant should have no inputs")
+            .into(),
         U256::ZERO,
     )?;
 
@@ -51,7 +54,6 @@ pub fn assert_invariants(
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 targeted_contracts,
-                func,
                 calldata,
                 call_result,
                 &inner_sequence,
