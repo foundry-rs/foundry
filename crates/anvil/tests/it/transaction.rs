@@ -96,7 +96,8 @@ async fn can_order_transactions() {
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
 
-// TODO: Revisit after https://github.com/alloy-rs/alloy/issues/389 is fixed.
+// TODO: Revisit after https://github.com/alloy-rs/alloy/issues/389 is fixed. Remove ignore.
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -139,7 +140,8 @@ async fn can_respect_nonces() {
     );
 }
 
-// TODO: Revisit after alloy/#389 is fixed.
+// TODO: Revisit after alloy/#389 is fixed. Remove ignore.
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
