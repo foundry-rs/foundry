@@ -91,7 +91,17 @@ pub fn fuzz_param_from_state(
         // Use `Index` instead of `Selector` to not iterate over the entire dictionary.
         any::<prop::sample::Index>().prop_map(move |index| {
             let state = state.dictionary_read();
-            let values = state.values(Some(param.clone()));
+            let bias = rand::thread_rng().gen_range(0..100);
+            let values = match bias {
+                x if x < 50 => {
+                    if let Some(sample_values) = state.samples(param.clone()) {
+                        sample_values
+                    } else {
+                        state.values()
+                    }
+                }
+                _ => state.values(),
+            };
             let index = index.index(values.len());
             *values.iter().nth(index).unwrap()
         })

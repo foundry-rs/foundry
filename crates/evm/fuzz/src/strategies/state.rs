@@ -9,7 +9,6 @@ use foundry_evm_core::utils::StateChangeset;
 use indexmap::IndexSet;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use proptest::prelude::{BoxedStrategy, Strategy};
-use rand::Rng;
 use revm::{
     db::{CacheDB, DatabaseRef},
     interpreter::opcode::{self, spec_opcode_gas},
@@ -202,23 +201,13 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn values(&self, param: Option<DynSolType>) -> &IndexSet<[u8; 32]> {
-        match param {
-            Some(param_type) => {
-                if let Some(typed_samples) = self.sample_values.get(&param_type) {
-                    // If we have sample values collected for this type then
-                    // use them with a weight of 50.
-                    if rand::thread_rng().gen_range(0..100) < 50 {
-                        typed_samples
-                    } else {
-                        &self.state_values
-                    }
-                } else {
-                    &self.state_values
-                }
-            }
-            None => &self.state_values,
-        }
+    pub fn values(&self) -> &IndexSet<[u8; 32]> {
+        &self.state_values
+    }
+
+    #[inline]
+    pub fn samples(&self, param_type: DynSolType) -> Option<&IndexSet<[u8; 32]>> {
+        self.sample_values.get(&param_type)
     }
 
     #[inline]
