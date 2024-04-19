@@ -197,7 +197,7 @@ impl<'a> Linker<'a> {
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap().object;
+                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
                 (id, bytecode)
             })
             .collect::<HashMap<_, _>>();
@@ -210,7 +210,7 @@ impl<'a> Linker<'a> {
             // Find any library which is fully linked.
             let deployable = needed_libraries
                 .iter()
-                .find(|(_, bytecode)| !bytecode.is_unlinked())
+                .find(|(_, bytecode)| !bytecode.object.is_unlinked())
                 .map(|(id, _)| *id);
 
             // If we haven't found any deployable library, it means we have a cyclic dependency.
@@ -274,6 +274,7 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::fixed_bytes;
     use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
     use std::collections::HashMap;
 
@@ -287,7 +288,7 @@ mod tests {
         fn new(path: impl Into<PathBuf>, strip_prefixes: bool) -> Self {
             let path = path.into();
             let paths = ProjectPathsConfig::builder()
-                .root("../../testdata/linking")
+                .root("../../testdata/default/linking")
                 .lib("../../testdata/lib")
                 .sources(path.clone())
                 .tests(path)
@@ -321,7 +322,29 @@ mod tests {
 
         fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: u64) {
             let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
-            for id in linker.contracts.keys() {
+            for (id, identifier) in self.iter_linking_targets(&linker) {
+                let output = linker
+                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
+                    .expect("Linking failed");
+                self.validate_assertions(identifier, output);
+            }
+        }
+
+        fn test_with_create2(self, sender: Address, salt: B256) {
+            let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
+            for (id, identifier) in self.iter_linking_targets(&linker) {
+                let output = linker
+                    .link_with_create2(Default::default(), sender, salt, id)
+                    .expect("Linking failed");
+                self.validate_assertions(identifier, output);
+            }
+        }
+
+        fn iter_linking_targets<'a>(
+            &'a self,
+            linker: &'a Linker<'_>,
+        ) -> impl IntoIterator<Item = (&'a ArtifactId, String)> + 'a {
+            linker.contracts.keys().filter_map(move |id| {
                 // If we didn't strip paths, artifacts will have absolute paths.
                 // That's expected and we want to ensure that only `libraries` object has relative
                 // paths, artifacts should be kept as is.
@@ -335,36 +358,42 @@ mod tests {
                 // Skip ds-test as it always has no dependencies etc. (and the path is outside root
                 // so is not sanitized)
                 if identifier.contains("DSTest") {
-                    continue;
+                    return None;
                 }
 
-                let LinkOutput { libs_to_deploy, libraries, .. } = linker
-                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
-                    .expect("Linking failed");
+                Some((id, identifier))
+            })
+        }
 
-                let assertions = self
-                    .dependency_assertions
-                    .get(&identifier)
-                    .unwrap_or_else(|| panic!("Unexpected artifact: {identifier}"));
+        fn validate_assertions(&self, identifier: String, output: LinkOutput) {
+            let LinkOutput { libs_to_deploy, libraries } = output;
 
-                assert_eq!(
-                    libs_to_deploy.len(),
-                    assertions.len(),
-                    "artifact {identifier} has more/less dependencies than expected ({} vs {}): {:#?}",
-                    libs_to_deploy.len(),
-                    assertions.len(),
-                    libs_to_deploy
-                );
+            let assertions = self
+                .dependency_assertions
+                .get(&identifier)
+                .unwrap_or_else(|| panic!("Unexpected artifact: {identifier}"));
 
-                for (dep_identifier, address) in assertions {
-                    let (file, name) = dep_identifier.split_once(':').unwrap();
-                    if let Some(lib_address) =
-                        libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
-                    {
-                        assert_eq!(*lib_address, address.to_string(), "incorrect library address for dependency {dep_identifier} of {identifier}");
-                    } else {
-                        panic!("Library not found")
-                    }
+            assert_eq!(
+                libs_to_deploy.len(),
+                assertions.len(),
+                "artifact {identifier} has more/less dependencies than expected ({} vs {}): {:#?}",
+                libs_to_deploy.len(),
+                assertions.len(),
+                libs_to_deploy
+            );
+
+            for (dep_identifier, address) in assertions {
+                let (file, name) = dep_identifier.split_once(':').unwrap();
+                if let Some(lib_address) =
+                    libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
+                {
+                    assert_eq!(
+                        *lib_address,
+                        address.to_string(),
+                        "incorrect library address for dependency {dep_identifier} of {identifier}"
+                    );
+                } else {
+                    panic!("Library not found")
                 }
             }
         }
@@ -378,7 +407,7 @@ mod tests {
 
     #[test]
     fn link_simple() {
-        link_test("../../testdata/linking/simple", |linker| {
+        link_test("../../testdata/default/linking/simple", |linker| {
             linker
                 .assert_dependencies("simple/Simple.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
@@ -401,7 +430,7 @@ mod tests {
 
     #[test]
     fn link_nested() {
-        link_test("../../testdata/linking/nested", |linker| {
+        link_test("../../testdata/default/linking/nested", |linker| {
             linker
                 .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
@@ -449,7 +478,7 @@ mod tests {
 
     #[test]
     fn link_duplicate() {
-        link_test("../../testdata/linking/duplicate", |linker| {
+        link_test("../../testdata/default/linking/duplicate", |linker| {
             linker
                 .assert_dependencies("duplicate/Duplicate.t.sol:A".to_string(), vec![])
                 .assert_dependencies("duplicate/Duplicate.t.sol:B".to_string(), vec![])
@@ -548,7 +577,7 @@ mod tests {
 
     #[test]
     fn link_cycle() {
-        link_test("../../testdata/linking/cycle", |linker| {
+        link_test("../../testdata/default/linking/cycle", |linker| {
             linker
                 .assert_dependencies(
                     "cycle/Cycle.t.sol:Foo".to_string(),
@@ -581,6 +610,59 @@ mod tests {
                     ],
                 )
                 .test_with_sender_and_nonce(Address::default(), 1);
+        });
+    }
+
+    #[test]
+    fn link_create2_nested() {
+        link_test("../../testdata/default/linking/nested", |linker| {
+            linker
+                .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies(
+                    "nested/Nested.t.sol:NestedLib".to_string(),
+                    vec![(
+                        "nested/Nested.t.sol:Lib".to_string(),
+                        Address::from_str("0x9D9f5BA9151532fe686922fd42369B0D55ffE98f").unwrap(),
+                    )],
+                )
+                .assert_dependencies(
+                    "nested/Nested.t.sol:LibraryConsumer".to_string(),
+                    vec![
+                        // Lib shows up here twice, because the linker sees it twice, but it should
+                        // have the same address and nonce.
+                        (
+                            "nested/Nested.t.sol:Lib".to_string(),
+                            Address::from_str("0x9D9f5BA9151532fe686922fd42369B0D55ffE98f")
+                                .unwrap(),
+                        ),
+                        (
+                            "nested/Nested.t.sol:NestedLib".to_string(),
+                            Address::from_str("0x31E092b6cAB55b22a32dfBa098778C324d650e56")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .assert_dependencies(
+                    "nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
+                    vec![
+                        (
+                            "nested/Nested.t.sol:Lib".to_string(),
+                            Address::from_str("0x9D9f5BA9151532fe686922fd42369B0D55ffE98f")
+                                .unwrap(),
+                        ),
+                        (
+                            "nested/Nested.t.sol:NestedLib".to_string(),
+                            Address::from_str("0x31E092b6cAB55b22a32dfBa098778C324d650e56")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .test_with_create2(
+                    Address::default(),
+                    fixed_bytes!(
+                        "19bf59b7b67ae8edcbc6e53616080f61fa99285c061450ad601b0bc40c9adfc9"
+                    ),
+                );
         });
     }
 }

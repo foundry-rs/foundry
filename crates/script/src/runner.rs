@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::build::ScriptPredeployLibraries;
 
 use super::ScriptResult;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
@@ -112,7 +112,7 @@ impl ScriptRunner {
                             from: Some(self.evm_opts.sender),
                             input: Some(calldata.into()).into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
-                            to: Some(DEFAULT_CREATE2_DEPLOYER),
+                            to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
                             ..Default::default()
                         },
                     });
