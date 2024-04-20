@@ -26,6 +26,13 @@ impl Cheatcode for setEnvCall {
     }
 }
 
+impl Cheatcode for envExistsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { name } = self;
+        Ok(env::var(name).is_ok().abi_encode())
+    }
+}
+
 impl Cheatcode for envBool_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;

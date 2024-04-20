@@ -3813,6 +3813,26 @@
     },
     {
       "func": {
+        "id": "envExists",
+        "description": "Gets the environment variable `name` and returns true if it exists, else returns false.",
+        "declaration": "function envExists(string calldata name) external view returns (bool exists);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "envExists(string)",
+        "selector": "0xce8365f9",
+        "selectorBytes": [
+          206,
+          131,
+          101,
+          249
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "envInt_0",
         "description": "Gets the environment variable `name` and parses it as `int256`.\nReverts if the variable was not found or could not be parsed.",
         "declaration": "function envInt(string calldata name) external view returns (int256 value);",
