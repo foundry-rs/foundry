@@ -1,4 +1,4 @@
-//! commonly used abigen generated types
+//! commonly used sol generated types
 use alloy_sol_types::sol;
 
 sol!(
