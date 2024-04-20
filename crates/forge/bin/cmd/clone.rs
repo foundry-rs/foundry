@@ -430,10 +430,11 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
         .write_to(&tmp_dump_dir)
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
 
-    // check whether we need to strip the `contract` or `src` directories in the original sources.
+    // check whether we need to re-organize directories in the original sources.
     // They are the source directories in foundry or hardhat projects. We do not want to preserve
     // them in the cloned project.
-    // If there is any other directory other than `src` `contracts` or `lib`, we should not strip.
+    // If there is any other directory other than `src`, `contracts`, `lib`, or not started with
+    // `@`, we should not re-organize.
     let strip_old_src = std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
         let Ok(e) = e else { return false };
         let folder_name = e.file_name().to_string_lossy().to_string();
@@ -462,12 +463,15 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
         } else {
             // move the other folders to src
             let dest = src_dir.join(entry.file_name());
+            eyre::ensure!(std::fs::metadata(&dest).is_err(), "destination already exists");
             std::fs::rename(entry.path(), &dest)?;
-            remappings.push(Remapping {
-                context: None,
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: dest.to_string_lossy().to_string(),
-            });
+            if entry.file_name() != "src" && entry.file_name() != "lib" {
+                remappings.push(Remapping {
+                    context: None,
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    path: dest.to_string_lossy().to_string(),
+                });
+            }
         }
     }
 
