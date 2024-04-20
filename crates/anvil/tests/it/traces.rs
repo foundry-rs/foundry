@@ -98,7 +98,6 @@ sol!(
     }
 );
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transfer_debug_trace_call() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
