@@ -420,9 +420,9 @@ impl ScriptArgs {
                     prompt_user = self.broadcast;
                     shell::println(format!(
                         "{}",
-                        Paint::red(format!(
+                        format!(
                             "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ))
+                        ).red()
                     ))?;
                 }
             }

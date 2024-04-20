@@ -159,7 +159,7 @@ impl InitArgs {
             }
         }
 
-        p_println!(!quiet => "    {} forge project",  Paint::green("Initialized"));
+        p_println!(!quiet => "    {} forge project",  "Initialized".green());
         Ok(())
     }
 }

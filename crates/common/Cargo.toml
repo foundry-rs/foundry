@@ -60,7 +60,7 @@ tokio = "1"
 tracing.workspace = true
 url = "2"
 walkdir = "2"
-yansi = "0.5"
+yansi = "1.0"
 rustc-hash.workspace = true
 num-format.workspace = true
 

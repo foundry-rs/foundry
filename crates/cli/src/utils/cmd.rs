@@ -128,7 +128,7 @@ pub fn needs_setup(abi: &JsonAbi) -> bool {
         if setup_fn.name != "setUp" {
             println!(
                 "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                Paint::yellow("Warning:").bold(),
+                "Warning:".yellow().bold(),
                 setup_fn.signature()
             );
         }
@@ -437,9 +437,9 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     println!();
 
     if result.success {
-        println!("{}", Paint::green("Transaction successfully executed."));
+        println!("{}", "Transaction successfully executed.".green());
     } else {
-        println!("{}", Paint::red("Transaction failed."));
+        println!("{}", "Transaction failed.".red());
     }
 
     println!("Gas used: {}", result.gas_used);

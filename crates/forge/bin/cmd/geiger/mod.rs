@@ -91,7 +91,7 @@ impl GeigerArgs {
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {
-            eprintln!("{}\n", Paint::red("ffi enabled"));
+            eprintln!("{}\n", "ffi enabled".red());
         }
 
         let root = config.__root.0;
