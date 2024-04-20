@@ -572,9 +572,9 @@ impl FileFilter for SkipBuildFilters {
     fn is_match(&self, file: &Path) -> bool {
         self.matchers.iter().all(|matcher| {
             if !is_match_exclude(matcher, file) {
-                return false;
+                false
             } else if let Ok(stripped) = file.strip_prefix(&self.project_root) {
-                return is_match_exclude(matcher, stripped);
+                is_match_exclude(matcher, stripped)
             } else {
                 true
             }
