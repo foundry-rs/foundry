@@ -848,8 +848,6 @@ async fn test_fork_snapshot_block_timestamp() {
     assert_eq!(initial_block.header.timestamp, latest_block.header.timestamp);
 }
 
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/pull/589> is merged, remove ignore
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_uncles_fetch() {
     let (api, handle) = spawn(fork_config()).await;
