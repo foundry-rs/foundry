@@ -617,7 +617,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "this test is used to dump mock data from Etherscan"]
     async fn test_dump_mock_data() {
-        let address: Address = "0x9ab6b21cdf116f611110b048987e58894786c244".parse().unwrap();
+        let address: Address = "0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F".parse().unwrap();
         let data_folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../testdata/etherscan")
             .join(address.to_string());
@@ -703,6 +703,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_clone_contract_with_relative_import2() {
         let address = "0x044b75f554b886A065b9567891e45c79542d7357".parse().unwrap();
+        one_test_case(address, false).await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_clone_contract_with_nested_src() {
+        let address = "0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F".parse().unwrap();
         one_test_case(address, false).await
     }
 
