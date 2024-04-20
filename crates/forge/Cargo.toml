@@ -37,7 +37,7 @@ proptest = "1"
 rayon = "1"
 serde.workspace = true
 tracing.workspace = true
-yansi = "1.0"
+yansi.workspace = true
 humantime-serde = "1.1.1"
 
 # bin
