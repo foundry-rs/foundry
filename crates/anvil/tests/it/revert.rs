@@ -5,12 +5,6 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
 use anvil::{spawn, NodeConfig};
-// use ethers::{
-//     contract::{ContractFactory, ContractInstance},
-//     middleware::SignerMiddleware,
-//     types::U256,
-//     utils::WEI_IN_ETHER,
-// };
 use foundry_compilers::{project_util::TempProject, Artifact};
 
 #[tokio::test(flavor = "multi_thread")]

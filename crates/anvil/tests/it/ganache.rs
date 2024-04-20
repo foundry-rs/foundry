@@ -3,10 +3,7 @@
 use crate::{
     abi::AlloyGreeter,
     init_tracing,
-    utils::{
-        http_provider, http_provider_with_signer, ws_provider, ws_provider_with_signer,
-        ContractInstanceCompat, DeploymentTxFactoryCompat,
-    },
+    utils::{http_provider, http_provider_with_signer, ws_provider, ws_provider_with_signer},
 };
 use alloy_contract::ContractInstance;
 use alloy_network::EthereumSigner;
