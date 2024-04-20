@@ -1620,7 +1620,12 @@ function test_run() external {}
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
     prj.clear();
-    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
+    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
+    );
+
+    cmd.forge_fuse().args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
     );
