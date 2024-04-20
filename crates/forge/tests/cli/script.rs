@@ -1288,3 +1288,36 @@ contract SimpleScript is Script {
     let output = cmd.stdout_lossy();
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });
+
+// https://github.com/foundry-rs/foundry/pull/7742
+forgetest_async!(unlocked_no_sender, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});
