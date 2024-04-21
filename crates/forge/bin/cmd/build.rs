@@ -94,7 +94,8 @@ impl BuildArgs {
             .bail(!self.format_json);
         if let Some(skip) = self.skip {
             if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
+                compiler = compiler
+                    .filter(Box::new(SkipBuildFilters::new(skip, project.root().to_path_buf())?));
             }
         }
         let output = compiler.compile(&project)?;
