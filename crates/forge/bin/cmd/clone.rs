@@ -71,6 +71,14 @@ pub struct CloneArgs {
     #[arg(long)]
     pub no_remappings_txt: bool,
 
+    /// Keep the original directory structure collected from Etherscan.
+    ///
+    /// If this flag is set, the directory structure of the cloned project will be kept as is.
+    /// By default, the directory structure is re-orgnized to increase the readability, but may
+    /// risk some compilation failures.
+    #[arg(long)]
+    pub keep_directory_structure: bool,
+
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -80,7 +88,14 @@ pub struct CloneArgs {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let CloneArgs { address, root, opts, etherscan, no_remappings_txt } = self;
+        let CloneArgs {
+            address,
+            root,
+            opts,
+            etherscan,
+            no_remappings_txt,
+            keep_directory_structure,
+        } = self;
 
         // step 0. get the chain and api key from the config
         let config = Config::from(&etherscan);
@@ -99,7 +114,8 @@ impl CloneArgs {
         let root = dunce::canonicalize(&root)?;
 
         // step 3. parse the metadata
-        Self::parse_metadata(&meta, chain, &root, no_remappings_txt).await?;
+        Self::parse_metadata(&meta, chain, &root, no_remappings_txt, keep_directory_structure)
+            .await?;
 
         // step 4. collect the compilation metadata
         // if the etherscan api key is not set, we need to wait for 3 seconds between calls
@@ -214,17 +230,24 @@ impl CloneArgs {
         chain: Chain,
         root: &PathBuf,
         no_remappings_txt: bool,
+        keep_directory_structure: bool,
     ) -> Result<()> {
         // dump sources and update the remapping in configuration
-        let remappings = dump_sources(meta, root)?;
+        let remappings = dump_sources(meta, root, keep_directory_structure)?;
         Config::update_at(root, |config, doc| {
             let profile = config.profile.as_str().as_str();
+
+            // update the remappings in the configuration
             let mut remapping_array = toml_edit::Array::new();
             for r in remappings {
                 remapping_array.push(r.to_string());
             }
             doc[Config::PROFILE_SECTION][profile]["remappings"] = toml_edit::value(remapping_array);
 
+            // make sure auto_detect_remappings is false (it is very important because cloned
+            // project may not follow the common remappings)
+            doc[Config::PROFILE_SECTION][profile]["auto_detect_remappings"] =
+                toml_edit::value(false);
             true
         })?;
 
@@ -392,7 +415,7 @@ fn update_config_by_metadata(
 /// The sources are dumped to the `src` directory.
 /// IO errors may be returned.
 /// A list of remappings is returned
-fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping>> {
+fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<RelativeRemapping>> {
     // get config
     let path_config = ProjectPathsConfig::builder().build_with_root(root);
     // we will canonicalize the sources directory later
@@ -412,66 +435,95 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
         .write_to(&tmp_dump_dir)
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
 
-    // check whether we need to re-organize directories in the original sources.
-    // They are the source directories in foundry or hardhat projects. We do not want to preserve
-    // them in the cloned project.
-    // If there is any other directory other than `src`, `contracts`, `lib`, or not started with
-    // `@`, we should not re-organize.
-    let need_reorg = std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
-        let Ok(e) = e else { return false };
-        let folder_name = e.file_name();
-        folder_name == "src" ||
-            folder_name == "lib" ||
-            folder_name == "contracts" ||
-            folder_name.to_string_lossy().starts_with('@')
-    });
-    // move contract sources to the `src` directory
+    // check whether we need to re-organize directories in the original sources, since we do not
+    // want to put all the sources in the `src` directory if the original directory structure is
+    // well organized, e.g., a standard foundry project containing `src` and `lib`
+    //
+    // * if the user wants to keep the original directory structure, we should not re-organize.
+    // * if there is any other directory other than `src`, `contracts`, `lib`, `hardhat`,
+    //   `forge-std`,
+    // or not started with `@`, we should not re-organize.
+    let to_reorg = !no_reorg &&
+        std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
+            let Ok(e) = e else { return false };
+            let folder_name = e.file_name();
+            folder_name == "src" ||
+                folder_name == "lib" ||
+                folder_name == "contracts" ||
+                folder_name == "hardhat" ||
+                folder_name == "forge-std" ||
+                folder_name.to_string_lossy().starts_with('@')
+        });
+
+    // ensure `src` and `lib` directories exist
+    eyre::ensure!(std::fs::metadata(root.join(src_dir)).is_ok(), "source directory must exists");
+    eyre::ensure!(std::fs::metadata(root.join(lib_dir)).is_ok(), "source directory must exists");
+
+    // move source files
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
-        if std::fs::metadata(root.join(src_dir)).is_err() {
-            std::fs::create_dir(root.join(src_dir))?;
-        }
         let entry = entry?;
         let folder_name = entry.file_name();
         // special handling when we need to re-organize the directories: we flatten them.
-        if need_reorg &&
-            (folder_name == "contracts" || folder_name == "src" || folder_name == "lib")
-        {
-            // move all sub folders in contracts to src or lib
-            let new_dir = if folder_name == "lib" { lib_dir } else { src_dir };
-            for e in read_dir(entry.path())? {
-                let e = e?;
-                let dest = new_dir.join(e.file_name());
-                std::fs::rename(e.path(), &dest)?;
+        if to_reorg {
+            if folder_name == "contracts" || folder_name == "src" || folder_name == "lib" {
+                // move all sub folders in contracts to src or lib
+                let new_dir = if folder_name == "lib" { lib_dir } else { src_dir };
+                for e in read_dir(entry.path())? {
+                    let e = e?;
+                    let dest = new_dir.join(&e.file_name());
+                    eyre::ensure!(
+                        std::fs::metadata(&dest).is_err(),
+                        "destination already exists: {:?}",
+                        dest
+                    );
+                    std::fs::rename(e.path(), &dest)?;
+                    remappings.push(Remapping {
+                        context: None,
+                        name: format!(
+                            "{}/{}",
+                            folder_name.to_string_lossy(),
+                            e.file_name().to_string_lossy()
+                        ),
+                        path: dest.to_string_lossy().to_string(),
+                    });
+                }
+            } else {
+                assert!(
+                    folder_name == "hardhat" ||
+                        folder_name == "forge-std" ||
+                        folder_name.to_string_lossy().starts_with('@')
+                );
+                // move these other folders to lib
+                let dest = lib_dir.join(&folder_name);
+                if folder_name == "forge-std" {
+                    // let's use the provided forge-std directory
+                    std::fs::remove_dir_all(&dest)?;
+                }
+                eyre::ensure!(
+                    std::fs::metadata(&dest).is_err(),
+                    "destination already exists: {:?}",
+                    dest
+                );
+                std::fs::rename(entry.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
-                    name: format!(
-                        "{}/{}",
-                        folder_name.to_string_lossy(),
-                        e.file_name().to_string_lossy()
-                    ),
+                    name: folder_name.to_string_lossy().to_string(),
                     path: dest.to_string_lossy().to_string(),
                 });
             }
-        } else if need_reorg {
-            assert!(folder_name.to_string_lossy().starts_with('@'));
-            // move the other folders to lib
-            let dest = lib_dir.join(folder_name);
-            eyre::ensure!(std::fs::metadata(&dest).is_err(), "destination already exists");
-            std::fs::rename(entry.path(), &dest)?;
-            remappings.push(Remapping {
-                context: None,
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: dest.to_string_lossy().to_string(),
-            });
         } else {
-            // move the other folders to src
-            let dest = src_dir.join(folder_name.clone());
-            eyre::ensure!(std::fs::metadata(&dest).is_err(), "destination already exists");
+            // directly move the all folders into src
+            let dest = src_dir.join(&folder_name);
+            eyre::ensure!(
+                std::fs::metadata(&dest).is_err(),
+                "destination already exists: {:?}",
+                dest
+            );
             std::fs::rename(entry.path(), &dest)?;
-            if folder_name != "src" && folder_name != "lib" {
+            if folder_name != "src" {
                 remappings.push(Remapping {
                     context: None,
-                    name: entry.file_name().to_string_lossy().to_string(),
+                    name: folder_name.to_string_lossy().to_string(),
                     path: dest.to_string_lossy().to_string(),
                 });
             }
@@ -483,12 +535,15 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping
 
     // add remappings in the metedata
     for mut r in meta.settings()?.remappings {
-        if need_reorg {
+        if to_reorg {
             // we should update its remapped path in the same way as we dump sources
             // i.e., remove prefix `contracts` (if any) and add prefix `src`
             let new_path = if r.path.starts_with("contracts") {
                 PathBuf::from("src").join(PathBuf::from(&r.path).strip_prefix("contracts")?)
-            } else if r.path.starts_with('@') {
+            } else if r.path.starts_with('@') ||
+                r.path.starts_with("hardhat/") ||
+                r.path.starts_with("forge-std/")
+            {
                 PathBuf::from("lib").join(PathBuf::from(&r.path))
             } else {
                 PathBuf::from(&r.path)
@@ -670,7 +725,9 @@ mod tests {
         let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default()).unwrap();
         project_root = dunce::canonicalize(&project_root).unwrap();
-        CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false).await.unwrap();
+        CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false, false)
+            .await
+            .unwrap();
         CloneArgs::collect_compilation_metadata(
             &meta,
             Chain::mainnet(),
