@@ -6,6 +6,7 @@ import "cheats/Vm.sol";
 
 contract FindFromLogValue {
     event FindFromLog(int256 indexed mystery, bytes32 rand);
+
     bool public found = false;
 
     function seed() public {
