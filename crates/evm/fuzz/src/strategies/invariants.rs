@@ -15,7 +15,7 @@ pub fn override_call_strat(
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,
     calldata_fuzz_config: CalldataFuzzDictionary,
-) -> SBoxedStrategy<(Address, Bytes, Option<Function>)> {
+) -> SBoxedStrategy<(Address, Bytes, Option<Function>, JsonAbi)> {
     let contracts_ref = contracts.targets.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
@@ -26,7 +26,7 @@ pub fn override_call_strat(
         let fuzz_state = fuzz_state.clone();
         let calldata_fuzz_config = calldata_fuzz_config.clone();
 
-        let func = {
+        let (func, abi) = {
             let contracts = contracts.targets.lock();
             let (_, abi, functions) = contracts.get(&target_address).unwrap_or_else(|| {
                 // Choose a random contract if target selected by lazy strategy is not in fuzz run
@@ -36,11 +36,17 @@ pub fn override_call_strat(
                 let (_, contract_specs) = contracts.iter().nth(rand_index).unwrap();
                 contract_specs
             });
-            select_random_function(abi, functions)
+            (select_random_function(abi, functions), abi.clone())
         };
 
         func.prop_flat_map(move |func| {
-            fuzz_contract_with_calldata(&fuzz_state, &calldata_fuzz_config, target_address, func)
+            fuzz_contract_with_calldata(
+                &fuzz_state,
+                &calldata_fuzz_config,
+                target_address,
+                func,
+                abi.clone(),
+            )
         })
     })
     .sboxed()
@@ -80,14 +86,14 @@ fn generate_call(
     let senders = Rc::new(senders);
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
-            let (contract, func) = {
+            let (contract, func, abi) = {
                 let contracts = contracts.targets.lock();
                 let contracts =
                     contracts.iter().filter(|(_, (_, abi, _))| !abi.functions.is_empty());
                 let (&contract, (_, abi, functions)) = selector.select(contracts);
 
                 let func = select_random_function(abi, functions);
-                (contract, func)
+                (contract, func, abi.clone())
             };
 
             let senders = senders.clone();
@@ -95,8 +101,13 @@ fn generate_call(
             let calldata_fuzz_config = calldata_fuzz_config.clone();
             func.prop_flat_map(move |func| {
                 let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
-                let contract =
-                    fuzz_contract_with_calldata(&fuzz_state, &calldata_fuzz_config, contract, func);
+                let contract = fuzz_contract_with_calldata(
+                    &fuzz_state,
+                    &calldata_fuzz_config,
+                    contract,
+                    func,
+                    abi.clone(),
+                );
                 (sender, contract)
             })
         })
@@ -167,7 +178,8 @@ pub fn fuzz_contract_with_calldata(
     calldata_fuzz_config: &CalldataFuzzDictionary,
     contract: Address,
     func: Function,
-) -> impl Strategy<Value = (Address, Bytes, Option<Function>)> {
+    contract_abi: JsonAbi,
+) -> impl Strategy<Value = (Address, Bytes, Option<Function>, JsonAbi)> {
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
@@ -180,9 +192,9 @@ pub fn fuzz_contract_with_calldata(
         trace!(input=?calldata);
         if !func.outputs.is_empty() {
             // If function has outputs then return it for decoding result.
-            (contract, calldata, Some(func.clone()))
+            (contract, calldata, Some(func.clone()), contract_abi.clone())
         } else {
-            (contract, calldata, None)
+            (contract, calldata, None, contract_abi.clone())
         }
     })
 }

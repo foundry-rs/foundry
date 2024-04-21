@@ -2,7 +2,7 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_json_abi::Function;
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
@@ -221,7 +221,7 @@ impl<'a> InvariantExecutor<'a> {
             let mut assume_rejects_counter = 0;
 
             while current_run < self.config.depth {
-                let (sender, (address, calldata, func)) =
+                let (sender, (address, calldata, func, abi)) =
                     inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
@@ -254,6 +254,7 @@ impl<'a> InvariantExecutor<'a> {
                             &mut state_changeset,
                             sender,
                             func,
+                            abi,
                             &call_result,
                             &fuzz_state,
                             self.config.depth,
@@ -678,6 +679,7 @@ fn collect_data(
     state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
     function: &Option<Function>,
+    abi: &JsonAbi,
     call_result: &RawCallResult,
     fuzz_state: &EvmFuzzState,
     run_depth: u32,
@@ -697,6 +699,7 @@ fn collect_data(
 
     fuzz_state.collect_state_from_call(
         function,
+        abi,
         &call_result.result,
         &call_result.logs,
         &*state_changeset,

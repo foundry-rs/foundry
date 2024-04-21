@@ -28,8 +28,8 @@ impl FuzzRunIdentifiedContracts {
     }
 }
 
-/// (Sender, (TargetContract, Calldata))
-pub type BasicTxDetails = (Address, (Address, Bytes, Option<Function>));
+/// (Sender, (TargetContract, Calldata, FuzzedFunction, TargetContractAbi))
+pub type BasicTxDetails = (Address, (Address, Bytes, Option<Function>, JsonAbi));
 
 /// Test contract which is testing its invariants.
 #[derive(Clone, Debug)]

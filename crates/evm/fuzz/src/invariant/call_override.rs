@@ -1,5 +1,5 @@
 use super::BasicTxDetails;
-use alloy_json_abi::Function;
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
@@ -18,7 +18,7 @@ pub struct RandomCallGenerator {
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<Mutex<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
-    pub strategy: SBoxedStrategy<Option<(Address, Bytes, Option<Function>)>>,
+    pub strategy: SBoxedStrategy<Option<(Address, Bytes, Option<Function>, JsonAbi)>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
     /// Flag to know if a call has been overridden. Don't allow nesting for now.
@@ -34,7 +34,7 @@ impl RandomCallGenerator {
     pub fn new(
         test_address: Address,
         runner: TestRunner,
-        strategy: SBoxedStrategy<(Address, Bytes, Option<Function>)>,
+        strategy: SBoxedStrategy<(Address, Bytes, Option<Function>, JsonAbi)>,
         target_reference: Arc<RwLock<Address>>,
     ) -> Self {
         let strategy = weighted(0.9, strategy).sboxed();
@@ -78,12 +78,9 @@ impl RandomCallGenerator {
             *self.target_reference.write() = original_caller;
 
             // `original_caller` has a 80% chance of being the `new_target`.
-            let choice = self
-                .strategy
-                .new_tree(&mut self.runner.lock())
-                .unwrap()
-                .current()
-                .map(|(new_target, calldata, func)| (new_caller, (new_target, calldata, func)));
+            let choice = self.strategy.new_tree(&mut self.runner.lock()).unwrap().current().map(
+                |(new_target, calldata, func, abi)| (new_caller, (new_target, calldata, func, abi)),
+            );
 
             self.last_sequence.write().push(choice.clone());
             choice

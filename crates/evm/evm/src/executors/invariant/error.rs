@@ -173,7 +173,7 @@ impl FailedInvariantCaseData {
         set_up_inner_replay(&mut executor, &self.inner_sequence);
 
         // Replay each call from the sequence until we break the invariant.
-        for (sender, (addr, bytes, _)) in calls.iter() {
+        for (sender, (addr, bytes, _, _)) in calls.iter() {
             let call_result =
                 executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
 
@@ -241,7 +241,7 @@ impl FailedInvariantCaseData {
         }
 
         for (seq_idx, call_index) in new_sequence.iter().enumerate() {
-            let (sender, (addr, bytes, _)) = &calls[*call_index];
+            let (sender, (addr, bytes, _, _)) = &calls[*call_index];
 
             executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
 

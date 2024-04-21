@@ -1,7 +1,7 @@
 use super::fuzz_param_from_state;
 use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::Function;
+use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
@@ -41,6 +41,7 @@ impl EvmFuzzState {
     pub fn collect_state_from_call(
         &self,
         function: &Option<Function>,
+        abi: &JsonAbi,
         result: &Bytes,
         logs: &[Log],
         state_changeset: &StateChangeset,
@@ -52,7 +53,7 @@ impl EvmFuzzState {
             Some(func) => {
                 // Decode result and collect samples to be used in subsequent fuzz runs.
                 if !result.is_empty() {
-                    if let Ok(decoded_result) = func.abi_decode_output(result, true) {
+                    if let Ok(decoded_result) = func.abi_decode_output(result, false) {
                         dict.insert_sample_value(decoded_result, run_depth);
                     }
                 }
@@ -60,18 +61,14 @@ impl EvmFuzzState {
             None => {}
         }
 
-        // Insert sample values from log topics and data.
+        // Decode with known events and collect samples from indexed fields and event body.
         for log in logs {
-            for topic in log.topics() {
-                dict.insert_value(topic.0);
-            }
-            let chunks = log.data.data.chunks_exact(32);
-            let rem = chunks.remainder();
-            for chunk in chunks {
-                dict.insert_value(chunk.try_into().unwrap());
-            }
-            if !rem.is_empty() {
-                dict.insert_value(B256::right_padding_from(rem).0);
+            for event in abi.events() {
+                if let Ok(decoded_event) = event.decode_log(log, false) {
+                    dict.insert_sample_value(decoded_event.indexed, run_depth);
+                    dict.insert_sample_value(decoded_event.body, run_depth);
+                    break;
+                }
             }
         }
 

@@ -82,7 +82,7 @@ impl Fuzzer {
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
-                if let Some((sender, (contract, input, _))) =
+                if let Some((sender, (contract, input, _, _))) =
                     call_generator.next(call.context.caller, call.contract)
                 {
                     *call.input = input.0;
