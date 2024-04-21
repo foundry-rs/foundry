@@ -29,6 +29,7 @@ impl FuzzRunIdentifiedContracts {
 }
 
 /// (Sender, (TargetContract, Calldata, FuzzedFunction, TargetContractAbi))
+/// Fuzzed function and contract abi are used for collecting sample values from result and logs.
 pub type BasicTxDetails = (Address, (Address, Bytes, Option<Function>, JsonAbi));
 
 /// Test contract which is testing its invariants.

@@ -518,24 +518,21 @@ async fn test_invariant_scrape_return_values() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_scrape_logs() {
-    let filter =
-        Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeLogs.t.sol");
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeLogs.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.invariant.fail_on_revert = false;
     let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
-        BTreeMap::from([
-            (
-                "default/fuzz/invariant/common/InvariantScrapeLogs.t.sol:FindFromLogValueTest",
-                vec![(
-                    "invariant_value_not_found()",
-                    false,
-                    Some("revert: value found".into()),
-                    None,
-                    None,
-                )],
-            ),
-        ]),
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantScrapeLogs.t.sol:FindFromLogValueTest",
+            vec![(
+                "invariant_value_not_found()",
+                false,
+                Some("revert: value found".into()),
+                None,
+                None,
+            )],
+        )]),
     );
 }
