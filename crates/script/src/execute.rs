@@ -118,7 +118,7 @@ impl PreExecutionState {
                 build_data: self.build_data.build_data,
             };
 
-            return state.link()?.prepare_execution().await?.execute().await;
+            return state.link().await?.prepare_execution().await?.execute().await;
         }
 
         Ok(ExecutedState {

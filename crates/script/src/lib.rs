@@ -228,7 +228,8 @@ impl ScriptArgs {
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
             let pre_simulation = compiled
-                .link()?
+                .link()
+                .await?
                 .prepare_execution()
                 .await?
                 .execute()
