@@ -3819,9 +3819,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8caca67f174741b05c2f4188d3ee93420342130eb2a768abb9b885bb8b918df2"
+checksum = "10a73252c7753488cf7779e2788e05088b3b3d9198fbbc5d4da94b5afd0f751d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3851,7 +3851,7 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -3939,6 +3939,7 @@ dependencies = [
 name = "foundry-evm-core"
 version = "0.2.0"
 dependencies = [
+ "alloy-chains",
  "alloy-dyn-abi",
  "alloy-genesis",
  "alloy-json-abi",
