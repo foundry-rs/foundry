@@ -209,7 +209,8 @@ pub fn load_dotenv() {
 
 /// Sets the default [`yansi`] color output condition.
 pub fn enable_paint() {
-    yansi::whenever(yansi::Condition::TTY_AND_COLOR);
+    let enable = yansi::Condition::os_support() && yansi::Condition::tty_and_color_live();
+    yansi::whenever(yansi::Condition::cached(enable));
 }
 
 /// Useful extensions to [`std::process::Command`].
