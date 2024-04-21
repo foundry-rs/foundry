@@ -216,26 +216,10 @@ impl CloneArgs {
         no_remappings_txt: bool,
     ) -> Result<()> {
         // dump sources and update the remapping in configuration
-        let Settings { remappings: original_remappings, .. } = meta.settings()?;
-        let (remappings, strip_old_src) = dump_sources(meta, root)?;
+        let remappings = dump_sources(meta, root)?;
         Config::update_at(root, |config, doc| {
             let profile = config.profile.as_str().as_str();
             let mut remapping_array = toml_edit::Array::new();
-            // original remappings
-            for r in original_remappings.iter() {
-                // we should update its remapped path in the same way as we dump sources
-                // i.e., remove prefix `contracts` (if any) and add prefix `src`
-                let mut r = r.to_owned();
-                if strip_old_src {
-                    let new_path = PathBuf::from(r.path.clone())
-                        .strip_prefix("contracts")
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or(PathBuf::from(r.path));
-                    r.path = PathBuf::from("src").join(new_path).to_string_lossy().to_string();
-                }
-                remapping_array.push(r.to_string());
-            }
-            // new remappings
             for r in remappings {
                 remapping_array.push(r.to_string());
             }
@@ -407,13 +391,13 @@ fn update_config_by_metadata(
 /// Dump the contract sources to the root directory.
 /// The sources are dumped to the `src` directory.
 /// IO errors may be returned.
-/// A list of remappings is returned, as well as a boolean indicating whether the old `contract`
-/// or `src` directories are stripped.
-fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemapping>, bool)> {
+/// A list of remappings is returned
+fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<Vec<RelativeRemapping>> {
     // get config
     let path_config = ProjectPathsConfig::builder().build_with_root(root);
     // we will canonicalize the sources directory later
     let src_dir = &path_config.sources;
+    let lib_dir = &path_config.libraries[0];
     let contract_name = &meta.contract_name;
     let source_tree = meta.source_tree();
 
@@ -421,8 +405,6 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
     // we will first load existing remappings if necessary
     //  make sure this happens before dumping sources
     let mut remappings: Vec<Remapping> = Remapping::find_many(root);
-    // we also load the original remappings from the metadata
-    remappings.extend(meta.settings()?.remappings);
 
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
@@ -435,10 +417,13 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
     // them in the cloned project.
     // If there is any other directory other than `src`, `contracts`, `lib`, or not started with
     // `@`, we should not re-organize.
-    let strip_old_src = std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
+    let need_reorg = std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
         let Ok(e) = e else { return false };
-        let folder_name = e.file_name().to_string_lossy().to_string();
-        ["contracts", "src", "lib"].contains(&folder_name.as_str())
+        let folder_name = e.file_name();
+        folder_name == "src" ||
+            folder_name == "lib" ||
+            folder_name == "contracts" ||
+            folder_name.to_string_lossy().starts_with('@')
     });
     // move contract sources to the `src` directory
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
@@ -446,26 +431,44 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
             std::fs::create_dir(root.join(src_dir))?;
         }
         let entry = entry?;
-        let folder_name = entry.file_name().to_string_lossy().to_string();
-        // special handling for contracts and src directories: we flatten them.
-        if strip_old_src && (folder_name.as_str() == "contracts" || folder_name.as_str() == "src") {
-            // move all sub folders in contracts to src
+        let folder_name = entry.file_name();
+        // special handling when we need to re-organize the directories: we flatten them.
+        if need_reorg &&
+            (folder_name == "contracts" || folder_name == "src" || folder_name == "lib")
+        {
+            // move all sub folders in contracts to src or lib
+            let new_dir = if folder_name == "lib" { lib_dir } else { src_dir };
             for e in read_dir(entry.path())? {
                 let e = e?;
-                let dest = src_dir.join(e.file_name());
+                let dest = new_dir.join(e.file_name());
                 std::fs::rename(e.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
-                    name: format!("{}/{}", folder_name, e.file_name().to_string_lossy()),
+                    name: format!(
+                        "{}/{}",
+                        folder_name.to_string_lossy(),
+                        e.file_name().to_string_lossy()
+                    ),
                     path: dest.to_string_lossy().to_string(),
                 });
             }
-        } else {
-            // move the other folders to src
-            let dest = src_dir.join(entry.file_name());
+        } else if need_reorg {
+            assert!(folder_name.to_string_lossy().starts_with('@'));
+            // move the other folders to lib
+            let dest = lib_dir.join(folder_name);
             eyre::ensure!(std::fs::metadata(&dest).is_err(), "destination already exists");
             std::fs::rename(entry.path(), &dest)?;
-            if entry.file_name() != "src" && entry.file_name() != "lib" {
+            remappings.push(Remapping {
+                context: None,
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: dest.to_string_lossy().to_string(),
+            });
+        } else {
+            // move the other folders to src
+            let dest = src_dir.join(folder_name.clone());
+            eyre::ensure!(std::fs::metadata(&dest).is_err(), "destination already exists");
+            std::fs::rename(entry.path(), &dest)?;
+            if folder_name != "src" && folder_name != "lib" {
                 remappings.push(Remapping {
                     context: None,
                     name: entry.file_name().to_string_lossy().to_string(),
@@ -478,7 +481,26 @@ fn dump_sources(meta: &Metadata, root: &PathBuf) -> Result<(Vec<RelativeRemappin
     // remove the temporary directory
     std::fs::remove_dir_all(tmp_dump_dir)?;
 
-    Ok((remappings.into_iter().map(|r| r.into_relative(root)).collect(), strip_old_src))
+    // add remappings in the metedata
+    for mut r in meta.settings()?.remappings {
+        if need_reorg {
+            // we should update its remapped path in the same way as we dump sources
+            // i.e., remove prefix `contracts` (if any) and add prefix `src`
+            let new_path = if r.path.starts_with("contracts") {
+                PathBuf::from("src").join(PathBuf::from(&r.path).strip_prefix("contracts")?)
+            } else if r.path.starts_with('@') {
+                PathBuf::from("lib").join(PathBuf::from(&r.path))
+            } else {
+                PathBuf::from(&r.path)
+            };
+            r.path = new_path.to_string_lossy().to_string();
+            remappings.push(r);
+        } else {
+            remappings.push(r);
+        }
+    }
+
+    Ok(remappings.into_iter().map(|r| r.into_relative(root)).collect())
 }
 
 /// Compile the project in the root directory, and return the compilation result.
