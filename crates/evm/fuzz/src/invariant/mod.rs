@@ -28,9 +28,14 @@ impl FuzzRunIdentifiedContracts {
     }
 }
 
-/// (Sender, (TargetContract, Calldata, FuzzedFunction, TargetContractAbi))
-/// Fuzzed function and contract abi are used for collecting sample values from result and logs.
-pub type BasicTxDetails = (Address, (Address, Bytes, Option<Function>, JsonAbi));
+/// (Sender, CallDetails)
+/// TODO: replace type with struct
+pub type BasicTxDetails = (Address, CallDetails);
+
+/// (TargetContractAddress, Calldata, Function, TargetContractAbi)
+/// Function and contract abi are used for collecting sample values from result and logs.
+/// Function is set for calls that returns values.
+pub type CallDetails = (Address, Bytes, Option<Function>, JsonAbi);
 
 /// Test contract which is testing its invariants.
 #[derive(Clone, Debug)]

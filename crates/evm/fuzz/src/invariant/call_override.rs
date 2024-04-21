@@ -1,4 +1,4 @@
-use super::BasicTxDetails;
+use super::{BasicTxDetails, CallDetails};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use parking_lot::{Mutex, RwLock};
@@ -18,7 +18,7 @@ pub struct RandomCallGenerator {
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<Mutex<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
-    pub strategy: SBoxedStrategy<Option<(Address, Bytes, Option<Function>, JsonAbi)>>,
+    pub strategy: SBoxedStrategy<Option<CallDetails>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
     /// Flag to know if a call has been overridden. Don't allow nesting for now.
