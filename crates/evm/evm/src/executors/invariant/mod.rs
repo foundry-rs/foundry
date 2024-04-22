@@ -36,6 +36,8 @@ use self::error::FailedInvariantCaseData;
 pub use error::{InvariantFailures, InvariantFuzzError, InvariantFuzzTestResult};
 
 mod funcs;
+mod shrink;
+
 pub use funcs::{assert_invariants, replay_run};
 
 sol! {
