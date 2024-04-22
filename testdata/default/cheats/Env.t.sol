@@ -13,6 +13,14 @@ contract EnvTest is DSTest {
         vm.setEnv(key, val);
     }
 
+    function testEnvExists() public {
+        string memory key = "_foundryCheatcodeEnvExistsTestKey";
+        string memory val = "_foundryCheatcodeEnvExistsTestVal";
+        vm.setEnv(key, val);
+        require(vm.envExists(key), "envExists failed");
+        require(!vm.envExists("nonexistent"), "envExists failed");
+    }
+
     uint256 constant numEnvBoolTests = 2;
 
     function testEnvBool() public {

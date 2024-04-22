@@ -23,7 +23,7 @@ pub use ui::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_at
 /// use alloy_primitives::U256;
 /// use foundry_common::fmt::format_uint_exp as f;
 ///
-/// # yansi::Paint::disable();
+/// # yansi::disable();
 /// assert_eq!(f(U256::from(0)), "0");
 /// assert_eq!(f(U256::from(1234)), "1234");
 /// assert_eq!(f(U256::from(1234567890)), "1234567890 [1.234e9]");
@@ -36,7 +36,7 @@ pub fn format_uint_exp(num: U256) -> String {
     }
 
     let exp = to_exp_notation(num, 4, true, Sign::Positive);
-    format!("{num} {}", Paint::default(format!("[{exp}]")).dimmed())
+    format!("{num} {}", format!("[{exp}]").dim())
 }
 
 /// Formats a U256 number to string, adding an exponential notation _hint_.
@@ -49,7 +49,7 @@ pub fn format_uint_exp(num: U256) -> String {
 /// use alloy_primitives::I256;
 /// use foundry_common::fmt::format_int_exp as f;
 ///
-/// # yansi::Paint::disable();
+/// # yansi::disable();
 /// assert_eq!(f(I256::try_from(0).unwrap()), "0");
 /// assert_eq!(f(I256::try_from(-1).unwrap()), "-1");
 /// assert_eq!(f(I256::try_from(1234).unwrap()), "1234");
@@ -72,5 +72,5 @@ pub fn format_int_exp(num: I256) -> String {
     }
 
     let exp = to_exp_notation(abs, 4, true, sign);
-    format!("{sign}{abs} {}", Paint::default(format!("[{exp}]")).dimmed())
+    format!("{sign}{abs} {}", format!("[{exp}]").dim())
 }

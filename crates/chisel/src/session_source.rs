@@ -97,7 +97,7 @@ impl SessionSourceConfig {
             SolcReq::Version(version.into())
         } else {
             if !self.foundry_config.offline {
-                print!("{}", Paint::green("No solidity versions installed! "));
+                print!("{}", "No solidity versions installed! ".green());
             }
             // use default
             SolcReq::Version("0.8.19".parse().unwrap())
@@ -121,10 +121,7 @@ impl SessionSourceConfig {
                     if self.foundry_config.offline {
                         eyre::bail!("can't install missing solc {version} in offline mode")
                     }
-                    println!(
-                        "{}",
-                        Paint::green(format!("Installing solidity version {version}..."))
-                    );
+                    println!("{}", format!("Installing solidity version {version}...").green());
                     Solc::blocking_install(&version)?;
                     solc = Solc::find_svm_installed_version(version.to_string())?;
                 }
@@ -289,21 +286,21 @@ impl SessionSource {
 
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
-        self.global_code.clear();
+        String::clear(&mut self.global_code);
         self.generated_output = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
-        self.top_level_code.clear();
+        String::clear(&mut self.top_level_code);
         self.generated_output = None;
         self
     }
 
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
-        self.run_code.clear();
+        String::clear(&mut self.run_code);
         self.generated_output = None;
         self
     }

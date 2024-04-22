@@ -117,8 +117,8 @@ impl VerifyBytecodeArgs {
         if !self.json {
             println!(
                 "Verifying bytecode for contract {} at address {}",
-                Paint::green(self.contract.name.clone()),
-                Paint::green(self.address.to_string())
+                self.contract.name.clone().green(),
+                self.address.green()
             );
         }
 
@@ -174,7 +174,7 @@ impl VerifyBytecodeArgs {
         if provided_constructor_args != constructor_args.to_string() && !self.json {
             println!(
                 "{}",
-                Paint::red("The provided constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
+                "The provided constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan".red().bold(),
             );
         }
 
@@ -373,7 +373,10 @@ impl VerifyBytecodeArgs {
 
         if let Some(skip) = &self.skip {
             if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip.to_owned())?));
+                compiler = compiler.filter(Box::new(SkipBuildFilters::new(
+                    skip.to_owned(),
+                    project.root().to_path_buf(),
+                )?));
             }
         }
         let output = compiler.compile(&project)?;
@@ -453,8 +456,8 @@ impl VerifyBytecodeArgs {
             if !self.json {
                 println!(
                     "{} with status {}",
-                    Paint::green(format!("{:?} code matched", bytecode_type)).bold(),
-                    Paint::green(res.1.unwrap()).bold()
+                    format!("{:?} code matched", bytecode_type).green().bold(),
+                    res.1.unwrap().green().bold()
                 );
             } else {
                 let json_res = JsonResult {
@@ -468,15 +471,16 @@ impl VerifyBytecodeArgs {
         } else if !res.0 && !self.json {
             println!(
                 "{}",
-                Paint::red(format!(
+                format!(
                     "{:?} code did not match - this may be due to varying compiler settings",
                     bytecode_type
-                ))
+                )
+                .red()
                 .bold()
             );
             let mismatches = find_mismatch_in_settings(etherscan_config, config);
             for mismatch in mismatches {
-                println!("{}", Paint::red(mismatch).bold());
+                println!("{}", mismatch.red().bold());
             }
         } else if !res.0 && self.json {
             let json_res = JsonResult {

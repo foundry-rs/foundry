@@ -5,7 +5,6 @@ use eyre::Result;
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
-    inspectors::CheatsConfig,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
@@ -35,7 +34,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::mpsc::channel,
+    sync::{mpsc::channel, Arc},
     time::Instant,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -274,21 +273,14 @@ impl TestArgs {
         // Clone the output only if we actually need it later for the debugger.
         let output_clone = should_debug.then(|| output.clone());
 
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+        let config = Arc::new(config);
 
-        let runner = MultiContractRunnerBuilder::default()
+        let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(
-                &config,
-                evm_opts.clone(),
-                Some(artifact_ids),
-                None,
-                None, // populated separately for each test contract
-            ))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
@@ -328,7 +320,7 @@ impl TestArgs {
                 .debug_arenas(test_result.debug.as_slice())
                 .sources(sources)
                 .breakpoints(test_result.breakpoints.clone());
-            if let Some(decoder) = &outcome.decoder {
+            if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
             }
             let mut debugger = builder.build();
@@ -342,7 +334,7 @@ impl TestArgs {
     pub async fn run_tests(
         &self,
         mut runner: MultiContractRunner,
-        config: Config,
+        config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
     ) -> eyre::Result<TestOutcome> {
@@ -367,15 +359,7 @@ impl TestArgs {
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
-        // Set up trace identifiers.
-        let known_contracts = runner.known_contracts.clone();
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
-
-        // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
-        if !self.gas_report {
-            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
-        }
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -385,24 +369,9 @@ impl TestArgs {
             move || runner.test(&filter, tx)
         });
 
-        let mut gas_report =
-            self.gas_report.then(|| GasReport::new(config.gas_reports, config.gas_reports_ignore));
-
-        // Build the trace decoder.
-        let mut builder = CallTraceDecoderBuilder::new()
-            .with_known_contracts(&known_contracts)
-            .with_verbosity(verbosity);
-        // Signatures are of no value for gas reports.
-        if !self.gas_report {
-            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                config.offline,
-            )?);
-        }
-        let mut decoder = builder.build();
-
-        // We identify addresses if we're going to print *any* trace or gas report.
-        let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+        let mut gas_report = self
+            .gas_report
+            .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
 
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
@@ -410,10 +379,36 @@ impl TestArgs {
         for (contract_name, suite_result) in rx {
             let tests = &suite_result.test_results;
 
+            // Set up trace identifiers.
+            let known_contracts = suite_result.known_contracts.clone();
+            let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+            // Avoid using etherscan for gas report as we decode more traces and this will be
+            // expensive.
+            if !self.gas_report {
+                identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+            }
+
+            // Build the trace decoder.
+            let mut builder = CallTraceDecoderBuilder::new()
+                .with_known_contracts(&known_contracts)
+                .with_verbosity(verbosity);
+            // Signatures are of no value for gas reports.
+            if !self.gas_report {
+                builder = builder.with_signature_identifier(SignaturesIdentifier::new(
+                    Config::foundry_cache_dir(),
+                    config.offline,
+                )?);
+            }
+            let mut decoder = builder.build();
+
+            // We identify addresses if we're going to print *any* trace or gas report.
+            let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+
             // Print suite header.
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
+                eprintln!("{} {warning}", "Warning:".yellow().bold());
             }
             if !tests.is_empty() {
                 let len = tests.len();
@@ -520,6 +515,7 @@ impl TestArgs {
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
+            outcome.last_run_decoder = Some(decoder);
 
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
@@ -529,8 +525,6 @@ impl TestArgs {
         let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
-
-        outcome.decoder = Some(decoder);
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();

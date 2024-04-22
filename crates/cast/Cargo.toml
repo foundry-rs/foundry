@@ -15,11 +15,7 @@ name = "cast"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # lib
@@ -34,7 +30,7 @@ alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
-alloy-provider = { workspace = true, features = ["pubsub"] }
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-rpc.workspace = true
@@ -75,10 +71,10 @@ itertools.workspace = true
 regex = { version = "1", default-features = false }
 rpassword = "7"
 semver = "1"
-tempfile = "3"
+tempfile.workspace = true
 tokio = { version = "1", features = ["macros", "signal"] }
 tracing.workspace = true
-yansi = "0.5"
+yansi.workspace = true
 evmole = "0.3.1"
 
 [target.'cfg(unix)'.dependencies]

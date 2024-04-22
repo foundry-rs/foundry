@@ -1,5 +1,4 @@
 use super::{
-    artifacts::ArtifactInfo,
     multi_sequence::MultiChainSequence,
     providers::ProvidersManager,
     runner::ScriptRunner,
@@ -18,7 +17,7 @@ use alloy_primitives::{utils::format_units, Address, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, provider::alloy::RpcUrl, shell, ContractsByArtifact};
+use foundry_common::{get_contract_name, provider::alloy::RpcUrl, shell, ContractData};
 use foundry_evm::traces::render_trace_arena;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -88,9 +87,7 @@ impl PreSimulationState {
                 .collect::<HashMap<_, _>>(),
         );
 
-        let contracts = self.build_data.get_flattened_contracts(false);
-        let address_to_abi: BTreeMap<Address, ArtifactInfo> =
-            self.build_address_to_abi_map(&contracts);
+        let address_to_abi = self.build_address_to_abi_map();
 
         let mut final_txs = VecDeque::new();
 
@@ -183,21 +180,17 @@ impl PreSimulationState {
     }
 
     /// Build mapping from contract address to its ABI, code and contract name.
-    fn build_address_to_abi_map<'a>(
-        &self,
-        contracts: &'a ContractsByArtifact,
-    ) -> BTreeMap<Address, ArtifactInfo<'a>> {
+    fn build_address_to_abi_map(&self) -> BTreeMap<Address, &ContractData> {
         self.execution_artifacts
             .decoder
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
                 let contract_name = get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, code)))) =
-                    contracts.find_by_name_or_identifier(contract_name)
+                if let Ok(Some((_, data))) =
+                    self.build_data.known_contracts.find_by_name_or_identifier(contract_name)
                 {
-                    let info = ArtifactInfo { contract_name: contract_name.to_string(), abi, code };
-                    return Some((*addr, info));
+                    return Some((*addr, data));
                 }
                 None
             })

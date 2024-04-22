@@ -16,7 +16,7 @@ impl EyreHandler for Handler {
             return core::fmt::Debug::fmt(error, f)
         }
         writeln!(f)?;
-        write!(f, "{}", Paint::red(error))?;
+        write!(f, "{}", error.red())?;
 
         if let Some(cause) = error.source() {
             write!(f, "\n\nContext:")?;

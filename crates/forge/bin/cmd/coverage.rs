@@ -1,25 +1,22 @@
-use super::{install, test::FilterArgs};
+use super::{install, test::TestArgs};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, BytecodeReporter, ContractId,
-        CoverageReport, CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
+        CoverageReport, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter,
     },
-    inspectors::CheatsConfig,
     opts::EvmOpts,
-    result::SuiteResult,
     revm::primitives::SpecId,
     utils::IcPcMap,
     MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_cli::{
-    opts::CoreBuildArgs,
     p_println,
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
     sourcemap::SourceMap,
@@ -28,14 +25,14 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use rustc_hash::FxHashMap;
 use semver::Version;
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
 type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
+foundry_config::impl_figment_convert!(CoverageArgs, test);
 
 /// CLI arguments for `forge coverage`.
 #[derive(Clone, Debug, Parser)]
@@ -69,13 +66,7 @@ pub struct CoverageArgs {
     include_libs: bool,
 
     #[command(flatten)]
-    filter: FilterArgs,
-
-    #[command(flatten)]
-    evm_opts: EvmArgs,
-
-    #[command(flatten)]
-    opts: CoreBuildArgs,
+    test: TestArgs,
 }
 
 impl CoverageArgs {
@@ -83,7 +74,7 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
+        if install::install_missing_dependencies(&mut config, self.test.build_args().silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
@@ -97,11 +88,11 @@ impl CoverageArgs {
         config.ast = true;
 
         let (project, output) = self.build(&config)?;
-        p_println!(!self.opts.silent => "Analysing contracts...");
+        p_println!(!self.test.build_args().silent => "Analysing contracts...");
         let report = self.prepare(&config, output.clone())?;
 
-        p_println!(!self.opts.silent => "Running tests...");
-        self.collect(project, output, report, config, evm_opts).await
+        p_println!(!self.test.build_args().silent => "Running tests...");
+        self.collect(project, output, report, Arc::new(config), evm_opts).await
     }
 
     /// Builds the project.
@@ -121,14 +112,14 @@ impl CoverageArgs {
             }
 
             // print warning message
-            let msg = Paint::yellow(concat!(
+            let msg = concat!(
                 "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
                  which can result in inaccurate source mappings.\n",
                 "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
                 "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
                 "See more: https://github.com/foundry-rs/foundry/issues/3357",
-            ));
-            p_println!(!self.opts.silent => "{msg}");
+            ).yellow();
+            p_println!(!self.test.build_args().silent => "{msg}");
 
             // Enable viaIR with minimum optimization
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
@@ -271,21 +262,26 @@ impl CoverageArgs {
                 items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
             }
 
-            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_maps
+            let anchors = source_maps
                 .iter()
                 .filter(|(contract_id, _)| contract_id.version == version)
-                .filter_map(|(contract_id, (_, deployed_source_map))| {
+                .filter_map(|(contract_id, (creation_source_map, deployed_source_map))| {
+                    let creation_code_anchors = find_anchors(
+                        &bytecodes.get(contract_id)?.0,
+                        creation_source_map,
+                        &ic_pc_maps.get(contract_id)?.0,
+                        &source_analysis.items,
+                        &items_by_source_id,
+                    );
+                    let deployed_code_anchors = find_anchors(
+                        &bytecodes.get(contract_id)?.1,
+                        deployed_source_map,
+                        &ic_pc_maps.get(contract_id)?.1,
+                        &source_analysis.items,
+                        &items_by_source_id,
+                    );
                     // TODO: Creation source map/bytecode as well
-                    Some((
-                        contract_id.clone(),
-                        find_anchors(
-                            &bytecodes.get(contract_id)?.1,
-                            deployed_source_map,
-                            &ic_pc_maps.get(contract_id)?.1,
-                            &source_analysis.items,
-                            &items_by_source_id,
-                        ),
-                    ))
+                    Some((contract_id.clone(), (creation_code_anchors, deployed_code_anchors)))
                 })
                 .collect();
             report.add_items(version, source_analysis.items);
@@ -303,59 +299,60 @@ impl CoverageArgs {
         project: Project,
         output: ProjectCompileOutput,
         mut report: CoverageReport,
-        config: Config,
+        config: Arc<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let root = project.paths.root;
-
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+        let verbosity = evm_opts.verbosity;
 
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
-        let mut runner = MultiContractRunnerBuilder::default()
+        let runner = MultiContractRunnerBuilder::new(config.clone())
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(
-                &config,
-                evm_opts.clone(),
-                Some(artifact_ids),
-                None,
-                None,
-            ))
             .with_test_options(TestOptions {
-                fuzz: config.fuzz,
+                fuzz: config.fuzz.clone(),
                 invariant: config.invariant,
                 ..Default::default()
             })
             .set_coverage(true)
             .build(&root, output, env, evm_opts)?;
 
-        // Run tests
-        let known_contracts = runner.known_contracts.clone();
-        let filter = self.filter;
-        let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle = tokio::task::spawn_blocking(move || runner.test(&filter, tx));
+        let outcome = self
+            .test
+            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
+            .await?;
 
         // Add hit data to the coverage report
-        let data = rx
-            .into_iter()
-            .flat_map(|(_, suite)| suite.test_results.into_values())
-            .filter_map(|mut result| result.coverage.take())
-            .flat_map(|hit_maps| {
-                hit_maps.0.into_values().filter_map(|map| {
-                    Some((known_contracts.find_by_code(map.bytecode.as_ref())?.0, map))
-                })
-            });
-        for (artifact_id, hits) in data {
-            // TODO: Note down failing tests
+        let data = outcome.results.into_iter().flat_map(|(_, suite)| {
+            let mut hits = Vec::new();
+            for (_, mut result) in suite.test_results {
+                let Some(hit_maps) = result.coverage.take() else { continue };
+
+                for map in hit_maps.0.into_values() {
+                    if let Some((id, _)) =
+                        suite.known_contracts.find_by_deployed_code(map.bytecode.as_ref())
+                    {
+                        hits.push((id.clone(), map, true));
+                    } else if let Some((id, _)) =
+                        suite.known_contracts.find_by_creation_code(map.bytecode.as_ref())
+                    {
+                        hits.push((id.clone(), map, false));
+                    }
+                }
+            }
+
+            hits
+        });
+
+        for (artifact_id, hits, is_deployed_code) in data {
             if let Some(source_id) = report.get_source_id(
                 artifact_id.version.clone(),
                 artifact_id.source.to_string_lossy().to_string(),
             ) {
                 let source_id = *source_id;
-                // TODO: Distinguish between creation/runtime in a smart way
                 report.add_hit_map(
                     &ContractId {
                         version: artifact_id.version.clone(),
@@ -363,15 +360,8 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
+                    is_deployed_code,
                 )?;
-            }
-        }
-
-        // Reattach the thread
-        if let Err(e) = handle.await {
-            match e.try_into_panic() {
-                Ok(payload) => std::panic::resume_unwind(payload),
-                Err(e) => return Err(e.into()),
             }
         }
 
@@ -398,11 +388,6 @@ impl CoverageArgs {
             }?;
         }
         Ok(())
-    }
-
-    /// Returns the flattened [`CoreBuildArgs`]
-    pub fn build_args(&self) -> &CoreBuildArgs {
-        &self.opts
     }
 }
 
