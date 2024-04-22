@@ -46,7 +46,7 @@ path-slash = "0.2.1"
 [dev-dependencies]
 pretty_assertions.workspace = true
 figment = { version = "0.10", features = ["test"] }
-tempfile = "3"
+tempfile.workspace = true
 
 [features]
 default = ["rustls"]

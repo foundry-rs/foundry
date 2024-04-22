@@ -40,4 +40,4 @@ yansi.workspace = true
 [dev-dependencies]
 tokio = { version = "1", features = ["macros"] }
 foundry-test-utils.workspace = true
-tempfile = "3"
+tempfile.workspace = true
