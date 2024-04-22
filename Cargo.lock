@@ -725,7 +725,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vergen",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -1821,7 +1821,7 @@ dependencies = [
  "tokio",
  "tracing",
  "vergen",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -1897,7 +1897,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vergen",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -3534,7 +3534,7 @@ dependencies = [
  "tracing-subscriber",
  "vergen",
  "watchexec",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -3618,7 +3618,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -3651,7 +3651,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -3764,7 +3764,7 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -3820,14 +3820,14 @@ dependencies = [
  "tracing",
  "url",
  "walkdir",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8caca67f174741b05c2f4188d3ee93420342130eb2a768abb9b885bb8b918df2"
+checksum = "10a73252c7753488cf7779e2788e05088b3b3d9198fbbc5d4da94b5afd0f751d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3857,7 +3857,7 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -4042,7 +4042,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "yansi 0.5.1",
+ "yansi 1.0.1",
 ]
 
 [[package]]
@@ -9459,6 +9459,9 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+dependencies = [
+ "is-terminal",
+]
 
 [[package]]
 name = "zerocopy"

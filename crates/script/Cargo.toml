@@ -35,7 +35,7 @@ async-recursion = "1.0.5"
 
 itertools.workspace = true
 parking_lot = "0.12"
-yansi = "0.5"
+yansi.workspace = true
 revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true

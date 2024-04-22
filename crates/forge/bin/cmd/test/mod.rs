@@ -408,7 +408,7 @@ impl TestArgs {
             // Print suite header.
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
+                eprintln!("{} {warning}", "Warning:".yellow().bold());
             }
             if !tests.is_empty() {
                 let len = tests.len();
