@@ -2,12 +2,10 @@
 
 use crate::utils::{connect_pubsub, connect_pubsub_with_signer, http_provider};
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address as aAddress, U256 as rU256};
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_pubsub::Subscription;
-use alloy_rpc_types::{
-    Block as AlloyBlock, Filter as AlloyFilter, TransactionRequest as CallRequest, WithOtherFields,
-};
+use alloy_rpc_types::{Block as AlloyBlock, Filter, TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
 use anvil::{spawn, NodeConfig};
 use futures::StreamExt;
@@ -54,7 +52,7 @@ async fn test_sub_logs_legacy() {
     assert_eq!(val._0, msg);
 
     // subscribe to events from the contract
-    let filter = AlloyFilter::new().address(contract.address().to_owned());
+    let filter = Filter::new().address(contract.address().to_owned());
     let logs_sub = provider.subscribe_logs(&filter).await.unwrap();
 
     // send a tx triggering an event
@@ -94,7 +92,7 @@ async fn test_sub_logs() {
     assert_eq!(val._0, msg);
 
     // subscribe to events from the contract
-    let filter = AlloyFilter::new().address(contract.address().to_owned());
+    let filter = Filter::new().address(contract.address().to_owned());
     let logs_sub = provider.subscribe_logs(&filter).await.unwrap();
 
     // send a tx triggering an event
@@ -124,8 +122,8 @@ async fn test_sub_logs_impersonated() {
             .await;
 
     // impersonate account
-    let impersonate = aAddress::random();
-    let funding = rU256::from(1e18 as u64);
+    let impersonate = Address::random();
+    let funding = U256::from(1e18 as u64);
     api.anvil_set_balance(impersonate, funding).await.unwrap();
     api.anvil_impersonate_account(impersonate).await.unwrap();
 
@@ -135,14 +133,15 @@ async fn test_sub_logs_impersonated() {
     let _val = contract.getValue().call().await.unwrap();
 
     // subscribe to events from the impersonated account
-    let filter = AlloyFilter::new().address(contract.address().to_owned());
+    let filter = Filter::new().address(contract.address().to_owned());
     let logs_sub = provider.subscribe_logs(&filter).await.unwrap();
 
     // send a tx triggering an event
     let data = contract.setValue("Next Message".to_string());
     let data = data.calldata().clone();
 
-    let tx = CallRequest::default().from(impersonate).to(*contract.address()).with_input(data);
+    let tx =
+        TransactionRequest::default().from(impersonate).to(*contract.address()).with_input(data);
 
     let tx = WithOtherFields::new(tx);
     let provider = http_provider(&handle.http_endpoint());
@@ -234,7 +233,7 @@ async fn test_subscriptions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(std::time::Duration::from_secs(1)))).await;
     let provider = connect_pubsub(&handle.ws_endpoint()).await;
-    let sub_id: rU256 = provider.raw_request("eth_subscribe".into(), ["newHeads"]).await.unwrap();
+    let sub_id: U256 = provider.raw_request("eth_subscribe".into(), ["newHeads"]).await.unwrap();
     let stream: Subscription<AlloyBlock> = provider.get_subscription(sub_id).await.unwrap();
     let blocks = stream
         .into_stream()

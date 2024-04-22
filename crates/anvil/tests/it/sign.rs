@@ -1,7 +1,7 @@
 use crate::utils::http_provider_with_signer;
 use alloy_dyn_abi::TypedData;
 use alloy_network::EthereumSigner;
-use alloy_primitives::{Address as aAddress, U256};
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
@@ -288,7 +288,7 @@ async fn rejects_different_chain_id() {
     let wallet = handle.dev_wallets().next().unwrap().with_chain_id(Some(1));
     let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumSigner::from(wallet));
 
-    let tx = TransactionRequest::default().to(aAddress::random()).value(U256::from(100));
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
     let tx = WithOtherFields::new(tx);
     let res = provider.send_transaction(tx).await;
     let err = res.unwrap_err();
@@ -301,7 +301,7 @@ async fn rejects_invalid_chain_id() {
     let wallet = handle.dev_wallets().next().unwrap();
     let wallet = wallet.with_chain_id(Some(99u64));
     let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumSigner::from(wallet));
-    let tx = TransactionRequest::default().to(aAddress::random()).value(U256::from(100u64));
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100u64));
     let tx = WithOtherFields::new(tx);
     let res = provider.send_transaction(tx).await;
     let _err = res.unwrap_err();

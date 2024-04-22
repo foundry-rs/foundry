@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{address, Address, Bytes, U256};
-use alloy_provider::Provider as AlloyProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
     BlockId, BlockNumberOrTag, WithOtherFields,
@@ -334,8 +334,10 @@ async fn test_fork_snapshotting_repeated() {
     assert!(!api.evm_revert(snapshot).await.unwrap());
 }
 
+// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>, remove ignore
 // <https://github.com/foundry-rs/foundry/issues/6463>
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_fork_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();

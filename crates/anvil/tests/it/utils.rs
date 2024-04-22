@@ -1,13 +1,9 @@
 use alloy_network::{Ethereum, EthereumSigner};
-use foundry_common::provider::{
-    alloy::{
-        get_http_provider, ProviderBuilder as AlloyProviderBuilder,
-        RetryProvider as AlloyRetryProvider, RetryProviderWithSigner,
-    },
-    ethers::{ProviderBuilder, RetryProvider},
+use foundry_common::provider::alloy::{
+    get_http_provider, ProviderBuilder, RetryProvider, RetryProviderWithSigner,
 };
 
-pub fn http_provider(http_endpoint: &str) -> AlloyRetryProvider {
+pub fn http_provider(http_endpoint: &str) -> RetryProvider {
     get_http_provider(http_endpoint)
 }
 
@@ -15,20 +11,20 @@ pub fn http_provider_with_signer(
     http_endpoint: &str,
     signer: EthereumSigner,
 ) -> RetryProviderWithSigner {
-    AlloyProviderBuilder::new(http_endpoint)
+    ProviderBuilder::new(http_endpoint)
         .build_with_signer(signer)
         .expect("failed to build Alloy HTTP provider with signer")
 }
 
-pub fn ws_provider(ws_endpoint: &str) -> AlloyRetryProvider {
-    AlloyProviderBuilder::new(ws_endpoint).build().expect("failed to build Alloy WS provider")
+pub fn ws_provider(ws_endpoint: &str) -> RetryProvider {
+    ProviderBuilder::new(ws_endpoint).build().expect("failed to build Alloy WS provider")
 }
 
 pub fn ws_provider_with_signer(
     ws_endpoint: &str,
     signer: EthereumSigner,
 ) -> RetryProviderWithSigner {
-    AlloyProviderBuilder::new(ws_endpoint)
+    ProviderBuilder::new(ws_endpoint)
         .build_with_signer(signer)
         .expect("failed to build Alloy WS provider with signer")
 }
@@ -60,20 +56,15 @@ pub async fn connect_pubsub_with_signer(conn_str: &str, signer: EthereumSigner) 
         .unwrap()
 }
 
-pub async fn ipc_provider(ipc_endpoint: &str) -> AlloyRetryProvider {
-    AlloyProviderBuilder::new(ipc_endpoint).build().expect("failed to build Alloy IPC provider")
+pub async fn ipc_provider(ipc_endpoint: &str) -> RetryProvider {
+    ProviderBuilder::new(ipc_endpoint).build().expect("failed to build Alloy IPC provider")
 }
 
 pub async fn ipc_provider_with_signer(
     ipc_endpoint: &str,
     signer: EthereumSigner,
 ) -> RetryProviderWithSigner {
-    AlloyProviderBuilder::new(ipc_endpoint)
+    ProviderBuilder::new(ipc_endpoint)
         .build_with_signer(signer)
         .expect("failed to build Alloy IPC provider with signer")
-}
-
-/// Builds an ethers HTTP [RetryProvider]
-pub fn ethers_http_provider(http_endpoint: &str) -> RetryProvider {
-    ProviderBuilder::new(http_endpoint).build().expect("failed to build ethers HTTP provider")
 }

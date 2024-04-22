@@ -1,8 +1,8 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError as AlloySignatureError};
-use alloy_signer::Error as AlloySignerError;
+use alloy_primitives::{Bytes, SignatureError};
+use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -44,9 +44,9 @@ pub enum BlockchainError {
     #[error("Prevrandao not in th EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
-    AlloySignatureError(#[from] AlloySignatureError),
+    SignatureError(#[from] SignatureError),
     #[error(transparent)]
-    AlloySignerError(#[from] AlloySignerError),
+    SignerError(#[from] SignerError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
     #[error("Rpc error {0:?}")]
@@ -356,10 +356,8 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
-                BlockchainError::AlloySignerError(err) => RpcError::invalid_params(err.to_string()),
-                BlockchainError::AlloySignatureError(err) => {
-                    RpcError::invalid_params(err.to_string())
-                }
+                BlockchainError::SignerError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
