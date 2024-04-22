@@ -41,7 +41,7 @@ proptest = "1"
 rayon = "1"
 serde.workspace = true
 tracing.workspace = true
-yansi = "0.5"
+yansi.workspace = true
 humantime-serde = "1.1.1"
 
 # bin
@@ -112,7 +112,7 @@ pretty_assertions.workspace = true
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
 ] }
-tempfile = "3"
+tempfile.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 alloy-signer-wallet.workspace = true

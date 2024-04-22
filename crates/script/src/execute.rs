@@ -267,7 +267,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                     .map(|(_, chain)| *chain as u64)
                     .format(", ")
             );
-            shell::println(Paint::yellow(msg))?;
+            shell::println(msg.yellow())?;
         }
         Ok(())
     }
@@ -306,9 +306,7 @@ impl ExecutedState {
         if rpc_data.is_multi_chain() {
             shell::eprintln(format!(
                 "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
+                "Multi chain deployment is still under development. Use with caution.".yellow()
             ))?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
@@ -453,7 +451,7 @@ impl PreSimulationState {
         }
 
         if result.success {
-            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
+            shell::println(format!("{}", "Script ran successfully.".green()))?;
         }
 
         if self.script_config.evm_opts.fork_url.is_none() {

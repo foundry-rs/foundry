@@ -69,7 +69,7 @@ impl Spinner {
             return
         }
 
-        let indicator = Paint::green(self.indicator[self.idx % self.indicator.len()]);
+        let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
         print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
@@ -194,7 +194,7 @@ impl Reporter for SpinnerReporter {
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        self.send_msg(Paint::red(format!("Failed to install Solc {version}: {error}")).to_string());
+        self.send_msg(format!("Failed to install Solc {version}: {error}").red().to_string());
     }
 
     fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
@@ -221,8 +221,8 @@ macro_rules! cli_warn {
     ($($arg:tt)*) => {
         eprintln!(
             "{}{} {}",
-            yansi::Paint::yellow("warning").bold(),
-            yansi::Paint::new(":").bold(),
+            yansi::Painted::new("warning").yellow().bold(),
+            yansi::Painted::new(":").bold(),
             format_args!($($arg)*)
         )
     }

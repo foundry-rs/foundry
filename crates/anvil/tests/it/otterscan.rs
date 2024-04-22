@@ -659,11 +659,13 @@ async fn can_call_ots_get_transaction_by_sender_and_nonce() {
     let receipt1 = provider.send_transaction(tx1).await.unwrap().get_receipt().await.unwrap();
     let receipt2 = provider.send_transaction(tx2).await.unwrap().get_receipt().await.unwrap();
 
-    let result1 = api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(0)).await.unwrap();
-    let result2 = api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(1)).await.unwrap();
+    let result1 =
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(0)).await.unwrap().unwrap();
+    let result2 =
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(1)).await.unwrap().unwrap();
 
-    assert_eq!(result1.unwrap().hash, receipt1.transaction_hash);
-    assert_eq!(result2.unwrap().hash, receipt2.transaction_hash);
+    assert_eq!(result1, receipt1.transaction_hash);
+    assert_eq!(result2, receipt2.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]

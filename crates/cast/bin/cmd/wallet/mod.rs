@@ -236,7 +236,7 @@ impl WalletSubcommands {
                 let wallets =
                     wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
-                println!("{}", Paint::green("Successfully generated a new mnemonic."));
+                println!("{}", "Successfully generated a new mnemonic.".green());
                 println!("Phrase:\n{phrase}");
                 println!("\nAccounts:");
                 for (i, wallet) in wallets.iter().enumerate() {
@@ -347,7 +347,7 @@ flag to set your key via:
                     "`{}` keystore was saved successfully. Address: {:?}",
                     &account_name, address,
                 );
-                println!("{}", Paint::green(success_message));
+                println!("{}", success_message.green());
             }
             WalletSubcommands::List(cmd) => {
                 cmd.run().await?;
