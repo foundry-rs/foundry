@@ -1,17 +1,10 @@
-use crate::utils::{http_provider_with_signer, ws_provider_with_signer};
+use crate::utils::ws_provider_with_signer;
 use alloy_network::EthereumSigner;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
 use anvil::{spawn, NodeConfig};
-use foundry_common::shell::println;
-// use ethers::{
-//     contract::{ContractFactory, ContractInstance},
-//     middleware::SignerMiddleware,
-//     types::U256,
-//     utils::WEI_IN_ETHER,
-// };
 use foundry_compilers::{project_util::TempProject, Artifact};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -197,4 +190,117 @@ async fn test_solc_revert_example() {
         .unwrap_err();
     let msg = res.to_string();
     assert!(msg.contains("execution reverted: revert: Not enough Ether provided."));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/1871>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_another_revert_message() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    uint256 public number;
+
+    function setNumber(uint256 num) public {
+        require(num != 0, "RevertStringFooBar");
+        number = num;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    sol!(
+        #[sol(rpc)]
+        contract Contract {
+            function setNumber(uint256 num) external;
+        }
+    );
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
+
+    // deploy successfully
+    provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().input(bytecode.into()).from(sender),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
+
+    let res = contract.setNumber(U256::from(0)).send().await.unwrap_err();
+
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: RevertStringFooBar"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_solc_revert_custom_errors() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    uint256 public number;
+    error AddressRevert(address);
+
+    function revertAddress() public {
+         revert AddressRevert(address(1));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    sol!(
+        #[sol(rpc)]
+        contract Contract {
+            function revertAddress() external;
+        }
+    );
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
+
+    // deploy successfully
+    provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().input(bytecode.into()).from(sender),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
+
+    let res = contract.revertAddress().send().await.unwrap_err();
+    assert!(res.to_string().contains("execution reverted"));
 }
