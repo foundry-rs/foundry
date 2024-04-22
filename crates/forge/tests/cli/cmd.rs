@@ -468,6 +468,48 @@ forgetest!(can_clone_quiet, |prj, cmd| {
     cmd.assert_empty_stdout();
 });
 
+// checks that clone works with --no-remappings-txt
+forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-remappings-txt",
+        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// checks that clone works with --keep-directory-structure
+forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--keep-directory-structure",
+        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj, cmd| {
     prj.assert_create_dirs_exists();
