@@ -1,17 +1,14 @@
 //! Tests for OP chain support.
 
 use crate::utils::http_provider_with_signer;
-use alloy_eips::{
-    eip2718::{Eip2718Error, Encodable2718},
-    BlockId,
-};
+use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{b256, U128, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{optimism::OptimismTransactionFields, TransactionRequest, WithOtherFields};
 use anvil::{spawn, Hardfork, NodeConfig};
 
-// TODO: transaction is expected to fail, it does not
+// TODO: transaction is expected to fail, it does not, remove ignore once fixed
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_deposits_not_supported_if_optimism_disabled() {
@@ -41,12 +38,11 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
         .into(),
     };
 
-    // TODO: transaction is expected to fail, it does not
-    // let res = provider.send_transaction(tx).await.unwrap().register().await;
-    // assert!(res
-    //     .unwrap_err()
-    //     .to_string()
-    //     .contains("op-stack deposit tx received but is not supported"));
+    let res = provider.send_transaction(tx).await.unwrap().register().await;
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("op-stack deposit tx received but is not supported"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
