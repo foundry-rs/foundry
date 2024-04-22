@@ -48,29 +48,33 @@ impl EvmFuzzState {
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
+        let mut samples = Vec::new();
 
         match function {
             Some(func) => {
                 // Decode result and collect samples to be used in subsequent fuzz runs.
                 if !result.is_empty() {
                     if let Ok(decoded_result) = func.abi_decode_output(result, false) {
-                        dict.insert_sample_value(decoded_result, run_depth);
+                        samples.extend(decoded_result);
                     }
                 }
             }
             None => {}
         }
 
-        // Decode with known events and collect samples from indexed fields and event body.
+        // Decode logs with known events and collect samples from indexed fields and event body.
         for log in logs {
             for event in abi.events() {
                 if let Ok(decoded_event) = event.decode_log(log, false) {
-                    dict.insert_sample_value(decoded_event.indexed, run_depth);
-                    dict.insert_sample_value(decoded_event.body, run_depth);
+                    samples.extend(decoded_event.indexed);
+                    samples.extend(decoded_event.body);
                     break;
                 }
             }
         }
+
+        // Insert samples collected from current call in fuzz dictionary.
+        dict.insert_sample_value(samples, run_depth);
 
         for (address, account) in state_changeset {
             // Insert basic account information
