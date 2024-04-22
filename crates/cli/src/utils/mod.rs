@@ -207,14 +207,9 @@ pub fn load_dotenv() {
     };
 }
 
-/// Disables terminal colours if either:
-/// - Colour has been disabled by some environment variable.
-/// - We are running inside a test
+/// Sets the default [`yansi`] color output condition.
 pub fn enable_paint() {
-    let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
-    if env_colour_disabled {
-        yansi::disable();
-    }
+    yansi::whenever(yansi::Condition::TTY_AND_COLOR);
 }
 
 /// Useful extensions to [`std::process::Command`].

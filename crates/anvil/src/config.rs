@@ -252,7 +252,8 @@ Chain ID:       {}
 
 Chain ID
 ==================
-\n{}
+
+{}
 "#,
                 self.get_chain_id().green()
             );
@@ -264,7 +265,8 @@ Chain ID
                 r#"
 Gas Price
 ==================
-\n{}
+
+{}
 "#,
                 self.get_gas_price().green()
             );
@@ -274,7 +276,8 @@ Gas Price
                 r#"
 Base Fee
 ==================
-\n{}
+
+{}
 "#,
                 self.get_base_fee().green()
             );
@@ -285,7 +288,8 @@ Base Fee
             r#"
 Gas Limit
 ==================
-\n{}
+
+{}
 "#,
             self.gas_limit.green()
         );
@@ -295,7 +299,8 @@ Gas Limit
             r#"
 Genesis Timestamp
 ==================
-\n{}
+
+{}
 "#,
             self.get_genesis_timestamp().green()
         );

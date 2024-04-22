@@ -214,7 +214,7 @@ vergen = { version = "8", default-features = false }
 indexmap = "2.2"
 tikv-jemallocator = "0.5.4"
 num-format = "0.4.4"
-yansi = "1.0"
+yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 axum = "0.7"
 hyper = "1.0"

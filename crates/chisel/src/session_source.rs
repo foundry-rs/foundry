@@ -286,21 +286,21 @@ impl SessionSource {
 
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
-        self.global_code.resetting();
+        String::clear(&mut self.global_code);
         self.generated_output = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
-        self.top_level_code.resetting();
+        String::clear(&mut self.top_level_code);
         self.generated_output = None;
         self
     }
 
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
-        self.run_code.resetting();
+        String::clear(&mut self.run_code);
         self.generated_output = None;
         self
     }

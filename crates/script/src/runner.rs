@@ -200,7 +200,6 @@ impl ScriptRunner {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
-
                     println!("{}", format!("\nFailed with `{reason}`:\n").red());
                     (Address::ZERO, raw)
                 }
