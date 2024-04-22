@@ -15,10 +15,7 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-linking.workspace = true
 
-ethers-core.workspace = true
 ethers-providers = { workspace = true, features = ["ws", "ipc"] }
-# should be removed along with ethers
-reqwest_ethers = { package = "reqwest", version = "0.11", default-features = false }
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
@@ -73,7 +70,3 @@ num-format.workspace = true
 foundry-macros.workspace = true
 pretty_assertions.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-
-[features]
-default = ["rustls"]
-rustls = ["reqwest_ethers/rustls-tls-native-roots"]
