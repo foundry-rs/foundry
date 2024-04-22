@@ -66,10 +66,10 @@ impl SolidityHelper {
         // highlight comments too
         let comments_iter = comments.into_iter().map(|comment| {
             let loc = match comment {
-                pt::Comment::Line(loc, _) |
-                pt::Comment::Block(loc, _) |
-                pt::Comment::DocLine(loc, _) |
-                pt::Comment::DocBlock(loc, _) => loc,
+                pt::Comment::Line(loc, _)
+                | pt::Comment::Block(loc, _)
+                | pt::Comment::DocLine(loc, _)
+                | pt::Comment::DocBlock(loc, _) => loc,
             };
             (loc.start(), Style::new().dim(), loc.end())
         });
@@ -103,7 +103,7 @@ impl SolidityHelper {
     /// Highlights a solidity source string
     pub fn highlight(input: &str) -> Cow<str> {
         if !yansi::is_enabled() {
-            return Cow::Borrowed(input)
+            return Cow::Borrowed(input);
         }
 
         // Highlight commands separately
@@ -221,7 +221,7 @@ impl Highlighter for SolidityHelper {
         _default: bool,
     ) -> Cow<'b, str> {
         if !yansi::is_enabled() {
-            return Cow::Borrowed(prompt)
+            return Cow::Borrowed(prompt);
         }
 
         let mut out = prompt.to_string();
@@ -284,27 +284,27 @@ impl<'a> TokenStyle for Token<'a> {
         match self {
             StringLiteral(_, _) => Color::Green.foreground(),
 
-            AddressLiteral(_) |
-            HexLiteral(_) |
-            Number(_, _) |
-            RationalNumber(_, _, _) |
-            HexNumber(_) |
-            True |
-            False => Color::Yellow.foreground(),
+            AddressLiteral(_)
+            | HexLiteral(_)
+            | Number(_, _)
+            | RationalNumber(_, _, _)
+            | HexNumber(_)
+            | True
+            | False => Color::Yellow.foreground(),
 
-            Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
-            Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
-            Modifier | Immutable | Unchecked => Color::Cyan.foreground(),
+            Memory | Storage | Calldata | Public | Private | Internal | External | Constant
+            | Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override
+            | Modifier | Immutable | Unchecked => Color::Cyan.foreground(),
 
-            Contract | Library | Interface | Function | Pragma | Import | Struct | Event |
-            Enum | Type | Constructor | As | Is | Using | New | Delete | Do | Continue |
-            Break | Throw | Emit | Return | Returns | Revert | For | While | If | Else | Try |
-            Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow | Arrow => {
+            Contract | Library | Interface | Function | Pragma | Import | Struct | Event | Enum
+            | Type | Constructor | As | Is | Using | New | Delete | Do | Continue | Break
+            | Throw | Emit | Return | Returns | Revert | For | While | If | Else | Try | Catch
+            | Assembly | Let | Leave | Switch | Case | Default | YulArrow | Arrow => {
                 Color::Magenta.foreground()
             }
 
-            Uint(_) | Int(_) | Bytes(_) | Byte | DynamicBytes | Bool | Address | String |
-            Mapping => Color::Blue.foreground(),
+            Uint(_) | Int(_) | Bytes(_) | Byte | DynamicBytes | Bool | Address | String
+            | Mapping => Color::Blue.foreground(),
 
             Identifier(_) => Style::default(),
 

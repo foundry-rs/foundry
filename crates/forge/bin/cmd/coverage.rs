@@ -74,8 +74,8 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.test.build_args().silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.test.build_args().silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -159,7 +159,7 @@ impl CoverageArgs {
             // Filter out dependencies
             if !self.include_libs && project_paths.has_library_ancestor(std::path::Path::new(&path))
             {
-                continue
+                continue;
             }
 
             if let Some(ast) = source_file.ast.take() {
@@ -372,10 +372,10 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     if let Some(report_file) = self.report_file {
                         return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
-                            .report(&report)
+                            .report(&report);
                     } else {
                         return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                            .report(&report)
+                            .report(&report);
                     }
                 }
                 CoverageReportKind::Bytecode => {

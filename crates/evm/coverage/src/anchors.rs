@@ -130,7 +130,7 @@ pub fn find_anchor_branch(
             } else {
                 // NOTE(onbjerg): For some reason the last few bytes of the bytecode do not have
                 // a source map associated, so at that point we just stop searching
-                break
+                break;
             };
 
             // Do push byte accounting

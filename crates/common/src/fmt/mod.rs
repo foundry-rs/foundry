@@ -32,7 +32,7 @@ pub use ui::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_at
 /// ```
 pub fn format_uint_exp(num: U256) -> String {
     if num < U256::from(10_000) {
-        return num.to_string()
+        return num.to_string();
     }
 
     let exp = to_exp_notation(num, 4, true, Sign::Positive);

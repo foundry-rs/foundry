@@ -155,7 +155,7 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
-            return Err(eyre!("Invariant test function should have no inputs"))
+            return Err(eyre!("Invariant test function should have no inputs"));
         }
 
         let (fuzz_state, targeted_contracts, strat, calldata_fuzz_dictionary) =
@@ -201,7 +201,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if self.config.fail_on_revert && failures.borrow().reverts > 0 {
-                return Err(TestCaseError::fail("Revert occurred."))
+                return Err(TestCaseError::fail("Revert occurred."));
             }
 
             // Before each run, we must reset the backend state.
@@ -240,7 +240,7 @@ impl<'a> InvariantExecutor<'a> {
                         failures.borrow_mut().error = Some(InvariantFuzzError::MaxAssumeRejects(
                             self.config.max_assume_rejects,
                         ));
-                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
+                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."));
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
@@ -293,7 +293,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
 
                     if !can_continue {
-                        break
+                        break;
                     }
 
                     *last_call_results.borrow_mut() = call_results;
@@ -442,13 +442,13 @@ impl<'a> InvariantExecutor<'a> {
                 .filter(|func| {
                     !matches!(
                         func.state_mutability,
-                        alloy_json_abi::StateMutability::Pure |
-                            alloy_json_abi::StateMutability::View
+                        alloy_json_abi::StateMutability::Pure
+                            | alloy_json_abi::StateMutability::View
                     )
                 })
-                .count() ==
-                0 &&
-                !self.artifact_filters.excluded.contains(&artifact.identifier())
+                .count()
+                == 0
+                && !self.artifact_filters.excluded.contains(&artifact.identifier())
             {
                 self.artifact_filters.excluded.push(artifact.identifier());
             }
@@ -459,8 +459,8 @@ impl<'a> InvariantExecutor<'a> {
         for contract in selected.targetedArtifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
-            if !self.artifact_filters.targeted.contains_key(&identifier) &&
-                !self.artifact_filters.excluded.contains(&identifier)
+            if !self.artifact_filters.targeted.contains_key(&identifier)
+                && !self.artifact_filters.excluded.contains(&identifier)
             {
                 self.artifact_filters.targeted.insert(identifier, vec![]);
             }
@@ -487,7 +487,7 @@ impl<'a> InvariantExecutor<'a> {
                     .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
-            return Ok(artifact.identifier())
+            return Ok(artifact.identifier());
         }
         eyre::bail!("{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`.");
     }
@@ -512,15 +512,15 @@ impl<'a> InvariantExecutor<'a> {
             .clone()
             .into_iter()
             .filter(|(addr, (identifier, _))| {
-                *addr != to &&
-                    *addr != CHEATCODE_ADDRESS &&
-                    *addr != HARDHAT_CONSOLE_ADDRESS &&
-                    (selected.is_empty() || selected.contains(addr)) &&
-                    (self.artifact_filters.targeted.is_empty() ||
-                        self.artifact_filters.targeted.contains_key(identifier)) &&
-                    (excluded.is_empty() || !excluded.contains(addr)) &&
-                    (self.artifact_filters.excluded.is_empty() ||
-                        !self.artifact_filters.excluded.contains(identifier))
+                *addr != to
+                    && *addr != CHEATCODE_ADDRESS
+                    && *addr != HARDHAT_CONSOLE_ADDRESS
+                    && (selected.is_empty() || selected.contains(addr))
+                    && (self.artifact_filters.targeted.is_empty()
+                        || self.artifact_filters.targeted.contains_key(identifier))
+                    && (excluded.is_empty() || !excluded.contains(addr))
+                    && (self.artifact_filters.excluded.is_empty()
+                        || !self.artifact_filters.excluded.contains(identifier))
             })
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();

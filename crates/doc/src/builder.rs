@@ -107,7 +107,7 @@ impl DocBuilder {
 
         if sources.is_empty() {
             println!("No sources detected at {}", self.sources.display());
-            return Ok(())
+            return Ok(());
         }
 
         let library_sources = self.libraries.iter().flat_map(source_files_iter).collect::<Vec<_>>();
@@ -382,7 +382,7 @@ impl DocBuilder {
         depth: usize,
     ) -> eyre::Result<()> {
         if files.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         if let Some(path) = base_path {

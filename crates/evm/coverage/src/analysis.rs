@@ -55,7 +55,7 @@ impl<'a> ContractVisitor<'a> {
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
         if kind == "receive" {
-            return Ok(())
+            return Ok(());
         }
 
         match node.body.take() {
@@ -110,14 +110,14 @@ impl<'a> ContractVisitor<'a> {
                     .ok_or_else(|| eyre::eyre!("inline assembly block with no AST attribute"))?,
             ),
             // Simple statements
-            NodeType::Break |
-            NodeType::Continue |
-            NodeType::EmitStatement |
-            NodeType::RevertStatement |
-            NodeType::YulAssignment |
-            NodeType::YulBreak |
-            NodeType::YulContinue |
-            NodeType::YulLeave => {
+            NodeType::Break
+            | NodeType::Continue
+            | NodeType::EmitStatement
+            | NodeType::RevertStatement
+            | NodeType::YulAssignment
+            | NodeType::YulBreak
+            | NodeType::YulContinue
+            | NodeType::YulLeave => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
@@ -338,13 +338,13 @@ impl<'a> ContractVisitor<'a> {
                 Ok(())
             }
             // Does not count towards coverage
-            NodeType::FunctionCallOptions |
-            NodeType::Identifier |
-            NodeType::IndexAccess |
-            NodeType::IndexRangeAccess |
-            NodeType::Literal |
-            NodeType::YulLiteralValue |
-            NodeType::YulIdentifier => Ok(()),
+            NodeType::FunctionCallOptions
+            | NodeType::Identifier
+            | NodeType::IndexAccess
+            | NodeType::IndexRangeAccess
+            | NodeType::Literal
+            | NodeType::YulLiteralValue
+            | NodeType::YulIdentifier => Ok(()),
             _ => {
                 warn!("unexpected node type, expected an expression: {:?}", node.node_type);
                 Ok(())
@@ -355,19 +355,19 @@ impl<'a> ContractVisitor<'a> {
     fn visit_block_or_statement(&mut self, node: Node) -> eyre::Result<()> {
         match node.node_type {
             NodeType::Block => self.visit_block(node),
-            NodeType::Break |
-            NodeType::Continue |
-            NodeType::DoWhileStatement |
-            NodeType::EmitStatement |
-            NodeType::ExpressionStatement |
-            NodeType::ForStatement |
-            NodeType::IfStatement |
-            NodeType::InlineAssembly |
-            NodeType::Return |
-            NodeType::RevertStatement |
-            NodeType::TryStatement |
-            NodeType::VariableDeclarationStatement |
-            NodeType::WhileStatement => self.visit_statement(node),
+            NodeType::Break
+            | NodeType::Continue
+            | NodeType::DoWhileStatement
+            | NodeType::EmitStatement
+            | NodeType::ExpressionStatement
+            | NodeType::ForStatement
+            | NodeType::IfStatement
+            | NodeType::InlineAssembly
+            | NodeType::Return
+            | NodeType::RevertStatement
+            | NodeType::TryStatement
+            | NodeType::VariableDeclarationStatement
+            | NodeType::WhileStatement => self.visit_statement(node),
             // Skip placeholder statements as they are never referenced in source maps.
             NodeType::PlaceholderStatement => Ok(()),
             _ => {
@@ -382,8 +382,8 @@ impl<'a> ContractVisitor<'a> {
         let source_location = &item.loc;
 
         // Push a line item if we haven't already
-        if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
-            self.last_line < source_location.line
+        if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. })
+            && self.last_line < source_location.line
         {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
@@ -453,7 +453,7 @@ impl SourceAnalyzer {
         for (source_id, ast) in asts.into_iter() {
             for child in ast.nodes {
                 if !matches!(child.node_type, NodeType::ContractDefinition) {
-                    continue
+                    continue;
                 }
 
                 let contract_id = ContractId {

@@ -268,7 +268,7 @@ impl CloneArgs {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
                 if fs::write(&remappings_txt, remappings_txt_content).is_err() {
-                    return false
+                    return false;
                 }
 
                 let profile = config.profile.as_str().as_str();
@@ -443,16 +443,16 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     // * if there is any other directory other than `src`, `contracts`, `lib`, `hardhat`,
     //   `forge-std`,
     // or not started with `@`, we should not re-organize.
-    let to_reorg = !no_reorg &&
-        std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
+    let to_reorg = !no_reorg
+        && std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
             let Ok(e) = e else { return false };
             let folder_name = e.file_name();
-            folder_name == "src" ||
-                folder_name == "lib" ||
-                folder_name == "contracts" ||
-                folder_name == "hardhat" ||
-                folder_name == "forge-std" ||
-                folder_name.to_string_lossy().starts_with('@')
+            folder_name == "src"
+                || folder_name == "lib"
+                || folder_name == "contracts"
+                || folder_name == "hardhat"
+                || folder_name == "forge-std"
+                || folder_name.to_string_lossy().starts_with('@')
         });
 
     // ensure `src` and `lib` directories exist
@@ -485,9 +485,9 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                 }
             } else {
                 assert!(
-                    folder_name == "hardhat" ||
-                        folder_name == "forge-std" ||
-                        folder_name.to_string_lossy().starts_with('@')
+                    folder_name == "hardhat"
+                        || folder_name == "forge-std"
+                        || folder_name.to_string_lossy().starts_with('@')
                 );
                 // move these other folders to lib
                 let dest = lib_dir.join(&folder_name);
@@ -528,9 +528,9 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
             // i.e., remove prefix `contracts` (if any) and add prefix `src`
             let new_path = if r.path.starts_with("contracts") {
                 PathBuf::from("src").join(PathBuf::from(&r.path).strip_prefix("contracts")?)
-            } else if r.path.starts_with('@') ||
-                r.path.starts_with("hardhat/") ||
-                r.path.starts_with("forge-std/")
+            } else if r.path.starts_with('@')
+                || r.path.starts_with("hardhat/")
+                || r.path.starts_with("forge-std/")
             {
                 PathBuf::from("lib").join(PathBuf::from(&r.path))
             } else {

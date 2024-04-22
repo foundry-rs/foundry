@@ -417,9 +417,9 @@ impl VerifyBytecodeArgs {
                 if let Some(artifact) = value.into_iter().next() {
                     if let Ok(version) = Version::parse(&version) {
                         if let Some(artifact) = artifact.1.iter().find(|a| {
-                            a.version.major == version.major &&
-                                a.version.minor == version.minor &&
-                                a.version.patch == version.patch
+                            a.version.major == version.major
+                                && a.version.minor == version.minor
+                                && a.version.patch == version.patch
                         }) {
                             return artifact
                                 .artifact

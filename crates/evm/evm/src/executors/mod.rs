@@ -467,7 +467,7 @@ impl Executor {
     ) -> bool {
         if call_result.has_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return should_fail
+            return should_fail;
         }
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
@@ -481,7 +481,7 @@ impl Executor {
     ) -> Result<bool, DatabaseError> {
         if self.backend.has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return Ok(should_fail)
+            return Ok(should_fail);
         }
 
         let mut success = !reverted;

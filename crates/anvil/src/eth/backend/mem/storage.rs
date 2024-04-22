@@ -161,7 +161,7 @@ impl InMemoryBlockStates {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
                 if let Some(cached) = self.disk_cache.read(*hash) {
                     state.init_from_snapshot(cached);
-                    return Some(state)
+                    return Some(state);
                 }
             }
             None

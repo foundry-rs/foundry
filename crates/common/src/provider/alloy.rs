@@ -282,7 +282,7 @@ pub async fn estimate_eip1559_fees<P: Provider<T, AnyNetwork>, T: Transport + Cl
                     max_fee_per_gas: a.to_alloy().to(),
                     max_priority_fee_per_gas: b.to_alloy().to(),
                 };
-                return Ok(estimation)
+                return Ok(estimation);
             }
             _ => {}
         }

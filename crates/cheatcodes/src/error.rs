@@ -71,7 +71,7 @@ macro_rules! ensure_not_precompile {
             return Err($crate::error::precompile_error(
                 <Self as $crate::CheatcodeDef>::CHEATCODE.func.id,
                 $address,
-            ))
+            ));
         }
     };
 }

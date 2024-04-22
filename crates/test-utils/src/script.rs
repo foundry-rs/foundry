@@ -269,17 +269,17 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            ScriptOutcome::OkNoEndpoint |
-            ScriptOutcome::OkSimulation |
-            ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer |
-            ScriptOutcome::OkRun => false,
-            ScriptOutcome::MissingSender |
-            ScriptOutcome::MissingWallet |
-            ScriptOutcome::StaticCallNotAllowed |
-            ScriptOutcome::UnsupportedLibraries |
-            ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::ScriptFailed => true,
+            ScriptOutcome::OkNoEndpoint
+            | ScriptOutcome::OkSimulation
+            | ScriptOutcome::OkBroadcast
+            | ScriptOutcome::WarnSpecifyDeployer
+            | ScriptOutcome::OkRun => false,
+            ScriptOutcome::MissingSender
+            | ScriptOutcome::MissingWallet
+            | ScriptOutcome::StaticCallNotAllowed
+            | ScriptOutcome::UnsupportedLibraries
+            | ScriptOutcome::ErrorSelectForkOnBroadcast
+            | ScriptOutcome::ScriptFailed => true,
         }
     }
 }

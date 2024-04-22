@@ -143,16 +143,16 @@ impl FuzzDictionary {
     }
 
     pub fn insert_value(&mut self, value: [u8; 32]) {
-        if self.state_values.len() < self.config.max_fuzz_dictionary_values &&
-            self.state_values.insert(value)
+        if self.state_values.len() < self.config.max_fuzz_dictionary_values
+            && self.state_values.insert(value)
         {
             self.new_values.insert(value);
         }
     }
 
     pub fn insert_address(&mut self, address: Address) {
-        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses &&
-            self.addresses.insert(address)
+        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses
+            && self.addresses.insert(address)
         {
             self.new_addreses.insert(address);
         }

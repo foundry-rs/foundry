@@ -2127,22 +2127,22 @@ impl PartialEq for ForgeContext {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (_, &ForgeContext::TestGroup) => {
-                self == &ForgeContext::Test ||
-                    self == &ForgeContext::Snapshot ||
-                    self == &ForgeContext::Coverage
+                self == &ForgeContext::Test
+                    || self == &ForgeContext::Snapshot
+                    || self == &ForgeContext::Coverage
             }
             (_, &ForgeContext::ScriptGroup) => {
-                self == &ForgeContext::ScriptDryRun ||
-                    self == &ForgeContext::ScriptBroadcast ||
-                    self == &ForgeContext::ScriptResume
+                self == &ForgeContext::ScriptDryRun
+                    || self == &ForgeContext::ScriptBroadcast
+                    || self == &ForgeContext::ScriptResume
             }
-            (&ForgeContext::Test, &ForgeContext::Test) |
-            (&ForgeContext::Snapshot, &ForgeContext::Snapshot) |
-            (&ForgeContext::Coverage, &ForgeContext::Coverage) |
-            (&ForgeContext::ScriptDryRun, &ForgeContext::ScriptDryRun) |
-            (&ForgeContext::ScriptBroadcast, &ForgeContext::ScriptBroadcast) |
-            (&ForgeContext::ScriptResume, &ForgeContext::ScriptResume) |
-            (&ForgeContext::Unknown, &ForgeContext::Unknown) => true,
+            (&ForgeContext::Test, &ForgeContext::Test)
+            | (&ForgeContext::Snapshot, &ForgeContext::Snapshot)
+            | (&ForgeContext::Coverage, &ForgeContext::Coverage)
+            | (&ForgeContext::ScriptDryRun, &ForgeContext::ScriptDryRun)
+            | (&ForgeContext::ScriptBroadcast, &ForgeContext::ScriptBroadcast)
+            | (&ForgeContext::ScriptResume, &ForgeContext::ScriptResume)
+            | (&ForgeContext::Unknown, &ForgeContext::Unknown) => true,
             _ => false,
         }
     }

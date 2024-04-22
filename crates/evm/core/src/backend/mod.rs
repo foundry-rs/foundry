@@ -590,8 +590,9 @@ impl Backend {
     /// Checks if the test contract associated with this backend failed, See
     /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
-        self.has_snapshot_failure() ||
-            self.test_contract_address()
+        self.has_snapshot_failure()
+            || self
+                .test_contract_address()
                 .map(|addr| self.is_failed_test_contract(addr))
                 .unwrap_or_default()
     }
@@ -839,7 +840,7 @@ impl Backend {
                 // created account takes precedence: for example contract creation in setups
                 if init_account.is_created() {
                     trace!(?loaded_account, "skipping created account");
-                    continue
+                    continue;
                 }
 
                 // otherwise we need to replace the account's info with the one from the fork's
@@ -904,8 +905,8 @@ impl Backend {
             for tx in txs.into_iter() {
                 // System transactions such as on L2s don't contain any pricing info so we skip them
                 // otherwise this would cause reverts
-                if is_known_system_sender(tx.from) ||
-                    tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                if is_known_system_sender(tx.from)
+                    || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                 {
                     trace!(tx=?tx.hash, "skipping system transaction");
                     continue;
@@ -913,7 +914,7 @@ impl Backend {
 
                 if tx.hash == tx_hash {
                     // found the target transaction
-                    return Ok(Some(tx))
+                    return Ok(Some(tx));
                 }
                 trace!(tx=?tx.hash, "committing transaction");
 

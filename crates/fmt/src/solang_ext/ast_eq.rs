@@ -5,7 +5,7 @@ use std::str::FromStr;
 /// Helper to convert a string number into a comparable one
 fn to_num(string: &str) -> I256 {
     if string.is_empty() {
-        return I256::ZERO
+        return I256::ZERO;
     }
     string.replace('_', "").trim().parse().unwrap()
 }
@@ -14,7 +14,7 @@ fn to_num(string: &str) -> I256 {
 /// This will reverse the number so that 0's can be ignored
 fn to_num_reversed(string: &str) -> U256 {
     if string.is_empty() {
-        return U256::from(0)
+        return U256::from(0);
     }
     string.replace('_', "").trim().chars().rev().collect::<String>().parse().unwrap()
 }
@@ -56,10 +56,10 @@ impl AstEq for VariableDefinition {
             attrs.sort();
             attrs
         };
-        self.ty.ast_eq(&other.ty) &&
-            self.name.ast_eq(&other.name) &&
-            self.initializer.ast_eq(&other.initializer) &&
-            sorted_attrs(self).ast_eq(&sorted_attrs(other))
+        self.ty.ast_eq(&other.ty)
+            && self.name.ast_eq(&other.name)
+            && self.initializer.ast_eq(&other.initializer)
+            && sorted_attrs(self).ast_eq(&sorted_attrs(other))
     }
 }
 
@@ -78,20 +78,20 @@ impl AstEq for FunctionDefinition {
         let left_returns = filter_params(&self.returns);
         let right_returns = filter_params(&other.returns);
 
-        self.ty.ast_eq(&other.ty) &&
-            self.name.ast_eq(&other.name) &&
-            left_params.ast_eq(&right_params) &&
-            self.return_not_returns.ast_eq(&other.return_not_returns) &&
-            left_returns.ast_eq(&right_returns) &&
-            self.body.ast_eq(&other.body) &&
-            sorted_attrs(self).ast_eq(&sorted_attrs(other))
+        self.ty.ast_eq(&other.ty)
+            && self.name.ast_eq(&other.name)
+            && left_params.ast_eq(&right_params)
+            && self.return_not_returns.ast_eq(&other.return_not_returns)
+            && left_returns.ast_eq(&right_returns)
+            && self.body.ast_eq(&other.body)
+            && sorted_attrs(self).ast_eq(&sorted_attrs(other))
     }
 }
 
 impl AstEq for Base {
     fn ast_eq(&self, other: &Self) -> bool {
-        self.name.ast_eq(&other.name) &&
-            self.args.clone().unwrap_or_default().ast_eq(&other.args.clone().unwrap_or_default())
+        self.name.ast_eq(&other.name)
+            && self.args.clone().unwrap_or_default().ast_eq(&other.args.clone().unwrap_or_default())
     }
 }
 

@@ -65,8 +65,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
-        if !args.skip_is_verified_check &&
-            self.is_contract_verified(&etherscan, &verify_args).await?
+        if !args.skip_is_verified_check
+            && self.is_contract_verified(&etherscan, &verify_args).await?
         {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
@@ -74,7 +74,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 verify_args.address.to_checksum(None)
             );
 
-            return Ok(())
+            return Ok(());
         }
 
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
@@ -139,7 +139,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     verifier: args.verifier,
                 };
                 // return check_args.run().await
-                return self.check(check_args).await
+                return self.check(check_args).await;
             }
         } else {
             println!("Contract source code already verified");
@@ -174,16 +174,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     );
 
                     if resp.result == "Pending in queue" {
-                        return Err(eyre!("Verification is still pending...",))
+                        return Err(eyre!("Verification is still pending...",));
                     }
 
                     if resp.result == "Unable to verify" {
-                        return Err(eyre!("Unable to verify.",))
+                        return Err(eyre!("Unable to verify.",));
                     }
 
                     if resp.result == "Already Verified" {
                         println!("Contract source code already verified");
-                        return Ok(())
+                        return Ok(());
                     }
 
                     if resp.status == "0" {
@@ -222,7 +222,7 @@ impl EtherscanVerificationProvider {
         contract: &ContractInfo,
     ) -> Result<&(PathBuf, CacheEntry, CompactContract)> {
         if let Some(ref entry) = self.cached_entry {
-            return Ok(entry)
+            return Ok(entry);
         }
 
         let cache = project.read_cache_file()?;
@@ -399,7 +399,7 @@ impl EtherscanVerificationProvider {
         project: &Project,
     ) -> Result<Version> {
         if let Some(ref version) = args.compiler_version {
-            return Ok(version.trim_start_matches('v').parse()?)
+            return Ok(version.trim_start_matches('v').parse()?);
         }
 
         if let Some(ref solc) = config.solc {
@@ -407,7 +407,7 @@ impl EtherscanVerificationProvider {
                 SolcReq::Version(version) => return Ok(version.to_owned()),
                 SolcReq::Local(solc) => {
                     if solc.is_file() {
-                        return Ok(Solc::new(solc).version()?)
+                        return Ok(Solc::new(solc).version()?);
                     }
                 }
             }
@@ -470,10 +470,10 @@ impl EtherscanVerificationProvider {
                 read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
-            return Ok(Some(encoded_args[8..].into()))
+            return Ok(Some(encoded_args[8..].into()));
         }
         if args.guess_constructor_args {
-            return Ok(Some(self.guess_constructor_args(args, project, config).await?))
+            return Ok(Some(self.guess_constructor_args(args, project, config).await?));
         }
 
         Ok(args.constructor_args.clone())
