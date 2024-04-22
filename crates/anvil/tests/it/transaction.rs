@@ -1,6 +1,6 @@
 use crate::{
     abi::*,
-    utils::{http_provider, ws_provider},
+    utils::{http_provider, http_provider_with_signer, ws_provider},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
@@ -53,7 +53,6 @@ async fn can_transfer_eth() {
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 }
 
-// TODO: Come back to this after https://github.com/alloy-rs/alloy/issues/389 is fixed.
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -88,7 +87,7 @@ async fn can_order_transactions() {
     api.mine_one().await;
 
     let higher_price = tx_higher.get_receipt().await.unwrap().transaction_hash;
-    let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash; // Awaits endlessly here due to https://github.com/alloy-rs/alloy/issues/389
+    let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
 
     // get the block, await receipts
     let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
@@ -96,8 +95,6 @@ async fn can_order_transactions() {
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
 
-// TODO: Revisit after https://github.com/alloy-rs/alloy/issues/389 is fixed. Remove ignore.
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -140,7 +137,7 @@ async fn can_respect_nonces() {
     );
 }
 
-// TODO: Revisit after https://github.com/alloy-rs/alloy/issues/389 is fixed. Remove ignore.
+// TODO: Revisit: https://github.com/alloy-rs/alloy/issues/389 didn't fix the issue. Remove ignore.
 #[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
@@ -177,8 +174,7 @@ async fn can_replace_transaction() {
     let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
 
     // lower priced transaction was replaced
-    let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
-
+    let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap(); // FIXME: Awaits here endlessly
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
     // ensure that only the replacement tx was mined
@@ -279,13 +275,12 @@ async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let _signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumSigner = wallet.clone().into();
 
-    let alloy_provider = http_provider(&handle.http_endpoint()); // TODO: Use http_provider_with_signer once #431 is merged.
+    let alloy_provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let alloy_greeter_addr =
         AlloyGreeter::deploy_builder(alloy_provider.clone(), "Hello World!".to_string())
-            .from(wallet.address())
             // .legacy() unimplemented! in alloy
             .deploy()
             .await

@@ -163,7 +163,7 @@ async fn can_get_pending_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    
+
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumSigner = wallet.clone().into();
     let sender = wallet.address();

@@ -1,26 +1,17 @@
 use crate::{
     fork::fork_config,
-    utils::{
-        ethers_http_provider, ethers_ws_provider, http_provider, ws_provider,
-        ContractInstanceCompat, DeploymentTxFactoryCompat,
-    },
+    utils::{http_provider, http_provider_with_signer, ws_provider},
 };
-use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
-use alloy_rpc_types_trace::parity::{Action, LocalizedTransactionTrace};
+use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_primitives::{hex, Address, U256};
+use alloy_provider::{debug::DebugApi, Provider};
+use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
+use alloy_rpc_types_trace::{
+    geth::{GethDebugTracingCallOptions, GethTrace},
+    parity::{Action, LocalizedTransactionTrace},
+};
 use alloy_sol_types::sol;
 use anvil::{spawn, Hardfork, NodeConfig};
-use ethers::{
-    contract::ContractInstance,
-    prelude::{ContractFactory, GethTrace, GethTraceFrame, Middleware, SignerMiddleware},
-    types::GethDebugTracingCallOptions,
-    utils::hex,
-};
-use foundry_common::types::ToEthers;
-use foundry_compilers::{project_util::TempProject, Artifact};
-use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -94,62 +85,54 @@ async fn test_parity_suicide_trace() {
     assert!(traces[1].trace.action.is_selfdestruct());
 }
 
-// TODO: Revist after debug_* methods are implemented in alloy
+sol!(
+    #[sol(rpc, bytecode = "0x6080604052348015600f57600080fd5b50336000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff16021790555060a48061005e6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c806375fc8e3c14602d575b600080fd5b60336035565b005b60008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16fffea26469706673582212205006867290df97c54f2df1cb94fc081197ab670e2adf5353071d2ecce1d694b864736f6c634300080d0033")]
+    contract DebugTraceContract {
+        address payable private owner;
+        constructor() public {
+            owner = payable(msg.sender);
+        }
+        function goodbye() public {
+            selfdestruct(owner);
+        }
+    }
+);
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transfer_debug_trace_call() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r"
-pragma solidity 0.8.13;
-contract Contract {
-    address payable private owner;
-    constructor() public {
-        owner = payable(msg.sender);
-    }
-    function goodbye() public {
-        selfdestruct(owner);
-    }
-}
-",
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
-
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumSigner = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
 
-    // deploy successfully
-    let factory = ContractFactory::new_compat(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
-
-    let contract = ContractInstance::new_compat(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
-    );
-    let call = contract.method::<_, ()>("goodbye", ()).unwrap();
-
-    let traces = ethers_http_provider(&handle.http_endpoint())
-        .debug_trace_call(call.tx, None, GethDebugTracingCallOptions::default())
+    let contract_addr = DebugTraceContract::deploy_builder(provider.clone())
+        .from(wallets[0].clone().address())
+        .deploy()
         .await
         .unwrap();
+
+    let caller: EthereumSigner = wallets[1].clone().into();
+    let caller_provider = http_provider_with_signer(&handle.http_endpoint(), caller);
+    let contract = DebugTraceContract::new(contract_addr, caller_provider);
+
+    let call = contract.goodbye().from(wallets[1].address());
+    let calldata = call.calldata().to_owned();
+
+    let tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*contract.address())
+        .with_input(calldata);
+
+    let traces = http_provider(&handle.http_endpoint())
+        .debug_trace_call(tx, BlockNumberOrTag::Latest, GethDebugTracingCallOptions::default())
+        .await
+        .unwrap();
+
     match traces {
-        GethTrace::Known(traces) => match traces {
-            GethTraceFrame::Default(traces) => {
-                assert!(!traces.failed);
-            }
-            _ => {
-                unreachable!()
-            }
-        },
-        GethTrace::Unknown(_) => {
+        GethTrace::Default(default_frame) => {
+            assert!(!default_frame.failed);
+        }
+        _ => {
             unreachable!()
         }
     }
