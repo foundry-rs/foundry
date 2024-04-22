@@ -11,13 +11,14 @@ use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
-    compile::{self, ContractSources},
+    compile::{ContractSources, ProjectCompiler},
     provider::alloy::try_get_http_provider,
     ContractData, ContractsByArtifact,
 };
 use foundry_compilers::{
     artifacts::{BytecodeObject, Libraries},
     info::ContractInfo,
+    utils::source_files_iter,
     ArtifactId, ProjectCompileOutput,
 };
 use foundry_linking::{LinkOutput, Linker};
@@ -149,7 +150,13 @@ impl PreprocessedState {
             }
         };
 
-        let output = compile::compile_target(&target_path, &project, args.opts.silent)?;
+        let sources_to_compile =
+            source_files_iter(project.paths.sources.as_path()).chain([target_path.to_path_buf()]);
+
+        let output = ProjectCompiler::new()
+            .quiet_if(args.opts.silent)
+            .files(sources_to_compile)
+            .compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 

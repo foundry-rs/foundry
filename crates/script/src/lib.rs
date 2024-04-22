@@ -120,7 +120,6 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[arg(
         long,
-        requires = "sender",
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
     )]
     pub unlocked: bool,
@@ -362,11 +361,9 @@ impl ScriptArgs {
 
         // From artifacts
         for (artifact, contract) in known_contracts.iter() {
-            bytecodes.push((
-                artifact.name.clone(),
-                &contract.bytecode,
-                &contract.deployed_bytecode,
-            ));
+            let Some(bytecode) = &contract.bytecode else { continue };
+            let Some(deployed_bytecode) = &contract.deployed_bytecode else { continue };
+            bytecodes.push((artifact.name.clone(), bytecode, deployed_bytecode));
         }
 
         // From traces

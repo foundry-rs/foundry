@@ -30,8 +30,7 @@ pub struct RunArgs {
     debug: bool,
 
     /// Print out opcode traces.
-    #[deprecated]
-    #[arg(long, short, hide = true)]
+    #[arg(long, short)]
     trace_printer: bool,
 
     /// Executes the transaction only with the state from the previous block.
@@ -83,11 +82,6 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
-        #[allow(deprecated)]
-        if self.trace_printer {
-            eprintln!("WARNING: --trace-printer is deprecated and has no effect\n");
-        }
-
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
         let evm_opts = figment.extract::<EvmOpts>()?;
@@ -214,6 +208,8 @@ impl RunArgs {
 
         // Execute our transaction
         let result = {
+            executor.set_trace_printer(self.trace_printer);
+
             configure_tx_env(&mut env, &tx);
 
             if let Some(to) = tx.to {

@@ -81,8 +81,10 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = cast.convert_block_number(from_block).await?;
-        let to_block = cast.convert_block_number(to_block).await?;
+        let from_block =
+            cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
+        let to_block =
+            cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 

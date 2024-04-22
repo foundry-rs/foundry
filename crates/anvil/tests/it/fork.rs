@@ -14,8 +14,9 @@ use alloy_rpc_types::{
 use alloy_signer_wallet::LocalWallet;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
-use foundry_common::{provider::alloy::get_http_provider, rpc, rpc::next_http_rpc_endpoint};
+use foundry_common::provider::alloy::get_http_provider;
 use foundry_config::Config;
+use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 

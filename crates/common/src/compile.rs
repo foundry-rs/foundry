@@ -560,19 +560,35 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
 #[derive(Clone, Debug)]
-pub struct SkipBuildFilters(Vec<GlobMatcher>);
+pub struct SkipBuildFilters {
+    /// All provided filters.
+    pub matchers: Vec<GlobMatcher>,
+    /// Root of the project.
+    pub project_root: PathBuf,
+}
 
 impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
-        self.0.iter().all(|matcher| is_match_exclude(matcher, file))
+        self.matchers.iter().all(|matcher| {
+            if !is_match_exclude(matcher, file) {
+                false
+            } else {
+                file.strip_prefix(&self.project_root)
+                    .map_or(true, |stripped| is_match_exclude(matcher, stripped))
+            }
+        })
     }
 }
 
 impl SkipBuildFilters {
     /// Creates a new `SkipBuildFilters` from multiple `SkipBuildFilter`.
-    pub fn new(matchers: impl IntoIterator<Item = SkipBuildFilter>) -> Result<Self> {
-        matchers.into_iter().map(|m| m.compile()).collect::<Result<_>>().map(Self)
+    pub fn new(
+        filters: impl IntoIterator<Item = SkipBuildFilter>,
+        project_root: PathBuf,
+    ) -> Result<Self> {
+        let matchers = filters.into_iter().map(|m| m.compile()).collect::<Result<_>>();
+        matchers.map(|filters| Self { matchers: filters, project_root })
     }
 }
 

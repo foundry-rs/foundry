@@ -375,6 +375,11 @@ interface Vm {
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prevrandao(bytes32 newPrevrandao) external;
+    /// Sets `block.prevrandao`.
+    /// Not available on EVM versions before Paris. Use `difficulty` instead.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prevrandao(uint256 newPrevrandao) external;
 
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -1495,6 +1500,10 @@ interface Vm {
     /// Sets environment variables.
     #[cheatcode(group = Environment)]
     function setEnv(string calldata name, string calldata value) external;
+
+    /// Gets the environment variable `name` and returns true if it exists, else returns false.
+    #[cheatcode(group = Environment)]
+    function envExists(string calldata name) external view returns (bool exists);
 
     /// Gets the environment variable `name` and parses it as `bool`.
     /// Reverts if the variable was not found or could not be parsed.

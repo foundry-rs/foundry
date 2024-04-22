@@ -372,7 +372,10 @@ impl VerifyBytecodeArgs {
 
         if let Some(skip) = &self.skip {
             if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip.to_owned())?));
+                compiler = compiler.filter(Box::new(SkipBuildFilters::new(
+                    skip.to_owned(),
+                    project.root().to_path_buf(),
+                )?));
             }
         }
         let output = compiler.compile(&project)?;
