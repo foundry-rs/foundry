@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
-
 use crate::build::ScriptPredeployLibraries;
-
 use super::ScriptResult;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;

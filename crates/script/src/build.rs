@@ -5,7 +5,6 @@ use crate::{
     sequence::{ScriptSequence, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
 };
-
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
