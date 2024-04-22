@@ -34,4 +34,4 @@ tracing = "0.1"
 yansi.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

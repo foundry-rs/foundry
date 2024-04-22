@@ -52,4 +52,4 @@ alloy-eips.workspace = true
 alloy-transport.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
