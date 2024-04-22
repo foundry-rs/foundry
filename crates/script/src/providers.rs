@@ -1,6 +1,6 @@
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::provider::alloy::{get_http_provider, RetryProvider, RpcUrl};
+use foundry_common::provider::{get_http_provider, RetryProvider, RpcUrl};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},

@@ -82,21 +82,19 @@ pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
     Ok(s)
 }
 
-/// Returns a [RetryProvider](foundry_common::alloy::RetryProvider) instantiated using [Config]'s
+/// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s
 /// RPC
-pub fn get_provider(config: &Config) -> Result<foundry_common::provider::alloy::RetryProvider> {
+pub fn get_provider(config: &Config) -> Result<foundry_common::provider::RetryProvider> {
     get_provider_builder(config)?.build()
 }
 
-/// Returns a [ProviderBuilder](foundry_common::provider::alloy::ProviderBuilder) instantiated using
+/// Returns a [ProviderBuilder](foundry_common::provider::ProviderBuilder) instantiated using
 /// [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider_builder(
-    config: &Config,
-) -> Result<foundry_common::provider::alloy::ProviderBuilder> {
+pub fn get_provider_builder(config: &Config) -> Result<foundry_common::provider::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = foundry_common::provider::alloy::ProviderBuilder::new(url.as_ref());
+    let mut builder = foundry_common::provider::ProviderBuilder::new(url.as_ref());
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);

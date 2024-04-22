@@ -28,10 +28,7 @@ use crate::{
         inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    revm::{
-        db::DatabaseRef,
-        primitives::{AccountInfo, U256 as rU256},
-    },
+    revm::{db::DatabaseRef, primitives::AccountInfo},
     NodeConfig, PrecompileFactory,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
@@ -60,7 +57,6 @@ use anvil_core::{
 };
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::types::ToAlloy;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -419,7 +415,7 @@ impl Backend {
                 env.cfg.chain_id = fork.chain_id();
 
                 env.block = BlockEnv {
-                    number: rU256::from(fork_block_number),
+                    number: U256::from(fork_block_number),
                     timestamp: U256::from(fork_block.header.timestamp),
                     gas_limit: U256::from(fork_block.header.gas_limit),
                     difficulty: fork_block.header.difficulty,
@@ -720,7 +716,7 @@ impl Backend {
 
             let mut env = self.env.write();
             env.block = BlockEnv {
-                number: rU256::from(num),
+                number: U256::from(num),
                 timestamp: U256::from(block.header.timestamp),
                 difficulty: block.header.difficulty,
                 // ensures prevrandao is set
@@ -937,9 +933,9 @@ impl Backend {
             }
 
             // increase block number for this block
-            env.block.number = env.block.number.saturating_add(rU256::from(1));
+            env.block.number = env.block.number.saturating_add(U256::from(1));
             env.block.basefee = U256::from(current_base_fee);
-            env.block.timestamp = rU256::from(self.time.next_timestamp());
+            env.block.timestamp = U256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
@@ -1038,7 +1034,7 @@ impl Backend {
             }
 
             // we intentionally set the difficulty to `0` for newer blocks
-            env.block.difficulty = rU256::from(0);
+            env.block.difficulty = U256::from(0);
 
             // update env with new values
             *self.env.write() = env;
@@ -1669,7 +1665,7 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: block.header.number.to_alloy(),
+                            number: U256::from(block.header.number),
                             coinbase: block.header.beneficiary,
                             timestamp: U256::from(block.header.timestamp),
                             difficulty: block.header.difficulty,
@@ -1697,9 +1693,9 @@ impl Backend {
                     .and_then(|block| Some((states.get(&block.header.hash_slow())?, block)))
                 {
                     let block = BlockEnv {
-                        number: block.header.number.to_alloy(),
+                        number: U256::from(block.header.number),
                         coinbase: block.header.beneficiary,
-                        timestamp: rU256::from(block.header.timestamp),
+                        timestamp: U256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
                         prevrandao: Some(block.header.mix_hash),
                         basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
@@ -1722,8 +1718,8 @@ impl Backend {
                     let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
 
                     block.number = block_number;
-                    block.timestamp = rU256::from(fork.timestamp());
-                    block.basefee = rU256::from(fork.base_fee().unwrap_or_default());
+                    block.timestamp = U256::from(fork.timestamp());
+                    block.basefee = U256::from(fork.base_fee().unwrap_or_default());
 
                     return Ok(f(Box::new(&gen_db), block));
                 }

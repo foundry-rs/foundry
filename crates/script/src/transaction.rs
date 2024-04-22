@@ -3,7 +3,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, provider::alloy::RpcUrl, ContractData, SELECTOR_LEN};
+use foundry_common::{fmt::format_token_raw, provider::RpcUrl, ContractData, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;

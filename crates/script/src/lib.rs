@@ -19,7 +19,7 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::SkipBuildFilter,
     evm::{Breakpoints, EvmArgs},
-    provider::alloy::RpcUrl,
+    provider::RpcUrl,
     shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::ArtifactId;

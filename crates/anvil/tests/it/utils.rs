@@ -1,5 +1,5 @@
 use alloy_network::{Ethereum, EthereumSigner};
-use foundry_common::provider::alloy::{
+use foundry_common::provider::{
     get_http_provider, ProviderBuilder, RetryProvider, RetryProviderWithSigner,
 };
 

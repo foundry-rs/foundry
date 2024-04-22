@@ -18,9 +18,7 @@ use foundry_cli::{
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
-    provider::alloy::{
-        estimate_eip1559_fees, get_http_provider, try_get_http_provider, RetryProvider,
-    },
+    provider::{get_http_provider, try_get_http_provider, RetryProvider},
     shell,
 };
 use foundry_config::Config;
@@ -258,9 +256,7 @@ impl BundledState {
                         }),
                     ),
                     (false, _, _) => {
-                        let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
-                                .await
-                            .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let mut fees = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();

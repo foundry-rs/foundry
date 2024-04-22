@@ -27,7 +27,6 @@ pub mod shell;
 pub mod term;
 pub mod traits;
 pub mod transactions;
-pub mod types;
 
 pub use constants::*;
 pub use contracts::*;

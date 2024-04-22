@@ -16,7 +16,7 @@ use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
-    provider::alloy::{get_http_provider, RpcUrl},
+    provider::{get_http_provider, RpcUrl},
     shell, ContractData, ContractsByArtifact,
 };
 use foundry_config::{Config, NamedChain};

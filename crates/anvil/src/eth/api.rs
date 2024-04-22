@@ -62,7 +62,7 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::provider::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,

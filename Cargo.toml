@@ -155,7 +155,6 @@ ethers-contract = { version = "2.0.14", default-features = false }
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 ethers-providers = { version = "2.0.14", default-features = false }
 ethers-signers = { version = "2.0.14", default-features = false }
-ethers-middleware = { version = "2.0.14", default-features = false }
 
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "f1b4789", default-features = false }
@@ -192,7 +191,10 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"

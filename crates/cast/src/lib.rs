@@ -72,7 +72,7 @@ where
     ///
     /// ```
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
+    /// use foundry_common::provider::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = get_http_provider("http://localhost:8545");
@@ -92,7 +92,7 @@ where
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
-    /// use foundry_common::provider::alloy::get_http_provider;
+    /// use foundry_common::provider::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {

@@ -18,7 +18,7 @@ use crate::{
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, provider::RpcUrl, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
