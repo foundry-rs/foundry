@@ -456,8 +456,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
         });
 
     // ensure `src` and `lib` directories exist
-    eyre::ensure!(std::fs::metadata(root.join(src_dir)).is_ok(), "source directory must exists");
-    eyre::ensure!(std::fs::metadata(root.join(lib_dir)).is_ok(), "source directory must exists");
+    eyre::ensure!(Path::exists(&root.join(src_dir)), "`src` directory must exists");
+    eyre::ensure!(Path::exists(&root.join(lib_dir)), "`lib` directory must exists");
 
     // move source files
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
@@ -471,11 +471,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                 for e in read_dir(entry.path())? {
                     let e = e?;
                     let dest = new_dir.join(&e.file_name());
-                    eyre::ensure!(
-                        std::fs::metadata(&dest).is_err(),
-                        "destination already exists: {:?}",
-                        dest
-                    );
+                    eyre::ensure!(!Path::exists(&dest), "destination already exists: {:?}", dest);
                     std::fs::rename(e.path(), &dest)?;
                     remappings.push(Remapping {
                         context: None,
@@ -499,11 +495,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                     // let's use the provided forge-std directory
                     std::fs::remove_dir_all(&dest)?;
                 }
-                eyre::ensure!(
-                    std::fs::metadata(&dest).is_err(),
-                    "destination already exists: {:?}",
-                    dest
-                );
+                eyre::ensure!(!Path::exists(&dest), "destination already exists: {:?}", dest);
                 std::fs::rename(entry.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
@@ -514,11 +506,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
         } else {
             // directly move the all folders into src
             let dest = src_dir.join(&folder_name);
-            eyre::ensure!(
-                std::fs::metadata(&dest).is_err(),
-                "destination already exists: {:?}",
-                dest
-            );
+            eyre::ensure!(!Path::exists(&dest), "destination already exists: {:?}", dest);
             std::fs::rename(entry.path(), &dest)?;
             if folder_name != "src" {
                 remappings.push(Remapping {
