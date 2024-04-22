@@ -125,7 +125,7 @@ impl Cheatcode for selectForkCall {
         ccx.ecx.db.select_fork(
             *forkId,
             &mut ccx.ecx.env,
-            &mut ccx.precompiles,
+            ccx.precompiles,
             &mut ccx.ecx.journaled_state,
         )?;
         Ok(Default::default())
@@ -314,7 +314,7 @@ fn create_select_fork<DB: DatabaseExt>(
     let id = ccx.ecx.db.create_select_fork(
         fork,
         &mut ccx.ecx.env,
-        &mut ccx.precompiles,
+        ccx.precompiles,
         &mut ccx.ecx.journaled_state,
     )?;
     Ok(id.abi_encode())
@@ -347,7 +347,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
         fork,
         &mut ccx.ecx.env,
         &mut ccx.ecx.journaled_state,
-        &mut ccx.precompiles,
+        ccx.precompiles,
         *transaction,
     )?;
     Ok(id.abi_encode())
