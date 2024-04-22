@@ -1,6 +1,6 @@
 //! tests for otterscan endpoints
 use crate::{
-    abi::AlloyMulticallContract,
+    abi::MulticallContract,
     utils::{http_provider, http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumSigner;
@@ -46,7 +46,7 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
-    let contract_receipt = AlloyMulticallContract::deploy_builder(provider.clone())
+    let contract_receipt = MulticallContract::deploy_builder(provider.clone())
         .from(sender)
         .send()
         .await
@@ -254,7 +254,7 @@ async fn can_call_ots_has_code() {
     // no code in the address before deploying
     assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(1)).await.unwrap());
 
-    let contract_builder = AlloyMulticallContract::deploy_builder(provider.clone());
+    let contract_builder = MulticallContract::deploy_builder(provider.clone());
     let contract_receipt = contract_builder.send().await.unwrap().get_receipt().await.unwrap();
 
     let num = provider.get_block_number().await.unwrap();
@@ -677,7 +677,7 @@ async fn can_call_ots_get_contract_creator() {
 
     api.mine_one().await;
 
-    let contract_builder = AlloyMulticallContract::deploy_builder(provider.clone());
+    let contract_builder = MulticallContract::deploy_builder(provider.clone());
     let contract_receipt = contract_builder.send().await.unwrap().get_receipt().await.unwrap();
     let contract_address = sender.create(0);
 

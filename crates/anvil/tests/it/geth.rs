@@ -1,10 +1,15 @@
 //! tests against local geth for local debug purposes
 
-use crate::{abi::VendingMachine, utils::http_provider};
-use alloy_network::TransactionBuilder;
+use crate::{
+    abi::{VendingMachine, VENDING_MACHINE_CONTRACT},
+    utils::{http_provider, http_provider_with_signer},
+};
+use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use anvil::{spawn, NodeConfig};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use futures::StreamExt;
 use tokio::time::timeout;
 
@@ -34,20 +39,44 @@ async fn test_geth_pending_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_geth_revert_transaction() {
-    let provider = http_provider("http://127.0.0.1:8545");
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source("VendingMachine", VENDING_MACHINE_CONTRACT).unwrap();
 
-    let account = provider.get_accounts().await.unwrap().remove(0);
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("VendingMachine").unwrap();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
     // deploy successfully
-    let vending_machine_builder = VendingMachine::deploy_builder(&provider).from(account);
-    let vending_machine_address = vending_machine_builder.deploy().await.unwrap();
-    let vending_machine = VendingMachine::new(vending_machine_address, &provider);
+    provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().input(bytecode.into()).from(sender),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = VendingMachine::new(contract_address, &provider);
 
-    // expect revert
-    let call = vending_machine.buyRevert(U256::from(10u64)).from(account).call().await;
-    let err = call.unwrap_err().to_string();
-    assert!(err.contains("execution reverted: Not enough Ether provided."));
-    assert!(err.contains("code: 3"));
+    let res = contract
+        .buyRevert(U256::from(100))
+        .value(U256::from(1))
+        .from(sender)
+        .send()
+        .await
+        .unwrap_err();
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: Not enough Ether provided."));
+    assert!(msg.contains("code: 3"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,7 +1,7 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{AlloyBUSD, AlloyGreeter, AlloyMulticallContract},
+    abi::{Greeter, MulticallContract, BUSD},
     fork::fork_config,
     utils::http_provider,
 };
@@ -153,8 +153,7 @@ async fn can_impersonate_contract() {
 
     let provider = http_provider(&handle.http_endpoint());
 
-    let greeter_contract =
-        AlloyGreeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
+    let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
     let impersonate = greeter_contract.address().to_owned();
 
     let to = Address::random();
@@ -419,9 +418,9 @@ async fn test_can_set_storage_bsc_fork() {
     let storage = api.storage_at(busd_addr, idx, None).await.unwrap();
     assert_eq!(storage, value);
 
-    let busd_contract = AlloyBUSD::new(busd_addr, &provider);
+    let busd_contract = BUSD::new(busd_addr, &provider);
 
-    let AlloyBUSD::balanceOfReturn { _0 } = busd_contract
+    let BUSD::balanceOfReturn { _0 } = busd_contract
         .balanceOf(address!("0000000000000000000000000000000000000000"))
         .call()
         .await
@@ -612,24 +611,22 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.mine_one().await;
     api.evm_revert(snapshot_id).await.unwrap();
 
-    let multicall_contract = AlloyMulticallContract::new(
-        address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"),
-        &provider,
-    );
+    let multicall_contract =
+        MulticallContract::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
 
-    let AlloyMulticallContract::getCurrentBlockTimestampReturn { timestamp } =
+    let MulticallContract::getCurrentBlockTimestampReturn { timestamp } =
         multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
-    let AlloyMulticallContract::getCurrentBlockDifficultyReturn { difficulty } =
+    let MulticallContract::getCurrentBlockDifficultyReturn { difficulty } =
         multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
     assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
 
-    let AlloyMulticallContract::getCurrentBlockGasLimitReturn { gaslimit } =
+    let MulticallContract::getCurrentBlockGasLimitReturn { gaslimit } =
         multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
 
-    let AlloyMulticallContract::getCurrentBlockCoinbaseReturn { coinbase } =
+    let MulticallContract::getCurrentBlockCoinbaseReturn { coinbase } =
         multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
     assert_eq!(coinbase, latest_block.header.miner);
 }

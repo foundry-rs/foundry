@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::{
-    abi::{AlloyMulticallContract, AlloySimpleStorage},
+    abi::{MulticallContract, SimpleStorage},
     utils::{connect_pubsub_with_signer, http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
@@ -175,7 +175,7 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let _contract_pending = AlloyMulticallContract::deploy_builder(&provider)
+    let _contract_pending = MulticallContract::deploy_builder(&provider)
         .from(wallet.address())
         .send()
         .await
@@ -184,13 +184,13 @@ async fn can_call_on_pending_block() {
         .await
         .unwrap();
     let contract_address = sender.create(0);
-    let contract = AlloyMulticallContract::new(contract_address, &provider);
+    let contract = MulticallContract::new(contract_address, &provider);
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
 
     // Ensure that we can get the block_number from the pending contract
-    let AlloyMulticallContract::aggregateReturn { blockNumber: ret_block_number, .. } =
+    let MulticallContract::aggregateReturn { blockNumber: ret_block_number, .. } =
         contract.aggregate(vec![]).block(BlockId::pending()).call().await.unwrap();
     assert_eq!(ret_block_number, U256::from(1));
 
@@ -209,34 +209,31 @@ async fn can_call_on_pending_block() {
         let block_number = BlockNumberOrTag::Number(anvil_block_number as u64);
         let block = api.block_by_number(block_number).await.unwrap().unwrap();
 
-        let AlloyMulticallContract::getCurrentBlockTimestampReturn {
-            timestamp: ret_timestamp, ..
-        } = contract
-            .getCurrentBlockTimestamp()
-            .block(BlockId::number(anvil_block_number as u64))
-            .call()
-            .await
-            .unwrap();
+        let MulticallContract::getCurrentBlockTimestampReturn { timestamp: ret_timestamp, .. } =
+            contract
+                .getCurrentBlockTimestamp()
+                .block(BlockId::number(anvil_block_number as u64))
+                .call()
+                .await
+                .unwrap();
         assert_eq!(block.header.timestamp, ret_timestamp.to::<u64>());
 
-        let AlloyMulticallContract::getCurrentBlockGasLimitReturn {
-            gaslimit: ret_gas_limit, ..
-        } = contract
-            .getCurrentBlockGasLimit()
-            .block(BlockId::number(anvil_block_number as u64))
-            .call()
-            .await
-            .unwrap();
+        let MulticallContract::getCurrentBlockGasLimitReturn { gaslimit: ret_gas_limit, .. } =
+            contract
+                .getCurrentBlockGasLimit()
+                .block(BlockId::number(anvil_block_number as u64))
+                .call()
+                .await
+                .unwrap();
         assert_eq!(block.header.gas_limit, ret_gas_limit.to::<u128>());
 
-        let AlloyMulticallContract::getCurrentBlockCoinbaseReturn {
-            coinbase: ret_coinbase, ..
-        } = contract
-            .getCurrentBlockCoinbase()
-            .block(BlockId::number(anvil_block_number as u64))
-            .call()
-            .await
-            .unwrap();
+        let MulticallContract::getCurrentBlockCoinbaseReturn { coinbase: ret_coinbase, .. } =
+            contract
+                .getCurrentBlockCoinbase()
+                .block(BlockId::number(anvil_block_number as u64))
+                .call()
+                .await
+                .unwrap();
         assert_eq!(block.header.miner, ret_coinbase);
     }
 }
@@ -252,12 +249,12 @@ async fn can_call_with_state_override() {
 
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let multicall_contract = AlloyMulticallContract::deploy(&provider).await.unwrap();
+    let multicall_contract = MulticallContract::deploy(&provider).await.unwrap();
 
     let init_value = "toto".to_string();
 
     let simple_storage_contract =
-        AlloySimpleStorage::deploy(&provider, init_value.clone()).await.unwrap();
+        SimpleStorage::deploy(&provider, init_value.clone()).await.unwrap();
 
     // Test the `balance` account override
     let balance = U256::from(42u64);

@@ -280,13 +280,13 @@ async fn can_deploy_greeter_http() {
     let alloy_provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let alloy_greeter_addr =
-        AlloyGreeter::deploy_builder(alloy_provider.clone(), "Hello World!".to_string())
+        Greeter::deploy_builder(alloy_provider.clone(), "Hello World!".to_string())
             // .legacy() unimplemented! in alloy
             .deploy()
             .await
             .unwrap();
 
-    let alloy_greeter = AlloyGreeter::new(alloy_greeter_addr, alloy_provider);
+    let alloy_greeter = Greeter::new(alloy_greeter_addr, alloy_provider);
 
     let greeting = alloy_greeter.greet().call().await.unwrap();
 
@@ -310,7 +310,7 @@ async fn can_deploy_and_mine_manually() {
     let from = wallet.address();
 
     let greeter_builder =
-        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string()).from(from);
+        Greeter::deploy_builder(provider.clone(), "Hello World!".to_string()).from(from);
     let greeter_calldata = greeter_builder.calldata();
 
     let tx = TransactionRequest::default().from(from).with_input(greeter_calldata.to_owned());
@@ -325,7 +325,7 @@ async fn can_deploy_and_mine_manually() {
     let receipt = tx.get_receipt().await.unwrap();
 
     let address = receipt.contract_address.unwrap();
-    let greeter_contract = AlloyGreeter::new(address, provider);
+    let greeter_contract = Greeter::new(address, provider);
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 
@@ -350,9 +350,8 @@ async fn can_mine_automatically() {
 
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_builder =
-        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
-            .from(wallet.address());
+    let greeter_builder = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+        .from(wallet.address());
 
     let greeter_calldata = greeter_builder.calldata();
 
@@ -378,13 +377,13 @@ async fn can_call_greeter_historic() {
 
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_addr = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+    let greeter_addr = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string())
         .from(wallet.address())
         .deploy()
         .await
         .unwrap();
 
-    let greeter_contract = AlloyGreeter::new(greeter_addr, provider.clone());
+    let greeter_contract = Greeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
@@ -409,14 +408,14 @@ async fn can_deploy_greeter_ws() {
 
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_addr = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+    let greeter_addr = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string())
         .from(wallet.address())
         // .legacy() unimplemented! in alloy
         .deploy()
         .await
         .unwrap();
 
-    let greeter_contract = AlloyGreeter::new(greeter_addr, provider.clone());
+    let greeter_contract = Greeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
@@ -429,7 +428,7 @@ async fn can_deploy_get_code() {
 
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let greeter_addr = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+    let greeter_addr = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string())
         .from(wallet.address())
         .deploy()
         .await
@@ -444,7 +443,7 @@ async fn get_blocktimestamp_works() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = http_provider(&handle.http_endpoint());
 
-    let contract = AlloyMulticallContract::deploy(provider.clone()).await.unwrap();
+    let contract = MulticallContract::deploy(provider.clone()).await.unwrap();
 
     let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
 
@@ -491,13 +490,13 @@ async fn call_past_state() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let contract_addr =
-        AlloySimpleStorage::deploy_builder(provider.clone(), "initial value".to_string())
+        SimpleStorage::deploy_builder(provider.clone(), "initial value".to_string())
             .from(wallet.address())
             .deploy()
             .await
             .unwrap();
 
-    let contract = AlloySimpleStorage::new(contract_addr, provider.clone());
+    let contract = SimpleStorage::new(contract_addr, provider.clone());
 
     let deployed_block = provider.get_block_number().await.unwrap();
 
@@ -581,7 +580,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 
     let mut tasks = Vec::new();
 
-    let greeter = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let greeter = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
 
     let greeter_calldata = greeter.calldata();
 
@@ -618,13 +617,13 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let from = wallet.address();
 
     let greeter_contract =
-        AlloyGreeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
+        Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
 
     let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
 
     let mut tasks = Vec::new();
 
-    let deploy = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let deploy = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
     let deploy_calldata = deploy.calldata();
     let deploy_tx = TransactionRequest::default()
         .from(from)
@@ -811,7 +810,7 @@ async fn test_tx_receipt() {
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     assert!(tx.to.is_some());
 
-    let greeter_deploy = AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+    let greeter_deploy = Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
     let greeter_calldata = greeter_deploy.calldata();
 
     let tx = TransactionRequest::default()
@@ -940,9 +939,8 @@ async fn test_tx_access_list() {
 
     let sender = Address::random();
     let other_acc = Address::random();
-    let multicall = AlloyMulticallContract::deploy(provider.clone()).await.unwrap();
-    let simple_storage =
-        AlloySimpleStorage::deploy(provider.clone(), "foo".to_string()).await.unwrap();
+    let multicall = MulticallContract::deploy(provider.clone()).await.unwrap();
+    let simple_storage = SimpleStorage::deploy(provider.clone(), "foo".to_string()).await.unwrap();
 
     // when calling `setValue` on SimpleStorage, both the `lastSender` and `_value` storages are
     // modified The `_value` is a `string`, so the storage slots here (small string) are `0x1`
@@ -989,7 +987,7 @@ async fn test_tx_access_list() {
 
     // With a subcall to another contract, the AccessList should be the same as when calling the
     // subcontract directly (given that the proxy contract doesn't read/write any state)
-    let subcall_tx = multicall.aggregate(vec![AlloyMulticallContract::Call {
+    let subcall_tx = multicall.aggregate(vec![MulticallContract::Call {
         target: *simple_storage.address(),
         callData: set_value_calldata.to_owned(),
     }]);
@@ -1114,8 +1112,7 @@ async fn can_call_with_high_gas_limit() {
     let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(100_000_000))).await;
     let provider = http_provider(&handle.http_endpoint());
 
-    let greeter_contract =
-        AlloyGreeter::deploy(provider, "Hello World!".to_string()).await.unwrap();
+    let greeter_contract = Greeter::deploy(provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().gas(60_000_000u128).call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
@@ -1130,7 +1127,7 @@ async fn test_reject_eip1559_pre_london() {
     let gas_price = api.gas_price().unwrap().to::<u128>();
 
     let unsupported_call_builder =
-        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string());
+        Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());
     let unsupported_calldata = unsupported_call_builder.calldata();
 
     let unsup_tx = TransactionRequest::default()
@@ -1146,14 +1143,14 @@ async fn test_reject_eip1559_pre_london() {
     assert!(unsupported.contains("not supported by the current hardfork"), "{unsupported}");
 
     let greeter_contract_addr =
-        AlloyGreeter::deploy_builder(provider.clone(), "Hello World!".to_string())
+        Greeter::deploy_builder(provider.clone(), "Hello World!".to_string())
             .gas(gas_limit)
             .gas_price(gas_price)
             .deploy()
             .await
             .unwrap();
 
-    let greeter_contract = AlloyGreeter::new(greeter_contract_addr, provider);
+    let greeter_contract = Greeter::new(greeter_contract_addr, provider);
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);

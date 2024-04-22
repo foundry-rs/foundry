@@ -1,7 +1,7 @@
 //! tests against local ganache for local debug purposes
 #![allow(unused)]
 use crate::{
-    abi::AlloyGreeter,
+    abi::Greeter,
     init_tracing,
     utils::{http_provider, http_provider_with_signer, ws_provider, ws_provider_with_signer},
 };
@@ -9,7 +9,7 @@ use alloy_contract::ContractInstance;
 use alloy_network::EthereumSigner;
 use alloy_primitives::{address, Address};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_signer_wallet::{LocalWallet, MnemonicBuilder};
 use alloy_sol_types::{sol, Revert};
 use foundry_compilers::{project_util::TempProject, Artifact};
@@ -47,12 +47,11 @@ async fn test_ganache_deploy() {
     let signer: EthereumSigner = ganache_wallet().into();
     let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
-    let greeter_contract_builder =
-        AlloyGreeter::deploy_builder(&provider, "Hello World!".to_string());
+    let greeter_contract_builder = Greeter::deploy_builder(&provider, "Hello World!".to_string());
     let greeter_contract_address = greeter_contract_builder.deploy().await.unwrap();
-    let greeter_contract = AlloyGreeter::new(greeter_contract_address, &provider);
+    let greeter_contract = Greeter::new(greeter_contract_address, &provider);
 
-    let AlloyGreeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
+    let Greeter::greetReturn { _0 } = greeter_contract.greet().call().await.unwrap();
     let greeting = _0;
     assert_eq!("Hello World!", greeting);
 }
@@ -89,41 +88,104 @@ async fn test_ganache_emit_logs() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_ganache_deploy_reverting() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    constructor() {
+      require(false, "");
+    }
+}
+"#,
+    )
+    .unwrap();
+
     sol!(
-        #[derive(Debug)]
         #[sol(rpc)]
-        RevertingConstructor,
-        "test-data/RevertingConstructor.json"
+        contract Contract {}
     );
 
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
+
     let wallet = ganache_wallet();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
     let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
-    // deploy will fail
-    let contract_builder = RevertingConstructor::deploy_builder(&provider);
-    contract_builder.deploy().await.unwrap_err();
+    // should catch the revert during estimation which results in an err
+    let err = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().input(bytecode.into()).from(sender),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("execution reverted"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_ganache_tx_reverting() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    address owner;
+    constructor() public {
+        owner = msg.sender;
+    }
+    modifier onlyOwner() {
+        require(msg.sender == owner, "!authorized");
+        _;
+    }
+    function getSecret() public onlyOwner view returns(uint256 secret) {
+        return 123;
+    }
+}
+"#,
+    )
+    .unwrap();
+
     sol!(
-        #[derive(Debug)]
         #[sol(rpc)]
-        RevertingMethod,
-        "test-data/RevertingMethod.json"
+        contract Contract {
+            function getSecret() public view returns (uint256);
+        }
     );
 
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
+
     let wallet = ganache_wallet();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
     let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
     // deploy successfully
-    let contract_builder = RevertingMethod::deploy_builder(&provider);
-    let contract_address = contract_builder.deploy().await.unwrap();
-    let contract = RevertingMethod::new(contract_address, &provider);
-    contract.getSecret().call().await.unwrap_err();
+    provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().input(bytecode.into()).from(sender),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
+
+    // should catch the revert during the call which results in an err
+    contract.getSecret().send().await.unwrap_err();
 
     // /*  Ganache rpc errors look like:
     // <   {

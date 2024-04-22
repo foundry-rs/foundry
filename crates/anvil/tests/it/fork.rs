@@ -430,14 +430,12 @@ async fn can_deploy_greeter_on_fork() {
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
-    let greeter_contract =
-        AlloyGreeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
+    let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 
-    let greeter_contract =
-        AlloyGreeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
+    let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
@@ -1053,12 +1051,12 @@ async fn can_override_fork_chain_id() {
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let greeter_contract =
-        AlloyGreeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
+        Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
 
     assert_eq!("Hello World!", greeting._0);
     let greeter_contract =
-        AlloyGreeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
+        Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 

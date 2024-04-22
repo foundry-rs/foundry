@@ -1,7 +1,7 @@
 //! log/event related tests
 
 use crate::{
-    abi::AlloySimpleStorage::{self},
+    abi::SimpleStorage::{self},
     utils::{http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumSigner;
@@ -22,7 +22,7 @@ async fn get_past_events() {
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let contract =
-        AlloySimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+        SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
     let _ = contract
         .setValue("hi".to_string())
         .from(account)
@@ -44,7 +44,7 @@ async fn get_past_events() {
         .await
         .unwrap()
         .into_iter()
-        .map(|log| log.log_decode::<AlloySimpleStorage::ValueChanged>().unwrap())
+        .map(|log| log.log_decode::<SimpleStorage::ValueChanged>().unwrap())
         .collect::<Vec<_>>();
 
     // 2 events, 1 in constructor, 1 in call
@@ -73,7 +73,7 @@ async fn get_past_events() {
         .await
         .unwrap()
         .into_iter()
-        .map(|log| log.log_decode::<AlloySimpleStorage::ValueChanged>().unwrap())
+        .map(|log| log.log_decode::<SimpleStorage::ValueChanged>().unwrap())
         .collect::<Vec<_>>();
 
     assert_eq!(logs[0].inner.newValue, "initial value");
@@ -91,7 +91,7 @@ async fn get_all_events() {
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let contract =
-        AlloySimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+        SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -158,16 +158,16 @@ async fn watch_events() {
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
 
     let contract1 =
-        AlloySimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+        SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
 
     // Spawn the event listener.
-    let event1 = contract1.event_filter::<AlloySimpleStorage::ValueChanged>();
+    let event1 = contract1.event_filter::<SimpleStorage::ValueChanged>();
     let mut stream1 = event1.watch().await.unwrap().into_stream();
 
     // Also set up a subscription for the same thing.
     let ws = ws_provider_with_signer(&handle.ws_endpoint(), signer.clone());
-    let contract2 = AlloySimpleStorage::new(*contract1.address(), ws);
-    let event2 = contract2.event_filter::<AlloySimpleStorage::ValueChanged>();
+    let contract2 = SimpleStorage::new(*contract1.address(), ws);
+    let event2 = contract2.event_filter::<SimpleStorage::ValueChanged>();
     let mut stream2 = event2.watch().await.unwrap().into_stream();
 
     let num_tx = 3;

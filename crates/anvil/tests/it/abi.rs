@@ -3,35 +3,28 @@ use alloy_sol_types::sol;
 
 sol!(
     #[sol(rpc)]
-    AlloyGreeter,
+    Greeter,
     "test-data/greeter.json"
 );
 
 sol!(
     #[derive(Debug)]
     #[sol(rpc)]
-    AlloySimpleStorage,
+    SimpleStorage,
     "test-data/SimpleStorage.json"
 );
 
 sol!(
     #[sol(rpc)]
-    AlloyMulticallContract,
+    MulticallContract,
     "test-data/multicall.json"
 );
 
 sol!(
     #[sol(rpc)]
-    contract AlloyBUSD {
+    contract BUSD {
         function balanceOf(address) external view returns (uint256);
     }
-);
-
-sol!(
-    #[sol(rpc)]
-    #[derive(Debug)]
-    VendingMachine,
-    "test-data/VendingMachine.json"
 );
 
 sol!(
@@ -53,5 +46,39 @@ sol!(
         function _burn(uint256 tokenId) internal;
         function _transfer(address from, address to, uint256 tokenId) internal;
         function _approve(address to, uint256 tokenId, address auth) internal;
+    }
+);
+
+// <https://docs.soliditylang.org/en/latest/control-structures.html#revert>
+pub(crate) const VENDING_MACHINE_CONTRACT: &str = r#"// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.13;
+
+contract VendingMachine {
+    address owner;
+    error Unauthorized();
+    function buyRevert(uint amount) public payable {
+        if (amount > msg.value / 2 ether)
+            revert("Not enough Ether provided.");
+    }
+    function buyRequire(uint amount) public payable {
+        require(
+            amount <= msg.value / 2 ether,
+            "Not enough Ether provided."
+        );
+    }
+    function withdraw() public {
+        if (msg.sender != owner)
+            revert Unauthorized();
+
+        payable(msg.sender).transfer(address(this).balance);
+    }
+}"#;
+
+sol!(
+    #[sol(rpc)]
+    contract VendingMachine {
+        function buyRevert(uint amount) external payable;
+        function buyRequire(uint amount) external payable;
+        function withdraw() external;
     }
 );
