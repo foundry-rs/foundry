@@ -295,7 +295,8 @@ impl FailedInvariantCaseData {
                 false,
             )
         } else {
-            false
+            // Invariant function is not set, return true as we cannot test the sequence.
+            true
         }
     }
 }
