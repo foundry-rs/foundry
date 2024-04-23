@@ -1,6 +1,6 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
-    StackSnapshotType, TracingInspector, TracingInspectorConfig,
+    context::Context, Cheatcodes, CheatsConfig, ChiselState, ContextCollector, CoverageCollector,
+    Debugger, Fuzzer, LogCollector, StackSnapshotType, TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
 use foundry_evm_core::{
@@ -40,6 +40,8 @@ pub struct InspectorStackBuilder {
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing.
     pub trace: Option<bool>,
+    /// Whether to enable context capture.
+    pub context: Option<bool>,
     /// Whether to enable the debugger.
     pub debug: Option<bool>,
     /// Whether logs should be collected.
@@ -151,6 +153,7 @@ impl InspectorStackBuilder {
             cheatcodes,
             fuzzer,
             trace,
+            context,
             debug,
             logs,
             coverage,
@@ -172,6 +175,7 @@ impl InspectorStackBuilder {
         }
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
+        stack.collect_context(context.unwrap_or(true));
         stack.enable_debugger(debug.unwrap_or(false));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace.unwrap_or(false));
@@ -249,6 +253,7 @@ pub struct InspectorData {
     pub logs: Vec<Log>,
     pub labels: HashMap<Address, String>,
     pub traces: Option<CallTraceArena>,
+    pub contexts: Vec<Context>,
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
@@ -285,6 +290,7 @@ pub struct InspectorStack {
     pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
     pub log_collector: Option<LogCollector>,
+    pub context_collector: Option<ContextCollector>,
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
     pub enable_isolation: bool,
@@ -370,6 +376,12 @@ impl InspectorStack {
         self.log_collector = yes.then(Default::default);
     }
 
+    /// Set whether to enable the context collector.
+    #[inline]
+    pub fn collect_context(&mut self, yes: bool) {
+        self.context_collector = yes.then(Default::default);
+    }
+
     /// Set whether to enable the trace printer.
     #[inline]
     pub fn print(&mut self, yes: bool) {
@@ -404,6 +416,7 @@ impl InspectorStack {
                 })
                 .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
+            contexts: self.context_collector.map(|context| context.contexts).unwrap_or_default(),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
             cheatcodes: self.cheatcodes,
@@ -654,6 +667,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.log_collector,
+                &mut self.context_collector,
                 &mut self.cheatcodes,
             ],
             |inspector| {

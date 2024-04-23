@@ -10,6 +10,7 @@ use foundry_evm::{
     debug::DebugArena,
     executors::EvmError,
     fuzz::{CounterExample, FuzzCase, FuzzFixtures},
+    inspectors::Context,
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
@@ -256,11 +257,6 @@ impl SuiteResult {
         self.test_results.is_empty()
     }
 
-    /// Whether this test suite has any forked tests.
-    pub fn has_fork(&self) -> bool {
-        self.test_results.values().any(|result| result.is_fork())
-    }
-
     /// The number of tests in this test suite.
     pub fn len(&self) -> usize {
         self.test_results.len()
@@ -376,11 +372,16 @@ pub struct TestResult {
     pub kind: TestKind,
 
     /// What kind of environment this test was run in.
+    #[serde(skip)]
     pub environment: TestEnvironment,
 
     /// Traces
     #[serde(skip)]
     pub traces: Traces,
+
+    /// Contexts
+    #[serde(skip)]
+    pub contexts: Vec<Context>,
 
     /// Additional traces to use for gas report.
     #[serde(skip)]

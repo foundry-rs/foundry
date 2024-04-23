@@ -7,7 +7,7 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions, Cheatcodes, Context, InspectorData, InspectorStack,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -662,6 +662,8 @@ pub struct RawCallResult {
     pub labels: HashMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The contexts created during the call
+    pub contexts: Vec<Context>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
@@ -696,6 +698,7 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: HashMap::new(),
             traces: None,
+            contexts: Vec::new(),
             coverage: None,
             debug: None,
             transactions: None,
@@ -810,7 +813,7 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { logs, labels, traces, contexts, coverage, debug, cheatcodes, chisel_state } =
         inspector.collect();
 
     let transactions = match cheatcodes.as_ref() {
@@ -831,6 +834,7 @@ fn convert_executed_result(
         logs,
         labels,
         traces,
+        contexts,
         coverage,
         debug,
         transactions,

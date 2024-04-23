@@ -24,6 +24,7 @@ use foundry_evm::{
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
     fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
+    inspectors::Context,
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -308,7 +309,6 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
-                        environment: self.get_environment(),
                         traces: setup.traces,
                         coverage: setup.coverage,
                         labeled_addresses: setup.labeled_addresses,
@@ -457,12 +457,12 @@ impl<'a> ContractRunner<'a> {
             stipend,
             logs: execution_logs,
             traces: execution_trace,
+            contexts,
             coverage: execution_coverage,
             labels: new_labels,
             state_changeset,
             debug,
             cheatcodes,
-            env,
             ..
         } = raw_call_result;
 
@@ -472,6 +472,7 @@ impl<'a> ContractRunner<'a> {
         labeled_addresses.extend(new_labels);
         logs.extend(execution_logs);
         coverage = merge_coverages(coverage, execution_coverage);
+        let environment = self.get_environment(&contexts);
 
         let success = executor.is_success(
             setup.address,
@@ -494,8 +495,9 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
-            environment: self.get_environment(),
+            environment,
             traces,
+            contexts,
             coverage,
             labeled_addresses,
             debug: debug_arena,
@@ -536,7 +538,6 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
-                environment: self.get_environment(),
                 coverage,
                 duration: start.elapsed(),
                 ..Default::default()
@@ -567,7 +568,6 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
-                        environment: self.get_environment(),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -634,7 +634,6 @@ impl<'a> ContractRunner<'a> {
                 calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
                 reverts,
             },
-            environment: self.get_environment(),
             coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
@@ -698,7 +697,6 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
-                environment: self.get_environment(),
                 debug,
                 breakpoints,
                 coverage,
@@ -771,7 +769,6 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind,
-            environment: self.get_environment(),
             traces,
             coverage,
             labeled_addresses,
@@ -779,6 +776,7 @@ impl<'a> ContractRunner<'a> {
             breakpoints,
             duration,
             gas_report_traces: result.gas_report_traces.into_iter().map(|t| vec![t]).collect(),
+            ..Default::default()
         }
     }
 
@@ -786,7 +784,11 @@ impl<'a> ContractRunner<'a> {
     ///
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
-    fn get_environment(&self) -> TestEnvironment {
+    fn get_environment(&self, contexts: &Vec<Context>) -> TestEnvironment {
+        if contexts.iter().any(|context| context.block_number > 1) {
+            return TestEnvironment::Fork { block_number: contexts.last().unwrap().block_number }
+        }
+
         self.executor
             .backend
             .has_forks()

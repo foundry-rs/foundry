@@ -3916,6 +3916,7 @@ dependencies = [
  "rayon",
  "revm",
  "revm-inspectors",
+ "serde",
  "thiserror",
  "tracing",
 ]
