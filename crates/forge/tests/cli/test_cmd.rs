@@ -615,7 +615,7 @@ interface IERC20 {
     function name() external view returns (string memory);
 }
 
-contract BlockNumberTraceTest is Test {
+contract MultiforkTraceTest is Test {
     function testRevertFork() public {
         vm.createSelectFork("<url>", 19_626_899);
         IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();

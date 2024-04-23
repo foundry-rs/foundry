@@ -8,10 +8,10 @@ Warning (5740): Unreachable code.
    |         ^ (Relevant source part starts here and spans across multiple lines).
 
 
-Ran 1 test for test/Contract.t.sol:BlockNumberTraceTest
+Ran 1 test for test/Contract.t.sol:MultiforkTraceTest
 [FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626800) (gas: 16456)
 Traces:
-  [16456] BlockNumberTraceTest::testRevertFork()
+  [16456] MultiforkTraceTest::testRevertFork()
     ├─ [0] VM::createSelectFork("<url>", 19626899 [1.962e7])
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
@@ -27,7 +27,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped;
 Ran 1 test suite: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
-Encountered 1 failing testt/Contract.t.sol:BlockNumberTraceTest
+Encountered 1 failing testt/Contract.t.sol:MultiforkTraceTest
 [FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626800) (gas: 16456)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
