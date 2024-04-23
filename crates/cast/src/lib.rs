@@ -1676,53 +1676,6 @@ impl SimpleCast {
         Ok(location.to_string())
     }
 
-    /// Converts ENS names to their namehash representation
-    /// [Namehash reference](https://docs.ens.domains/contract-api-reference/name-processing#hashing-names)
-    /// [namehash-rust reference](https://github.com/InstateDev/namehash-rust/blob/master/src/lib.rs)
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     Cast::namehash("")?,
-    ///     "0x0000000000000000000000000000000000000000000000000000000000000000"
-    /// );
-    /// assert_eq!(
-    ///     Cast::namehash("eth")?,
-    ///     "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae"
-    /// );
-    /// assert_eq!(
-    ///     Cast::namehash("foo.eth")?,
-    ///     "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f"
-    /// );
-    /// assert_eq!(
-    ///     Cast::namehash("sub.foo.eth")?,
-    ///     "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402"
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn namehash(ens: &str) -> Result<String> {
-        let mut node = vec![0u8; 32];
-
-        if !ens.is_empty() {
-            let ens_lower = ens.to_lowercase();
-            let mut labels: Vec<&str> = ens_lower.split('.').collect();
-            labels.reverse();
-
-            for label in labels {
-                let mut label_hash = keccak256(label.as_bytes());
-                node.append(&mut label_hash.to_vec());
-
-                label_hash = keccak256(node.as_slice());
-                node = label_hash.to_vec();
-            }
-        }
-
-        Ok(hex::encode_prefixed(node))
-    }
-
     /// Keccak-256 hashes arbitrary data
     ///
     /// # Example
