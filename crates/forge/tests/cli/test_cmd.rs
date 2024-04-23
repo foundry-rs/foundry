@@ -607,3 +607,43 @@ forgetest_init!(can_emit_block_number_in_trace, |prj, cmd| {
 
     cmd.args(["test"]).unchecked_output().stdout_matches_content(&expected);
 });
+
+static MULTIFORK_TRACE_TEST: &str = r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IERC20 {
+    function name() external view returns (string memory);
+}
+
+contract BlockNumberTraceTest is Test {
+    function testRevertFork() public {
+        vm.createSelectFork("<url>", 19_626_899);
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+
+        vm.createSelectFork("<url>", 19_626_800);
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+
+        revert();
+
+        vm.createSelectFork("<url>", 19_626_700);
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+    }
+}
+"#;
+
+forgetest_init!(test_emits_correct_block_number_in_trace, |prj, cmd| {
+    prj.wipe_contracts();
+
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
+    prj.add_test("Contract.t.sol", &MULTIFORK_TRACE_TEST.replace("<url>", &endpoint)).unwrap();
+
+    let expected = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/test_emits_correct_block_number_in_trace.stderr"),
+    )
+    .unwrap()
+    .replace("<url>", &endpoint);
+
+    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+});

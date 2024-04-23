@@ -581,7 +581,7 @@ impl fmt::Display for TestEnvironmentReport {
             TestEnvironmentReport::Fork { block_number } => {
                 write!(f, "(block: {block_number}) ")
             }
-            _ => Ok(()),
+            _ => write!(f, ""),
         }
     }
 }
