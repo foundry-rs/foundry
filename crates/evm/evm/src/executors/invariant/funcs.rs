@@ -71,7 +71,7 @@ pub fn assert_invariants(
 pub fn replay_run(
     invariant_contract: &InvariantContract<'_>,
     mut executor: Executor,
-    known_contracts: Option<&ContractsByArtifact>,
+    known_contracts: &ContractsByArtifact,
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,

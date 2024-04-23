@@ -44,7 +44,7 @@ impl GenerateTestArgs {
         // Write the test content to the test file.
         fs::write(&test_file_path, test_content)?;
 
-        println!("{} test file: {}", Paint::green("Generated"), test_file_path.to_str().unwrap());
+        println!("{} test file: {}", "Generated".green(), test_file_path.to_str().unwrap());
         Ok(())
     }
 }

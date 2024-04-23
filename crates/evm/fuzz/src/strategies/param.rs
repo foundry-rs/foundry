@@ -1,5 +1,5 @@
 use super::state::EvmFuzzState;
-use crate::strategies::calldata::CalldataFuzzDictionary;
+use crate::strategies::fixture_strategy;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
 use proptest::prelude::*;
@@ -7,68 +7,105 @@ use proptest::prelude::*;
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
-/// Given a parameter type, returns a strategy for generating values for that type.
+/// Given a parameter type and configured fixtures for param name, returns a strategy for generating
+/// values for that type. Fixtures can be currently generated for uint, int, address, bytes and
+/// string types and are defined for parameter name.
+///
+/// For example, fixtures for parameter `owner` of type `address` can be defined in a function with
+/// a `function fixture_owner() public returns (address[] memory)` signature.
+///
+/// Fixtures are matched on parameter name, hence fixtures defined in
+/// `fixture_owner` function can be used in a fuzzed test function with a signature like
+/// `function testFuzz_ownerAddress(address owner, uint amount)`.
+///
+/// Fuzzer will reject value and raise error if the fixture type is not of the same type as
+/// parameter to fuzz.
 ///
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param(
     param: &DynSolType,
-    config: Option<&CalldataFuzzDictionary>,
+    fuzz_fixtures: Option<&[DynSolValue]>,
 ) -> BoxedStrategy<DynSolValue> {
     match *param {
         DynSolType::Address => {
-            if let Some(config) = config {
-                let len = config.inner.addresses.len();
-                if len > 0 {
-                    let dict = config.inner.clone();
-                    // Create strategy to return random address from configured dictionary.
-                    return any::<prop::sample::Index>()
-                        .prop_map(move |index| {
-                            let index = index.index(len);
-                            DynSolValue::Address(dict.addresses[index])
-                        })
-                        .boxed();
-                }
-            }
-
-            // If no config for addresses dictionary then create unbounded addresses strategy.
-            any::<Address>().prop_map(DynSolValue::Address).boxed()
+            fixture_strategy!(
+                fuzz_fixtures,
+                |fixture: Option<&DynSolValue>| {
+                    if let Some(val @ DynSolValue::Address(_)) = fixture {
+                        Some(val.clone())
+                    } else {
+                        error!("{:?} is not a valid address fixture", fixture.unwrap());
+                        None
+                    }
+                },
+                DynSolValue::type_strategy(&DynSolType::Address)
+            )
         }
-        DynSolType::Int(n @ 8..=256) => {
-            super::IntStrategy::new(n, vec![]).prop_map(move |x| DynSolValue::Int(x, n)).boxed()
-        }
-        DynSolType::Uint(n @ 8..=256) => {
-            super::UintStrategy::new(n, vec![]).prop_map(move |x| DynSolValue::Uint(x, n)).boxed()
-        }
-        DynSolType::Function | DynSolType::Bool | DynSolType::Bytes => {
-            DynSolValue::type_strategy(param).boxed()
-        }
-        DynSolType::FixedBytes(size @ 1..=32) => any::<B256>()
-            .prop_map(move |mut v| {
-                v[size..].fill(0);
-                DynSolValue::FixedBytes(v, size)
-            })
+        DynSolType::Int(n @ 8..=256) => super::IntStrategy::new(n, fuzz_fixtures)
+            .prop_map(move |x| DynSolValue::Int(x, n))
             .boxed(),
-        DynSolType::String => DynSolValue::type_strategy(param)
-            .prop_map(move |value| {
+        DynSolType::Uint(n @ 8..=256) => super::UintStrategy::new(n, fuzz_fixtures)
+            .prop_map(move |x| DynSolValue::Uint(x, n))
+            .boxed(),
+        DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::Bytes => {
+            fixture_strategy!(
+                fuzz_fixtures,
+                |fixture: Option<&DynSolValue>| {
+                    if let Some(val @ DynSolValue::Bytes(_)) = fixture {
+                        Some(val.clone())
+                    } else {
+                        error!("{:?} is not a valid bytes fixture", fixture.unwrap());
+                        None
+                    }
+                },
+                DynSolValue::type_strategy(&DynSolType::Bytes)
+            )
+        }
+        DynSolType::FixedBytes(size @ 1..=32) => fixture_strategy!(
+            fuzz_fixtures,
+            |fixture: Option<&DynSolValue>| {
+                if let Some(val @ DynSolValue::FixedBytes(_, _)) = fixture {
+                    if let Some(val) = val.as_fixed_bytes() {
+                        if val.1 == size {
+                            return Some(DynSolValue::FixedBytes(B256::from_slice(val.0), val.1))
+                        }
+                    }
+                }
+                error!("{:?} is not a valid fixed bytes fixture", fixture.unwrap());
+                None
+            },
+            DynSolValue::type_strategy(&DynSolType::FixedBytes(size))
+        ),
+        DynSolType::String => fixture_strategy!(
+            fuzz_fixtures,
+            |fixture: Option<&DynSolValue>| {
+                if let Some(val @ DynSolValue::String(_)) = fixture {
+                    Some(val.clone())
+                } else {
+                    error!("{:?} is not a valid string fixture", fixture.unwrap());
+                    None
+                }
+            },
+            DynSolValue::type_strategy(&DynSolType::String).prop_map(move |value| {
                 DynSolValue::String(
                     value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
                 )
             })
-            .boxed(),
-
+        ),
         DynSolType::Tuple(ref params) => params
             .iter()
-            .map(|p| fuzz_param(p, config))
+            .map(|p| fuzz_param(p, None))
             .collect::<Vec<_>>()
             .prop_map(DynSolValue::Tuple)
             .boxed(),
         DynSolType::FixedArray(ref param, size) => {
-            proptest::collection::vec(fuzz_param(param, config), size)
+            proptest::collection::vec(fuzz_param(param, None), size)
                 .prop_map(DynSolValue::FixedArray)
                 .boxed()
         }
         DynSolType::Array(ref param) => {
-            proptest::collection::vec(fuzz_param(param, config), 0..MAX_ARRAY_LEN)
+            proptest::collection::vec(fuzz_param(param, None), 0..MAX_ARRAY_LEN)
                 .prop_map(DynSolValue::Array)
                 .boxed()
         }
@@ -174,7 +211,10 @@ pub fn fuzz_param_from_state(
 
 #[cfg(test)]
 mod tests {
-    use crate::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
+    use crate::{
+        strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
+        FuzzFixtures,
+    };
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use revm::db::{CacheDB, EmptyDB};
@@ -186,7 +226,7 @@ mod tests {
         let db = CacheDB::new(EmptyDB::default());
         let state = build_initial_state(&db, FuzzDictionaryConfig::default());
         let strat = proptest::prop_oneof![
-            60 => fuzz_calldata(func.clone()),
+            60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),
         ];
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };

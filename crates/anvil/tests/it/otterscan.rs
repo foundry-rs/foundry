@@ -594,8 +594,8 @@ async fn can_call_ots_get_transaction_by_sender_and_nonce() {
         .await
         .unwrap();
 
-    assert_eq!(result1.unwrap().hash, receipt1.transaction_hash.to_alloy());
-    assert_eq!(result2.unwrap().hash, receipt2.transaction_hash.to_alloy());
+    assert_eq!(result1.unwrap(), receipt1.transaction_hash.to_alloy());
+    assert_eq!(result2.unwrap(), receipt2.transaction_hash.to_alloy());
 }
 
 #[tokio::test(flavor = "multi_thread")]

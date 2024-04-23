@@ -6,13 +6,14 @@ use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
-    revm,
     revm::{
+        self,
         interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
         primitives::U256,
         EvmContext,
     },
     traces::TracingInspectorConfig,
+    InspectorExt,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -135,6 +136,8 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         }
     }
 }
+
+impl<DB: Database> InspectorExt<DB> for Inspector {}
 
 /// Prints all the logs
 #[inline]

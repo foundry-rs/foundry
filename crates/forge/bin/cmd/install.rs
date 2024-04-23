@@ -103,9 +103,7 @@ impl DependencyInstallOpts {
             if self.install(config, Vec::new()).is_err() && !quiet {
                 eprintln!(
                     "{}",
-                    Paint::yellow(
-                        "Your project has missing dependencies that could not be installed."
-                    )
+                    "Your project has missing dependencies that could not be installed.".yellow()
                 )
             }
             true
@@ -193,7 +191,7 @@ impl DependencyInstallOpts {
             }
 
             if !quiet {
-                let mut msg = format!("    {} {}", Paint::green("Installed"), dep.name);
+                let mut msg = format!("    {} {}", "Installed".green(), dep.name);
                 if let Some(tag) = dep.tag.or(installed_tag) {
                     msg.push(' ');
                     msg.push_str(tag.as_str());

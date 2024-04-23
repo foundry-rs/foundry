@@ -738,6 +738,24 @@ contract MemSafetyTest is DSTest {
         vm.stopExpectSafeMemory();
     }
 
+    /// @dev Tests that the `stopExpectSafeMemory` cheatcode can still be called if the free memory pointer was
+    ///      updated to the exclusive upper boundary during execution.
+    function testStopExpectSafeMemory_freeMemUpdate() public {
+        uint64 initPtr;
+        assembly {
+            initPtr := mload(0x40)
+        }
+
+        vm.expectSafeMemory(initPtr, initPtr + 0x20);
+        assembly {
+            // write outside of allowed range, this should revert
+            mstore(initPtr, 0x01)
+            mstore(0x40, add(initPtr, 0x20))
+        }
+
+        vm.stopExpectSafeMemory();
+    }
+
     ////////////////////////////////////////////////////////////////
     //                          HELPERS                           //
     ////////////////////////////////////////////////////////////////

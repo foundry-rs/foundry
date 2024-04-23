@@ -26,7 +26,7 @@ impl BroadcastedState {
         let verify = VerifyBundle::new(
             &script_config.config.project()?,
             &script_config.config,
-            build_data.get_flattened_contracts(false),
+            build_data.known_contracts,
             args.retry,
             args.verifier,
         );
@@ -105,7 +105,8 @@ impl VerifyBundle {
         data: &[u8],
         libraries: &[String],
     ) -> Option<VerifyArgs> {
-        for (artifact, (_contract, bytecode)) in self.known_contracts.iter() {
+        for (artifact, contract) in self.known_contracts.iter() {
+            let Some(bytecode) = contract.bytecode.as_ref() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
             if data.split_at(create2_offset).1.starts_with(bytecode) {

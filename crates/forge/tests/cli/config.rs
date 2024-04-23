@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
-use foundry_compilers::artifacts::{OptimizerDetails, RevertStrings, YulDetails};
+use foundry_compilers::artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -306,8 +306,10 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
 
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
-    let config = prj.config_from_output(["--via-ir"]);
+    let config = prj.config_from_output(["--via-ir", "--no-metadata"]);
     assert!(config.via_ir);
+    assert_eq!(config.cbor_metadata, false);
+    assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
 
 // tests that solc can be explicitly set

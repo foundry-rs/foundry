@@ -1,7 +1,11 @@
 //! Contains various tests for checking cast commands
 
-use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
-use foundry_test_utils::{casttest, util::OutputExt};
+use alloy_primitives::{address, b256, Address, B256};
+use foundry_test_utils::{
+    casttest,
+    rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
+    util::OutputExt,
+};
 use std::{fs, io::Write, path::Path};
 
 // tests `--help` is printed to std out
@@ -790,4 +794,37 @@ interface Interface {
     function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
 }"#;
     assert_eq!(output.trim(), s);
+});
+
+const ENS_NAME: &str = "emo.eth";
+const ENS_NAMEHASH: B256 =
+    b256!("0a21aaf2f6414aa664deb341d1114351fdb023cad07bf53b28e57c26db681910");
+const ENS_ADDRESS: Address = address!("28679A1a632125fbBf7A68d850E50623194A709E");
+
+casttest!(ens_namehash, |_prj, cmd| {
+    cmd.args(["namehash", ENS_NAME]);
+    let out = cmd.stdout_lossy().trim().parse::<B256>();
+    assert_eq!(out, Ok(ENS_NAMEHASH));
+});
+
+casttest!(ens_lookup, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args(["lookup-address", &ENS_ADDRESS.to_string(), "--rpc-url", &eth_rpc_url, "--verify"]);
+    let out = cmd.stdout_lossy();
+    assert_eq!(out.trim(), ENS_NAME);
+});
+
+casttest!(ens_resolve, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args(["resolve-name", ENS_NAME, "--rpc-url", &eth_rpc_url, "--verify"]);
+    let out = cmd.stdout_lossy().trim().parse::<Address>();
+    assert_eq!(out, Ok(ENS_ADDRESS));
+});
+
+casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let name = ENS_NAME.strip_suffix(".eth").unwrap();
+    cmd.args(["resolve-name", name, "--rpc-url", &eth_rpc_url, "--verify"]);
+    let (_out, err) = cmd.unchecked_output_lossy();
+    assert!(err.contains("not found"), "{err:?}");
 });

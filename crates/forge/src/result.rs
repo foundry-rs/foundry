@@ -1,19 +1,22 @@
 //! Test outcomes.
 
 use alloy_primitives::{Address, Log};
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{
+    evm::Breakpoints, get_contract_name, get_file_name, shell, ContractsByArtifact,
+};
 use foundry_compilers::artifacts::Libraries;
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
     executors::EvmError,
-    fuzz::{CounterExample, FuzzCase},
+    fuzz::{CounterExample, FuzzCase, FuzzFixtures},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{self, Write},
+    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
@@ -34,7 +37,7 @@ pub struct TestOutcome {
     /// This is `None` if traces and logs were not decoded.
     ///
     /// Note that `Address` fields only contain the last executed test case's data.
-    pub decoder: Option<CallTraceDecoder>,
+    pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
 }
@@ -42,7 +45,7 @@ pub struct TestOutcome {
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
     pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, decoder: None, gas_report: None }
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
     }
 
     /// Creates a new empty test outcome.
@@ -138,9 +141,9 @@ impl TestOutcome {
             suites,
             wall_clock_time,
             self.total_time(),
-            Paint::green(total_passed),
-            Paint::red(total_failed),
-            Paint::yellow(total_skipped),
+            total_passed.green(),
+            total_failed.red(),
+            total_skipped.yellow(),
             total_tests
         )
     }
@@ -176,8 +179,8 @@ impl TestOutcome {
         let successes = outcome.passed();
         shell::println(format!(
             "Encountered a total of {} failing tests, {} tests succeeded",
-            Paint::red(failures.to_string()),
-            Paint::green(successes.to_string())
+            failures.to_string().red(),
+            successes.to_string().green()
         ))?;
 
         // TODO: Avoid process::exit
@@ -189,6 +192,7 @@ impl TestOutcome {
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
     /// Wall clock time it took to execute all tests in this suite.
+    #[serde(with = "humantime_serde")]
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -196,6 +200,9 @@ pub struct SuiteResult {
     pub warnings: Vec<String>,
     /// Libraries used to link test contract.
     pub libraries: Libraries,
+    /// Contracts linked with correct libraries.
+    #[serde(skip)]
+    pub known_contracts: Arc<ContractsByArtifact>,
 }
 
 impl SuiteResult {
@@ -204,8 +211,9 @@ impl SuiteResult {
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
         libraries: Libraries,
+        known_contracts: Arc<ContractsByArtifact>,
     ) -> Self {
-        Self { duration, test_results, warnings, libraries }
+        Self { duration, test_results, warnings, libraries, known_contracts }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -263,13 +271,13 @@ impl SuiteResult {
     /// Returns the summary of a single test suite.
     pub fn summary(&self) -> String {
         let failed = self.failed();
-        let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
+        let result = if failed == 0 { "ok".green() } else { "FAILED".red() };
         format!(
             "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
             result,
-            Paint::green(self.passed()),
-            Paint::red(failed),
-            Paint::yellow(self.skipped()),
+            self.passed().green(),
+            failed.red(),
+            self.skipped().yellow(),
             self.duration,
             self.total_time(),
         )
@@ -389,8 +397,8 @@ pub struct TestResult {
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
-            TestStatus::Success => Paint::green("[PASS]").fmt(f),
-            TestStatus::Skipped => Paint::yellow("[SKIP]").fmt(f),
+            TestStatus::Success => "[PASS]".green().fmt(f),
+            TestStatus::Skipped => "[SKIP]".yellow().fmt(f),
             TestStatus::Failure => {
                 let mut s = String::from("[FAIL. Reason: ");
 
@@ -413,7 +421,7 @@ impl fmt::Display for TestResult {
                     s.push(']');
                 }
 
-                Paint::red(s).fmt(f)
+                s.red().fmt(f)
             }
         }
     }
@@ -526,6 +534,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Coverage info during setup
     pub coverage: Option<HitMaps>,
+    /// Defined fuzz test fixtures
+    pub fuzz_fixtures: FuzzFixtures,
 }
 
 impl TestSetup {
@@ -558,8 +568,9 @@ impl TestSetup {
         traces: Traces,
         labeled_addresses: HashMap<Address, String>,
         coverage: Option<HitMaps>,
+        fuzz_fixtures: FuzzFixtures,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
     }
 
     pub fn failed_with(
@@ -575,6 +586,7 @@ impl TestSetup {
             labeled_addresses,
             reason: Some(reason),
             coverage: None,
+            fuzz_fixtures: FuzzFixtures::default(),
         }
     }
 
