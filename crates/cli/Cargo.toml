@@ -40,12 +40,12 @@ tokio = { version = "1", features = ["macros"] }
 tracing-error = "0.2"
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter", "fmt"] }
 tracing.workspace = true
-yansi = "0.5"
+yansi.workspace = true
 hex.workspace = true
 futures = "0.3"
 
 [dev-dependencies]
-tempfile = "3.7"
+tempfile.workspace = true
 
 [features]
 default = ["rustls"]

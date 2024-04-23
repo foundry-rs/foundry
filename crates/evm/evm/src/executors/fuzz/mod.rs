@@ -11,7 +11,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
-    BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzTestResult,
+    BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
@@ -55,6 +55,7 @@ impl FuzzedExecutor {
     pub fn fuzz(
         &self,
         func: &Function,
+        fuzz_fixtures: &FuzzFixtures,
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
@@ -80,10 +81,12 @@ impl FuzzedExecutor {
         let state = self.build_fuzz_state();
 
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
+
         let strat = proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_calldata(func.clone()),
+            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
+
         debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;

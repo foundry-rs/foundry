@@ -54,13 +54,13 @@ reqwest.workspace = true
 semver = "1"
 serde_json.workspace = true
 serde.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 thiserror = "1"
 tokio = "1"
 tracing.workspace = true
 url = "2"
 walkdir = "2"
-yansi = "0.5"
+yansi.workspace = true
 rustc-hash.workspace = true
 num-format.workspace = true
 

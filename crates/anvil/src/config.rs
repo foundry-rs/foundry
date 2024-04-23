@@ -182,13 +182,9 @@ pub struct NodeConfig {
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
         let mut config_string: String = String::new();
-        let _ = write!(config_string, "\n{}", Paint::green(BANNER));
+        let _ = write!(config_string, "\n{}", BANNER.green());
         let _ = write!(config_string, "\n    {VERSION_MESSAGE}");
-        let _ = write!(
-            config_string,
-            "\n    {}",
-            Paint::green("https://github.com/foundry-rs/foundry")
-        );
+        let _ = write!(config_string, "\n    {}", "https://github.com/foundry-rs/foundry".green());
 
         let _ = write!(
             config_string,
@@ -256,9 +252,10 @@ Chain ID:       {}
 
 Chain ID
 ==================
+
 {}
 "#,
-                Paint::green(format!("\n{}", self.get_chain_id()))
+                self.get_chain_id().green()
             );
         }
 
@@ -268,9 +265,10 @@ Chain ID
                 r#"
 Gas Price
 ==================
+
 {}
 "#,
-                Paint::green(format!("\n{}", self.get_gas_price()))
+                self.get_gas_price().green()
             );
         } else {
             let _ = write!(
@@ -278,9 +276,10 @@ Gas Price
                 r#"
 Base Fee
 ==================
+
 {}
 "#,
-                Paint::green(format!("\n{}", self.get_base_fee()))
+                self.get_base_fee().green()
             );
         }
 
@@ -289,9 +288,10 @@ Base Fee
             r#"
 Gas Limit
 ==================
+
 {}
 "#,
-            Paint::green(format!("\n{}", self.gas_limit))
+            self.gas_limit.green()
         );
 
         let _ = write!(
@@ -299,9 +299,10 @@ Gas Limit
             r#"
 Genesis Timestamp
 ==================
+
 {}
 "#,
-            Paint::green(format!("\n{}", self.get_genesis_timestamp()))
+            self.get_genesis_timestamp().green()
         );
 
         config_string

@@ -18,14 +18,14 @@ use foundry_evm_fuzz::{
     },
     strategies::{
         build_initial_state, collect_created_contracts, invariant_strat, override_call_strat,
-        CalldataFuzzDictionary, EvmFuzzState,
+        EvmFuzzState,
     },
-    FuzzCase, FuzzedCases,
+    FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
 use parking_lot::RwLock;
 use proptest::{
-    strategy::{BoxedStrategy, Strategy, ValueTree},
+    strategy::{BoxedStrategy, Strategy},
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{primitives::HashMap, DatabaseCommit};
@@ -90,12 +90,8 @@ sol! {
 }
 
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
-type InvariantPreparation = (
-    EvmFuzzState,
-    FuzzRunIdentifiedContracts,
-    BoxedStrategy<BasicTxDetails>,
-    CalldataFuzzDictionary,
-);
+type InvariantPreparation =
+    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<BasicTxDetails>);
 
 /// Enriched results of an invariant run check.
 ///
@@ -154,14 +150,15 @@ impl<'a> InvariantExecutor<'a> {
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
+        fuzz_fixtures: &FuzzFixtures,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
             return Err(eyre!("Invariant test function should have no inputs"))
         }
 
-        let (fuzz_state, targeted_contracts, strat, calldata_fuzz_dictionary) =
-            self.prepare_fuzzing(&invariant_contract)?;
+        let (fuzz_state, targeted_contracts, strat) =
+            self.prepare_fuzzing(&invariant_contract, fuzz_fixtures)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call.
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
@@ -331,7 +328,7 @@ impl<'a> InvariantExecutor<'a> {
             Ok(())
         });
 
-        trace!(target: "forge::test::invariant::calldata_address_fuzz_dictionary", "{:?}", calldata_fuzz_dictionary.inner.addresses);
+        trace!(target: "forge::test::invariant::fuzz_fixtures", "{:?}", fuzz_fixtures);
         trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, error) = failures.into_inner().into_inner();
@@ -352,6 +349,7 @@ impl<'a> InvariantExecutor<'a> {
     fn prepare_fuzzing(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
+        fuzz_fixtures: &FuzzFixtures,
     ) -> eyre::Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
@@ -362,16 +360,13 @@ impl<'a> InvariantExecutor<'a> {
         let fuzz_state: EvmFuzzState =
             build_initial_state(self.executor.backend.mem_db(), self.config.dictionary);
 
-        let calldata_fuzz_config =
-            CalldataFuzzDictionary::new(&self.config.dictionary, &fuzz_state);
-
         // Creates the invariant strategy.
         let strat = invariant_strat(
             fuzz_state.clone(),
             targeted_senders,
             targeted_contracts.clone(),
             self.config.dictionary.dictionary_weight,
-            calldata_fuzz_config.clone(),
+            fuzz_fixtures.clone(),
         )
         .no_shrink()
         .boxed();
@@ -389,7 +384,7 @@ impl<'a> InvariantExecutor<'a> {
                     fuzz_state.clone(),
                     targeted_contracts.clone(),
                     target_contract_ref.clone(),
-                    calldata_fuzz_config.clone(),
+                    fuzz_fixtures.clone(),
                 ),
                 target_contract_ref,
             ));
@@ -398,7 +393,7 @@ impl<'a> InvariantExecutor<'a> {
         self.executor.inspector.fuzzer =
             Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
 
-        Ok((fuzz_state, targeted_contracts, strat, calldata_fuzz_config))
+        Ok((fuzz_state, targeted_contracts, strat))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string

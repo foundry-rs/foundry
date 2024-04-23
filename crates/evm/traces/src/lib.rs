@@ -125,8 +125,8 @@ pub async fn render_trace_arena(
             write!(
                 s,
                 "{child}{EDGE}{}{}",
-                color.paint(RETURN),
-                color.paint(format!("[{:?}] ", node.trace.status))
+                RETURN.fg(color),
+                format!("[{:?}] ", node.trace.status).fg(color)
             )?;
             match return_data {
                 Some(val) => write!(s, "{val}"),
@@ -164,8 +164,8 @@ pub async fn render_trace(
         write!(
             &mut s,
             "{}{} {}@{}",
-            Paint::yellow(CALL),
-            Paint::yellow("new"),
+            CALL.yellow(),
+            "new".yellow(),
             decoded.label.as_deref().unwrap_or("<unknown>"),
             address
         )?;
@@ -198,14 +198,14 @@ pub async fn render_trace(
         write!(
             &mut s,
             "{addr}::{func_name}{opt_value}({inputs}){action}",
-            addr = color.paint(decoded.label.as_deref().unwrap_or(&address)),
-            func_name = color.paint(func_name),
+            addr = decoded.label.as_deref().unwrap_or(&address).fg(color),
+            func_name = func_name.fg(color),
             opt_value = if trace.value.is_zero() {
                 String::new()
             } else {
                 format!("{{value: {}}}", trace.value)
             },
-            action = Paint::yellow(action),
+            action = action.yellow(),
         )?;
     }
 
@@ -227,11 +227,11 @@ async fn render_trace_log(
                     s,
                     "{:>13}: {}",
                     if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                    Paint::cyan(format!("{topic:?}"))
+                    format!("{topic:?}").cyan()
                 )?;
             }
 
-            write!(s, "          data: {}", Paint::cyan(hex::encode_prefixed(&log.data)))?;
+            write!(s, "          data: {}", hex::encode_prefixed(&log.data).cyan())?;
         }
         DecodedCallLog::Decoded(name, params) => {
             let params = params
@@ -240,7 +240,7 @@ async fn render_trace_log(
                 .collect::<Vec<String>>()
                 .join(", ");
 
-            write!(s, "emit {}({params})", Paint::cyan(name.clone()))?;
+            write!(s, "emit {}({params})", name.clone().cyan())?;
         }
     }
 

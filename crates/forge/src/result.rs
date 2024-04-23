@@ -9,7 +9,7 @@ use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
     executors::EvmError,
-    fuzz::{CounterExample, FuzzCase},
+    fuzz::{CounterExample, FuzzCase, FuzzFixtures},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
@@ -141,9 +141,9 @@ impl TestOutcome {
             suites,
             wall_clock_time,
             self.total_time(),
-            Paint::green(total_passed),
-            Paint::red(total_failed),
-            Paint::yellow(total_skipped),
+            total_passed.green(),
+            total_failed.red(),
+            total_skipped.yellow(),
             total_tests
         )
     }
@@ -179,8 +179,8 @@ impl TestOutcome {
         let successes = outcome.passed();
         shell::println(format!(
             "Encountered a total of {} failing tests, {} tests succeeded",
-            Paint::red(failures.to_string()),
-            Paint::green(successes.to_string())
+            failures.to_string().red(),
+            successes.to_string().green()
         ))?;
 
         // TODO: Avoid process::exit
@@ -271,13 +271,13 @@ impl SuiteResult {
     /// Returns the summary of a single test suite.
     pub fn summary(&self) -> String {
         let failed = self.failed();
-        let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
+        let result = if failed == 0 { "ok".green() } else { "FAILED".red() };
         format!(
             "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
             result,
-            Paint::green(self.passed()),
-            Paint::red(failed),
-            Paint::yellow(self.skipped()),
+            self.passed().green(),
+            failed.red(),
+            self.skipped().yellow(),
             self.duration,
             self.total_time(),
         )
@@ -397,8 +397,8 @@ pub struct TestResult {
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
-            TestStatus::Success => Paint::green("[PASS]").fmt(f),
-            TestStatus::Skipped => Paint::yellow("[SKIP]").fmt(f),
+            TestStatus::Success => "[PASS]".green().fmt(f),
+            TestStatus::Skipped => "[SKIP]".yellow().fmt(f),
             TestStatus::Failure => {
                 let mut s = String::from("[FAIL. Reason: ");
 
@@ -421,7 +421,7 @@ impl fmt::Display for TestResult {
                     s.push(']');
                 }
 
-                Paint::red(s).fmt(f)
+                s.red().fmt(f)
             }
         }
     }
@@ -534,6 +534,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Coverage info during setup
     pub coverage: Option<HitMaps>,
+    /// Defined fuzz test fixtures
+    pub fuzz_fixtures: FuzzFixtures,
 }
 
 impl TestSetup {
@@ -566,8 +568,9 @@ impl TestSetup {
         traces: Traces,
         labeled_addresses: HashMap<Address, String>,
         coverage: Option<HitMaps>,
+        fuzz_fixtures: FuzzFixtures,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
     }
 
     pub fn failed_with(
@@ -583,6 +586,7 @@ impl TestSetup {
             labeled_addresses,
             reason: Some(reason),
             coverage: None,
+            fuzz_fixtures: FuzzFixtures::default(),
         }
     }
 

@@ -254,7 +254,7 @@ impl TestArgs {
         let profiles = get_available_profiles(toml)?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.clone().fuzz)
+            .fuzz(config.fuzz.clone())
             .invariant(config.invariant)
             .profiles(profiles)
             .build(&output, project_root)?;
@@ -408,7 +408,7 @@ impl TestArgs {
             // Print suite header.
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
+                eprintln!("{} {warning}", "Warning:".yellow().bold());
             }
             if !tests.is_empty() {
                 let len = tests.len();
