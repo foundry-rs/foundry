@@ -24,7 +24,6 @@ use foundry_evm::{
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
     fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
-    revm::primitives::EnvWithHandlerCfg,
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -309,7 +308,7 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
-                        environment: self.get_environment(None),
+                        environment: self.get_environment(),
                         traces: setup.traces,
                         coverage: setup.coverage,
                         labeled_addresses: setup.labeled_addresses,
@@ -495,7 +494,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
-            environment: self.get_environment(Some(env)),
+            environment: self.get_environment(),
             traces,
             coverage,
             labeled_addresses,
@@ -537,7 +536,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
-                environment: self.get_environment(None),
+                environment: self.get_environment(),
                 coverage,
                 duration: start.elapsed(),
                 ..Default::default()
@@ -568,7 +567,7 @@ impl<'a> ContractRunner<'a> {
                         traces,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
-                        environment: self.get_environment(None),
+                        environment: self.get_environment(),
                         duration: start.elapsed(),
                         ..Default::default()
                     }
@@ -635,7 +634,7 @@ impl<'a> ContractRunner<'a> {
                 calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
                 reverts,
             },
-            environment: self.get_environment(None),
+            environment: self.get_environment(),
             coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
@@ -699,7 +698,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
-                environment: self.get_environment(None),
+                environment: self.get_environment(),
                 debug,
                 breakpoints,
                 coverage,
@@ -772,7 +771,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind,
-            environment: self.get_environment(None),
+            environment: self.get_environment(),
             traces,
             coverage,
             labeled_addresses,
@@ -787,19 +786,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
-    fn get_environment(&self, env: Option<EnvWithHandlerCfg>) -> TestEnvironment {
-        // If a fork occurs inside of a test, use the block number of the fork as the test
-        // Note: if a user uses `vm.roll` in a test, the test will be marked as a fork.
-        if let Some(environment) = env {
-            let block_number = environment.env.block.number.to::<u64>();
-
-            // If the block number is at genesis we assume it is a non-forked environment and
-            // continue checking for forks in the backend.
-            if block_number > 1 {
-                return TestEnvironment::Fork { block_number }
-            }
-        }
-
+    fn get_environment(&self) -> TestEnvironment {
         self.executor
             .backend
             .has_forks()
