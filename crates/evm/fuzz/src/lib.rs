@@ -10,6 +10,7 @@ extern crate tracing;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_primitives::{Address, Bytes, Log};
 use foundry_common::{calc, contracts::ContractsByAddress};
+use foundry_evm::Context;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
@@ -149,6 +150,9 @@ pub struct FuzzTestResult {
     /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
     /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
     pub traces: Option<CallTraceArena>,
+
+    /// Execution contexts
+    pub contexts: Vec<Context>,
 
     /// Additional traces used for gas report construction.
     /// Those traces should not be displayed.

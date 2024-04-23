@@ -1,5 +1,8 @@
 use super::{BasicTxDetails, InvariantContract};
-use crate::executors::{Executor, RawCallResult};
+use crate::{
+    executors::{Executor, RawCallResult},
+    inspectors::Context,
+};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
@@ -153,6 +156,7 @@ impl FailedInvariantCaseData {
         mut ided_contracts: ContractsByAddress,
         logs: &mut Vec<Log>,
         traces: &mut Traces,
+        contexts: &mut Vec<Context>,
     ) -> Result<Option<CounterExample>> {
         let mut counterexample_sequence = vec![];
         let mut calls = match self.test_error {
@@ -179,6 +183,7 @@ impl FailedInvariantCaseData {
 
             logs.extend(call_result.logs);
             traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
+            contexts.extend(call_result.contexts);
 
             // Identify newly generated contracts, if they exist.
             ided_contracts.extend(load_contracts(
@@ -199,9 +204,10 @@ impl FailedInvariantCaseData {
                 let error_call_result =
                     executor.call_raw(CALLER, self.addr, func.clone(), U256::ZERO)?;
 
-                traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
-
                 logs.extend(error_call_result.logs);
+                traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
+                contexts.extend(error_call_result.contexts);
+
                 if error_call_result.reverted {
                     break
                 }

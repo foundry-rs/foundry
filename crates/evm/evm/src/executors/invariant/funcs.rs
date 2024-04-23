@@ -1,5 +1,8 @@
 use super::{error::FailedInvariantCaseData, InvariantFailures, InvariantFuzzError};
-use crate::executors::{Executor, RawCallResult};
+use crate::{
+    executors::{Executor, RawCallResult},
+    inspectors::Context,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::Log;
@@ -75,6 +78,7 @@ pub fn replay_run(
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
+    contexts: &mut Vec<Context>,
     coverage: &mut Option<HitMaps>,
     func: Function,
     inputs: Vec<BasicTxDetails>,
@@ -91,6 +95,7 @@ pub fn replay_run(
 
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
+        contexts.extend(call_result.contexts);
 
         if let Some(new_coverage) = call_result.coverage {
             if let Some(old_coverage) = coverage {
@@ -114,9 +119,9 @@ pub fn replay_run(
             U256::ZERO,
         )?;
 
-        traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
-
         logs.extend(error_call_result.logs);
+        traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
+        contexts.extend(error_call_result.contexts);
     }
     Ok(())
 }

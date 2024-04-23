@@ -440,7 +440,13 @@ impl<'a> ContractRunner<'a> {
         let _guard = span.enter();
 
         let TestSetup {
-            address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
+            address,
+            mut logs,
+            mut traces,
+            mut contexts,
+            mut labeled_addresses,
+            mut coverage,
+            ..
         } = setup;
 
         // Run unit test
@@ -462,6 +468,7 @@ impl<'a> ContractRunner<'a> {
                     reason: None,
                     decoded_logs: decode_console_logs(&logs),
                     traces,
+                    contexts,
                     labeled_addresses,
                     kind: TestKind::Standard(0),
                     duration: start.elapsed(),
@@ -474,6 +481,7 @@ impl<'a> ContractRunner<'a> {
                     reason: Some(err.to_string()),
                     decoded_logs: decode_console_logs(&logs),
                     traces,
+                    contexts,
                     labeled_addresses,
                     kind: TestKind::Standard(0),
                     duration: start.elapsed(),
@@ -488,7 +496,7 @@ impl<'a> ContractRunner<'a> {
             stipend,
             logs: execution_logs,
             traces: execution_trace,
-            contexts,
+            contexts: execution_contexts,
             coverage: execution_coverage,
             labels: new_labels,
             state_changeset,
@@ -502,6 +510,7 @@ impl<'a> ContractRunner<'a> {
         traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
         labeled_addresses.extend(new_labels);
         logs.extend(execution_logs);
+        contexts.extend(execution_contexts);
         coverage = merge_coverages(coverage, execution_coverage);
         let environment = self.get_environment(&contexts);
 
@@ -549,8 +558,16 @@ impl<'a> ContractRunner<'a> {
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
-        let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
-            setup;
+        let TestSetup {
+            address,
+            logs,
+            traces,
+            contexts,
+            labeled_addresses,
+            coverage,
+            fuzz_fixtures,
+            ..
+        } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
@@ -567,6 +584,7 @@ impl<'a> ContractRunner<'a> {
                 reason: None,
                 decoded_logs: decode_console_logs(&logs),
                 traces,
+                contexts,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
                 coverage,
@@ -608,6 +626,7 @@ impl<'a> ContractRunner<'a> {
         let mut counterexample = None;
         let mut logs = logs.clone();
         let mut traces = traces.clone();
+        let mut contexts = contexts.clone();
         let success = error.is_none();
         let reason = error.as_ref().and_then(|err| err.revert_reason());
         let mut coverage = coverage.clone();
@@ -622,6 +641,7 @@ impl<'a> ContractRunner<'a> {
                         identified_contracts.clone(),
                         &mut logs,
                         &mut traces,
+                        &mut contexts,
                     ) {
                         Ok(c) => counterexample = c,
                         Err(err) => {
@@ -642,6 +662,7 @@ impl<'a> ContractRunner<'a> {
                     identified_contracts.clone(),
                     &mut logs,
                     &mut traces,
+                    &mut contexts,
                     &mut coverage,
                     func.clone(),
                     last_run_inputs.clone(),
@@ -667,6 +688,7 @@ impl<'a> ContractRunner<'a> {
             },
             coverage,
             traces,
+            contexts,
             labeled_addresses: labeled_addresses.clone(),
             duration: start.elapsed(),
             gas_report_traces,
@@ -727,6 +749,7 @@ impl<'a> ContractRunner<'a> {
                 reason: None,
                 decoded_logs: decode_console_logs(&logs),
                 traces,
+                contexts,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
                 debug,
@@ -781,10 +804,11 @@ impl<'a> ContractRunner<'a> {
             runs: result.gas_by_case.len(),
         };
 
-        // Record logs, labels and traces
+        // Record logs, labels, traces and contexts
         logs.extend(result.logs);
         labeled_addresses.extend(result.labeled_addresses);
         traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
+        contexts.extend(result.contexts);
         coverage = merge_coverages(coverage, result.coverage);
 
         // Record test execution time
@@ -802,6 +826,7 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind,
             traces,
+            contexts,
             coverage,
             labeled_addresses,
             debug,
