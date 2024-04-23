@@ -441,6 +441,7 @@ impl CallTraceDecoder {
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
+            "serializeUintToHex" |
             "serializeInt" |
             "serializeAddress" |
             "serializeBytes32" |
