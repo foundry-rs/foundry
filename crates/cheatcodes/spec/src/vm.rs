@@ -375,6 +375,11 @@ interface Vm {
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prevrandao(bytes32 newPrevrandao) external;
+    /// Sets `block.prevrandao`.
+    /// Not available on EVM versions before Paris. Use `difficulty` instead.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prevrandao(uint256 newPrevrandao) external;
 
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -1496,6 +1501,10 @@ interface Vm {
     #[cheatcode(group = Environment)]
     function setEnv(string calldata name, string calldata value) external;
 
+    /// Gets the environment variable `name` and returns true if it exists, else returns false.
+    #[cheatcode(group = Environment)]
+    function envExists(string calldata name) external view returns (bool exists);
+
     /// Gets the environment variable `name` and parses it as `bool`.
     /// Reverts if the variable was not found or could not be parsed.
     #[cheatcode(group = Environment)]
@@ -1642,7 +1651,7 @@ interface Vm {
 
     /// Returns true if `forge` command was executed in given context.
     #[cheatcode(group = Environment)]
-    function isContext(ForgeContext context) external view returns (bool isContext);
+    function isContext(ForgeContext context) external view returns (bool result);
 
     // ======== Scripts ========
 
@@ -1751,7 +1760,7 @@ interface Vm {
     /// Returns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.
     /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
-    function indexOf(string memory input, string memory key) external pure returns (uint256);
+    function indexOf(string calldata input, string calldata key) external pure returns (uint256);
 
     // ======== JSON Parsing and Manipulation ========
 

@@ -23,11 +23,10 @@ use ethers::{
 };
 use foundry_common::{
     provider::alloy::get_http_provider,
-    rpc,
-    rpc::next_http_rpc_endpoint,
     types::{ToAlloy, ToEthers},
 };
 use foundry_config::Config;
+use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 

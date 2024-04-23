@@ -149,7 +149,7 @@ impl FailedInvariantCaseData {
     pub fn replay(
         &self,
         mut executor: Executor,
-        known_contracts: Option<&ContractsByArtifact>,
+        known_contracts: &ContractsByArtifact,
         mut ided_contracts: ContractsByAddress,
         logs: &mut Vec<Log>,
         traces: &mut Traces,

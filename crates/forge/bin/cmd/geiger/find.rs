@@ -55,15 +55,15 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
             ($($name:literal => $field:ident),*) => {$(
                 let $field = &metrics.cheatcodes.$field[..];
                 if !$field.is_empty() {
-                    writeln!(f, "  {}  {}", Paint::red(metrics.cheatcodes.$field.len()), Paint::red($name))?;
+                    writeln!(f, "  {}  {}", metrics.cheatcodes.$field.len().red(), $name.red())?;
 
                     for &loc in $field {
                         let content = &metrics.contents[loc.range()];
                         let (line, col) = offset_to_line_column(&metrics.contents, loc.start());
                         let pos = format!("  --> {}:{}:{}", file.display(), line, col);
-                        writeln!(f,"{}", Paint::red(pos))?;
+                        writeln!(f,"{}", pos.red())?;
                         for line in content.lines() {
-                            writeln!(f, "      {}", Paint::red(line))?;
+                            writeln!(f, "      {}", line.red())?;
                         }
                     }
                 }
@@ -71,12 +71,7 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
         }
 
         if !metrics.cheatcodes.is_empty() {
-            writeln!(
-                f,
-                "{}    {}",
-                Paint::red(metrics.cheatcodes.len()),
-                Paint::red(file.display())
-            )?;
+            writeln!(f, "{}    {}", metrics.cheatcodes.len().red(), file.display().red())?;
             print_unsafe_fn!(
                 "ffi" => ffi,
                 "readFile" => read_file,

@@ -12,7 +12,7 @@ use std::{
     io::{Read, Write as _},
     path::{Path, PathBuf},
 };
-use yansi::Color;
+use yansi::{Color, Paint, Style};
 
 /// CLI arguments for `forge fmt`.
 #[derive(Clone, Debug, Parser)]
@@ -217,24 +217,24 @@ where
         }
         for op in group {
             for change in diff.iter_inline_changes(&op) {
-                let dimmed = Color::Default.style().dimmed();
+                let dimmed = Style::new().dim();
                 let (sign, s) = match change.tag() {
-                    ChangeTag::Delete => ("-", Color::Red.style()),
-                    ChangeTag::Insert => ("+", Color::Green.style()),
+                    ChangeTag::Delete => ("-", Color::Red.foreground()),
+                    ChangeTag::Insert => ("+", Color::Green.foreground()),
                     ChangeTag::Equal => (" ", dimmed),
                 };
 
                 let _ = write!(
                     diff_summary,
                     "{}{} |{}",
-                    dimmed.paint(Line(change.old_index())),
-                    dimmed.paint(Line(change.new_index())),
-                    s.bold().paint(sign),
+                    Line(change.old_index()).paint(dimmed),
+                    Line(change.new_index()).paint(dimmed),
+                    sign.paint(s.bold()),
                 );
 
                 for (emphasized, value) in change.iter_strings_lossy() {
                     let s = if emphasized { s.underline().bg(Color::Black) } else { s };
-                    let _ = write!(diff_summary, "{}", s.paint(value));
+                    let _ = write!(diff_summary, "{}", value.paint(s));
                 }
 
                 if change.missing_newline() {

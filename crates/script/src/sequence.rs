@@ -324,11 +324,12 @@ impl ScriptSequence {
         if !unverifiable_contracts.is_empty() {
             println!(
                 "\n{}",
-                Paint::yellow(format!(
+                format!(
                     "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
                     unverifiable_contracts,
                     "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
-                ))
+                )
+                .yellow()
                 .bold(),
             );
 

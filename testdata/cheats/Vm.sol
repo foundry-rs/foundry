@@ -186,6 +186,7 @@ interface Vm {
     function envBytes32(string calldata name, string calldata delim) external view returns (bytes32[] memory value);
     function envBytes(string calldata name) external view returns (bytes memory value);
     function envBytes(string calldata name, string calldata delim) external view returns (bytes[] memory value);
+    function envExists(string calldata name) external view returns (bool exists);
     function envInt(string calldata name) external view returns (int256 value);
     function envInt(string calldata name, string calldata delim) external view returns (int256[] memory value);
     function envOr(string calldata name, bool defaultValue) external view returns (bool value);
@@ -241,8 +242,8 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
-    function indexOf(string memory input, string memory key) external pure returns (uint256);
-    function isContext(ForgeContext context) external view returns (bool isContext);
+    function indexOf(string calldata input, string calldata key) external pure returns (uint256);
+    function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
@@ -305,6 +306,7 @@ interface Vm {
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
+    function prevrandao(uint256 newPrevrandao) external;
     function projectRoot() external view returns (string memory path);
     function prompt(string calldata promptText) external returns (string memory input);
     function promptAddress(string calldata promptText) external returns (address);

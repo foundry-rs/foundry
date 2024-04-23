@@ -11,15 +11,14 @@ use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::request::TransactionRequest;
 use async_recursion::async_recursion;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::alloy::{get_http_provider, RpcUrl},
-    shell, ContractsByArtifact,
+    shell, ContractData, ContractsByArtifact,
 };
-use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
@@ -62,11 +61,9 @@ impl LinkedState {
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 
-        let ContractBytecodeSome { abi, bytecode, .. } = build_data.get_target_contract()?;
+        let ContractData { abi, bytecode, .. } = build_data.get_target_contract()?;
 
-        let bytecode = bytecode.into_bytes().ok_or_else(|| {
-            eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
-        })?;
+        let bytecode = bytecode.ok_or_eyre("target contract has no bytecode")?;
 
         let (func, calldata) = args.get_method_and_calldata(&abi)?;
 
@@ -99,7 +96,7 @@ impl PreExecutionState {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
-                self.build_data.build_data.artifact_ids.clone(),
+                self.build_data.known_contracts.clone(),
                 self.script_wallets.clone(),
                 self.args.debug,
                 self.build_data.build_data.target.clone(),
@@ -270,7 +267,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                     .map(|(_, chain)| *chain as u64)
                     .format(", ")
             );
-            shell::println(Paint::yellow(msg))?;
+            shell::println(msg.yellow())?;
         }
         Ok(())
     }
@@ -301,8 +298,7 @@ impl ExecutedState {
     pub async fn prepare_simulation(self) -> Result<PreSimulationState> {
         let returns = self.get_returns()?;
 
-        let known_contracts = self.build_data.get_flattened_contracts(true);
-        let decoder = self.build_trace_decoder(&known_contracts)?;
+        let decoder = self.build_trace_decoder(&self.build_data.known_contracts)?;
 
         let txs = self.execution_result.transactions.clone().unwrap_or_default();
         let rpc_data = RpcData::from_transactions(&txs);
@@ -310,9 +306,7 @@ impl ExecutedState {
         if rpc_data.is_multi_chain() {
             shell::eprintln(format!(
                 "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
+                "Multi chain deployment is still under development. Use with caution.".yellow()
             ))?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
@@ -457,7 +451,7 @@ impl PreSimulationState {
         }
 
         if result.success {
-            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
+            shell::println(format!("{}", "Script ran successfully.".green()))?;
         }
 
         if self.script_config.evm_opts.fork_url.is_none() {

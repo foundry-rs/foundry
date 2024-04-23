@@ -8,8 +8,8 @@ use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
-    Solc, SolcConfig,
+    Artifact, ArtifactId, FileFilter, Project, ProjectCompileOutput, ProjectPathsConfig, Solc,
+    SolcConfig,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -470,27 +470,12 @@ pub struct ContractInfo {
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target_with_filter(
+pub fn compile_target(
     target_path: &Path,
     project: &Project,
     quiet: bool,
-    verify: bool,
-    skip: Vec<SkipBuildFilter>,
 ) -> Result<ProjectCompileOutput> {
-    let graph = Graph::resolve(&project.paths)?;
-
-    // Checking if it's a standalone script, or part of a project.
-    let mut compiler = ProjectCompiler::new().quiet(quiet);
-    if !skip.is_empty() {
-        compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
-    }
-    if !graph.files().contains_key(target_path) {
-        if verify {
-            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
-        }
-        compiler = compiler.files([target_path.into()]);
-    }
-    compiler.compile(project)
+    ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
 /// Compiles an Etherscan source from metadata by creating a project.
@@ -575,19 +560,35 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
 #[derive(Clone, Debug)]
-pub struct SkipBuildFilters(Vec<GlobMatcher>);
+pub struct SkipBuildFilters {
+    /// All provided filters.
+    pub matchers: Vec<GlobMatcher>,
+    /// Root of the project.
+    pub project_root: PathBuf,
+}
 
 impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
-        self.0.iter().all(|matcher| is_match_exclude(matcher, file))
+        self.matchers.iter().all(|matcher| {
+            if !is_match_exclude(matcher, file) {
+                false
+            } else {
+                file.strip_prefix(&self.project_root)
+                    .map_or(true, |stripped| is_match_exclude(matcher, stripped))
+            }
+        })
     }
 }
 
 impl SkipBuildFilters {
     /// Creates a new `SkipBuildFilters` from multiple `SkipBuildFilter`.
-    pub fn new(matchers: impl IntoIterator<Item = SkipBuildFilter>) -> Result<Self> {
-        matchers.into_iter().map(|m| m.compile()).collect::<Result<_>>().map(Self)
+    pub fn new(
+        filters: impl IntoIterator<Item = SkipBuildFilter>,
+        project_root: PathBuf,
+    ) -> Result<Self> {
+        let matchers = filters.into_iter().map(|m| m.compile()).collect::<Result<_>>();
+        matchers.map(|filters| Self { matchers: filters, project_root })
     }
 }
 
