@@ -249,7 +249,6 @@ async fn test_subscriptions() {
 
 // TODO: Fix this, num > 17 breaks the test due to poller channel_size defaults to 16. Recv channel
 // lags behind.
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -257,17 +256,23 @@ async fn test_sub_new_heads_fast() {
     let provider = connect_pubsub(&handle.ws_endpoint()).await;
 
     let blocks = provider.subscribe_blocks().await.unwrap();
+    let mut blocks = blocks.into_stream();
 
     let num = 1000u64;
-    let mine_api = api.clone();
-    tokio::task::spawn(async move {
-        for _ in 0..num {
-            mine_api.mine_one().await;
-        }
-    });
-    // collect all the blocks
-    let blocks = blocks.into_stream().take(num as usize).collect::<Vec<_>>().await;
-    let block_numbers = blocks.into_iter().map(|b| b.header.number.unwrap()).collect::<Vec<_>>();
+
+    let mut block_numbers = Vec::new();
+    for _ in 0..num {
+        let mine = api.mine_one();
+        let block = async {
+            let block = blocks.next().await.unwrap();
+            block.header.number.unwrap()
+        };
+        let _ = mine.await;
+        let block_number = block.await;
+        block_numbers.push(block_number);
+    }
+
+    println!("Collected {} blocks", block_numbers.len());
 
     let numbers = (1..=num).collect::<Vec<_>>();
     assert_eq!(block_numbers, numbers);
