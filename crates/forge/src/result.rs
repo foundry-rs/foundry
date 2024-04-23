@@ -1,6 +1,6 @@
 //! Test outcomes.
 
-use alloy_primitives::{Address, Log};
+use alloy_primitives::{Address, Log, U256};
 use foundry_common::{
     evm::Breakpoints, get_contract_name, get_file_name, shell, ContractsByArtifact,
 };
@@ -546,7 +546,7 @@ pub enum TestEnvironment {
     /// A forked test environment
     Fork {
         /// The block number at which the test was executed
-        block_number: u64,
+        block_number: U256,
     },
 }
 
@@ -572,7 +572,7 @@ impl TestEnvironment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TestEnvironmentReport {
     Standard,
-    Fork { block_number: u64 },
+    Fork { block_number: U256 },
 }
 
 impl fmt::Display for TestEnvironmentReport {

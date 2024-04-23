@@ -782,19 +782,20 @@ impl<'a> ContractRunner<'a> {
 
     /// Returns the environment of the test runner
     ///
+    /// If the [RawCallResult] contains a non-genesis context, the
+    /// environment is a fork. Otherwise, it is a standard environment.
+    ///
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
     fn get_environment(&self, contexts: &Vec<Context>) -> TestEnvironment {
-        if contexts.iter().any(|context| context.block_number > 1) {
+        if contexts.iter().any(|context| context.block_number.gt(&U256::from(1))) {
             return TestEnvironment::Fork { block_number: contexts.last().unwrap().block_number }
         }
 
         self.executor
             .backend
             .has_forks()
-            .then(|| TestEnvironment::Fork {
-                block_number: self.executor.env.block.number.to::<u64>(),
-            })
+            .then(|| TestEnvironment::Fork { block_number: self.executor.env.block.number })
             .unwrap_or_default()
     }
 }
