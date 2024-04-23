@@ -71,11 +71,12 @@ where
     /// # Example
     ///
     /// ```
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// # Ok(())
     /// # }
@@ -92,7 +93,7 @@ where
     /// use alloy_primitives::{Address, U256, Bytes};
     /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
+    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
     ///
@@ -101,7 +102,7 @@ where
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let alloy_provider = get_http_provider("http://localhost:8545");
+    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
@@ -165,7 +166,7 @@ where
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
     /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
-    /// use foundry_common::provider::alloy::get_http_provider;
+    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
     ///
@@ -174,7 +175,7 @@ where
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
@@ -225,7 +226,7 @@ where
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
     /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
-    /// use foundry_common::provider::alloy::get_http_provider;
+    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
     ///
@@ -234,7 +235,7 @@ where
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
     /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
@@ -264,11 +265,12 @@ where
     /// # Example
     ///
     /// ```
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let res = cast.publish("0x1234".to_string()).await?;
     /// println!("{:?}", res);
@@ -292,11 +294,12 @@ where
     /// # Example
     ///
     /// ```
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
@@ -449,12 +452,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await?;
@@ -470,12 +474,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let implementation = cast.implementation(addr, None).await?;
@@ -495,12 +500,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let admin = cast.admin(addr, None).await?;
@@ -520,12 +526,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, U256};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let computed_address = cast.compute_address(addr, None).await?;
@@ -542,12 +549,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let code = cast.code(addr, None, false).await?;
@@ -573,12 +581,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let codesize = cast.codesize(addr, None).await?;
@@ -594,11 +603,12 @@ where
     /// # Example
     ///
     /// ```
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
     /// let tx = cast.transaction(tx_hash.to_string(), None, false, false).await?;
@@ -632,11 +642,12 @@ where
     /// # Example
     ///
     /// ```
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
     /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
@@ -691,11 +702,12 @@ where
     /// # Example
     ///
     /// ```
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let result = cast
     ///     .rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
@@ -721,12 +733,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, B256};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
     /// let slot = B256::ZERO;
@@ -776,13 +789,14 @@ where
     ///
     /// ```
     /// use alloy_primitives::fixed_bytes;
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use alloy_rpc_types::{BlockId, BlockNumberOrTag};
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::{convert::TryFrom, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_http_provider("http://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     ///
     /// let block_number = cast.convert_block_number(Some(BlockId::number(5))).await?;
@@ -822,7 +836,7 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{ProviderBuilder, RootProvider};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use alloy_rpc_types::Filter;
     /// use alloy_transport::BoxTransport;
     /// use cast::Cast;
@@ -830,7 +844,8 @@ where
     /// use std::{io, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = get_ws_provider("wss://localhost:8545");
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("wss://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     ///
     /// let filter =
