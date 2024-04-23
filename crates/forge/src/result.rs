@@ -9,7 +9,7 @@ use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
     executors::EvmError,
-    fuzz::{CounterExample, FuzzCase},
+    fuzz::{CounterExample, FuzzCase, FuzzFixtures},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
@@ -599,6 +599,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Coverage info during setup
     pub coverage: Option<HitMaps>,
+    /// Defined fuzz test fixtures
+    pub fuzz_fixtures: FuzzFixtures,
 }
 
 impl TestSetup {
@@ -631,8 +633,9 @@ impl TestSetup {
         traces: Traces,
         labeled_addresses: HashMap<Address, String>,
         coverage: Option<HitMaps>,
+        fuzz_fixtures: FuzzFixtures,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
     }
 
     pub fn failed_with(
@@ -648,6 +651,7 @@ impl TestSetup {
             labeled_addresses,
             reason: Some(reason),
             coverage: None,
+            fuzz_fixtures: FuzzFixtures::default(),
         }
     }
 

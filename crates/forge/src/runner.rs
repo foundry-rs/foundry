@@ -5,6 +5,7 @@ use crate::{
     result::{SuiteResult, TestEnvironment, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
+use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256};
 use eyre::Result;
@@ -20,9 +21,9 @@ use foundry_evm::{
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
-        EvmError, ExecutionErr, Executor, RawCallResult,
+        CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
-    fuzz::{invariant::InvariantContract, CounterExample},
+    fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
     revm::primitives::EnvWithHandlerCfg,
     traces::{load_contracts, TraceKind},
 };
@@ -167,12 +168,82 @@ impl<'a> ContractRunner<'a> {
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
 
-            TestSetup { address, logs, traces, labeled_addresses, reason, coverage }
+            TestSetup {
+                address,
+                logs,
+                traces,
+                labeled_addresses,
+                reason,
+                coverage,
+                fuzz_fixtures: self.fuzz_fixtures(address),
+            }
         } else {
-            TestSetup::success(address, logs, traces, Default::default(), None)
+            TestSetup::success(
+                address,
+                logs,
+                traces,
+                Default::default(),
+                None,
+                self.fuzz_fixtures(address),
+            )
         };
 
         Ok(setup)
+    }
+
+    /// Collect fixtures from test contract.
+    ///
+    /// Fixtures can be defined:
+    /// - as storage arrays in test contract, prefixed with `fixture`
+    /// - as functions prefixed with `fixture` and followed by parameter name to be
+    /// fuzzed
+    ///
+    /// Storage array fixtures:
+    /// `uint256[] public fixture_amount = [1, 2, 3];`
+    /// define an array of uint256 values to be used for fuzzing `amount` named parameter in scope
+    /// of the current test.
+    ///
+    /// Function fixtures:
+    /// `function fixture_owner() public returns (address[] memory){}`
+    /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
+    /// current test.
+    fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
+        let mut fixtures = HashMap::new();
+        self.contract.abi.functions().filter(|func| func.is_fixture()).for_each(|func| {
+            if func.inputs.is_empty() {
+                // Read fixtures declared as functions.
+                if let Ok(CallResult { raw: _, decoded_result }) =
+                    self.executor.call(CALLER, address, func, &[], U256::ZERO, None)
+                {
+                    fixtures.insert(fixture_name(func.name.clone()), decoded_result);
+                }
+            } else {
+                // For reading fixtures from storage arrays we collect values by calling the
+                // function with incremented indexes until there's an error.
+                let mut vals = Vec::new();
+                let mut index = 0;
+                loop {
+                    if let Ok(CallResult { raw: _, decoded_result }) = self.executor.call(
+                        CALLER,
+                        address,
+                        func,
+                        &[DynSolValue::Uint(U256::from(index), 256)],
+                        U256::ZERO,
+                        None,
+                    ) {
+                        vals.push(decoded_result);
+                    } else {
+                        // No result returned for this index, we reached the end of storage
+                        // array or the function is not a valid fixture.
+                        break;
+                    }
+                    index += 1;
+                }
+                fixtures.insert(fixture_name(func.name.clone()), DynSolValue::Array(vals));
+            };
+        });
+
+        FuzzFixtures::new(fixtures)
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -446,7 +517,8 @@ impl<'a> ContractRunner<'a> {
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
-        let TestSetup { address, logs, traces, labeled_addresses, coverage, .. } = setup;
+        let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
+            setup;
 
         // First, run the test normally to see if it needs to be skipped.
         let start = Instant::now();
@@ -484,7 +556,7 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_function: func, abi: &self.contract.abi };
 
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
-            match evm.invariant_fuzz(invariant_contract.clone()) {
+            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures) {
                 Ok(x) => x,
                 Err(e) => {
                     return TestResult {
@@ -594,7 +666,13 @@ impl<'a> ContractRunner<'a> {
         let _guard = span.enter();
 
         let TestSetup {
-            address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
+            address,
+            mut logs,
+            mut traces,
+            mut labeled_addresses,
+            mut coverage,
+            fuzz_fixtures,
+            ..
         } = setup;
 
         // Run fuzz test
@@ -605,7 +683,8 @@ impl<'a> ContractRunner<'a> {
             self.sender,
             fuzz_config.clone(),
         );
-        let result = fuzzed_executor.fuzz(func, address, should_fail, self.revert_decoder);
+        let result =
+            fuzzed_executor.fuzz(func, &fuzz_fixtures, address, should_fail, self.revert_decoder);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();

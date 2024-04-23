@@ -37,7 +37,7 @@ impl<T> InlineConfig<T> {
     }
 
     /// Inserts an inline configuration, for a test function.
-    /// Configuration is identified by the pair "contract", "function".    
+    /// Configuration is identified by the pair "contract", "function".
     pub fn insert<C, F>(&mut self, contract_id: C, fn_name: F, config: T)
     where
         C: Into<String>,
