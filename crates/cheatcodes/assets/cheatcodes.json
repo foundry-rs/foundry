@@ -7193,6 +7193,26 @@
     },
     {
       "func": {
+        "id": "serializeUintToHex",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeUintToHex(string,string,uint256)",
+        "selector": "0xae5a2ae8",
+        "selectorBytes": [
+          174,
+          90,
+          42,
+          232
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "serializeUint_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);",

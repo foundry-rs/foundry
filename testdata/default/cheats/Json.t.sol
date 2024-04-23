@@ -224,6 +224,7 @@ contract WriteJsonTest is DSTest {
         vm.serializeBool(json1, "boolean", true);
         vm.serializeInt(json2, "key2", -234);
         vm.serializeUint(json2, "deploy", uint256(254));
+        vm.serializeUintToHex(json2, "hexUint", uint256(255));
         string memory data = vm.serializeBool(json2, "boolean", true);
         vm.serializeString(json2, "json1", data);
         emit log(data);
