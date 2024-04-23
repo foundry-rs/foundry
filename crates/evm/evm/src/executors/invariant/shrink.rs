@@ -53,14 +53,15 @@ impl CallSequenceShrinker {
         }
     }
 
-    /// Reverts removed call from sequence.
+    /// Reverts removed call from sequence and tries to simplify next call.
     pub(crate) fn complicate(&mut self) -> bool {
         match self.prev_shrink {
             Some(shrink) => {
                 // Undo the last call removed.
                 self.included_calls.set(shrink.call_index);
                 self.prev_shrink = None;
-                true
+                // Try to simplify next call.
+                self.simplify()
             }
             None => false,
         }
