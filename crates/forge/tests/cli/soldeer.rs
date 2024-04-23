@@ -1,6 +1,9 @@
 //! Contains various tests related to `forge soldeer`.
 
-use std::{ fs::{ self, OpenOptions }, path::Path };
+use std::{
+    fs::{self, OpenOptions},
+    path::Path,
+};
 
 use foundry_test_utils::forgesoldeer;
 use std::io::Write;
@@ -13,17 +16,13 @@ forgesoldeer!(install_dependency, |prj, cmd| {
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
-    let path_dep_forge = prj
-        .root()
-        .join("dependencies")
-        .join("forge-std-v1.8.1")
-        .join("foundry.toml");
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-v1.8.1").join("foundry.toml");
     assert_eq!(path_dep_forge.exists(), true);
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents =
-        r#"
+    let lock_contents = r#"
 [[dependencies]]
 name = "forge-std"
 version = "v1.8.1"
@@ -36,8 +35,7 @@ checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
 
     // Making sure the foundry contents are the right ones
     let foundry_file = prj.root().join("foundry.toml");
-    let foundry_contents =
-        r#"[profile.default]
+    let foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -63,8 +61,7 @@ forgesoldeer!(update_dependencies, |prj, cmd| {
     let command = "update";
 
     // We need to write this into the foundry.toml to make the update install the dependency
-    let foundry_updates =
-        r#"
+    let foundry_updates = r#"
 [dependencies]
 forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip" }
 "#;
@@ -81,17 +78,13 @@ forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
-    let path_dep_forge = prj
-        .root()
-        .join("dependencies")
-        .join("forge-std-v1.8.1")
-        .join("foundry.toml");
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-v1.8.1").join("foundry.toml");
     assert_eq!(path_dep_forge.exists(), true);
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents =
-        r#"
+    let lock_contents = r#"
 [[dependencies]]
 name = "forge-std"
 version = "v1.8.1"
@@ -103,8 +96,7 @@ checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
     assert_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
-    let foundry_contents =
-        r#"[profile.default]
+    let foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]

@@ -1,6 +1,6 @@
 //! Configuration specific to the `forge soldeer` command and the `forge_soldeer` package
 
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 
 /// Soldeer dependencies config structure
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,9 +14,6 @@ pub struct SoldeerDependency {
 
 impl Default for SoldeerDependency {
     fn default() -> Self {
-        SoldeerDependency {
-            version: String::new(),
-            url: String::new(),
-        }
+        SoldeerDependency { version: String::new(), url: String::new() }
     }
 }
