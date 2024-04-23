@@ -840,7 +840,6 @@ impl<'a> ContractRunner<'a> {
             breakpoints,
             duration,
             gas_report_traces: result.gas_report_traces.into_iter().map(|t| vec![t]).collect(),
-            ..Default::default()
         }
     }
 
