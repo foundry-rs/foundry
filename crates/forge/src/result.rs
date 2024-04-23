@@ -594,6 +594,8 @@ pub struct TestSetup {
     pub logs: Vec<Log>,
     /// Call traces of the setup
     pub traces: Traces,
+    /// Contexts of the setup
+    pub contexts: Vec<Context>,
     /// Addresses labeled during setup
     pub labeled_addresses: HashMap<Address, String>,
     /// The reason the setup failed, if it did
@@ -609,6 +611,7 @@ impl TestSetup {
         error: EvmError,
         mut logs: Vec<Log>,
         mut traces: Traces,
+        mut contexts: Vec<Context>,
         mut labeled_addresses: HashMap<Address, String>,
     ) -> Self {
         match error {
@@ -616,12 +619,14 @@ impl TestSetup {
                 // force the tracekind to be setup so a trace is shown.
                 traces.extend(err.raw.traces.map(|traces| (TraceKind::Setup, traces)));
                 logs.extend(err.raw.logs);
+                contexts.extend(err.raw.contexts);
                 labeled_addresses.extend(err.raw.labels);
-                Self::failed_with(logs, traces, labeled_addresses, err.reason)
+                Self::failed_with(logs, traces, contexts, labeled_addresses, err.reason)
             }
             e => Self::failed_with(
                 logs,
                 traces,
+                contexts,
                 labeled_addresses,
                 format!("failed to deploy contract: {e}"),
             ),
@@ -632,16 +637,27 @@ impl TestSetup {
         address: Address,
         logs: Vec<Log>,
         traces: Traces,
+        contexts: Vec<Context>,
         labeled_addresses: HashMap<Address, String>,
         coverage: Option<HitMaps>,
         fuzz_fixtures: FuzzFixtures,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
+        Self {
+            address,
+            logs,
+            traces,
+            contexts,
+            labeled_addresses,
+            reason: None,
+            coverage,
+            fuzz_fixtures,
+        }
     }
 
     pub fn failed_with(
         logs: Vec<Log>,
         traces: Traces,
+        contexts: Vec<Context>,
         labeled_addresses: HashMap<Address, String>,
         reason: String,
     ) -> Self {
@@ -649,6 +665,7 @@ impl TestSetup {
             address: Address::ZERO,
             logs,
             traces,
+            contexts,
             labeled_addresses,
             reason: Some(reason),
             coverage: None,

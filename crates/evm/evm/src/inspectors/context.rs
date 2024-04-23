@@ -5,8 +5,8 @@ use revm::{
 };
 use serde::{Deserialize, Serialize};
 
+/// An execution context
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-/// A context
 pub struct Context {
     /// The block number of the context.
     pub block_number: U256,
@@ -15,7 +15,7 @@ pub struct Context {
 /// An inspector that collects EVM context during execution.
 #[derive(Clone, Debug, Default)]
 pub struct ContextCollector {
-    /// The collected contexts.
+    /// The collected execution contexts.
     pub contexts: Vec<Context>,
 }
 

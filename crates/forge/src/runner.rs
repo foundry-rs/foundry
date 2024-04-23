@@ -99,6 +99,7 @@ impl<'a> ContractRunner<'a> {
         // Deploy libraries
         let mut logs = Vec::new();
         let mut traces = Vec::with_capacity(self.contract.libs_to_deploy.len());
+        let mut contexts = Vec::new();
         for code in self.contract.libs_to_deploy.iter() {
             match self.executor.deploy(
                 self.sender,
@@ -109,9 +110,16 @@ impl<'a> ContractRunner<'a> {
                 Ok(d) => {
                     logs.extend(d.raw.logs);
                     traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
+                    contexts.extend(d.raw.contexts);
                 }
                 Err(e) => {
-                    return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
+                    return Ok(TestSetup::from_evm_error_with(
+                        e,
+                        logs,
+                        traces,
+                        contexts,
+                        Default::default(),
+                    ))
                 }
             }
         }
@@ -132,10 +140,17 @@ impl<'a> ContractRunner<'a> {
             Ok(d) => {
                 logs.extend(d.raw.logs);
                 traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
+                contexts.extend(d.raw.contexts);
                 d.address
             }
             Err(e) => {
-                return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
+                return Ok(TestSetup::from_evm_error_with(
+                    e,
+                    logs,
+                    traces,
+                    contexts,
+                    Default::default(),
+                ))
             }
         };
 
@@ -149,29 +164,44 @@ impl<'a> ContractRunner<'a> {
         let setup = if setup {
             trace!("setting up");
             let res = self.executor.setup(None, address, Some(self.revert_decoder));
-            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match res {
-                Ok(RawCallResult { traces, labels, logs, coverage, .. }) => {
-                    trace!(contract=%address, "successfully setUp test");
-                    (logs, traces, labels, None, coverage)
-                }
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr {
-                        raw: RawCallResult { traces, labels, logs, coverage, .. },
-                        reason,
-                    } = *err;
-                    (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
-                }
-                Err(err) => {
-                    (Vec::new(), None, HashMap::new(), Some(format!("setup failed: {err}")), None)
-                }
-            };
-            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+            let (setup_logs, setup_traces, setup_contexts, labeled_addresses, reason, coverage) =
+                match res {
+                    Ok(RawCallResult { traces, labels, logs, contexts, coverage, .. }) => {
+                        trace!(contract=%address, "successfully setUp test");
+                        (logs, traces, contexts, labels, None, coverage)
+                    }
+                    Err(EvmError::Execution(err)) => {
+                        let ExecutionErr {
+                            raw: RawCallResult { traces, labels, contexts, logs, coverage, .. },
+                            reason,
+                        } = *err;
+                        (
+                            logs,
+                            traces,
+                            contexts,
+                            labels,
+                            Some(format!("setup failed: {reason}")),
+                            coverage,
+                        )
+                    }
+                    Err(err) => (
+                        Vec::new(),
+                        None,
+                        Vec::new(),
+                        HashMap::new(),
+                        Some(format!("setup failed: {err}")),
+                        None,
+                    ),
+                };
             logs.extend(setup_logs);
+            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+            contexts.extend(setup_contexts);
 
             TestSetup {
                 address,
                 logs,
                 traces,
+                contexts,
                 labeled_addresses,
                 reason,
                 coverage,
@@ -182,6 +212,7 @@ impl<'a> ContractRunner<'a> {
                 address,
                 logs,
                 traces,
+                contexts,
                 Default::default(),
                 None,
                 self.fuzz_fixtures(address),
@@ -667,6 +698,7 @@ impl<'a> ContractRunner<'a> {
             address,
             mut logs,
             mut traces,
+            mut contexts,
             mut labeled_addresses,
             mut coverage,
             fuzz_fixtures,
