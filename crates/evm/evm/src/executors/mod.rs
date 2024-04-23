@@ -7,7 +7,7 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    cheatcodes::BroadcastableTransactions, Cheatcodes, Context, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -20,6 +20,7 @@ use foundry_evm_core::{
     },
     debug::DebugArena,
     decode::RevertDecoder,
+    fork::Context,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;

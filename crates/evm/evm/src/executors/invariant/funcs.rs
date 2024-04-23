@@ -1,13 +1,10 @@
 use super::{error::FailedInvariantCaseData, InvariantFailures, InvariantFuzzError};
-use crate::{
-    executors::{Executor, RawCallResult},
-    inspectors::Context,
-};
+use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::Log;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::constants::CALLER;
+use foundry_evm_core::{constants::CALLER, fork::Context};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract};
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};

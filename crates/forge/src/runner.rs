@@ -23,8 +23,8 @@ use foundry_evm::{
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
+    fork::Context,
     fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
-    inspectors::Context,
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -615,6 +615,7 @@ impl<'a> ContractRunner<'a> {
                         )),
                         decoded_logs: decode_console_logs(&logs),
                         traces,
+                        contexts,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
                         duration: start.elapsed(),
@@ -844,7 +845,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
-    fn get_environment(&self, contexts: &[Context]) -> TestEnvironment {
+    fn get_environment(&self, contexts: &Vec<Context>) -> TestEnvironment {
         if contexts.iter().any(|context| context.block_number.gt(&U256::from(1))) {
             return TestEnvironment::Fork { block_number: contexts.last().unwrap().block_number }
         }

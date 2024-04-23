@@ -9,8 +9,8 @@ use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
     executors::EvmError,
+    fork::Context,
     fuzz::{CounterExample, FuzzCase, FuzzFixtures},
-    inspectors::Context,
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};

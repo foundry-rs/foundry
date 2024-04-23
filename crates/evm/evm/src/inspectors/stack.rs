@@ -1,11 +1,12 @@
 use super::{
-    context::Context, Cheatcodes, CheatsConfig, ChiselState, ContextCollector, CoverageCollector,
-    Debugger, Fuzzer, LogCollector, StackSnapshotType, TracingInspector, TracingInspectorConfig,
+    Cheatcodes, CheatsConfig, ChiselState, ContextCollector, CoverageCollector, Debugger, Fuzzer,
+    LogCollector, StackSnapshotType, TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
 use foundry_evm_core::{
     backend::{update_state, DatabaseExt},
     debug::DebugArena,
+    fork::Context,
     InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;

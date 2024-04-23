@@ -10,6 +10,9 @@ pub use init::environment;
 mod cache;
 pub use cache::{BlockchainDb, BlockchainDbMeta, JsonBlockCacheDB, MemDb};
 
+mod context;
+pub use context::Context;
+
 pub mod database;
 
 mod multi;

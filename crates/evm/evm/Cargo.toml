@@ -48,6 +48,5 @@ parking_lot = "0.12"
 proptest = "1"
 rand.workspace = true
 rayon = "1"
-serde.workspace = true
 thiserror = "1"
 tracing = "0.1"

@@ -1,16 +1,8 @@
-use alloy_primitives::U256;
+use foundry_evm_core::fork::Context;
 use revm::{
     interpreter::{CallInputs, CallOutcome},
     Database, EvmContext, Inspector,
 };
-use serde::{Deserialize, Serialize};
-
-/// An execution context
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct Context {
-    /// The block number of the context.
-    pub block_number: U256,
-}
 
 /// An inspector that collects EVM context during execution.
 #[derive(Clone, Debug, Default)]

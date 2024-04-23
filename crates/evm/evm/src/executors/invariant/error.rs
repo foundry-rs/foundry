@@ -1,13 +1,10 @@
 use super::{BasicTxDetails, InvariantContract};
-use crate::{
-    executors::{Executor, RawCallResult},
-    inspectors::Context,
-};
+use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log};
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::{constants::CALLER, decode::RevertDecoder};
+use foundry_evm_core::{constants::CALLER, decode::RevertDecoder, fork::Context};
 use foundry_evm_fuzz::{
     invariant::FuzzRunIdentifiedContracts, BaseCounterExample, CounterExample, FuzzedCases, Reason,
 };
