@@ -88,23 +88,27 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use alloy_primitves::Address;
-    /// use alloy_rpc_types::TransactionRequest;
+    /// ```
+    /// use alloy_primitives::{Address, U256, Bytes};
+    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
     /// use cast::Cast;
     /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
+    /// use alloy_sol_types::{sol, SolCall};
+    ///
+    /// sol!(
+    /// function greeting(uint256 i) public returns (string);
+    /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let alloy_provider = get_http_provider("http://localhost:8545");
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "function greeting(uint256 i) public returns (string)";
-    /// let args = vec!["5".to_owned()];
-    /// let mut builder = TransactionRequest::default().await?;
-    /// builder.set_args(sig, args).await?;
-    /// let builder_output = builder.build();
+    /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
+    /// let bytes = Bytes::from_iter(greeting.iter());
+    /// let tx = TransactionRequest::default().to(Some(to)).input(bytes.into());
+    /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(builder_output, None).await?;
+    /// let data = cast.call(&tx, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -157,23 +161,27 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::Address;
-    /// use ethers_providers::{Http, Provider};
+    /// ```
+    /// use cast::{Cast};
+    /// use alloy_primitives::{Address, U256, Bytes};
+    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
+    /// use alloy_sol_types::{sol, SolCall};
+    ///
+    /// sol!(
+    /// function greeting(uint256 i) public returns (string);
+    /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let provider = get_http_provider("http://localhost:8545");
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "greeting(uint256)(string)";
-    /// let args = vec!["5".to_owned()];
-    /// let mut builder =
-    ///     TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
-    /// builder.set_args(sig, args).await?;
-    /// let builder_output = builder.peek();
+    /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
+    /// let bytes = Bytes::from_iter(greeting.iter());
+    /// let tx = TransactionRequest::default().to(Some(to)).input(bytes.into());
+    /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(&provider);
-    /// let access_list = cast.access_list(builder_output, None, false).await?;
+    /// let access_list = cast.access_list(&tx, None, false).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
@@ -213,27 +221,32 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, U256};
-    /// use ethers_providers::{Http, Provider};
+    /// ```
+    /// use cast::{Cast};
+    /// use alloy_primitives::{Address, U256, Bytes};
+    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use foundry_common::provider::alloy::get_http_provider;
     /// use std::str::FromStr;
+    /// use alloy_sol_types::{sol, SolCall};
+    ///
+    /// sol!(
+    /// function greet(string greeting) public;
+    /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let from = "vitalik.eth";
-    /// let to = eAddress::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "greet(string)()";
-    /// let args = vec!["hello".to_owned()];
+    /// let provider = get_http_provider("http://localhost:8545");
+    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
+    /// let bytes = Bytes::from_iter(greeting.iter());
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
-    /// builder.set_args(sig, args).await?.set_gas(gas).set_value(value).set_nonce(nonce);
-    /// let builder_output = builder.build();
+    /// let tx = TransactionRequest::default().to(Some(to)).input(bytes.into()).from(from);
+    /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(provider);
-    /// let data = cast.send(builder_output).await?;
-    /// println!("{}", *data);
+    /// let data = cast.send(tx).await?;
+    /// println!("{:#?}", data);
     /// # Ok(())
     /// # }
     /// ```
@@ -807,14 +820,17 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use alloy_primitives::Address;
+    /// use alloy_provider::{ProviderBuilder, RootProvider};
+    /// use alloy_rpc_types::Filter;
+    /// use alloy_transport::BoxTransport;
     /// use cast::Cast;
-    /// use ethers_core::{abi::Address, types::Filter};
-    /// use ethers_providers::{Provider, Ws};
+    /// use foundry_common::provider::alloy::get_http_provider as get_ws_provider;
     /// use std::{io, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = Provider::new(Ws::connect("wss://localhost:8545").await?);
+    /// let provider = get_ws_provider("wss://localhost:8545");
     /// let cast = Cast::new(provider);
     ///
     /// let filter =
@@ -1834,7 +1850,7 @@ impl SimpleCast {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
