@@ -468,6 +468,7 @@ impl<'a> ContractRunner<'a> {
                     reason: None,
                     decoded_logs: decode_console_logs(&logs),
                     traces,
+                    environment: self.get_environment(&contexts),
                     contexts,
                     labeled_addresses,
                     kind: TestKind::Standard(0),
@@ -481,6 +482,7 @@ impl<'a> ContractRunner<'a> {
                     reason: Some(err.to_string()),
                     decoded_logs: decode_console_logs(&logs),
                     traces,
+                    environment: self.get_environment(&contexts),
                     contexts,
                     labeled_addresses,
                     kind: TestKind::Standard(0),
@@ -512,7 +514,6 @@ impl<'a> ContractRunner<'a> {
         logs.extend(execution_logs);
         contexts.extend(execution_contexts);
         coverage = merge_coverages(coverage, execution_coverage);
-        let environment = self.get_environment(&contexts);
 
         let success = executor.is_success(
             setup.address,
@@ -535,7 +536,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
-            environment,
+            environment: self.get_environment(&contexts),
             traces,
             contexts,
             coverage,
@@ -584,6 +585,7 @@ impl<'a> ContractRunner<'a> {
                 reason: None,
                 decoded_logs: decode_console_logs(&logs),
                 traces,
+                environment: self.get_environment(&contexts),
                 contexts,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
@@ -615,6 +617,7 @@ impl<'a> ContractRunner<'a> {
                         )),
                         decoded_logs: decode_console_logs(&logs),
                         traces,
+                        environment: self.get_environment(&contexts),
                         contexts,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
@@ -689,6 +692,7 @@ impl<'a> ContractRunner<'a> {
             },
             coverage,
             traces,
+            environment: self.get_environment(&contexts),
             contexts,
             labeled_addresses: labeled_addresses.clone(),
             duration: start.elapsed(),
@@ -750,6 +754,7 @@ impl<'a> ContractRunner<'a> {
                 reason: None,
                 decoded_logs: decode_console_logs(&logs),
                 traces,
+                environment: self.get_environment(&contexts),
                 contexts,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
@@ -827,6 +832,7 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind,
             traces,
+            environment: self.get_environment(&contexts),
             contexts,
             coverage,
             labeled_addresses,
@@ -845,7 +851,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
-    fn get_environment(&self, contexts: &Vec<Context>) -> TestEnvironment {
+    fn get_environment(&self, contexts: &[Context]) -> TestEnvironment {
         if contexts.iter().any(|context| context.block_number.gt(&U256::from(1))) {
             return TestEnvironment::Fork { block_number: contexts.last().unwrap().block_number }
         }
