@@ -97,7 +97,7 @@ where
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
-    /// function greeting(uint256 i) public returns (string);
+    ///     function greeting(uint256 i) public returns (string);
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -170,7 +170,7 @@ where
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
-    /// function greeting(uint256 i) public returns (string);
+    ///     function greeting(uint256 i) public returns (string);
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -230,7 +230,7 @@ where
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
-    /// function greet(string greeting) public;
+    ///     function greet(string greeting) public;
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
