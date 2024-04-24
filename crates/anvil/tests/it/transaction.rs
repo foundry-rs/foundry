@@ -963,7 +963,7 @@ async fn estimates_gas_on_pending_by_default() {
 
     let tx = AlloyTransactionRequest::default()
         .from(recipient.to_alloy())
-        .to(Some(sender.to_alloy()))
+        .to(sender.to_alloy())
         .value(rU256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     api.estimate_gas(WithOtherFields::new(tx), None, None).await.unwrap();
@@ -979,7 +979,7 @@ async fn test_estimate_gas() {
 
     let tx = AlloyTransactionRequest::default()
         .from(recipient.to_alloy())
-        .to(Some(sender.to_alloy()))
+        .to(sender.to_alloy())
         .value(rU256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.

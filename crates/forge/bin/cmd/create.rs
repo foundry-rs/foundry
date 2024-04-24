@@ -4,7 +4,7 @@ use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -237,13 +237,13 @@ impl CreateArgs {
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, None).await
+            provider.get_transaction_count(deployer_address, BlockId::latest()).await
         }?);
 
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
-            provider.estimate_gas(&deployer.tx, None).await
+            provider.estimate_gas(&deployer.tx, BlockId::latest()).await
         }?);
 
         // set tx value if specified
@@ -557,7 +557,7 @@ where
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()).to(None));
+        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()));
 
         Ok(Deployer {
             client: self.client.clone(),
