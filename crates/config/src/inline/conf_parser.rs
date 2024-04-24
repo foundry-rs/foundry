@@ -149,7 +149,7 @@ mod tests {
             function: Default::default(),
             line: Default::default(),
             docs: r"
-            forge-config: ciii.invariant.depth = 1 
+            forge-config: ciii.invariant.depth = 1
             forge-config: default.invariant.depth = 1
             "
             .into(),
@@ -167,7 +167,7 @@ mod tests {
             function: Default::default(),
             line: Default::default(),
             docs: r"
-            forge-config: ci.invariant.depth = 1 
+            forge-config: ci.invariant.depth = 1
             forge-config: default.invariant.depth = 1
             "
             .into(),

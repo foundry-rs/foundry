@@ -1865,6 +1865,11 @@ interface Vm {
         returns (string memory json);
     /// See `serializeJson`.
     #[cheatcode(group = Json)]
+    function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value)
+        external
+        returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
     function serializeInt(string calldata objectKey, string calldata valueKey, int256 value)
         external
         returns (string memory json);

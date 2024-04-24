@@ -355,6 +355,7 @@ interface Vm {
     function serializeJson(string calldata objectKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string[] calldata values) external returns (string memory json);
+    function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256[] calldata values) external returns (string memory json);
     function setEnv(string calldata name, string calldata value) external;
