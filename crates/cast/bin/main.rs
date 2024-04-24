@@ -3,7 +3,7 @@ extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
+use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag::Latest};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -346,7 +346,9 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let address = address.resolve(&provider).await?;
-            let value = provider.get_proof(address, slots.into_iter().collect(), block).await?;
+            let value = provider
+                .get_proof(address, slots.into_iter().collect(), block.unwrap_or(BlockId::latest()))
+                .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         CastSubcommand::Rpc(cmd) => cmd.run().await?,
