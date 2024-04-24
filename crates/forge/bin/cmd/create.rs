@@ -233,7 +233,10 @@ impl CreateArgs {
 
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);
-
+        // `to` field must be set explicitly, cannot be None.
+        if deployer.tx.to.is_none() {
+            deployer.tx.set_create();
+        }
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
