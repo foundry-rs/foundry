@@ -290,6 +290,11 @@ impl BundledState {
                         let mut tx = tx.clone();
                         tx.set_chain_id(sequence.chain);
 
+                        // Set TxKind::Create explicityly to satify `check_reqd_fields` in alloy
+                        if tx.to().is_none() {
+                            tx.set_create();
+                        }
+
                         if let Some(gas_price) = gas_price {
                             tx.set_gas_price(gas_price);
                         } else {
