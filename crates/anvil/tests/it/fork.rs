@@ -334,10 +334,8 @@ async fn test_fork_snapshotting_repeated() {
     assert!(!api.evm_revert(snapshot).await.unwrap());
 }
 
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>, remove ignore
 // <https://github.com/foundry-rs/foundry/issues/6463>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn test_fork_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
@@ -494,8 +492,6 @@ async fn can_reset_properly() {
     assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.is_err())
 }
 
-// TODO: <https://github.com/alloy-rs/alloy/issues/389> didn't fix this, remove ignore
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_timestamp() {
     let start = std::time::Instant::now();
@@ -1068,8 +1064,6 @@ async fn can_override_fork_chain_id() {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6485>
-// TODO: Revisit after <https://github.com/alloy-rs/alloy/issues/389>, remove ignore
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_moonbeam() {
     crate::init_tracing();
