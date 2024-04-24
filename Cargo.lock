@@ -3792,7 +3792,6 @@ dependencies = [
  "async-trait",
  "clap",
  "comfy-table",
- "const-hex",
  "dunce",
  "eyre",
  "foundry-block-explorers",
