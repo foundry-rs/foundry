@@ -106,7 +106,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let tx = TransactionRequest::default().to(Some(to)).input(bytes.into());
+    /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
     /// let data = cast.call(&tx, None, None).await?;
@@ -183,7 +183,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let tx = TransactionRequest::default().to(Some(to)).input(bytes.into());
+    /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(&provider);
     /// let access_list = cast.access_list(&tx, None, false).await?;
@@ -248,7 +248,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let tx = TransactionRequest::default().to(Some(to)).input(bytes.into()).from(from);
+    /// let tx = TransactionRequest::default().to(to).input(bytes.into()).from(from);
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(provider);
     /// let data = cast.send(tx).await?;
