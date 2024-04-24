@@ -6,7 +6,7 @@ extern crate tracing;
 use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
@@ -401,7 +401,7 @@ impl ScriptArgs {
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
             if let Some(to) = to {
-                if to == DEFAULT_CREATE2_DEPLOYER {
+                if to == TxKind::from(DEFAULT_CREATE2_DEPLOYER) {
                     // Size of the salt prefix.
                     offset = 32;
                 }

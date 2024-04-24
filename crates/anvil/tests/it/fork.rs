@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
@@ -810,7 +810,7 @@ async fn test_fork_call() {
     let res1 = api
         .call(
             WithOtherFields::new(TransactionRequest {
-                to: Some(to),
+                to: Some(TxKind::from(to)),
                 input: input.into(),
                 ..Default::default()
             }),
@@ -1207,7 +1207,7 @@ async fn test_fork_execution_reverted() {
     let resp = api
         .call(
             WithOtherFields::new(TransactionRequest {
-                to: Some(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377")),
+                to: Some(TxKind::from(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377"))),
                 input: TransactionInput::new("0x8f283b3c".as_bytes().into()),
                 ..Default::default()
             }),

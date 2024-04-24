@@ -76,10 +76,7 @@ async fn can_impersonate_account() {
     let balance = api.balance(impersonate, None).await.unwrap();
     assert_eq!(balance, funding);
 
-    let tx = TransactionRequest::default()
-        .with_from(impersonate)
-        .with_to(Some(to).into())
-        .with_value(val);
+    let tx = TransactionRequest::default().with_from(impersonate).with_to(to).with_value(val);
     let tx = WithOtherFields::new(tx);
 
     let res = provider.send_transaction(tx.clone()).await;
@@ -118,10 +115,7 @@ async fn can_auto_impersonate_account() {
     let balance = api.balance(impersonate, None).await.unwrap();
     assert_eq!(balance, funding);
 
-    let tx = TransactionRequest::default()
-        .with_from(impersonate)
-        .with_to(Some(to).into())
-        .with_value(val);
+    let tx = TransactionRequest::default().with_from(impersonate).with_to(to).with_value(val);
     let tx = WithOtherFields::new(tx);
 
     let res = provider.send_transaction(tx.clone()).await;
@@ -544,7 +538,7 @@ async fn test_get_transaction_receipt() {
     // send a EIP-1559 transaction
     let to = Address::random();
     let val = U256::from(1337);
-    let tx = TransactionRequest::default().with_to(Some(to).into()).with_value(val);
+    let tx = TransactionRequest::default().with_to(to).with_value(val);
     let tx = WithOtherFields::new(tx);
 
     let receipt = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();

@@ -13,7 +13,7 @@ use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{utils::format_units, Address, U256};
+use alloy_primitives::{utils::format_units, Address, TxKind, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
@@ -103,7 +103,13 @@ impl PreSimulationState {
                     .simulate(
                         tx.from
                             .expect("transaction doesn't have a `from` address at execution time"),
-                        tx.to,
+                        match tx.to {
+                            Some(to) => match to {
+                                TxKind::Call(to) => Some(to),
+                                TxKind::Create => None,
+                            },
+                            None => None,
+                        },
                         tx.input.clone().into_input(),
                         tx.value,
                     )

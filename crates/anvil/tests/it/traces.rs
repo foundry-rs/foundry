@@ -3,7 +3,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer, ws_provider},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{hex, Address, U256};
+use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{debug::DebugApi, Provider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
 use alloy_rpc_types_trace::{
@@ -151,7 +151,7 @@ async fn test_trace_address_fork() {
     let tx = TransactionRequest::default()
         .to(to)
         .from(from)
-        .with_input(input.into())
+        .with_input::<Bytes>(input.into())
         .with_gas_limit(300_000);
 
     let tx = WithOtherFields::new(tx);
@@ -349,7 +349,7 @@ async fn test_trace_address_fork2() {
     let tx = TransactionRequest::default()
         .to(to)
         .from(from)
-        .with_input(input.into())
+        .with_input::<Bytes>(input.into())
         .with_gas_limit(350_000);
 
     let tx = WithOtherFields::new(tx);

@@ -108,7 +108,7 @@ async fn can_get_block_by_number() {
     let val = handle.genesis_balance().checked_div(U256::from(2)).unwrap();
 
     // send a dummy transaction
-    let tx = TransactionRequest::default().with_from(from).with_to(Some(to).into()).with_value(val);
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(val);
     let tx = WithOtherFields::new(tx);
 
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
@@ -140,10 +140,7 @@ async fn can_get_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let tx = TransactionRequest::default()
-        .with_from(from)
-        .with_to(Some(to).into())
-        .with_value(U256::from(100));
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(100));
 
     let pending = provider.send_transaction(tx.clone()).await.unwrap().register().await.unwrap();
 

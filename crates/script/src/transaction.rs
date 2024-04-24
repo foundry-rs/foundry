@@ -1,6 +1,6 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, TxKind, B256};
 use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, provider::RpcUrl, ContractData, SELECTOR_LEN};
@@ -72,7 +72,7 @@ impl TransactionWithMetadata {
 
         // Specify if any contract was directly created with this transaction
         if let Some(to) = metadata.transaction.to {
-            if to == DEFAULT_CREATE2_DEPLOYER {
+            if to == TxKind::from(DEFAULT_CREATE2_DEPLOYER) {
                 metadata.set_create(
                     true,
                     Address::from_slice(&result.returned),
@@ -80,7 +80,7 @@ impl TransactionWithMetadata {
                 )?;
             } else {
                 metadata
-                    .set_call(to, local_contracts, decoder)
+                    .set_call(*to.to().unwrap_or(&Address::ZERO), local_contracts, decoder)
                     .wrap_err("Could not decode transaction type.")?;
             }
         } else {

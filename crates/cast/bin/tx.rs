@@ -1,6 +1,6 @@
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
@@ -59,7 +59,7 @@ pub async fn build_tx<
     let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
 
     let mut req = WithOtherFields::new(TransactionRequest::default())
-        .with_to(to.into())
+        .with_to(to.unwrap_or_default())
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
@@ -110,7 +110,7 @@ pub async fn build_tx<
         (Vec::new(), None)
     };
 
-    req.set_input(data.into());
+    req.set_input::<Bytes>(data.into());
 
     req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
         gas_limit.to()

@@ -134,7 +134,11 @@ where
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
                         if let Some(addr) = req.to {
-                            if let Ok(code) = self.provider.get_code_at(addr, block).await {
+                            if let Ok(code) = self
+                                .provider
+                                .get_code_at(*addr.to().unwrap_or(&Address::ZERO), block)
+                                .await
+                            {
                                 if code.is_empty() {
                                     eyre::bail!("contract {addr:?} does not have any code")
                                 }

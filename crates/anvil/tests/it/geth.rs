@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use anvil::{spawn, NodeConfig};
@@ -56,9 +56,12 @@ async fn test_geth_revert_transaction() {
 
     // deploy successfully
     provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap()
         .get_receipt()

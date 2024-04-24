@@ -63,7 +63,7 @@ pub fn transaction_request_to_typed(
         return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
-            kind: to.into(),
+            kind: to.unwrap_or_default(),
             mint: other.get_deserialized::<U256>("mint")?.ok()?,
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
@@ -92,10 +92,7 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to: to.unwrap_or_default(),
                 chain_id: None,
             }))
         }
@@ -108,10 +105,7 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to: to.unwrap_or_default(),
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
             }))
@@ -129,10 +123,7 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to: to.unwrap_or_default(),
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
             }))
@@ -147,7 +138,10 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to,
+                to: match to {
+                    TxKind::Call(to) => to,
+                    TxKind::Create => Address::ZERO,
+                },
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),

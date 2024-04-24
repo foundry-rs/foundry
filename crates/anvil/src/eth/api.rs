@@ -2191,7 +2191,9 @@ impl EthApi {
         let likely_transfer = request.input.clone().into_input().is_none();
         if likely_transfer {
             if let Some(to) = request.to {
-                if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
+                if let Ok(target_code) =
+                    self.backend.get_code_with_state(&state, *to.to().unwrap_or(&Address::ZERO))
+                {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_TRANSACTION_GAS);
                     }

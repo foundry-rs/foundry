@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_contract::ContractInstance;
 use alloy_network::EthereumSigner;
-use alloy_primitives::{address, Address};
+use alloy_primitives::{address, Address, TxKind};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_signer_wallet::{LocalWallet, MnemonicBuilder};
@@ -120,9 +120,12 @@ contract Contract {
 
     // should catch the revert during estimation which results in an err
     let err = provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("execution reverted"));
@@ -173,9 +176,12 @@ contract Contract {
 
     // deploy successfully
     provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap()
         .get_receipt()

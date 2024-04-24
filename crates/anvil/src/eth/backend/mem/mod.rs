@@ -1123,7 +1123,7 @@ impl Backend {
             gas_price: U256::from(gas_price),
             gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr),
+                Some(addr) => TransactTo::Call(*addr.to().unwrap_or(&Address::ZERO)),
                 None => TransactTo::Create(CreateScheme::Create),
             },
             value: value.unwrap_or_default(),
@@ -1220,7 +1220,7 @@ impl Backend {
     {
         let from = request.from.unwrap_or_default();
         let to = if let Some(to) = request.to {
-            to
+            *to.to().unwrap_or(&Address::ZERO)
         } else {
             let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
             from.create(nonce)

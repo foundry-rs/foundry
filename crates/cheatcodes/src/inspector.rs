@@ -15,7 +15,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, provider::RpcUrl, SELECTOR_LEN};
@@ -915,7 +915,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         rpc: ecx.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
-                            to: Some(call.contract),
+                            to: Some(TxKind::from(Some(call.contract))),
                             value: Some(call.transfer.value),
                             input: TransactionInput::new(call.input.clone()),
                             nonce: Some(account.info.nonce),

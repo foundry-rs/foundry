@@ -3,7 +3,7 @@ use crate::{
     utils::ws_provider_with_signer,
 };
 use alloy_network::EthereumSigner;
-use alloy_primitives::U256;
+use alloy_primitives::{TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_sol_types::sol;
@@ -40,9 +40,12 @@ contract Contract {
 
     // should catch the revert during estimation which results in an err
     let err = provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("execution reverted"));
@@ -93,9 +96,12 @@ contract Contract {
 
     // deploy successfully
     provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap()
         .get_receipt()
@@ -129,9 +135,12 @@ async fn test_solc_revert_example() {
 
     // deploy successfully
     provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap()
         .get_receipt()
@@ -202,9 +211,12 @@ contract Contract {
 
     // deploy successfully
     provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap()
         .get_receipt()
@@ -259,9 +271,12 @@ contract Contract {
 
     // deploy successfully
     provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().input(bytecode.into()).from(sender),
-        ))
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
         .await
         .unwrap()
         .get_receipt()
