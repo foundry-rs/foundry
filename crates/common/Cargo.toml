@@ -15,8 +15,6 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-linking.workspace = true
 
-ethers-providers = { workspace = true, features = ["ws", "ipc"] }
-
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
@@ -25,6 +23,7 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
+alloy-rpc-types-engine.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-client.workspace = true
 alloy-provider.workspace = true

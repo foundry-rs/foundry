@@ -3,13 +3,13 @@
 use crate::REQUEST_TIMEOUT;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
+use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
 use alloy_transport_http::Http;
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
-use ethers_providers::{JwtAuth, JwtKey};
 use reqwest::header::{HeaderName, HeaderValue};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
@@ -292,10 +292,9 @@ impl tower::Service<RequestPacket> for &RuntimeTransport {
 
 fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     // Decode jwt from hex, then generate claims (iat with current timestamp)
-    let jwt = hex::decode(jwt)?;
-    let secret = JwtKey::from_slice(&jwt).map_err(|err| eyre::eyre!("Invalid JWT: {}", err))?;
-    let auth = JwtAuth::new(secret, None, None);
-    let token = auth.generate_token()?;
+    let secret = JwtSecret::from_hex(jwt)?;
+    let claims = Claims::default();
+    let token = secret.encode(&claims)?;
 
     let auth = Authorization::Bearer(token);
 
