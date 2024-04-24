@@ -72,7 +72,7 @@ impl TransactionWithMetadata {
 
         // Specify if any contract was directly created with this transaction
         if let Some(to) = metadata.transaction.to {
-            if to == TxKind::from(DEFAULT_CREATE2_DEPLOYER) {
+            if *to.to().unwrap_or(&Address::ZERO) == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
                     Address::from_slice(&result.returned),
