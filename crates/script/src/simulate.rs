@@ -17,7 +17,7 @@ use alloy_primitives::{utils::format_units, Address, TxKind, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, provider::RpcUrl, shell, ContractData};
+use foundry_common::{get_contract_name, shell, ContractData};
 use foundry_evm::traces::render_trace_arena;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -199,7 +199,7 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<Vec<(RpcUrl, ScriptRunner)>> {
+    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
         if !shell::verbosity().is_silent() {
             let n = rpcs.len();
@@ -258,7 +258,7 @@ impl FilledTransactionsState {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
         }
 
-        let mut total_gas_per_rpc: HashMap<RpcUrl, u128> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();

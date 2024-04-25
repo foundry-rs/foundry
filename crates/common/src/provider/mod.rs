@@ -40,9 +40,6 @@ pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
     N,
 >;
 
-/// Helper type alias for a rpc url
-pub type RpcUrl = String;
-
 /// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
 /// an anvil or other dev node) and with the default, or 7 second otherwise.
 ///

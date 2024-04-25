@@ -18,7 +18,7 @@ use crate::{
 use alloy_primitives::{Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, provider::RpcUrl, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
@@ -80,7 +80,7 @@ impl Context {
 #[derive(Clone, Debug, Default)]
 pub struct BroadcastableTransaction {
     /// The optional RPC URL.
-    pub rpc: Option<RpcUrl>,
+    pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionRequest,
 }
