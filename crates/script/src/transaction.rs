@@ -1,6 +1,6 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, TxKind, B256};
 use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, provider::alloy::RpcUrl, ContractData, SELECTOR_LEN};
@@ -71,7 +71,7 @@ impl TransactionWithMetadata {
         metadata.is_fixed_gas_limit = is_fixed_gas_limit;
 
         // Specify if any contract was directly created with this transaction
-        if let Some(to) = metadata.transaction.to {
+        if let Some(TxKind::Call(to)) = metadata.transaction.to {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,

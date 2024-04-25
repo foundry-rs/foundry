@@ -1,6 +1,7 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::Result;
 use foundry_common::provider::alloy::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
@@ -117,7 +118,7 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(self.accounts_pub[index as usize], None)
+                    .get_transaction_count(self.accounts_pub[index as usize], BlockId::latest())
                     .await
                     .unwrap();
                 self.nonces.insert(index, nonce);
@@ -128,8 +129,13 @@ impl ScriptTester {
 
     pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
         for &address in addresses {
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(address, None).await.unwrap();
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(address, BlockId::latest())
+                .await
+                .unwrap();
             self.address_nonces.insert(address, nonce);
         }
         self
@@ -169,8 +175,13 @@ impl ScriptTester {
     pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
         for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(addr, None).await.unwrap();
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(addr, BlockId::latest())
+                .await
+                .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
@@ -193,7 +204,7 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(*address, None)
+                .get_transaction_count(*address, BlockId::latest())
                 .await
                 .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();

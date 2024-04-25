@@ -58,12 +58,13 @@ pub fn transaction_request_to_typed(
         other,
     } = tx;
 
+    let to = if let Some(TxKind::Call(to)) = to { TxKind::Call(to) } else { TxKind::Create };
     // Special case: OP-stack deposit tx
     if transaction_type == Some(126) {
         return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
-            kind: to.into(),
+            kind: to,
             mint: other.get_deserialized::<U256>("mint")?.ok()?,
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
@@ -92,10 +93,7 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to,
                 chain_id: None,
             }))
         }
@@ -108,10 +106,7 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to,
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
             }))
@@ -129,16 +124,13 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => TxKind::Call(to),
-                    None => TxKind::Create,
-                },
+                to,
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), Some(to)) => {
+        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), TxKind::Call(to)) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),

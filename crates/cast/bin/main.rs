@@ -346,7 +346,9 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let address = address.resolve(&provider).await?;
-            let value = provider.get_proof(address, slots.into_iter().collect(), block).await?;
+            let value = provider
+                .get_proof(address, slots.into_iter().collect(), block.unwrap_or(BlockId::latest()))
+                .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         CastSubcommand::Rpc(cmd) => cmd.run().await?,
