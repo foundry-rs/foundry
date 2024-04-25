@@ -1,7 +1,7 @@
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
@@ -87,6 +87,9 @@ impl FuzzedExecutor {
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
 
+        //Stores logs for all fuzz cases
+        let logs: RefCell<Vec<Log>> = RefCell::default();
+
         debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
@@ -104,6 +107,7 @@ impl FuzzedExecutor {
                         }
                         traces.borrow_mut().push(call_traces);
                     }
+                    logs.borrow_mut().extend(case.logs);
 
                     if let Some(prev) = coverage.take() {
                         // Safety: If `Option::or` evaluates to `Some`, then `call.coverage` must
@@ -127,7 +131,9 @@ impl FuzzedExecutor {
                     // to run at least one more case to find a minimal failure
                     // case.
                     let call_res = _counterexample.1.result.clone();
+                    let _logs = _counterexample.1.logs.clone();
                     *counterexample.borrow_mut() = _counterexample;
+                    logs.borrow_mut().extend(_logs);
                     // HACK: we have to use an empty string here to denote `None`
                     let reason = rd.maybe_decode(&call_res, Some(status));
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
@@ -146,8 +152,8 @@ impl FuzzedExecutor {
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
-            decoded_logs: decode_console_logs(&call.logs),
-            logs: call.logs,
+            decoded_logs: decode_console_logs(&logs.clone().into_inner()),
+            logs: logs.into_inner(),
             labeled_addresses: call.labels,
             traces: last_run_traces,
             gas_report_traces: traces,
@@ -207,7 +213,7 @@ impl FuzzedExecutor {
 
         // When the `assume` cheatcode is called it returns a special string
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::AssumeReject))
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let breakpoints = call
@@ -229,6 +235,7 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 debug: call.debug,
                 breakpoints,
+                logs: call.logs,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {
