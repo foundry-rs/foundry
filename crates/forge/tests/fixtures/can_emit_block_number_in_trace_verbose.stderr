@@ -40,7 +40,7 @@ Suite result: FAILED. 2 passed; 2 failed; 0 skipped;
 Ran 1 test suite: 2 tests passed, 2 failed, 0 skipped (4 total tests)
 
 Failing tests:
-Encountered 2 failing testst/Contract.t.sol:BlockNumberTraceTest
+Encountered 2 failing tests in test/Contract.t.sol:BlockNumberTraceTest
 [FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626899) (gas: 9550)
 [FAIL. Reason: assertion failed] testRevertLocal() (gas: 3070)
 
