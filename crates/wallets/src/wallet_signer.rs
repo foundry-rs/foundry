@@ -183,6 +183,10 @@ impl TxSigner<Signature> for WalletSigner {
     ) -> alloy_signer::Result<Signature> {
         delegate!(self, inner => inner.sign_transaction(tx)).await
     }
+
+    fn address(&self) -> Address {
+        delegate!(self, inner => alloy_signer::Signer::address(inner))
+    }
 }
 
 /// Signers that require user action to be obtained.

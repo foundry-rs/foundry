@@ -186,7 +186,7 @@ interface Vm {
     function envBytes32(string calldata name, string calldata delim) external view returns (bytes32[] memory value);
     function envBytes(string calldata name) external view returns (bytes memory value);
     function envBytes(string calldata name, string calldata delim) external view returns (bytes[] memory value);
-    function envExists(string calldata name) external view returns (bool exists);
+    function envExists(string calldata name) external view returns (bool result);
     function envInt(string calldata name) external view returns (int256 value);
     function envInt(string calldata name, string calldata delim) external view returns (int256[] memory value);
     function envOr(string calldata name, bool defaultValue) external view returns (bool value);

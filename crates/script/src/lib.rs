@@ -400,13 +400,15 @@ impl ScriptArgs {
             let mut offset = 0;
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(to) = to {
-                if to == TxKind::from(DEFAULT_CREATE2_DEPLOYER) {
+            if let Some(TxKind::Call(to)) = to {
+                if to == DEFAULT_CREATE2_DEPLOYER {
                     // Size of the salt prefix.
                     offset = 32;
+                } else {
+                    continue;
                 }
-            } else if to.is_some() {
-                continue;
+            } else if let Some(TxKind::Create) = to {
+                // Pass
             }
 
             // Find artifact with a deployment code same as the data.

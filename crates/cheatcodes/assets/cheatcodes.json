@@ -3815,7 +3815,7 @@
       "func": {
         "id": "envExists",
         "description": "Gets the environment variable `name` and returns true if it exists, else returns false.",
-        "declaration": "function envExists(string calldata name) external view returns (bool exists);",
+        "declaration": "function envExists(string calldata name) external view returns (bool result);",
         "visibility": "external",
         "mutability": "view",
         "signature": "envExists(string)",

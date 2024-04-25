@@ -2188,12 +2188,11 @@ impl EthApi {
     {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
+        let to = if let Some(TxKind::Call(to)) = request.to { Some(to) } else { None };
         let likely_transfer = request.input.clone().into_input().is_none();
         if likely_transfer {
-            if let Some(to) = request.to {
-                if let Ok(target_code) =
-                    self.backend.get_code_with_state(&state, *to.to().unwrap_or(&Address::ZERO))
-                {
+            if let Some(to) = to {
+                if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_TRANSACTION_GAS);
                     }

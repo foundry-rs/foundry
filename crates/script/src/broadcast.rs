@@ -4,7 +4,7 @@ use crate::{
     ScriptConfig,
 };
 use alloy_chains::Chain;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
@@ -285,6 +285,11 @@ impl BundledState {
 
                         let mut tx = tx.clone();
                         tx.set_chain_id(sequence.chain);
+
+                        // Set TxKind::Create explicityly to satify `check_reqd_fields` in alloy
+                        if tx.to().is_none() {
+                            tx.set_create();
+                        }
 
                         if let Some(gas_price) = gas_price {
                             tx.set_gas_price(gas_price);

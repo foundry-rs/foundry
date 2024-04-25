@@ -195,8 +195,9 @@ impl ClientFork {
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
-        let block = block.unwrap_or(BlockNumber::Latest);
-        self.provider().create_access_list(request, block.into()).await
+        self.provider()
+            .create_access_list(request, block.unwrap_or(BlockNumber::Latest).into())
+            .await
     }
 
     pub async fn storage_at(

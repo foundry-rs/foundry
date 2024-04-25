@@ -1503,7 +1503,7 @@ interface Vm {
 
     /// Gets the environment variable `name` and returns true if it exists, else returns false.
     #[cheatcode(group = Environment)]
-    function envExists(string calldata name) external view returns (bool exists);
+    function envExists(string calldata name) external view returns (bool result);
 
     /// Gets the environment variable `name` and parses it as `bool`.
     /// Reverts if the variable was not found or could not be parsed.

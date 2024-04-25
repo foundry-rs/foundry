@@ -1,5 +1,5 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use cast::Cast;
 use clap::Parser;
@@ -209,13 +209,10 @@ impl CallArgs {
 
                     let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
+                    let to = if let Some(TxKind::Call(to)) = req.to { Some(to) } else { None };
                     let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
-                        // req.to.expect("an address to be here"),
-                        match req.to {
-                            Some(to) => *to.to().unwrap_or(&Address::ZERO),
-                            None => return Err(eyre::eyre!("No address provided")),
-                        },
+                        to.expect("an address to be here"),
                         data.into(),
                         req.value.unwrap_or_default(),
                     )?);

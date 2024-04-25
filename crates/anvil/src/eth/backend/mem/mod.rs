@@ -32,7 +32,7 @@ use crate::{
     NodeConfig, PrecompileFactory,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, B256, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
 use alloy_rpc_types::{
     request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
     Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
@@ -1116,7 +1116,7 @@ impl Backend {
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
-
+        let to = if let Some(TxKind::Call(addr)) = to { Some(addr) } else { None };
         env.tx = TxEnv {
             caller,
             gas_limit: gas_limit as u64,
@@ -1219,8 +1219,8 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         let from = request.from.unwrap_or_default();
-        let to = if let Some(to) = request.to {
-            *to.to().unwrap_or(&Address::ZERO)
+        let to = if let Some(TxKind::Call(to)) = request.to {
+            to
         } else {
             let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
             from.create(nonce)

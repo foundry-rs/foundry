@@ -71,8 +71,8 @@ impl TransactionWithMetadata {
         metadata.is_fixed_gas_limit = is_fixed_gas_limit;
 
         // Specify if any contract was directly created with this transaction
-        if let Some(to) = metadata.transaction.to {
-            if *to.to().unwrap_or(&Address::ZERO) == DEFAULT_CREATE2_DEPLOYER {
+        if let Some(TxKind::Call(to)) = metadata.transaction.to {
+            if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
                     Address::from_slice(&result.returned),

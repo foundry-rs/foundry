@@ -56,7 +56,9 @@ pub async fn build_tx<
     let chain = chain.into();
 
     let from = from.into().resolve(provider).await?;
-    let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
+    // TODO: Possible bug here?
+    let to: Option<Address> =
+        if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
 
     let mut req = WithOtherFields::new(TransactionRequest::default())
         .with_to(to.unwrap_or_default())
