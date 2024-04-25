@@ -137,8 +137,6 @@ async fn can_respect_nonces() {
     );
 }
 
-// TODO: Revisit: https://github.com/alloy-rs/alloy/issues/389 didn't fix the issue. Remove ignore.
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -162,28 +160,32 @@ async fn can_replace_transaction() {
 
     tx.set_gas_price(gas_price);
     // send transaction with lower gas price
-    let lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+    let _lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
 
     tx.set_gas_price(gas_price + 1);
     // send the same transaction with higher gas price
     let higher_priced_pending_tx = provider.send_transaction(tx).await.unwrap();
 
+    let higher_tx_hash = *higher_priced_pending_tx.tx_hash();
     // mine exactly one block
     api.mine_one().await;
 
     let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
 
+    assert_eq!(block.transactions.len(), 1);
+    assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
+
+    // FIXME: Unable to get receipt despite hotfix in https://github.com/alloy-rs/alloy/pull/614
+
     // lower priced transaction was replaced
-    let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap(); // FIXME: Awaits here endlessly
-    let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
+    // let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap();
+    // let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
-    // ensure that only the replacement tx was mined
-
-    assert_eq!(1, block.transactions.len());
-    assert_eq!(
-        BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
-        block.transactions
-    );
+    // assert_eq!(1, block.transactions.len());
+    // assert_eq!(
+    //     BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
+    //     block.transactions
+    // );
 }
 
 #[tokio::test(flavor = "multi_thread")]
