@@ -187,7 +187,7 @@ where
                 trace!(target: "backendhandler", %address, %idx, "preparing storage request");
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
-                let block_id = self.block_id;
+                let block_id = self.block_id.unwrap_or(BlockId::latest());
                 let fut = Box::pin(async move {
                     let storage =
                         provider.get_storage_at(address, idx, block_id).await.map_err(Into::into);
@@ -202,11 +202,11 @@ where
     fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Report> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
-        let block_id = self.block_id;
+        let block_id = self.block_id.unwrap_or(BlockId::latest());
         let fut = Box::pin(async move {
             let balance = provider.get_balance(address, block_id);
             let nonce = provider.get_transaction_count(address, block_id);
-            let code = provider.get_code_at(address, block_id.unwrap_or_default());
+            let code = provider.get_code_at(address, block_id);
             let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
             (resp, address)
         });

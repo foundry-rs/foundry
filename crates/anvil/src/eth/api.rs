@@ -2025,9 +2025,9 @@ impl EthApi {
         fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
             let to = tx.to();
-            let gas_price = U256::from(tx.gas_price());
+            let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = U256::from(tx.gas_limit());
+            let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
@@ -2188,9 +2188,10 @@ impl EthApi {
     {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
+        let to = if let Some(TxKind::Call(to)) = request.to { Some(to) } else { None };
         let likely_transfer = request.input.clone().into_input().is_none();
         if likely_transfer {
-            if let Some(to) = request.to {
+            if let Some(to) = to {
                 if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_TRANSACTION_GAS);

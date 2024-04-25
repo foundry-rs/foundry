@@ -286,9 +286,8 @@ impl VerifyBytecodeArgs {
         // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.
         let prev_block_id = BlockId::Number(BlockNumberOrTag::Number(simulation_block - 1));
-        let prev_block_nonce = provider
-            .get_transaction_count(creation_data.contract_creator, Some(prev_block_id))
-            .await?;
+        let prev_block_nonce =
+            provider.get_transaction_count(creation_data.contract_creator, prev_block_id).await?;
         transaction.nonce = prev_block_nonce;
 
         if let Some(ref block) = block {

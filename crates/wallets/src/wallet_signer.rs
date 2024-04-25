@@ -91,7 +91,7 @@ impl WalletSigner {
                 }
             }
             WalletSigner::Aws(aws) => {
-                senders.push(aws.address());
+                senders.push(alloy_signer::Signer::address(aws));
             }
         }
         Ok(senders)
@@ -142,7 +142,7 @@ impl Signer for WalletSigner {
     }
 
     fn address(&self) -> Address {
-        delegate!(self, inner => inner.address())
+        delegate!(self, inner => alloy_signer::Signer::address(inner))
     }
 
     fn chain_id(&self) -> Option<ChainId> {
@@ -179,6 +179,10 @@ impl TxSigner<Signature> for WalletSigner {
         tx: &mut dyn SignableTransaction<Signature>,
     ) -> alloy_signer::Result<Signature> {
         delegate!(self, inner => inner.sign_transaction(tx)).await
+    }
+
+    fn address(&self) -> Address {
+        delegate!(self, inner => alloy_signer::Signer::address(inner))
     }
 }
 

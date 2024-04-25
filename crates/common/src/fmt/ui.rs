@@ -453,7 +453,7 @@ pub fn get_pretty_tx_receipt_attr(
         }
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
-            Some(receipt.receipt.transaction_index.to_string())
+            Some(receipt.receipt.transaction_index.pretty())
         }
         "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
         "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
