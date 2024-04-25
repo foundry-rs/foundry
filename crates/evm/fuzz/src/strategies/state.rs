@@ -72,7 +72,7 @@ impl EvmFuzzState {
         }
 
         // Insert samples collected from current call in fuzz dictionary.
-        dict.insert_sample_value(samples, run_depth);
+        dict.insert_sample_values(samples, run_depth);
 
         for (address, account) in state_changeset {
             // Insert basic account information
@@ -173,7 +173,7 @@ impl FuzzDictionary {
 
     /// Insert sample values that are reused across multiple runs.
     /// The number of samples is limited to invariant run depth.
-    pub fn insert_sample_value(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
+    pub fn insert_sample_values(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
         for sample in sample_values {
             let sample_type = sample.as_type().unwrap();
             let sample_value = sample.as_word().unwrap().into();
