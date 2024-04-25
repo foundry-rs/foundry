@@ -1116,14 +1116,14 @@ impl Backend {
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
-        let to = if let Some(TxKind::Call(addr)) = to { Some(addr) } else { None };
+        let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {
             caller,
             gas_limit: gas_limit as u64,
             gas_price: U256::from(gas_price),
             gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr),
+                Some(addr) => TransactTo::Call(*addr),
                 None => TransactTo::Create(CreateScheme::Create),
             },
             value: value.unwrap_or_default(),
