@@ -156,8 +156,7 @@ async fn can_impersonate_contract() {
     // // fund the impersonated account
     api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
 
-    let tx =
-        TransactionRequest::default().with_from(impersonate).with_to(to.into()).with_value(val);
+    let tx = TransactionRequest::default().with_from(impersonate).to(to).with_value(val);
     let tx = WithOtherFields::new(tx);
 
     let res = provider.send_transaction(tx.clone()).await;
@@ -227,8 +226,7 @@ async fn can_impersonate_multiple_accounts() {
     api.anvil_set_balance(impersonate0, funding).await.unwrap();
     api.anvil_set_balance(impersonate1, funding).await.unwrap();
 
-    let tx =
-        TransactionRequest::default().with_from(impersonate0).with_to(to.into()).with_value(val);
+    let tx = TransactionRequest::default().with_from(impersonate0).to(to).with_value(val);
     let tx = WithOtherFields::new(tx);
 
     api.anvil_impersonate_account(impersonate0).await.unwrap();

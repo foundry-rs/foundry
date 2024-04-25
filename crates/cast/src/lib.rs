@@ -855,7 +855,6 @@ where
     /// use alloy_rpc_types::Filter;
     /// use alloy_transport::BoxTransport;
     /// use cast::Cast;
-    /// use foundry_common::provider::alloy::get_http_provider as get_ws_provider;
     /// use std::{io, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {

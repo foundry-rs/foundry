@@ -4,9 +4,8 @@ use crate::{
     abi::{MulticallContract, SimpleStorage},
     utils::{connect_pubsub_with_signer, http_provider, http_provider_with_signer},
 };
-use alloy_eips::BlockId;
 use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address, ChainId, TxKind, B256, U256};
+use alloy_primitives::{Address, ChainId, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest, state::AccountOverride, BlockId, BlockNumberOrTag,

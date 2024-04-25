@@ -139,10 +139,8 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    TxKind::Call(to) => to,
-                    TxKind::Create => Address::ZERO,
-                },
+                to, /* FIXME: This match branch does not handle the case where `to` is
+                     * `TxKind::Create` */
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),

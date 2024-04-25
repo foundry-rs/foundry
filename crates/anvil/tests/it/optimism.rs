@@ -23,7 +23,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 
     let tx = TransactionRequest::default()
         .with_from(from)
-        .with_to(to.into())
+        .with_to(to)
         .with_value(U256::from(1234))
         .with_gas_limit(21000);
     let tx = WithOtherFields {
@@ -63,7 +63,7 @@ async fn test_send_value_deposit_transaction() {
 
     let tx = TransactionRequest::default()
         .with_from(from)
-        .with_to(to.into())
+        .with_to(to)
         .with_value(send_value)
         .with_gas_limit(21000);
     let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
@@ -113,7 +113,7 @@ async fn test_send_value_raw_deposit_transaction() {
         .with_chain_id(31337)
         .with_nonce(0)
         .with_from(from)
-        .with_to(to.into())
+        .with_to(to)
         .with_value(send_value)
         .with_gas_limit(21_000)
         .with_max_fee_per_gas(20_000_000_000)

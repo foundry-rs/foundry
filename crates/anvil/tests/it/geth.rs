@@ -22,7 +22,7 @@ async fn test_geth_pending_transaction() {
 
     let tx = TransactionRequest::default()
         .with_from(account)
-        .with_to(Address::random().into())
+        .with_to(Address::random())
         .with_value(U256::from(1337u64))
         .with_nonce(2u64);
     let tx = WithOtherFields::new(tx);

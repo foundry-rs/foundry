@@ -1,8 +1,5 @@
 //! genesis.json tests
 
-use std::str::FromStr;
-
-use alloy_eips::BlockId;
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;

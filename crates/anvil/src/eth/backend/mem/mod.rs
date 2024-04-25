@@ -1123,7 +1123,7 @@ impl Backend {
             gas_price: U256::from(gas_price),
             gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(*addr.to().unwrap_or(&Address::ZERO)),
+                Some(addr) => TransactTo::Call(addr),
                 None => TransactTo::Create(CreateScheme::Create),
             },
             value: value.unwrap_or_default(),

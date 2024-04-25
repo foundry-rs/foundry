@@ -19,7 +19,7 @@ async fn geth_txpool() {
     let gas_price = 221435145689u128;
 
     let tx = TransactionRequest::default()
-        .with_to(account.into())
+        .with_to(account)
         .with_from(account)
         .with_value(value)
         .with_gas_price(gas_price);

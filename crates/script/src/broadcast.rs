@@ -4,7 +4,7 @@ use crate::{
     ScriptConfig,
 };
 use alloy_chains::Chain;
-use alloy_eips::{eip2718::Encodable2718, BlockId};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};

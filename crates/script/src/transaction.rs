@@ -80,7 +80,7 @@ impl TransactionWithMetadata {
                 )?;
             } else {
                 metadata
-                    .set_call(*to.to().unwrap_or(&Address::ZERO), local_contracts, decoder)
+                    .set_call(to, local_contracts, decoder)
                     .wrap_err("Could not decode transaction type.")?;
             }
         } else {
