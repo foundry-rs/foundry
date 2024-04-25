@@ -11,8 +11,8 @@ struct Shrink {
 /// If the failure is not reproducible then restore removed call and moves to next one.
 #[derive(Debug)]
 pub(crate) struct CallSequenceShrinker {
-    /// Call sequence to be shrinked.
-    call_sequence: Vec<usize>,
+    /// Length of call sequence to be shrinked.
+    call_sequence_len: usize,
     /// Call ids contained in current shrinked sequence.
     included_calls: VarBitSet,
     /// Current shrinked call id.
@@ -22,24 +22,23 @@ pub(crate) struct CallSequenceShrinker {
 }
 
 impl CallSequenceShrinker {
-    pub(crate) fn new(call_sequence: Vec<usize>) -> Self {
-        let included_calls = VarBitSet::saturated(call_sequence.len());
-        Self { call_sequence, included_calls, shrink: Shrink { call_index: 0 }, prev_shrink: None }
+    pub(crate) fn new(call_sequence_len: usize) -> Self {
+        Self {
+            call_sequence_len,
+            included_calls: VarBitSet::saturated(call_sequence_len),
+            shrink: Shrink { call_index: 0 },
+            prev_shrink: None,
+        }
     }
 
     /// Return candidate shrink sequence to be tested, by removing ids from original sequence.
-    pub(crate) fn current(&self) -> Vec<usize> {
-        self.call_sequence
-            .iter()
-            .enumerate()
-            .filter(|&(call_id, _)| self.included_calls.test(call_id))
-            .map(|(_, element)| element.to_owned())
-            .collect()
+    pub(crate) fn current(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.call_sequence_len).filter(|&call_id| self.included_calls.test(call_id))
     }
 
     /// Removes next call from sequence.
     pub(crate) fn simplify(&mut self) -> bool {
-        if self.shrink.call_index >= self.call_sequence.len() {
+        if self.shrink.call_index >= self.call_sequence_len {
             // We reached the end of call sequence, nothing left to simplify.
             false
         } else {

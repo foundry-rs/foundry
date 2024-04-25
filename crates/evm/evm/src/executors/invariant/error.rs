@@ -159,7 +159,7 @@ impl FailedInvariantCaseData {
         };
 
         if self.shrink {
-            calls = self.shrink_sequence(&calls, &executor)?.into_iter().cloned().collect();
+            calls = self.shrink_sequence(&calls, &executor)?;
         } else {
             trace!(target: "forge::test", "Shrinking disabled.");
         }
@@ -212,11 +212,11 @@ impl FailedInvariantCaseData {
     /// Tries to shrink the failure case to its smallest sequence of calls.
     ///
     /// If the number of calls is small enough, we can guarantee maximal shrinkage
-    fn shrink_sequence<'a>(
+    fn shrink_sequence(
         &self,
-        calls: &'a [BasicTxDetails],
+        calls: &[BasicTxDetails],
         executor: &Executor,
-    ) -> Result<Vec<&'a BasicTxDetails>> {
+    ) -> Result<Vec<BasicTxDetails>> {
         trace!(target: "forge::test", "Shrinking.");
 
         // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
@@ -229,16 +229,10 @@ impl FailedInvariantCaseData {
             }
         }
 
-        let mut shrinker = CallSequenceShrinker::new((0..calls.len()).collect());
-        let mut shrink_attempts = 0;
-        loop {
-            // Exit if we reached the configured max limit shrink runs.
-            if shrink_attempts > self.shrink_run_limit {
-                break
-            }
-
+        let mut shrinker = CallSequenceShrinker::new(calls.len());
+        for _ in 0..self.shrink_run_limit {
             // Check candidate sequence result.
-            match self.check_sequence(executor.clone(), calls, shrinker.current()) {
+            match self.check_sequence(executor.clone(), calls, shrinker.current().collect()) {
                 false => {
                     // If candidate sequence still fails then shrink more if possible.
                     if !shrinker.simplify() {
@@ -253,8 +247,6 @@ impl FailedInvariantCaseData {
                     }
                 }
             }
-
-            shrink_attempts += 1;
         }
 
         // We recreate the call sequence in the same order as they reproduce the failure,
@@ -264,7 +256,7 @@ impl FailedInvariantCaseData {
         // 2. Bob calls transferOwnership to Alice
         // 3. Alice calls acceptOwnership and test fails
         // we shrink to indices of [2, 1] and we recreate call sequence in same order.
-        Ok(shrinker.current().iter().map(|idx| &calls[*idx]).collect())
+        Ok(shrinker.current().map(|idx| &calls[idx]).cloned().collect())
     }
 
     fn check_sequence(
