@@ -851,7 +851,7 @@ impl<'a> ContractRunner<'a> {
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
     fn get_environment(&self, contexts: &[Context]) -> TestEnvironment {
-        if contexts.iter().any(|context| context.block_number.gt(&U256::from(1))) {
+        if !contexts.is_empty() {
             return TestEnvironment::Fork { block_number: contexts.last().unwrap().block_number }
         }
 

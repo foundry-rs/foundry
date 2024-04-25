@@ -1,3 +1,4 @@
+use alloy_primitives::U256;
 use foundry_evm_core::fork::Context;
 use revm::{
     interpreter::{CallInputs, CallOutcome},
@@ -14,6 +15,11 @@ pub struct ContextCollector {
 impl<DB: Database> Inspector<DB> for ContextCollector {
     fn call(&mut self, ecx: &mut EvmContext<DB>, _call: &mut CallInputs) -> Option<CallOutcome> {
         let block_number = ecx.inner.env.block.number;
+
+        // Skip if the block number is at genesis
+        if block_number == U256::from(1) {
+            return None;
+        }
 
         // Skip if the previous context is the same
         if let Some(Context { block_number: prev_block_number }) = self.contexts.last() {

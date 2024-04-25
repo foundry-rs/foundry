@@ -612,21 +612,32 @@ static MULTIFORK_TRACE_TEST: &str = r#"
 import {Test} from "forge-std/Test.sol";
 
 interface IERC20 {
-    function name() external view returns (string memory);
+    function balanceOf(address) external view returns (uint256);
 }
 
 contract MultiforkTraceTest is Test {
     function testRevertFork() public {
-        vm.createSelectFork("<url>", 19_626_899);
-        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+        vm.createSelectFork("<url1>", 19_626_900);
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).balanceOf(address(0));
 
-        vm.createSelectFork("<url>", 19_626_800);
-        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+        vm.createSelectFork("<url2>", 19_626_800);
+        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).balanceOf(address(1));
 
         revert();
 
-        vm.createSelectFork("<url>", 19_626_700);
-        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
+        vm.createSelectFork("<url3>", 19_626_700);
+        IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2).balanceOf(address(2));
+    }
+
+    function testSuccessFork() public {
+        vm.createSelectFork("<url1>", 19_626_900);
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).balanceOf(address(0));
+
+        vm.createSelectFork("<url2>", 19_626_800);
+        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).balanceOf(address(1));
+
+        vm.createSelectFork("<url3>", 19_626_700);
+        IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2).balanceOf(address(2));
     }
 }
 "#;
@@ -634,16 +645,27 @@ contract MultiforkTraceTest is Test {
 forgetest_init!(test_emits_correct_block_number_in_trace, |prj, cmd| {
     prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint1 = rpc::next_http_archive_rpc_endpoint();
+    let endpoint2 = rpc::next_http_archive_rpc_endpoint();
+    let endpoint3 = rpc::next_http_archive_rpc_endpoint();
 
-    prj.add_test("Contract.t.sol", &MULTIFORK_TRACE_TEST.replace("<url>", &endpoint)).unwrap();
+    prj.add_test(
+        "Contract.t.sol",
+        &MULTIFORK_TRACE_TEST
+            .replace("<url1>", &endpoint1)
+            .replace("<url2>", &endpoint2)
+            .replace("<url3>", &endpoint3),
+    )
+    .unwrap();
 
     let expected = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/test_emits_correct_block_number_in_trace.stderr"),
     )
     .unwrap()
-    .replace("<url>", &endpoint);
+    .replace("<url1>", &endpoint1)
+    .replace("<url2>", &endpoint2)
+    .replace("<url3>", &endpoint3);
 
     cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
 });
