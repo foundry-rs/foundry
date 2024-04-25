@@ -851,8 +851,8 @@ impl<'a> ContractRunner<'a> {
     /// If the backend has forks, return the block number of the fork.
     /// If the backend does not have forks, return [TestEnvironment::Standard].
     fn get_environment(&self, contexts: &[Context]) -> TestEnvironment {
-        if !contexts.is_empty() {
-            return TestEnvironment::Fork { block_number: contexts.last().unwrap().block_number }
+        if let Some(context) = contexts.last() {
+            return TestEnvironment::Fork { block_number: context.block_number }
         }
 
         self.executor

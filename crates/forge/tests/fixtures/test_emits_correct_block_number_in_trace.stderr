@@ -1,17 +1,22 @@
 Compiling 1 files
  
-Compiler run successful with warnings:
-Warning (5740): Unreachable code.
-  :20:9:
-   |
-20 |         vm.createSelectFork("<url3>", 19_626_700);
-   |         ^ (Relevant source part starts here and spans across multiple lines).
+Compiler run successful!
 
-
-Ran 2 tests for test/Contract.t.sol:MultiforkTraceTest
-[FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626800) (gas: 24170)
+Ran 3 tests for test/Contract.t.sol:MultiforkTraceTest
+[FAIL. Reason: assertion failed: 7550308002 != 0; counterexample: calldata=0x8681d0c70000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzzRevertFork(uint256) (block: 19626900) ()
 Traces:
-  [24170] MultiforkTraceTest::testRevertFork()
+  [11499] MultiforkTraceTest::testFuzzRevertFork(0)
+    ├─ [0] VM::createSelectFork("<url1>", 19626900 [1.962e7])
+    │   └─ ← [Return] 0
+    ├─ [5031] 0xdAC17F958D2ee523a2206206994597C13D831ec7::balanceOf(0x0000000000000000000000000000000000000000) [staticcall]
+    │   └─ ← [Return] 7550308002 [7.55e9]
+    ├─ [0] VM::assertEq(7550308002 [7.55e9], 0) [staticcall]
+    │   └─ ← [Revert] assertion failed: 7550308002 != 0
+    └─ ← [Revert] assertion failed: 7550308002 != 0
+
+[FAIL. Reason: assertion failed: 27412316046 != 0] testRevertFork() (block: 19626800) (gas: 24580)
+Traces:
+  [24580] MultiforkTraceTest::testRevertFork()
     ├─ [0] VM::createSelectFork("<url1>", 19626900 [1.962e7])
     │   └─ ← [Return] 0
     ├─ [5031] 0xdAC17F958D2ee523a2206206994597C13D831ec7::balanceOf(0x0000000000000000000000000000000000000000) [staticcall]
@@ -22,11 +27,13 @@ Traces:
     │   ├─ [2553] 0x43506849D7C04F9138D1A2050bbF3A0c054402dd::balanceOf(0x0000000000000000000000000000000000000001) [delegatecall]
     │   │   └─ ← [Return] 27412316046 [2.741e10]
     │   └─ ← [Return] 27412316046 [2.741e10]
-    └─ ← [Revert] EvmError: Revert
+    ├─ [0] VM::assertEq(27412316046 [2.741e10], 0) [staticcall]
+    │   └─ ← [Revert] assertion failed: 27412316046 != 0
+    └─ ← [Revert] assertion failed: 27412316046 != 0
 
-[PASS] testSuccessFork() (gas: 30072)
+[PASS] testSuccessFork() (gas: 30096)
 Traces:
-  [30072] MultiforkTraceTest::testSuccessFork()
+  [30096] MultiforkTraceTest::testSuccessFork()
     ├─ [0] VM::createSelectFork("<url1>", 19626900 [1.962e7])
     │   └─ ← [Return] 0
     ├─ [5031] 0xdAC17F958D2ee523a2206206994597C13D831ec7::balanceOf(0x0000000000000000000000000000000000000000) [staticcall]
@@ -43,12 +50,13 @@ Traces:
     │   └─ ← [Return] 1052208109888342 [1.052e15]
     └─ ← [Stop] 
 
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; 
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; 
 
-Ran 1 test suite: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+Ran 1 test suite: 1 tests passed, 2 failed, 0 skipped (3 total tests)
 
 Failing tests:
-Encountered 1 failing test in test/Contract.t.sol:MultiforkTraceTest
-[FAIL. Reason: EvmError: Revert] testRevertFork() (block: 19626800) (gas: 24170)
+Encountered 2 failing tests in test/Contract.t.sol:MultiforkTraceTest
+[FAIL. Reason: assertion failed: 7550308002 != 0; counterexample: calldata=0x8681d0c70000000000000000000000000000000000000000000000000000000000000000 args=[0]] testFuzzRevertFork(uint256) (block: 19626900) ()
+[FAIL. Reason: assertion failed: 27412316046 != 0] testRevertFork() (block: 19626800) (gas: 24580)
 
-Encountered a total of 1 failing tests, 1 tests succeeded
+Encountered a total of 2 failing tests, 1 tests succeeded

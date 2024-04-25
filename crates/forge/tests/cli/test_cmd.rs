@@ -621,9 +621,8 @@ contract MultiforkTraceTest is Test {
         IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).balanceOf(address(0));
 
         vm.createSelectFork("<url2>", 19_626_800);
-        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).balanceOf(address(1));
-
-        revert();
+        uint256 balance = IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).balanceOf(address(1));
+        vm.assertEq(balance, 0);
 
         vm.createSelectFork("<url3>", 19_626_700);
         IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2).balanceOf(address(2));
@@ -638,6 +637,13 @@ contract MultiforkTraceTest is Test {
 
         vm.createSelectFork("<url3>", 19_626_700);
         IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2).balanceOf(address(2));
+    }
+
+    // Expected to only run on test failure
+    function testFuzzRevertFork(uint256) public {
+        vm.createSelectFork("<url1>", 19_626_900);
+        uint256 balance = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).balanceOf(address(0));
+        vm.assertEq(balance, 0);
     }
 }
 "#;
@@ -667,5 +673,7 @@ forgetest_init!(test_emits_correct_block_number_in_trace, |prj, cmd| {
     .replace("<url2>", &endpoint2)
     .replace("<url3>", &endpoint3);
 
-    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+    cmd.args(["test", "-vvvv", "--fuzz-runs=3", "--fuzz-seed=1"])
+        .unchecked_output()
+        .stdout_matches_content(&expected);
 });

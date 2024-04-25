@@ -28,6 +28,12 @@ impl<DB: Database> Inspector<DB> for ContextCollector {
             }
         }
 
+        warn!(
+            "New context: block_number={}, contexts_length={}",
+            block_number,
+            self.contexts.len()
+        );
+
         // Push the new context
         self.contexts.push(Context { block_number });
 
