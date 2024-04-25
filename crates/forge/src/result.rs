@@ -380,7 +380,7 @@ pub struct TestResult {
     #[serde(skip)]
     pub traces: Traces,
 
-    /// Contexts
+    /// Execution context switches made inside of the test that was run.
     #[serde(skip)]
     pub contexts: Vec<Context>,
 
@@ -462,7 +462,7 @@ impl TestResult {
     }
 }
 
-/// Various types of tests
+/// Various types of tests.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestKind {
     /// A standard test that consists of calling the defined solidity function
@@ -539,7 +539,7 @@ impl TestKindReport {
     }
 }
 
-/// Various types of test environments
+/// Various types of test environments.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestEnvironment {
     /// A standard test environment
