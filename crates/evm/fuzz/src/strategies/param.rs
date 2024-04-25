@@ -125,23 +125,26 @@ pub fn fuzz_param_from_state(
     let value = || {
         let state = state.clone();
         let param = param.clone();
-        // Use `Index` instead of `Selector` to not iterate over the entire dictionary.
-        any::<prop::sample::Index>().prop_map(move |index| {
-            let state = state.dictionary_read();
-            let bias = rand::thread_rng().gen_range(0..100);
-            let values = match bias {
-                x if x < 50 => {
-                    if let Some(sample_values) = state.samples(param.clone()) {
-                        sample_values
-                    } else {
-                        state.values()
+        // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
+        // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
+        // entire dictionary.
+        ((0..100).prop_flat_map(Just), any::<prop::sample::Index>()).prop_map(
+            move |(bias, index)| {
+                let state = state.dictionary_read();
+                let values = match bias {
+                    x if x < 50 => {
+                        if let Some(sample_values) = state.samples(param.clone()) {
+                            sample_values
+                        } else {
+                            state.values()
+                        }
                     }
-                }
-                _ => state.values(),
-            };
-            let index = index.index(values.len());
-            *values.iter().nth(index).unwrap()
-        })
+                    _ => state.values(),
+                };
+                let index = index.index(values.len());
+                *values.iter().nth(index).unwrap()
+            },
+        )
     };
 
     // Convert the value based on the parameter type
