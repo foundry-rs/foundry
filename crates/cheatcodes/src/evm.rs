@@ -305,13 +305,13 @@ impl Cheatcode for prevrandao_1Call {
 
 impl Cheatcode for blobhashesCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { blobhashes } = self;
+        let Self { hashes } = self;
         ensure!(
             ccx.ecx.spec_id() >= SpecId::CANCUN,
             "`blobhash` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.tx.blob_hashes.clone_from(blobhashes);
+        ccx.ecx.env.tx.blob_hashes.clone_from(hashes);
         Ok(Default::default())
     }
 }
