@@ -16,10 +16,6 @@ pub fn http_provider_with_signer(
         .expect("failed to build Alloy HTTP provider with signer")
 }
 
-pub fn ws_provider(ws_endpoint: &str) -> RetryProvider {
-    ProviderBuilder::new(ws_endpoint).build().expect("failed to build Alloy WS provider")
-}
-
 pub fn ws_provider_with_signer(
     ws_endpoint: &str,
     signer: EthereumSigner,
@@ -54,10 +50,6 @@ pub async fn connect_pubsub_with_signer(conn_str: &str, signer: EthereumSigner) 
         .on_builtin(conn_str)
         .await
         .unwrap()
-}
-
-pub async fn ipc_provider(ipc_endpoint: &str) -> RetryProvider {
-    ProviderBuilder::new(ipc_endpoint).build().expect("failed to build Alloy IPC provider")
 }
 
 pub async fn ipc_provider_with_signer(

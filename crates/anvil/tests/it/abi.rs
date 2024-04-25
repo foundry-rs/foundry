@@ -29,7 +29,7 @@ sol!(
 
 sol!(
     #[sol(rpc)]
-    interface AlloyErc721 {
+    interface ERC721 {
         function balanceOf(address owner) public view virtual returns (uint256);
         function ownerOf(uint256 tokenId) public view virtual returns (address);
         function name() public view virtual returns (string memory);

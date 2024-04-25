@@ -1,7 +1,7 @@
 //! various fork related test
 
 use crate::{
-    abi::*,
+    abi::{Greeter, ERC721},
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
@@ -625,7 +625,7 @@ async fn test_fork_nft_set_approve_all() {
     let owner: Address = "0x052564eb0fd8b340803df55def89c25c432f43f4".parse().unwrap();
     let token_id: U256 = U256::from(154u64);
 
-    let nouns = AlloyErc721::new(nouns_addr, provider.clone());
+    let nouns = ERC721::new(nouns_addr, provider.clone());
 
     let real_owner = nouns.ownerOf(token_id).call().await.unwrap();
     assert_eq!(real_owner._0, owner);

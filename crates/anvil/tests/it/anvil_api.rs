@@ -3,10 +3,11 @@
 use crate::{
     abi::{Greeter, MulticallContract, BUSD},
     fork::fork_config,
+    utils::http_provider_with_signer,
 };
-use alloy_network::TransactionBuilder;
+use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
-use alloy_provider::Provider;
+use alloy_provider::{txpool::TxPoolApi, Provider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, WithOtherFields};
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
@@ -621,31 +622,29 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     assert_eq!(coinbase, latest_block.header.miner);
 }
 
-// #[tokio::test(flavor = "multi_thread")]
-// async fn can_remove_pool_transactions() {
-//     let (api, handle) = spawn(NodeConfig::test()).await;
+#[tokio::test(flavor = "multi_thread")]
+async fn can_remove_pool_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
 
-//     let wallet = handle.dev_wallets().next().unwrap();
-//     let signer: EthereumSigner = wallet.clone().into();
-//     let from = wallet.address();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let from = wallet.address();
 
-//     let provider = handle.http_provider();
-//     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
-//     let sender = Address::random();
-//     let to = Address::random();
-//     let val = U256::from(1337);
-//     let tx =
-//         TransactionRequest::default().with_from(sender).with_to(Some(to).into()).with_value(val);
-//     let tx = WithOtherFields::new(tx);
+    let sender = Address::random();
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_from(sender).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
 
-//     provider.send_transaction(tx.with_from(from)).await.unwrap();
+    provider.send_transaction(tx.with_from(from)).await.unwrap().register().await.unwrap();
 
-//     let initial_txs = provider.txpool_inspect().await.unwrap();
-//     assert_eq!(initial_txs.pending.len(), 1);
+    let initial_txs = provider.txpool_inspect().await.unwrap();
+    assert_eq!(initial_txs.pending.len(), 1);
 
-//     api.anvil_remove_pool_transactions(wallet.address().to_alloy()).await.unwrap();
+    api.anvil_remove_pool_transactions(wallet.address()).await.unwrap();
 
-//     let final_txs = provider.txpool_inspect().await.unwrap();
-//     assert_eq!(final_txs.pending.len(), 0);
-// }
+    let final_txs = provider.txpool_inspect().await.unwrap();
+    assert_eq!(final_txs.pending.len(), 0);
+}

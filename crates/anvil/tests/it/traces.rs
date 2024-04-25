@@ -1,7 +1,4 @@
-use crate::{
-    fork::fork_config,
-    utils::{http_provider_with_signer, ws_provider},
-};
+use crate::{fork::fork_config, utils::http_provider_with_signer};
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{debug::DebugApi, Provider};
@@ -16,7 +13,7 @@ use anvil::{spawn, Hardfork, NodeConfig};
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -64,7 +61,7 @@ sol!(
 #[tokio::test(flavor = "multi_thread")]
 async fn test_parity_suicide_trace() {
     let (_api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Shanghai))).await;
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let owner = wallets[0].address();
     let destructor = wallets[1].address();

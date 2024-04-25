@@ -1,6 +1,6 @@
 //! IPC tests
 
-use crate::utils::{connect_pubsub, ipc_provider};
+use crate::utils::connect_pubsub;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use anvil::{spawn, NodeConfig};
@@ -29,7 +29,7 @@ async fn can_get_block_number_ipc() {
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::ZERO);
 
-    let provider = ipc_provider(handle.ipc_path().unwrap().as_str()).await;
+    let provider = handle.ipc_provider().unwrap();
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, block_num.to::<u64>());

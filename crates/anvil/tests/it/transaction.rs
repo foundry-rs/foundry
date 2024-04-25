@@ -1,6 +1,6 @@
 use crate::{
-    abi::*,
-    utils::{http_provider_with_signer, ws_provider},
+    abi::{Greeter, MulticallContract, SimpleStorage},
+    utils::http_provider_with_signer,
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
@@ -407,7 +407,7 @@ async fn can_call_greeter_historic() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
 
@@ -427,7 +427,7 @@ async fn can_deploy_greeter_ws() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_get_code() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
 
@@ -536,7 +536,7 @@ async fn call_past_state() {
 async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -575,7 +575,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
@@ -614,7 +614,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ws_provider(&handle.ws_endpoint());
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
@@ -838,7 +838,7 @@ async fn can_stream_pending_transactions() {
     let num_txs = 5;
 
     let provider = handle.http_provider();
-    let ws_provider = ws_provider(&handle.ws_endpoint());
+    let ws_provider = handle.ws_provider();
 
     let accounts = provider.get_accounts().await.unwrap();
     let tx =

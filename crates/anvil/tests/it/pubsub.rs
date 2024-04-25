@@ -14,7 +14,6 @@ use futures::StreamExt;
 async fn test_sub_new_heads() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    // let provider = ws_provider(&handle.ws_endpoint());
     let provider = connect_pubsub(&handle.ws_endpoint()).await;
 
     let blocks = provider.subscribe_blocks().await.unwrap();
