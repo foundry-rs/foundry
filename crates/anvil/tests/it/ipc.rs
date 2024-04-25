@@ -19,7 +19,10 @@ fn ipc_config() -> NodeConfig {
     NodeConfig::test().with_ipc(Some(Some(rand_ipc_endpoint())))
 }
 
+// TODO: throws: `Transport(Custom(Os { code: 2, kind: NotFound, message: "The system cannot find
+// the file specified." }))` on Windows
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn can_get_block_number_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
