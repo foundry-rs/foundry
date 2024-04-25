@@ -31,7 +31,7 @@ foundry-evm.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 
-ethers-contract.workspace = true
+ethers-contract = { workspace = true, features = ["abigen"] }
 
 revm-inspectors.workspace = true
 
