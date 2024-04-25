@@ -32,7 +32,10 @@ async fn can_get_block_number_ipc() {
     assert_eq!(num, block_num.to::<u64>());
 }
 
+// TODO: throws: `Transport(Custom(Os { code: 2, kind: NotFound, message: "The system cannot find
+// the file specified." }))` on Windows
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_sub_new_heads_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
