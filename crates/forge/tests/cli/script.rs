@@ -3,8 +3,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_common::rpc;
-use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
+use foundry_test_utils::{rpc, util::OutputExt, ScriptOutcome, ScriptTester};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -32,7 +31,7 @@ contract ContractScript is Script {
             )
             .unwrap();
 
-        let rpc = foundry_common::rpc::next_http_rpc_endpoint();
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
 
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
@@ -105,6 +104,47 @@ contract Demo {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_execute_script_command_with_sig.stdout"),
     );
+});
+
+static FAILING_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract FailingScript is Script {
+    function run() external {
+        revert("failed");
+    }
+}
+"#;
+
+// Tests that execution throws upon encountering a revert in the script.
+forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+
+    // set up command
+    cmd.arg("script").arg(script);
+
+    // run command and assert error exit code
+    cmd.assert_err();
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("script failed: revert: failed"));
+});
+
+// Tests that execution throws upon encountering a revert in the script with --json option.
+// <https://github.com/foundry-rs/foundry/issues/2508>
+forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+
+    // set up command
+    cmd.arg("script").arg(script).arg("--json");
+
+    // run command and assert error exit code
+    cmd.assert_err();
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("script failed: revert: failed"));
 });
 
 // Tests that the manually specified gas limit is used when using the --unlocked option
@@ -403,97 +443,75 @@ forgetest_async!(can_deploy_script_with_lib, |prj, cmd| {
         .await;
 });
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_script_private_key,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_script_private_key, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_addresses(&[
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
-            .await
-            .add_sig("BroadcastTest", "deployPrivateKey()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(&[(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                3,
-            )])
-            .await;
-    }
-);
+    tester
+        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .await
+        .add_sig("BroadcastTest", "deployPrivateKey()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            3,
+        )])
+        .await;
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_unlocked,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_unlocked, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
-            .unlocked()
-            .add_sig("BroadcastTest", "deployOther()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast);
-    }
-);
+    tester
+        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .unlocked()
+        .add_sig("BroadcastTest", "deployOther()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast);
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_script_remember_key,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_addresses(&[
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
-            .await
-            .add_sig("BroadcastTest", "deployRememberKey()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(&[(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                2,
-            )])
-            .await;
-    }
-);
+    tester
+        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .await
+        .add_sig("BroadcastTest", "deployRememberKey()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            2,
+        )])
+        .await;
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_script_remember_key_and_resume,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_script_remember_key_and_resume, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .add_deployer(0)
-            .load_addresses(&[
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
-            .await
-            .add_sig("BroadcastTest", "deployRememberKeyResume()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .resume(ScriptOutcome::MissingWallet)
-            // load missing wallet
-            .load_private_keys(&[0])
-            .await
-            .run(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(&[(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                1,
-            )])
-            .await
-            .assert_nonce_increment(&[(0, 2)])
-            .await;
-    }
-);
+    tester
+        .add_deployer(0)
+        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .await
+        .add_sig("BroadcastTest", "deployRememberKeyResume()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .resume(ScriptOutcome::MissingWallet)
+        // load missing wallet
+        .load_private_keys(&[0])
+        .await
+        .run(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            1,
+        )])
+        .await
+        .assert_nonce_increment(&[(0, 2)])
+        .await;
+});
 
 forgetest_async!(can_resume_script, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -580,41 +598,33 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
         .run(ScriptOutcome::ScriptFailed);
 });
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_and_simulate_25_txes_concurrently,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_private_keys(&[0])
-            .await
-            .add_sig("BroadcastTestNoLinking", "deployMany()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(&[(0, 25)])
-            .await;
-    }
-);
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
 
-forgetest_async!(
-    #[serial_test::serial]
-    can_deploy_and_simulate_mixed_broadcast_modes,
-    |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(can_deploy_and_simulate_mixed_broadcast_modes, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        tester
-            .load_private_keys(&[0])
-            .await
-            .add_sig("BroadcastMix", "deployMix()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(&[(0, 15)])
-            .await;
-    }
-);
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastMix", "deployMix()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 15)])
+        .await;
+});
 
 forgetest_async!(deploy_with_setup, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -641,81 +651,76 @@ forgetest_async!(fail_broadcast_staticcall, |prj, cmd| {
         .simulate(ScriptOutcome::StaticCallNotAllowed);
 });
 
-forgetest_async!(
-    #[serial_test::serial]
-    check_broadcast_log,
-    |prj, cmd| {
-        let (api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(check_broadcast_log, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-        // Prepare CREATE2 Deployer
-        let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-        let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr, code).await.unwrap();
+    // Prepare CREATE2 Deployer
+    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
+    api.anvil_set_code(addr, code).await.unwrap();
 
-        tester
-            .load_private_keys(&[0])
-            .await
-            .add_sig("BroadcastTestSetup", "run()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(&[(0, 6)])
-            .await;
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestSetup", "run()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 6)])
+        .await;
 
-        // Uncomment to recreate the broadcast log
-        // std::fs::copy(
-        //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
-        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixtures/broadcast.
-        // log. json" ), );
+    // Uncomment to recreate the broadcast log
+    // std::fs::copy(
+    //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
+    //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixtures/broadcast.
+    // log. json" ), );
 
-        // Check broadcast logs
-        // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
-        // transactionIndex and logIndex values since they can change inbetween runs
-        let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
+    // Check broadcast logs
+    // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
+    // transactionIndex and logIndex values since they can change inbetween runs
+    let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
-        let fixtures_log = std::fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../testdata/fixtures/broadcast.log.json"),
-        )
-        .unwrap();
-        let _fixtures_log = re.replace_all(&fixtures_log, "");
+    let fixtures_log = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/fixtures/broadcast.log.json"),
+    )
+    .unwrap();
+    let _fixtures_log = re.replace_all(&fixtures_log, "");
 
-        let run_log =
-            std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
-        let _run_log = re.replace_all(&run_log, "");
+    let run_log =
+        std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
+    let _run_log = re.replace_all(&run_log, "");
 
-        // pretty_assertions::assert_eq!(fixtures_log, run_log);
+    // pretty_assertions::assert_eq!(fixtures_log, run_log);
 
-        // Uncomment to recreate the sensitive log
-        // std::fs::copy(
-        //     "cache/Broadcast.t.sol/31337/run-latest.json",
-        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        //         .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
-        // );
+    // Uncomment to recreate the sensitive log
+    // std::fs::copy(
+    //     "cache/Broadcast.t.sol/31337/run-latest.json",
+    //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    //         .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
+    // );
 
-        // Check sensitive logs
-        // Ignore port number since it can change inbetween runs
-        let re = Regex::new(r":[0-9]+").unwrap();
+    // Check sensitive logs
+    // Ignore port number since it can change inbetween runs
+    let re = Regex::new(r":[0-9]+").unwrap();
 
-        let fixtures_log = std::fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
-        )
-        .unwrap();
-        let fixtures_log = re.replace_all(&fixtures_log, "");
+    let fixtures_log = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
+    )
+    .unwrap();
+    let fixtures_log = re.replace_all(&fixtures_log, "");
 
-        let run_log =
-            std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
-        let run_log = re.replace_all(&run_log, "");
+    let run_log = std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
+    let run_log = re.replace_all(&run_log, "");
 
-        // Clean up carriage return OS differences
-        let re = Regex::new(r"\r\n").unwrap();
-        let fixtures_log = re.replace_all(&fixtures_log, "\n");
-        let run_log = re.replace_all(&run_log, "\n");
+    // Clean up carriage return OS differences
+    let re = Regex::new(r"\r\n").unwrap();
+    let fixtures_log = re.replace_all(&fixtures_log, "\n");
+    let run_log = re.replace_all(&run_log, "\n");
 
-        pretty_assertions::assert_eq!(fixtures_log, run_log);
-    }
-);
+    pretty_assertions::assert_eq!(fixtures_log, run_log);
+});
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -1074,6 +1079,28 @@ interface Interface {}
     assert!(cmd.stdout_lossy().contains("Script ran successfully."));
 });
 
+forgetest_async!(assert_can_detect_unlinked_target_with_libraries, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "ScriptWithExtLib.s.sol",
+            r#"
+library Lib {
+    function f() public {}
+}
+
+contract Script {
+    function run() external {
+        Lib.f();
+    }
+}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script);
+    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});
+
 forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
@@ -1085,4 +1112,212 @@ forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
         .load_private_keys(&[0])
         .await
         .resume(ScriptOutcome::OkBroadcast);
+});
+
+forgetest_async!(can_detect_contract_when_multiple_versions, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    prj.add_script(
+        "A.sol",
+        r#"pragma solidity 0.8.20;
+import "./B.sol";
+
+contract ScriptA {}
+"#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "B.sol",
+        r#"pragma solidity >=0.8.5 <=0.8.20;
+import 'forge-std/Script.sol';
+
+contract ScriptB is Script {
+    function run() external {
+        vm.broadcast();
+        address(0).call("");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "C.sol",
+        r#"pragma solidity 0.8.5;
+import "./B.sol";
+
+contract ScriptC {}
+"#,
+    )
+    .unwrap();
+
+    let mut tester = ScriptTester::new(cmd, None, prj.root(), "script/B.sol");
+    tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
+    tester.simulate(ScriptOutcome::OkNoEndpoint);
+});
+
+forgetest_async!(can_sign_with_script_wallet_single, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester
+        .add_sig("ScriptSign", "run()")
+        .load_private_keys(&[0])
+        .await
+        .simulate(ScriptOutcome::OkNoEndpoint);
+});
+
+forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    let acc = tester.accounts_pub[0].to_checksum(None);
+    tester
+        .add_sig("ScriptSign", "run(address)")
+        .arg(&acc)
+        .load_private_keys(&[0, 1, 2])
+        .await
+        .simulate(ScriptOutcome::OkRun);
+});
+
+forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "Sctipt.s.sol",
+            r#"
+contract Script {
+    function run() external {}
+
+    function run(address,uint256) external {}
+}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
+    assert!(cmd.stderr_lossy().contains("Multiple functions with the same name"));
+});
+
+forgetest_async!(can_decode_custom_errors, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
+
+    let script = prj
+        .add_script(
+            "CustomErrorScript.s.sol",
+            r#"
+import { Script } from "forge-std/Script.sol";
+
+contract ContractWithCustomError {
+    error CustomError();
+
+    constructor() {
+        revert CustomError();
+    }
+}
+
+contract CustomErrorScript is Script {
+    ContractWithCustomError test;
+
+    function run() public {
+        test = new ContractWithCustomError();
+    }
+}
+"#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
+    assert!(cmd.stderr_lossy().contains("script failed: CustomError()"));
+});
+
+// https://github.com/foundry-rs/foundry/issues/7620
+forgetest_async!(can_run_zero_base_fee, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let node_config = NodeConfig::test().with_base_fee(Some(0));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    // Firstly run script with non-zero gas prices to ensure that eth_feeHistory contains non-zero
+    // values.
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+        "--with-gas-price",
+        "2000000",
+        "--priority-gas-price",
+        "100000",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+    // Ensure that we can correctly estimate gas when base fee is zero but priority fee is not.
+    cmd.forge_fuse().args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});
+
+// https://github.com/foundry-rs/foundry/pull/7742
+forgetest_async!(unlocked_no_sender, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });

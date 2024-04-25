@@ -81,6 +81,10 @@ pub fn print_diagnostics_report(
     path: Option<&Path>,
     diagnostics: Vec<Diagnostic>,
 ) -> std::io::Result<()> {
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+
     let filename =
         path.map(|p| p.file_name().unwrap().to_string_lossy().to_string()).unwrap_or_default();
     for diag in diagnostics {

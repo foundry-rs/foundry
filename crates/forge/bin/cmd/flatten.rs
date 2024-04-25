@@ -4,7 +4,7 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ProjectPathsArgs},
     utils::LoadConfig,
 };
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::{compile::compile_target, fs};
 use foundry_compilers::{error::SolcError, flatten::Flattener};
 use std::path::PathBuf;
 
@@ -12,13 +12,13 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Parser)]
 pub struct FlattenArgs {
     /// The path to the contract to flatten.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
 
     /// The path to output the flattened contract.
     ///
     /// If not specified, the flattened contract will be output to stdout.
-    #[clap(
+    #[arg(
         long,
         short,
         value_hint = ValueHint::FilePath,
@@ -26,7 +26,7 @@ pub struct FlattenArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     project_paths: ProjectPathsArgs,
 }
 
@@ -36,14 +36,13 @@ impl FlattenArgs {
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };
-
-        let config = build_args.try_load_config_emit_warnings()?;
-
-        let target_path = dunce::canonicalize(target_path)?;
-
+        let mut config = build_args.try_load_config_emit_warnings()?;
+        // `Flattener` uses the typed AST for better flattening results.
+        config.ast = true;
         let project = config.ephemeral_no_artifacts_project()?;
 
-        let compiler_output = ProjectCompiler::new().files([target_path.clone()]).compile(&project);
+        let target_path = dunce::canonicalize(target_path)?;
+        let compiler_output = compile_target(&target_path, &project, false);
 
         let flattened = match compiler_output {
             Ok(compiler_output) => {

@@ -1,31 +1,208 @@
 //! Test outcomes.
 
 use alloy_primitives::{Address, Log};
-use foundry_common::evm::Breakpoints;
+use foundry_common::{
+    evm::Breakpoints, get_contract_name, get_file_name, shell, ContractsByArtifact,
+};
+use foundry_compilers::artifacts::Libraries;
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
     executors::EvmError,
-    fuzz::{CounterExample, FuzzCase},
-    traces::{TraceKind, Traces},
+    fuzz::{CounterExample, FuzzCase, FuzzFixtures},
+    traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{self, Write},
+    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
 
-/// Results and duration for a set of tests included in the same test contract
+use crate::gas_report::GasReport;
+
+/// The aggregated result of a test run.
+#[derive(Clone, Debug)]
+pub struct TestOutcome {
+    /// The results of all test suites by their identifier (`path:contract_name`).
+    ///
+    /// Essentially `identifier => signature => result`.
+    pub results: BTreeMap<String, SuiteResult>,
+    /// Whether to allow test failures without failing the entire test run.
+    pub allow_failure: bool,
+    /// The decoder used to decode traces and logs.
+    ///
+    /// This is `None` if traces and logs were not decoded.
+    ///
+    /// Note that `Address` fields only contain the last executed test case's data.
+    pub last_run_decoder: Option<CallTraceDecoder>,
+    /// The gas report, if requested.
+    pub gas_report: Option<GasReport>,
+}
+
+impl TestOutcome {
+    /// Creates a new test outcome with the given results.
+    pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
+    }
+
+    /// Creates a new empty test outcome.
+    pub fn empty(allow_failure: bool) -> Self {
+        Self::new(BTreeMap::new(), allow_failure)
+    }
+
+    /// Returns an iterator over all individual succeeding tests and their names.
+    pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+    }
+
+    /// Returns an iterator over all individual skipped tests and their names.
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+    }
+
+    /// Returns an iterator over all individual failing tests and their names.
+    pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+    }
+
+    /// Returns an iterator over all individual tests and their names.
+    pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.results.values().flat_map(|suite| suite.tests())
+    }
+
+    /// Flattens the test outcome into a list of individual tests.
+    // TODO: Replace this with `tests` and make it return `TestRef<'_>`
+    pub fn into_tests_cloned(&self) -> impl Iterator<Item = SuiteTestResult> + '_ {
+        self.results
+            .iter()
+            .flat_map(|(file, suite)| {
+                suite
+                    .test_results
+                    .iter()
+                    .map(move |(sig, result)| (file.clone(), sig.clone(), result.clone()))
+            })
+            .map(|(artifact_id, signature, result)| SuiteTestResult {
+                artifact_id,
+                signature,
+                result,
+            })
+    }
+
+    /// Flattens the test outcome into a list of individual tests.
+    pub fn into_tests(self) -> impl Iterator<Item = SuiteTestResult> {
+        self.results
+            .into_iter()
+            .flat_map(|(file, suite)| {
+                suite.test_results.into_iter().map(move |t| (file.clone(), t))
+            })
+            .map(|(artifact_id, (signature, result))| SuiteTestResult {
+                artifact_id,
+                signature,
+                result,
+            })
+    }
+
+    /// Returns the number of tests that passed.
+    pub fn passed(&self) -> usize {
+        self.successes().count()
+    }
+
+    /// Returns the number of tests that were skipped.
+    pub fn skipped(&self) -> usize {
+        self.skips().count()
+    }
+
+    /// Returns the number of tests that failed.
+    pub fn failed(&self) -> usize {
+        self.failures().count()
+    }
+
+    /// Sums up all the durations of all individual test suites.
+    ///
+    /// Note that this is not necessarily the wall clock time of the entire test run.
+    pub fn total_time(&self) -> Duration {
+        self.results.values().map(|suite| suite.duration).sum()
+    }
+
+    /// Formats the aggregated summary of all test suites into a string (for printing).
+    pub fn summary(&self, wall_clock_time: Duration) -> String {
+        let num_test_suites = self.results.len();
+        let suites = if num_test_suites == 1 { "suite" } else { "suites" };
+        let total_passed = self.passed();
+        let total_failed = self.failed();
+        let total_skipped = self.skipped();
+        let total_tests = total_passed + total_failed + total_skipped;
+        format!(
+            "\nRan {} test {} in {:.2?} ({:.2?} CPU time): {} tests passed, {} failed, {} skipped ({} total tests)",
+            num_test_suites,
+            suites,
+            wall_clock_time,
+            self.total_time(),
+            total_passed.green(),
+            total_failed.red(),
+            total_skipped.yellow(),
+            total_tests
+        )
+    }
+
+    /// Checks if there are any failures and failures are disallowed.
+    pub fn ensure_ok(&self) -> eyre::Result<()> {
+        let outcome = self;
+        let failures = outcome.failures().count();
+        if outcome.allow_failure || failures == 0 {
+            return Ok(());
+        }
+
+        if !shell::verbosity().is_normal() {
+            // TODO: Avoid process::exit
+            std::process::exit(1);
+        }
+
+        shell::println("")?;
+        shell::println("Failing tests:")?;
+        for (suite_name, suite) in outcome.results.iter() {
+            let failed = suite.failed();
+            if failed == 0 {
+                continue;
+            }
+
+            let term = if failed > 1 { "tests" } else { "test" };
+            shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
+            for (name, result) in suite.failures() {
+                shell::println(result.short_result(name))?;
+            }
+            shell::println("")?;
+        }
+        let successes = outcome.passed();
+        shell::println(format!(
+            "Encountered a total of {} failing tests, {} tests succeeded",
+            failures.to_string().red(),
+            successes.to_string().green()
+        ))?;
+
+        // TODO: Avoid process::exit
+        std::process::exit(1);
+    }
+}
+
+/// A set of test results for a single test suite, which is all the tests in a single contract.
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
-    /// Total duration of the test run for this block of tests
+    /// Wall clock time it took to execute all tests in this suite.
+    #[serde(with = "humantime_serde")]
     pub duration: Duration,
-    /// Individual test results. `test fn signature -> TestResult`
+    /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
-    /// Warnings
+    /// Generated warnings.
     pub warnings: Vec<String>,
+    /// Libraries used to link test contract.
+    pub libraries: Libraries,
+    /// Contracts linked with correct libraries.
+    #[serde(skip)]
+    pub known_contracts: Arc<ContractsByArtifact>,
 }
 
 impl SuiteResult {
@@ -33,18 +210,40 @@ impl SuiteResult {
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
+        libraries: Libraries,
+        known_contracts: Arc<ContractsByArtifact>,
     ) -> Self {
-        Self { duration, test_results, warnings }
+        Self { duration, test_results, warnings, libraries, known_contracts }
     }
 
-    /// Iterator over all succeeding tests and their names
+    /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
-    /// Iterator over all failing tests and their names
+    /// Returns an iterator over all individual skipped tests and their names.
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+    }
+
+    /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+    }
+
+    /// Returns the number of tests that passed.
+    pub fn passed(&self) -> usize {
+        self.successes().count()
+    }
+
+    /// Returns the number of tests that were skipped.
+    pub fn skipped(&self) -> usize {
+        self.skips().count()
+    }
+
+    /// Returns the number of tests that failed.
+    pub fn failed(&self) -> usize {
+        self.failures().count()
     }
 
     /// Iterator over all tests and their names
@@ -61,8 +260,62 @@ impl SuiteResult {
     pub fn len(&self) -> usize {
         self.test_results.len()
     }
+
+    /// Sums up all the durations of all individual tests in this suite.
+    ///
+    /// Note that this is not necessarily the wall clock time of the entire test suite.
+    pub fn total_time(&self) -> Duration {
+        self.test_results.values().map(|result| result.duration).sum()
+    }
+
+    /// Returns the summary of a single test suite.
+    pub fn summary(&self) -> String {
+        let failed = self.failed();
+        let result = if failed == 0 { "ok".green() } else { "FAILED".red() };
+        format!(
+            "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
+            result,
+            self.passed().green(),
+            failed.red(),
+            self.skipped().yellow(),
+            self.duration,
+            self.total_time(),
+        )
+    }
 }
 
+/// The result of a single test in a test suite.
+///
+/// This is flattened from a [`TestOutcome`].
+#[derive(Clone, Debug)]
+pub struct SuiteTestResult {
+    /// The identifier of the artifact/contract in the form:
+    /// `<artifact file name>:<contract name>`.
+    pub artifact_id: String,
+    /// The function signature of the Solidity test.
+    pub signature: String,
+    /// The result of the executed test.
+    pub result: TestResult,
+}
+
+impl SuiteTestResult {
+    /// Returns the gas used by the test.
+    pub fn gas_used(&self) -> u64 {
+        self.result.kind.report().gas()
+    }
+
+    /// Returns the contract name of the artifact ID.
+    pub fn contract_name(&self) -> &str {
+        get_contract_name(&self.artifact_id)
+    }
+
+    /// Returns the file name of the artifact ID.
+    pub fn file_name(&self) -> &str {
+        get_file_name(&self.artifact_id)
+    }
+}
+
+/// The status of a test.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TestStatus {
     Success,
@@ -91,7 +344,7 @@ impl TestStatus {
     }
 }
 
-/// The result of an executed solidity test
+/// The result of an executed test.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
     /// The test status, indicating whether the test case succeeded, failed, or was marked as
@@ -121,6 +374,10 @@ pub struct TestResult {
     #[serde(skip)]
     pub traces: Traces,
 
+    /// Additional traces to use for gas report.
+    #[serde(skip)]
+    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
+
     /// Raw coverage info
     #[serde(skip)]
     pub coverage: Option<HitMaps>,
@@ -131,6 +388,8 @@ pub struct TestResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
 
+    pub duration: Duration,
+
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
 }
@@ -138,8 +397,8 @@ pub struct TestResult {
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
-            TestStatus::Success => Paint::green("[PASS]").fmt(f),
-            TestStatus::Skipped => Paint::yellow("[SKIP]").fmt(f),
+            TestStatus::Success => "[PASS]".green().fmt(f),
+            TestStatus::Skipped => "[SKIP]".yellow().fmt(f),
             TestStatus::Failure => {
                 let mut s = String::from("[FAIL. Reason: ");
 
@@ -162,7 +421,7 @@ impl fmt::Display for TestResult {
                     s.push(']');
                 }
 
-                Paint::red(s).fmt(f)
+                s.red().fmt(f)
             }
         }
     }
@@ -176,6 +435,11 @@ impl TestResult {
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
+    }
+
+    /// Formats the test result into a string (for printing).
+    pub fn short_result(&self, name: &str) -> String {
+        format!("{self} {name} {}", self.kind.report())
     }
 }
 
@@ -270,6 +534,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Coverage info during setup
     pub coverage: Option<HitMaps>,
+    /// Defined fuzz test fixtures
+    pub fuzz_fixtures: FuzzFixtures,
 }
 
 impl TestSetup {
@@ -282,9 +548,9 @@ impl TestSetup {
         match error {
             EvmError::Execution(err) => {
                 // force the tracekind to be setup so a trace is shown.
-                traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
-                logs.extend(err.logs);
-                labeled_addresses.extend(err.labels);
+                traces.extend(err.raw.traces.map(|traces| (TraceKind::Setup, traces)));
+                logs.extend(err.raw.logs);
+                labeled_addresses.extend(err.raw.labels);
                 Self::failed_with(logs, traces, labeled_addresses, err.reason)
             }
             e => Self::failed_with(
@@ -302,8 +568,9 @@ impl TestSetup {
         traces: Traces,
         labeled_addresses: HashMap<Address, String>,
         coverage: Option<HitMaps>,
+        fuzz_fixtures: FuzzFixtures,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
     }
 
     pub fn failed_with(
@@ -319,6 +586,7 @@ impl TestSetup {
             labeled_addresses,
             reason: Some(reason),
             coverage: None,
+            fuzz_fixtures: FuzzFixtures::default(),
         }
     }
 

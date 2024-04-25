@@ -24,8 +24,8 @@ pub struct IpcEndpoint<Handler> {
 
 impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// Creates a new endpoint with the given handler
-    pub fn new(handler: Handler, endpoint: impl Into<String>) -> Self {
-        Self { handler, endpoint: Endpoint::new(endpoint.into()) }
+    pub fn new(handler: Handler, endpoint: String) -> Self {
+        Self { handler, endpoint: Endpoint::new(endpoint) }
     }
 
     /// Returns a stream of incoming connection handlers

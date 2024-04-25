@@ -8,13 +8,13 @@
 extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log};
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -150,6 +150,10 @@ pub struct FuzzTestResult {
     /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
     pub traces: Option<CallTraceArena>,
 
+    /// Additional traces used for gas report construction.
+    /// Those traces should not be displayed.
+    pub gas_report_traces: Vec<CallTraceArena>,
+
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
 }
@@ -157,18 +161,16 @@ pub struct FuzzTestResult {
 impl FuzzTestResult {
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::median_sorted(&values).to::<u64>()
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::mean(&values).to::<u64>()
+        calc::mean(&values)
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
@@ -223,19 +225,17 @@ impl FuzzedCases {
     /// Returns the median gas of all test cases
     #[inline]
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::median_sorted(&values).to::<u64>()
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values =
-            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
+        let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
-        calc::mean(&values).to::<u64>()
+        calc::mean(&values)
     }
 
     #[inline]
@@ -271,4 +271,43 @@ impl FuzzedCases {
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
     }
+}
+
+/// Fixtures to be used for fuzz tests.
+/// The key represents name of the fuzzed parameter, value holds possible fuzzed values.
+/// For example, for a fixture function declared as
+/// `function fixture_sender() external returns (address[] memory senders)`
+/// the fuzz fixtures will contain `sender` key with `senders` array as value
+#[derive(Clone, Default, Debug)]
+pub struct FuzzFixtures {
+    inner: Arc<HashMap<String, DynSolValue>>,
+}
+
+impl FuzzFixtures {
+    pub fn new(fixtures: HashMap<String, DynSolValue>) -> FuzzFixtures {
+        Self { inner: Arc::new(fixtures) }
+    }
+
+    /// Returns configured fixtures for `param_name` fuzzed parameter.
+    pub fn param_fixtures(&self, param_name: &str) -> Option<&[DynSolValue]> {
+        if let Some(param_fixtures) = self.inner.get(&normalize_fixture(param_name)) {
+            match param_fixtures {
+                DynSolValue::FixedArray(_) => param_fixtures.as_fixed_array(),
+                _ => param_fixtures.as_array(),
+            }
+        } else {
+            None
+        }
+    }
+}
+
+/// Extracts fixture name from a function name.
+/// For example: fixtures defined in `fixture_Owner` function will be applied for `owner` parameter.
+pub fn fixture_name(function_name: String) -> String {
+    normalize_fixture(function_name.strip_prefix("fixture").unwrap())
+}
+
+/// Normalize fixture parameter name, for example `_Owner` to `owner`.
+fn normalize_fixture(param_name: &str) -> String {
+    param_name.trim_matches(&['_']).to_ascii_lowercase()
 }

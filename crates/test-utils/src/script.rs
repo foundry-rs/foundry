@@ -1,12 +1,9 @@
 use crate::{init_tracing, TestCommand};
-use alloy_primitives::{Address, U256};
-use ethers_core::types::NameOrAddress;
-use ethers_providers::Middleware;
+use alloy_primitives::Address;
+use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::Result;
-use foundry_common::{
-    provider::ethers::{get_http_provider, RetryProvider},
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::provider::alloy::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -17,8 +14,8 @@ pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
     pub provider: Option<RetryProvider>,
-    pub nonces: BTreeMap<u32, U256>,
-    pub address_nonces: BTreeMap<Address, U256>,
+    pub nonces: BTreeMap<u32, u64>,
+    pub address_nonces: BTreeMap<Address, u64>,
     pub cmd: TestCommand,
 }
 
@@ -38,6 +35,8 @@ impl ScriptTester {
             "script",
             "-R",
             "ds-test/=lib/",
+            "-R",
+            "cheats/=cheats/",
             target_contract,
             "--root",
             project_root.to_str().unwrap(),
@@ -75,7 +74,7 @@ impl ScriptTester {
 
         // copy the broadcast test
         fs::copy(
-            Self::testdata_path().join("cheats/Broadcast.t.sol"),
+            Self::testdata_path().join("default/cheats/Broadcast.t.sol"),
             project_root.join(BROADCAST_TEST_PATH),
         )
         .expect("Failed to initialize broadcast contract");
@@ -90,8 +89,11 @@ impl ScriptTester {
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
-            .expect("Failed to initialize broadcast contract");
+        fs::copy(
+            testdata.join("default/cheats/Broadcast.t.sol"),
+            project_root.join(BROADCAST_TEST_PATH),
+        )
+        .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, None, project_root, &target_contract)
     }
@@ -104,7 +106,8 @@ impl ScriptTester {
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
+        fs::create_dir_all(current_dir.join("cheats"))?;
+        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("cheats/Vm.sol"))?;
         fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
         Ok(())
     }
@@ -115,13 +118,10 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(
-                        NameOrAddress::Address(self.accounts_pub[index as usize].to_ethers()),
-                        None,
-                    )
+                    .get_transaction_count(self.accounts_pub[index as usize], BlockId::latest())
                     .await
                     .unwrap();
-                self.nonces.insert(index, nonce.to_alloy());
+                self.nonces.insert(index, nonce);
             }
         }
         self
@@ -133,10 +133,10 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
+                .get_transaction_count(address, BlockId::latest())
                 .await
                 .unwrap();
-            self.address_nonces.insert(address, nonce.to_alloy());
+            self.address_nonces.insert(address, nonce);
         }
         self
     }
@@ -179,14 +179,14 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(NameOrAddress::Address(addr.to_ethers()), None)
+                .get_transaction_count(addr, BlockId::latest())
                 .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
                 nonce,
-                (prev_nonce + U256::from(expected_increment)).to_ethers(),
+                (*prev_nonce + expected_increment as u64),
                 "nonce not incremented correctly for {addr}: \
                  {prev_nonce} + {expected_increment} != {nonce}"
             );
@@ -204,12 +204,12 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
+                .get_transaction_count(*address, BlockId::latest())
                 .await
                 .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)).to_ethers());
+            assert_eq!(nonce, *prev_nonce + *expected_increment as u64);
         }
         self
     }
@@ -258,6 +258,7 @@ pub enum ScriptOutcome {
     ScriptFailed,
     UnsupportedLibraries,
     ErrorSelectForkOnBroadcast,
+    OkRun,
 }
 
 impl ScriptOutcome {
@@ -273,6 +274,7 @@ impl ScriptOutcome {
             Self::ScriptFailed => "script failed: ",
             Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
+            Self::OkRun => "Script ran successfully",
         }
     }
 
@@ -281,7 +283,8 @@ impl ScriptOutcome {
             ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::WarnSpecifyDeployer |
+            ScriptOutcome::OkRun => false,
             ScriptOutcome::MissingSender |
             ScriptOutcome::MissingWallet |
             ScriptOutcome::StaticCallNotAllowed |

@@ -24,9 +24,6 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
-alloy-rpc-types.workspace = true
-alloy-signer.workspace = true
-hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
@@ -38,13 +35,10 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-itertools.workspace = true
-
+arrayvec.workspace = true
 eyre = "0.6"
 hex.workspace = true
 parking_lot = "0.12"
 proptest = "1"
 thiserror = "1"
 tracing = "0.1"
-rayon = "1"
-rand.workspace = true

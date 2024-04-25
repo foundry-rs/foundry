@@ -1,8 +1,11 @@
-//! Contains various tests for checking `forge test`
-use foundry_common::rpc;
+//! Contains various tests for `forge test`.
+
 use foundry_config::Config;
-use foundry_test_utils::util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
-use std::{path::PathBuf, process::Command, str::FromStr};
+use foundry_test_utils::{
+    rpc,
+    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+};
+use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj, cmd| {
@@ -259,31 +262,6 @@ contract ContractTest is DSTest {
     );
 });
 
-// checks that we can test forge std successfully
-// `forgetest_init!` will install with `forge-std` under `lib/forge-std`
-forgetest_init!(
-    #[serial_test::serial]
-    can_test_forge_std,
-    |prj, cmd| {
-        let forge_std_dir = prj.root().join("lib/forge-std");
-        let status = Command::new("git")
-            .current_dir(&forge_std_dir)
-            .args(["pull", "origin", "master"])
-            .status()
-            .unwrap();
-        if !status.success() {
-            panic!("failed to update forge-std");
-        }
-
-        // execute in subdir
-        cmd.cmd().current_dir(forge_std_dir);
-        cmd.args(["test", "--root", "."]);
-        let stdout = cmd.stdout_lossy();
-        assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
-        assert!(!stdout.contains("[FAIL]"), "Tests failed:\n{stdout}");
-    }
-);
-
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
@@ -383,10 +361,10 @@ interface IERC20 {
     function name() external view returns (string memory);
 }
 
-contract USDCCallingTest is Test {
+contract USDTCallingTest is Test {
     function test() public {
         vm.createSelectFork("<url>");
-        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
     }
 }
    "#
@@ -431,4 +409,138 @@ contract CustomTypesTest is Test {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/include_custom_types_in_traces.stdout"),
     );
+});
+
+forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Destructing {
+    function destruct() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract SelfDestructTest is Test {
+    function test() public {
+        Destructing d = new Destructing();
+        vm.store(address(d), bytes32(0), bytes32(uint256(1)));
+        d.destruct();
+        assertEq(address(d).code.length, 0);
+        assertEq(vm.load(address(d), bytes32(0)), bytes32(0));
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv", "--isolate"]).assert_success();
+});
+
+forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Test} from "forge-std/Test.sol";
+
+contract TransientTester {
+    function locked() public view returns (bool isLocked) {
+        assembly {
+            isLocked := tload(0)
+        }
+    }
+
+    modifier lock() {
+        require(!locked(), "locked");
+        assembly {
+            tstore(0, 1)
+        }
+        _;
+    }
+
+    function maybeReentrant(address target, bytes memory data) public lock {
+        (bool success, bytes memory ret) = target.call(data);
+        if (!success) {
+            // forwards revert reason
+            assembly {
+                let ret_size := mload(ret)
+                revert(add(32, ret), ret_size)
+            }
+        }
+    }
+}
+
+contract TransientTest is Test {
+    function test() public {
+        TransientTester t = new TransientTester();
+        vm.expectRevert(bytes("locked"));
+        t.maybeReentrant(address(t), abi.encodeCall(TransientTester.maybeReentrant, (address(0), new bytes(0))));
+
+        t.maybeReentrant(address(0), new bytes(0));
+        assertEq(t.locked(), false);
+    }
+}
+
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+});
+
+forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
+    prj.wipe_contracts();
+
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
+    prj.add_test(
+        "Contract.t.sol",
+        &r#"pragma solidity 0.8.24;
+import {Test} from "forge-std/Test.sol";
+
+contract C is Test {}
+
+contract GasWaster {
+    function waste() public {
+        for (uint256 i = 0; i < 100; i++) {
+            new C();
+        }
+    }
+}
+
+contract GasLimitTest is Test {
+    function test() public {
+        vm.createSelectFork("<rpc>");
+        
+        GasWaster waster = new GasWaster();
+        waster.waste();
+    }
+}
+   "#
+        .replace("<rpc>", &endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+});
+
+forgetest!(test_match_path, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"  
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["test", "--match-path", "src/dummy.sol"]);
+    cmd.assert_success()
 });

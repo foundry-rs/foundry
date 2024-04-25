@@ -117,7 +117,9 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
                         )?;
                     }
                     // Statements are not in the LCOV format
-                    CoverageItemKind::Statement => (),
+                    CoverageItemKind::Statement => {
+                        writeln!(self.destination, "DA:{line},{hits}")?;
+                    }
                 }
             }
 
@@ -159,17 +161,27 @@ impl CoverageReporter for DebugReporter {
 
         for (contract_id, anchors) in &report.anchors {
             println!("Anchors for {contract_id}:");
-            anchors.iter().for_each(|anchor| {
-                println!("- {anchor}");
-                println!(
-                    "  - Refers to item: {}",
-                    report
-                        .items
-                        .get(&contract_id.version)
-                        .and_then(|items| items.get(anchor.item_id))
-                        .map_or("None".to_owned(), |item| item.to_string())
-                );
-            });
+            anchors
+                .0
+                .iter()
+                .map(|anchor| (false, anchor))
+                .chain(anchors.1.iter().map(|anchor| (true, anchor)))
+                .for_each(|(is_deployed, anchor)| {
+                    println!("- {anchor}");
+                    if is_deployed {
+                        println!("- Creation code");
+                    } else {
+                        println!("- Runtime code");
+                    }
+                    println!(
+                        "  - Refers to item: {}",
+                        report
+                            .items
+                            .get(&contract_id.version)
+                            .and_then(|items| items.get(anchor.item_id))
+                            .map_or("None".to_owned(), |item| item.to_string())
+                    );
+                });
             println!();
         }
 

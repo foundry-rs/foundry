@@ -15,7 +15,7 @@ name = "cast"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # lib
@@ -24,14 +24,26 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-wallets.workspace = true
 
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-transport.workspace = true
+alloy-rpc-types.workspace = true
+alloy-json-rpc.workspace = true
+alloy-signer.workspace = true
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-contract.workspace = true
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-network.workspace = true
+alloy-sol-types.workspace = true
+alloy-chains.workspace = true
 
 ethers-core.workspace = true
-ethers-providers.workspace = true
+ethers-contract.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true
@@ -44,16 +56,10 @@ serde_json.workspace = true
 serde.workspace = true
 
 # aws
-rusoto_core = { version = "0.48", default-features = false }
-rusoto_kms = { version = "0.48", default-features = false }
+aws-sdk-kms = { version = "1", default-features = false }
 
 # bin
 foundry-cli.workspace = true
-
-ethers-contract.workspace = true
-ethers-middleware.workspace = true
-ethers-signers.workspace = true
-eth-keystore = "0.5"
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
@@ -65,11 +71,14 @@ itertools.workspace = true
 regex = { version = "1", default-features = false }
 rpassword = "7"
 semver = "1"
-tempfile = "3"
+tempfile.workspace = true
 tokio = { version = "1", features = ["macros", "signal"] }
 tracing.workspace = true
-yansi = "0.5"
+yansi.workspace = true
 evmole = "0.3.1"
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 foundry-test-utils.workspace = true
@@ -78,9 +87,10 @@ criterion = "0.5"
 
 [features]
 default = ["rustls"]
-rustls = ["foundry-cli/rustls"]
+rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
 openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
+jemalloc = ["dep:tikv-jemallocator"]
 
 [[bench]]
 name = "vanity"

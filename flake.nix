@@ -27,9 +27,9 @@
           overlays = [ rust-overlay.overlays.default solc.overlay ];
         };
         lib = pkgs.lib;
-        toolchain = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
+        toolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rustfmt" "clippy" "rust-src" ];
-        });
+        };
       in
       {
         devShells.default = pkgs.mkShell {

@@ -3,25 +3,32 @@
 use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
-use alloy_primitives::U256;
-use alloy_providers::provider::{Provider, TempProvider};
+use alloy_provider::{
+    network::AnyNetwork, utils::Eip1559Estimation, Provider,
+    ProviderBuilder as AlloyProviderBuilder, RootProvider,
+};
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::BoxTransport;
+use alloy_transport::Transport;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
 use foundry_common::types::ToAlloy;
 use foundry_config::NamedChain;
 use reqwest::Url;
 use std::{
+    net::SocketAddr,
     path::{Path, PathBuf},
+    str::FromStr,
     time::Duration,
 };
 use url::ParseError;
 
-use super::tower::RetryBackoffLayer;
+use super::{
+    runtime_transport::RuntimeTransport,
+    tower::{RetryBackoffLayer, RetryBackoffService},
+};
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<BoxTransport>;
+pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -91,12 +98,16 @@ impl ProviderBuilder {
         let url = Url::parse(url_str)
             .or_else(|err| match err {
                 ParseError::RelativeUrlWithoutBase => {
-                    let path = Path::new(url_str);
-
-                    if let Ok(path) = resolve_path(path) {
-                        Url::parse(&format!("file://{}", path.display()))
+                    if SocketAddr::from_str(url_str).is_ok() {
+                        Url::parse(&format!("http://{}", url_str))
                     } else {
-                        Err(err)
+                        let path = Path::new(url_str);
+
+                        if let Ok(path) = resolve_path(path) {
+                            Url::parse(&format!("file://{}", path.display()))
+                        } else {
+                            Err(err)
+                        }
                     }
                 }
                 _ => Err(err),
@@ -203,18 +214,6 @@ impl ProviderBuilder {
         self
     }
 
-    /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
-    /// interval.
-    pub async fn connect(self) -> Result<RetryProvider> {
-        let provider = self.build()?;
-        // todo: port poll interval hint
-        /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-        }) {
-            provider = provider.interval(blocktime / 2);
-            }*/
-        Ok(provider)
-    }
-
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let ProviderBuilder {
@@ -243,8 +242,10 @@ impl ProviderBuilder {
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
-        // todo: provider polling interval
-        Ok(Provider::new_with_client(client.boxed()))
+        let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            .on_provider(RootProvider::new(client));
+
+        Ok(provider)
     }
 }
 
@@ -254,14 +255,14 @@ impl ProviderBuilder {
 ///   - polygon
 ///
 /// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
-pub async fn estimate_eip1559_fees<P: TempProvider>(
+pub async fn estimate_eip1559_fees<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: &P,
     chain: Option<u64>,
-) -> Result<(U256, U256)> {
+) -> Result<Eip1559Estimation> {
     let chain = if let Some(chain) = chain {
         chain
     } else {
-        provider.get_chain_id().await.wrap_err("Failed to get chain id")?.to()
+        provider.get_chain_id().await.wrap_err("Failed to get chain id")?
     };
 
     if let Ok(chain) = NamedChain::try_from(chain) {
@@ -276,7 +277,12 @@ pub async fn estimate_eip1559_fees<P: TempProvider>(
                 };
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
                 let (a, b) = estimator.estimate_eip1559_fees().await?;
-                return Ok((a.to_alloy(), b.to_alloy()));
+
+                let estimation = Eip1559Estimation {
+                    max_fee_per_gas: a.to_alloy().to(),
+                    max_priority_fee_per_gas: b.to_alloy().to(),
+                };
+                return Ok(estimation)
             }
             _ => {}
         }

@@ -9,36 +9,36 @@ use std::path::{Path, PathBuf};
 use yansi::Paint;
 
 /// CLI arguments for `forge init`.
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Default, Parser)]
 pub struct InitArgs {
     /// The root directory of the new project.
-    #[clap(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
-    root: PathBuf,
+    #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
+    pub root: PathBuf,
 
     /// The template to start from.
-    #[clap(long, short)]
-    template: Option<String>,
+    #[arg(long, short)]
+    pub template: Option<String>,
 
     /// Branch argument that can only be used with template option.
     /// If not specified, the default branch is used.
-    #[clap(long, short, requires = "template")]
-    branch: Option<String>,
+    #[arg(long, short, requires = "template")]
+    pub branch: Option<String>,
 
     /// Do not install dependencies from the network.
-    #[clap(long, conflicts_with = "template", visible_alias = "no-deps")]
-    offline: bool,
+    #[arg(long, conflicts_with = "template", visible_alias = "no-deps")]
+    pub offline: bool,
 
     /// Create the project even if the specified root directory is not empty.
-    #[clap(long, conflicts_with = "template")]
-    force: bool,
+    #[arg(long, conflicts_with = "template")]
+    pub force: bool,
 
     /// Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt
     /// file.
-    #[clap(long, conflicts_with = "template")]
-    vscode: bool,
+    #[arg(long, conflicts_with = "template")]
+    pub vscode: bool,
 
-    #[clap(flatten)]
-    opts: DependencyInstallOpts,
+    #[command(flatten)]
+    pub opts: DependencyInstallOpts,
 }
 
 impl InitArgs {
@@ -84,7 +84,7 @@ impl InitArgs {
                 git.submodule_init()?;
             } else {
                 // if not shallow, initialize and clone submodules (without fetching latest)
-                git.submodule_update(false, false, true, true, None::<PathBuf>)?;
+                git.submodule_update(false, false, true, true, std::iter::empty::<PathBuf>())?;
             }
         } else {
             // if target is not empty
@@ -159,14 +159,9 @@ impl InitArgs {
             }
         }
 
-        p_println!(!quiet => "    {} forge project",  Paint::green("Initialized"));
+        p_println!(!quiet => "    {} forge project",  "Initialized".green());
         Ok(())
     }
-}
-
-/// Returns the commit hash of the project if it exists
-pub fn get_commit_hash(root: &Path) -> Option<String> {
-    Git::new(root).commit_hash(true, "HEAD").ok()
 }
 
 /// Initialises `root` as a git repository, if it isn't one already.

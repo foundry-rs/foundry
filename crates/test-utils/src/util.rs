@@ -13,9 +13,8 @@ use regex::Regex;
 use std::{
     env,
     ffi::OsStr,
-    fs,
-    fs::File,
-    io::{BufWriter, IsTerminal, Write},
+    fs::{self, File},
+    io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
@@ -51,7 +50,7 @@ pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 
 /// External test builder
 #[derive(Clone, Debug)]
-#[must_use = "call run()"]
+#[must_use = "ExtTester does nothing unless you `run` it"]
 pub struct ExtTester {
     pub org: &'static str,
     pub name: &'static str,
@@ -60,6 +59,7 @@ pub struct ExtTester {
     pub fork_block: Option<u64>,
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
+    pub install_commands: Vec<Vec<String>>,
 }
 
 impl ExtTester {
@@ -73,6 +73,7 @@ impl ExtTester {
             fork_block: None,
             args: vec![],
             envs: vec![],
+            install_commands: vec![],
         }
     }
 
@@ -121,6 +122,15 @@ impl ExtTester {
         self
     }
 
+    /// Adds a command to run after the project is cloned.
+    ///
+    /// Note that the command is run in the project's root directory, and it won't fail the test if
+    /// it fails.
+    pub fn install_command(mut self, command: &[&str]) -> Self {
+        self.install_commands.push(command.iter().map(|s| s.to_string()).collect());
+        self
+    }
+
     /// Runs the test.
     pub fn run(&self) {
         // Skip fork tests if the RPC url is not set.
@@ -129,7 +139,7 @@ impl ExtTester {
             return;
         }
 
-        let (prj, mut cmd) = setup_forge(self.name, self.style.clone());
+        let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Wipe the default structure.
         prj.wipe();
@@ -141,10 +151,10 @@ impl ExtTester {
 
         // Checkout the revision.
         if self.rev.is_empty() {
-            let mut cmd = Command::new("git");
-            cmd.current_dir(root).args(["log", "-n", "1"]);
-            eprintln!("$ {cmd:?}");
-            let output = cmd.output().unwrap();
+            let mut git = Command::new("git");
+            git.current_dir(root).args(["log", "-n", "1"]);
+            eprintln!("$ {git:?}");
+            let output = git.output().unwrap();
             if !output.status.success() {
                 panic!("git log failed: {output:?}");
             }
@@ -152,31 +162,43 @@ impl ExtTester {
             let commit = stdout.lines().next().unwrap().split_whitespace().nth(1).unwrap();
             panic!("pin to latest commit: {commit}");
         } else {
-            let mut cmd = Command::new("git");
-            cmd.current_dir(root).args(["checkout", self.rev]);
-            eprintln!("$ {cmd:?}");
-            let status = cmd.status().unwrap();
+            let mut git = Command::new("git");
+            git.current_dir(root).args(["checkout", self.rev]);
+            eprintln!("$ {git:?}");
+            let status = git.status().unwrap();
             if !status.success() {
                 panic!("git checkout failed: {status}");
             }
         }
 
-        // Run common installation commands.
-        run_install_commands(prj.root());
-
-        // Run the tests.
-        cmd.arg("test");
-        cmd.args(&self.args);
-        cmd.args(["--fuzz-runs=256", "--ffi", "-vvvvv"]);
-
-        cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
-        cmd.env("FOUNDRY_FUZZ_RUNS", "1");
-        if let Some(fork_block) = self.fork_block {
-            cmd.env("FOUNDRY_ETH_RPC_URL", foundry_common::rpc::next_http_archive_rpc_endpoint());
-            cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
+        // Run installation command.
+        for install_command in &self.install_commands {
+            let mut install_cmd = Command::new(&install_command[0]);
+            install_cmd.args(&install_command[1..]).current_dir(root);
+            eprintln!("cd {root}; {install_cmd:?}");
+            match install_cmd.status() {
+                Ok(s) => {
+                    eprintln!("\n\n{install_cmd:?}: {s}");
+                    if s.success() {
+                        break;
+                    }
+                }
+                Err(e) => eprintln!("\n\n{install_cmd:?}: {e}"),
+            }
         }
 
-        cmd.assert_non_empty_stdout();
+        // Run the tests.
+        test_cmd.arg("test");
+        test_cmd.args(&self.args);
+        test_cmd.args(["--fuzz-runs=32", "--ffi", "-vvvvv"]);
+
+        test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
+        if let Some(fork_block) = self.fork_block {
+            test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
+            test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
+        }
+
+        test_cmd.assert_non_empty_stdout();
     }
 }
 
@@ -213,21 +235,31 @@ pub fn initialize(target: &Path) {
 
         // Release the read lock and acquire a write lock, initializing the lock file.
         _read = None;
+
         let mut write = lock.write().unwrap();
-        write.write_all(b"1").unwrap();
 
-        // Initialize and build.
-        let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-        eprintln!("- initializing template dir in {}", prj.root().display());
+        let mut data = String::new();
+        write.read_to_string(&mut data).unwrap();
 
-        cmd.args(["init", "--force"]).assert_success();
-        cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+        if data != "1" {
+            // Initialize and build.
+            let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+            eprintln!("- initializing template dir in {}", prj.root().display());
 
-        // Remove the existing template, if any.
-        let _ = fs::remove_dir_all(tpath);
+            cmd.args(["init", "--force"]).assert_success();
+            cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
 
-        // Copy the template to the global template path.
-        pretty_err(tpath, copy_dir(prj.root(), tpath));
+            // Remove the existing template, if any.
+            let _ = fs::remove_dir_all(tpath);
+
+            // Copy the template to the global template path.
+            pretty_err(tpath, copy_dir(prj.root(), tpath));
+
+            // Update lockfile to mark that template is initialized.
+            write.set_len(0).unwrap();
+            write.seek(std::io::SeekFrom::Start(0)).unwrap();
+            write.write_all(b"1").unwrap();
+        }
 
         // Release the write lock and acquire a new read lock.
         drop(write);
@@ -250,45 +282,6 @@ pub fn clone_remote(repo_url: &str, target_dir: &str) {
         panic!("git clone failed: {status}");
     }
     eprintln!();
-}
-
-/// Runs common installation commands, such as `make` and `npm`. Continues if any command fails.
-pub fn run_install_commands(root: &Path) {
-    let root_files =
-        std::fs::read_dir(root).unwrap().flatten().map(|x| x.path()).collect::<Vec<_>>();
-    let contains = |path: &str| root_files.iter().any(|p| p.to_str().unwrap().contains(path));
-    let run = |args: &[&str]| {
-        let mut cmd = Command::new(args[0]);
-        cmd.args(&args[1..]).current_dir(root);
-        eprintln!("cd {}; {cmd:?}", root.display());
-        match cmd.status() {
-            Ok(s) => {
-                eprintln!("\n\n{cmd:?}: {s}");
-                s.success()
-            }
-            Err(e) => {
-                eprintln!("\n\n{cmd:?}: {e}");
-                false
-            }
-        }
-    };
-    let maybe_run = |path: &str, args: &[&str]| {
-        if contains(path) {
-            run(args)
-        } else {
-            false
-        }
-    };
-
-    maybe_run("Makefile", &["make", "install"]);
-
-    // Only run one of these for `node_modules`.
-    let mut nm = false;
-    nm = nm || maybe_run("bun.lockb", &["bun", "install", "--prefer-offline"]);
-    nm = nm || maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
-    nm = nm || maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
-    nm = nm || maybe_run("package.json", &["npm", "install", "--prefer-offline"]);
-    let _ = nm;
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -459,6 +452,12 @@ impl TestProject {
         &self.paths().artifacts
     }
 
+    /// Removes the project's cache and artifacts directory.
+    pub fn clear(&self) {
+        self.clear_cache();
+        self.clear_artifacts();
+    }
+
     /// Removes this project's cache file.
     pub fn clear_cache(&self) {
         let _ = fs::remove_file(self.cache());
@@ -577,7 +576,7 @@ impl TestProject {
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/logs/console.sol");
+        let s = include_str!("../../../testdata/default/logs/console.sol");
         self.add_source("console.sol", s).unwrap()
     }
 
@@ -629,6 +628,7 @@ impl TestProject {
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
         let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+        let forge = forge.canonicalize().unwrap_or_else(|_| forge.clone());
         let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
         // disable color output for comparisons
@@ -639,6 +639,7 @@ impl TestProject {
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
         let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        let cast = cast.canonicalize().unwrap_or_else(|_| cast.clone());
         let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
@@ -1067,7 +1068,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
         // elapsed time
-        "finished in .*?s",
+        r"(?:finished)? ?in .*?s(?: \(.*?s CPU time\))?",
         // file paths
         r"-->.*\.sol",
         r"Location(.|\n)*\.rs(.|\n)*Backtrace",

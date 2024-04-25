@@ -83,6 +83,48 @@
           "description": "The account's code was copied."
         }
       ]
+    },
+    {
+      "name": "ForgeContext",
+      "description": "Forge execution contexts.",
+      "variants": [
+        {
+          "name": "TestGroup",
+          "description": "Test group execution context (test, coverage or snapshot)."
+        },
+        {
+          "name": "Test",
+          "description": "`forge test` execution context."
+        },
+        {
+          "name": "Coverage",
+          "description": "`forge coverage` execution context."
+        },
+        {
+          "name": "Snapshot",
+          "description": "`forge snapshot` execution context."
+        },
+        {
+          "name": "ScriptGroup",
+          "description": "Script group execution context (dry run, broadcast or resume)."
+        },
+        {
+          "name": "ScriptDryRun",
+          "description": "`forge script` execution context."
+        },
+        {
+          "name": "ScriptBroadcast",
+          "description": "`forge script --broadcast` execution context."
+        },
+        {
+          "name": "ScriptResume",
+          "description": "`forge script --resume` execution context."
+        },
+        {
+          "name": "Unknown",
+          "description": "Unknown `forge` execution context."
+        }
+      ]
     }
   ],
   "structs": [
@@ -372,6 +414,11 @@
           "name": "storageAccesses",
           "ty": "StorageAccess[]",
           "description": "An ordered list of storage accesses made during an account access operation."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "Call depth traversed during the recording of state differences"
         }
       ]
     },
@@ -408,6 +455,37 @@
           "name": "reverted",
           "ty": "bool",
           "description": "If the access was reverted."
+        }
+      ]
+    },
+    {
+      "name": "Gas",
+      "description": "Gas used. Returned by `lastCallGas`.",
+      "fields": [
+        {
+          "name": "gasLimit",
+          "ty": "uint64",
+          "description": "The gas limit of the call."
+        },
+        {
+          "name": "gasTotalUsed",
+          "ty": "uint64",
+          "description": "The total gas used."
+        },
+        {
+          "name": "gasMemoryUsed",
+          "ty": "uint64",
+          "description": "The amount of gas used for memory expansion."
+        },
+        {
+          "name": "gasRefunded",
+          "ty": "int64",
+          "description": "The amount of gas refunded."
+        },
+        {
+          "name": "gasRemaining",
+          "ty": "uint64",
+          "description": "The amount of gas remaining."
         }
       ]
     }
@@ -2895,6 +2973,26 @@
     },
     {
       "func": {
+        "id": "blobBaseFee",
+        "description": "Sets `block.blobbasefee`",
+        "declaration": "function blobBaseFee(uint256 newBlobBaseFee) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "blobBaseFee(uint256)",
+        "selector": "0x6d315d7e",
+        "selectorBytes": [
+          109,
+          49,
+          93,
+          126
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "blobhashes",
         "description": "Sets the blobhashes in the transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
         "declaration": "function blobhashes(bytes32[] calldata blobhashes) external;",
@@ -2956,7 +3054,7 @@
     {
       "func": {
         "id": "broadcast_0",
-        "description": "Using the address that calls the test contract, has the next call (at this call depth only)\ncreate a transaction that can later be signed and sent onchain.",
+        "description": "Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function broadcast() external;",
         "visibility": "external",
         "mutability": "",
@@ -3727,6 +3825,26 @@
           194,
           101,
           27
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "envExists",
+        "description": "Gets the environment variable `name` and returns true if it exists, else returns false.",
+        "declaration": "function envExists(string calldata name) external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "envExists(string)",
+        "selector": "0xce8365f9",
+        "selectorBytes": [
+          206,
+          131,
+          101,
+          249
         ]
       },
       "group": "environment",
@@ -4595,6 +4713,26 @@
     },
     {
       "func": {
+        "id": "getBlobBaseFee",
+        "description": "Gets the current `block.blobbasefee`.\nYou should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getBlobBaseFee() external view returns (uint256 blobBaseFee);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlobBaseFee()",
+        "selector": "0x1f6d6ef7",
+        "selectorBytes": [
+          31,
+          109,
+          110,
+          247
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getBlockNumber",
         "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockNumber() external view returns (uint256 height);",
@@ -4636,7 +4774,7 @@
     {
       "func": {
         "id": "getCode",
-        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.",
+        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4656,7 +4794,7 @@
     {
       "func": {
         "id": "getDeployedCode",
-        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file.",
+        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4815,6 +4953,46 @@
     },
     {
       "func": {
+        "id": "indexOf",
+        "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
+        "declaration": "function indexOf(string calldata input, string calldata key) external pure returns (uint256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "indexOf(string,string)",
+        "selector": "0x8a0807b7",
+        "selectorBytes": [
+          138,
+          8,
+          7,
+          183
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isContext",
+        "description": "Returns true if `forge` command was executed in given context.",
+        "declaration": "function isContext(ForgeContext context) external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isContext(uint8)",
+        "selector": "0x64af255d",
+        "selectorBytes": [
+          100,
+          175,
+          37,
+          93
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "isDir",
         "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
         "declaration": "function isDir(string calldata path) external returns (bool result);",
@@ -4876,7 +5054,7 @@
     {
       "func": {
         "id": "keyExists",
-        "description": "Checks if `key` exists in a JSON object.",
+        "description": "Checks if `key` exists in a JSON object\n`keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.",
         "declaration": "function keyExists(string calldata json, string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -4890,6 +5068,46 @@
         ]
       },
       "group": "json",
+      "status": "deprecated",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "keyExistsJson",
+        "description": "Checks if `key` exists in a JSON object.",
+        "declaration": "function keyExistsJson(string calldata json, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "keyExistsJson(string,string)",
+        "selector": "0xdb4235f6",
+        "selectorBytes": [
+          219,
+          66,
+          53,
+          246
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "keyExistsToml",
+        "description": "Checks if `key` exists in a TOML table.",
+        "declaration": "function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "keyExistsToml(string,string)",
+        "selector": "0x600903ad",
+        "selectorBytes": [
+          96,
+          9,
+          3,
+          173
+        ]
+      },
+      "group": "toml",
       "status": "stable",
       "safety": "safe"
     },
@@ -4910,6 +5128,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "lastCallGas",
+        "description": "Gets the gas used in the last call.",
+        "declaration": "function lastCallGas() external view returns (Gas memory gas);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "lastCallGas()",
+        "selector": "0x2b589b28",
+        "selectorBytes": [
+          43,
+          88,
+          155,
+          40
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -5555,6 +5793,346 @@
     },
     {
       "func": {
+        "id": "parseTomlAddress",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address`.",
+        "declaration": "function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddress(string,string)",
+        "selector": "0x65e7c844",
+        "selectorBytes": [
+          101,
+          231,
+          200,
+          68
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlAddressArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address[]`.",
+        "declaration": "function parseTomlAddressArray(string calldata toml, string calldata key) external pure returns (address[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddressArray(string,string)",
+        "selector": "0x65c428e7",
+        "selectorBytes": [
+          101,
+          196,
+          40,
+          231
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBool",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool`.",
+        "declaration": "function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBool(string,string)",
+        "selector": "0xd30dced6",
+        "selectorBytes": [
+          211,
+          13,
+          206,
+          214
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBoolArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool[]`.",
+        "declaration": "function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBoolArray(string,string)",
+        "selector": "0x127cfe9a",
+        "selectorBytes": [
+          18,
+          124,
+          254,
+          154
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`.",
+        "declaration": "function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes(string,string)",
+        "selector": "0xd77bfdb9",
+        "selectorBytes": [
+          215,
+          123,
+          253,
+          185
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`.",
+        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32(string,string)",
+        "selector": "0x8e214810",
+        "selectorBytes": [
+          142,
+          33,
+          72,
+          16
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32Array",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32[]`.",
+        "declaration": "function parseTomlBytes32Array(string calldata toml, string calldata key) external pure returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32Array(string,string)",
+        "selector": "0x3e716f81",
+        "selectorBytes": [
+          62,
+          113,
+          111,
+          129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytesArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes[]`.",
+        "declaration": "function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytesArray(string,string)",
+        "selector": "0xb197c247",
+        "selectorBytes": [
+          177,
+          151,
+          194,
+          71
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlInt",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256`.",
+        "declaration": "function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlInt(string,string)",
+        "selector": "0xc1350739",
+        "selectorBytes": [
+          193,
+          53,
+          7,
+          57
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlIntArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`.",
+        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlIntArray(string,string)",
+        "selector": "0xd3522ae6",
+        "selectorBytes": [
+          211,
+          82,
+          42,
+          230
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlKeys",
+        "description": "Returns an array of all the keys in a TOML table.",
+        "declaration": "function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlKeys(string,string)",
+        "selector": "0x812a44b2",
+        "selectorBytes": [
+          129,
+          42,
+          68,
+          178
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlString",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string`.",
+        "declaration": "function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlString(string,string)",
+        "selector": "0x8bb8dd43",
+        "selectorBytes": [
+          139,
+          184,
+          221,
+          67
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlStringArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`.",
+        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlStringArray(string,string)",
+        "selector": "0x9f629281",
+        "selectorBytes": [
+          159,
+          98,
+          146,
+          129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUint",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256`.",
+        "declaration": "function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUint(string,string)",
+        "selector": "0xcc7b0487",
+        "selectorBytes": [
+          204,
+          123,
+          4,
+          135
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUintArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`.",
+        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUintArray(string,string)",
+        "selector": "0xb5df27c8",
+        "selectorBytes": [
+          181,
+          223,
+          39,
+          200
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseToml_0",
+        "description": "ABI-encodes a TOML table.",
+        "declaration": "function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseToml(string)",
+        "selector": "0x592151f0",
+        "selectorBytes": [
+          89,
+          33,
+          81,
+          240
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseToml_1",
+        "description": "ABI-encodes a TOML table at `key`.",
+        "declaration": "function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseToml(string,string)",
+        "selector": "0x37736e08",
+        "selectorBytes": [
+          55,
+          115,
+          110,
+          8
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseUint",
         "description": "Parses the given `string` into a `uint256`.",
         "declaration": "function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);",
@@ -5635,7 +6213,7 @@
     },
     {
       "func": {
-        "id": "prevrandao",
+        "id": "prevrandao_0",
         "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
         "declaration": "function prevrandao(bytes32 newPrevrandao) external;",
         "visibility": "external",
@@ -5647,6 +6225,26 @@
           146,
           85,
           73
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "prevrandao_1",
+        "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function prevrandao(uint256 newPrevrandao) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prevrandao(uint256)",
+        "selector": "0x9cb1c0d4",
+        "selectorBytes": [
+          156,
+          177,
+          192,
+          212
         ]
       },
       "group": "evm",
@@ -5667,6 +6265,86 @@
           48,
           160,
           230
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "prompt",
+        "description": "Prompts the user for a string value in the terminal.",
+        "declaration": "function prompt(string calldata promptText) external returns (string memory input);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prompt(string)",
+        "selector": "0x47eaf474",
+        "selectorBytes": [
+          71,
+          234,
+          244,
+          116
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptAddress",
+        "description": "Prompts the user for an address in the terminal.",
+        "declaration": "function promptAddress(string calldata promptText) external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptAddress(string)",
+        "selector": "0x62ee05f4",
+        "selectorBytes": [
+          98,
+          238,
+          5,
+          244
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptSecret",
+        "description": "Prompts the user for a hidden string value in the terminal.",
+        "declaration": "function promptSecret(string calldata promptText) external returns (string memory input);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptSecret(string)",
+        "selector": "0x1e279d41",
+        "selectorBytes": [
+          30,
+          39,
+          157,
+          65
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptUint",
+        "description": "Prompts the user for uint256 in the terminal.",
+        "declaration": "function promptUint(string calldata promptText) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptUint(string)",
+        "selector": "0x652fd489",
+        "selectorBytes": [
+          101,
+          47,
+          212,
+          137
         ]
       },
       "group": "filesystem",
@@ -6535,6 +7213,26 @@
     },
     {
       "func": {
+        "id": "serializeUintToHex",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeUintToHex(string,string,uint256)",
+        "selector": "0xae5a2ae8",
+        "selectorBytes": [
+          174,
+          90,
+          42,
+          232
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "serializeUint_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);",
@@ -6676,6 +7374,46 @@
     {
       "func": {
         "id": "sign_1",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(bytes32)",
+        "selector": "0x799cd333",
+        "selectorBytes": [
+          121,
+          156,
+          211,
+          51
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "sign_2",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(address,bytes32)",
+        "selector": "0x8c1aa205",
+        "selectorBytes": [
+          140,
+          26,
+          162,
+          5
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "sign_3",
         "description": "Signs data with a `Wallet`.",
         "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
@@ -6776,7 +7514,7 @@
     {
       "func": {
         "id": "startBroadcast_0",
-        "description": "Using the address that calls the test contract, has all subsequent calls\n(at this call depth only) create transactions that can later be signed and sent onchain.",
+        "description": "Has all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function startBroadcast() external;",
         "visibility": "external",
         "mutability": "",
@@ -6952,6 +7690,26 @@
       "group": "scripting",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopExpectSafeMemory",
+        "description": "Stops all safe memory expectation in the current subcontext.",
+        "declaration": "function stopExpectSafeMemory() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopExpectSafeMemory()",
+        "selector": "0x0956441b",
+        "selectorBytes": [
+          9,
+          86,
+          68,
+          27
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -7490,6 +8248,46 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeToml_0",
+        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML to a file.",
+        "declaration": "function writeToml(string calldata json, string calldata path) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeToml(string,string)",
+        "selector": "0xc0865ba7",
+        "selectorBytes": [
+          192,
+          134,
+          91,
+          167
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeToml_1",
+        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.",
+        "declaration": "function writeToml(string calldata json, string calldata path, string calldata valueKey) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeToml(string,string,string)",
+        "selector": "0x51ac6a33",
+        "selectorBytes": [
+          81,
+          172,
+          106,
+          51
+        ]
+      },
+      "group": "toml",
       "status": "stable",
       "safety": "safe"
     }

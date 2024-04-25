@@ -7,7 +7,7 @@ use yansi::Paint;
 /// CLI arguments for `forge generate`.
 #[derive(Debug, Parser)]
 pub struct GenerateArgs {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     pub sub: GenerateSubcommands,
 }
 
@@ -20,7 +20,7 @@ pub enum GenerateSubcommands {
 #[derive(Debug, Parser)]
 pub struct GenerateTestArgs {
     /// Contract name for test generation.
-    #[clap(long, short, value_name = "CONTRACT_NAME")]
+    #[arg(long, short, value_name = "CONTRACT_NAME")]
     pub contract_name: String,
 }
 
@@ -44,7 +44,7 @@ impl GenerateTestArgs {
         // Write the test content to the test file.
         fs::write(&test_file_path, test_content)?;
 
-        println!("{} test file: {}", Paint::green("Generated"), test_file_path.to_str().unwrap());
+        println!("{} test file: {}", "Generated".green(), test_file_path.to_str().unwrap());
         Ok(())
     }
 }

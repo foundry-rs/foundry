@@ -4,9 +4,12 @@ use foundry_common::{
     fs,
     selectors::{SelectorType, SignEthClient},
 };
-use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
@@ -34,7 +37,7 @@ pub struct SignaturesIdentifier {
 }
 
 impl SignaturesIdentifier {
-    #[instrument(target = "forge::signatures")]
+    #[instrument(target = "evm::traces")]
     pub fn new(
         cache_path: Option<PathBuf>,
         offline: bool,
@@ -43,14 +46,14 @@ impl SignaturesIdentifier {
 
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
-            trace!(?path, "reading signature cache");
+            trace!(target: "evm::traces", ?path, "reading signature cache");
             let cached = if path.is_file() {
                 fs::read_json_file(&path)
-                    .map_err(|err| warn!(?path, ?err, "failed to read cache file"))
+                    .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
                     .unwrap_or_default()
             } else {
                 if let Err(err) = std::fs::create_dir_all(cache_path) {
-                    warn!("could not create signatures cache dir: {:?}", err);
+                    warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
                 }
                 CachedSignatures::default()
             };
@@ -74,18 +77,18 @@ impl SignaturesIdentifier {
         Ok(Arc::new(RwLock::new(identifier)))
     }
 
-    #[instrument(target = "forge::signatures", skip(self))]
+    #[instrument(target = "evm::traces", skip(self))]
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
             if let Some(parent) = cached_path.parent() {
                 if let Err(err) = std::fs::create_dir_all(parent) {
-                    warn!(?parent, ?err, "failed to create cache");
+                    warn!(target: "evm::traces", ?parent, ?err, "failed to create cache");
                 }
             }
             if let Err(err) = fs::write_json_file(cached_path, &self.cached) {
-                warn!(?cached_path, ?err, "failed to flush signature cache");
+                warn!(target: "evm::traces", ?cached_path, ?err, "failed to flush signature cache");
             } else {
-                trace!(?cached_path, "flushed signature cache")
+                trace!(target: "evm::traces", ?cached_path, "flushed signature cache")
             }
         }
     }

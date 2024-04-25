@@ -16,13 +16,14 @@ path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # foundry internal
 anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
+foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
@@ -31,22 +32,22 @@ foundry-evm.workspace = true
 bytes = "1.4.0"
 k256.workspace = true
 ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
-trie-db = "0.23"
-hash-db = "0.15"
-memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
+alloy-eips.workspace = true
 alloy-rlp.workspace = true
-alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types.workspace = true
-alloy-rpc-trace-types.workspace = true
-alloy-providers.workspace = true
+alloy-rpc-types-trace.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
+alloy-trie.workspace = true
 
 # axum related
 axum.workspace = true
@@ -69,8 +70,8 @@ serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
 thiserror = "1"
-yansi = "0.5"
-tempfile = "3"
+yansi.workspace = true
+tempfile.workspace = true
 itertools.workspace = true
 rand = "0.8"
 eyre.workspace = true
@@ -85,11 +86,17 @@ fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
 ethereum-forkid = "0.12"
 
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+
 [dev-dependencies]
-ethers = { workspace = true, features = ["abigen"] }
+alloy-json-abi.workspace = true
+ethers = { workspace = true, features = ["abigen", "optimism"] }
 ethers-core = { workspace = true, features = ["optimism"] }
-ethers-solc = { workspace = true, features = ["project-util", "full"] }
-pretty_assertions = "1.3.0"
+foundry-compilers = { workspace = true, features = ["project-util", "full"] }
+foundry-test-utils.workspace = true
+
+pretty_assertions.workspace = true
 tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
 
@@ -98,3 +105,4 @@ default = ["cli"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
+jemalloc = ["dep:tikv-jemallocator"]

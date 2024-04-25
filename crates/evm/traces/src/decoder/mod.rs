@@ -5,16 +5,18 @@ use crate::{
     CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function, JsonAbi};
+use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
-use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
+use foundry_common::{
+    abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
+};
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
     },
-    decode,
+    decode::RevertDecoder,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -43,32 +45,27 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Add known functions to the decoder.
+    /// Add known errors to the decoder.
     #[inline]
-    pub fn with_functions(mut self, functions: impl IntoIterator<Item = Function>) -> Self {
-        for function in functions {
-            self.decoder.functions.entry(function.selector()).or_default().push(function);
+    pub fn with_abi(mut self, abi: &JsonAbi) -> Self {
+        self.decoder.collect_abi(abi, None);
+        self
+    }
+
+    /// Add known contracts to the decoder.
+    #[inline]
+    pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
+        trace!(target: "evm::traces", len=contracts.len(), "collecting known contract ABIs");
+        for contract in contracts.values() {
+            self.decoder.collect_abi(&contract.abi, None);
         }
         self
     }
 
-    /// Add known events to the decoder.
-    #[inline]
-    pub fn with_events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
-        for event in events {
-            self.decoder
-                .events
-                .entry((event.selector(), indexed_inputs(&event)))
-                .or_default()
-                .push(event);
-        }
-        self
-    }
-
+    /// Add known contracts to the decoder from a `LocalTraceIdentifier`.
     #[inline]
     pub fn with_local_identifier_abis(self, identifier: &LocalTraceIdentifier<'_>) -> Self {
-        self.with_events(identifier.events().cloned())
-            .with_functions(identifier.functions().cloned())
+        self.with_known_contracts(identifier.contracts())
     }
 
     /// Sets the verbosity level of the decoder.
@@ -109,12 +106,14 @@ pub struct CallTraceDecoder {
     pub labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: Vec<Address>,
+
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
-    /// All known errors.
-    pub errors: JsonAbi,
+    /// Revert decoder. Contains all known custom errors.
+    pub revert_decoder: RevertDecoder,
+
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
@@ -153,7 +152,6 @@ impl CallTraceDecoder {
 
         Self {
             contracts: Default::default(),
-
             labels: [
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
@@ -162,6 +160,7 @@ impl CallTraceDecoder {
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
             ]
             .into(),
+            receive_contracts: Default::default(),
 
             functions: hh_funcs()
                 .chain(
@@ -172,44 +171,75 @@ impl CallTraceDecoder {
                 )
                 .map(|(selector, func)| (selector, vec![func]))
                 .collect(),
-
             events: Console::abi::events()
                 .into_values()
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
+            revert_decoder: Default::default(),
 
-            errors: Default::default(),
             signature_identifier: None,
-            receive_contracts: Default::default(),
             verbosity: 0,
         }
+    }
+
+    /// Clears all known addresses.
+    pub fn clear_addresses(&mut self) {
+        self.contracts.clear();
+
+        let default_labels = &Self::new().labels;
+        if self.labels.len() > default_labels.len() {
+            self.labels.clone_from(default_labels);
+        }
+
+        self.receive_contracts.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    #[inline]
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
         self.collect_identities(identifier.identify_addresses(self.addresses(trace)));
     }
 
-    #[inline(always)]
+    /// Adds a single event to the decoder.
+    pub fn push_event(&mut self, event: Event) {
+        self.events.entry((event.selector(), indexed_inputs(&event))).or_default().push(event);
+    }
+
+    /// Adds a single function to the decoder.
+    pub fn push_function(&mut self, function: Function) {
+        match self.functions.entry(function.selector()) {
+            Entry::Occupied(entry) => {
+                // This shouldn't happen that often.
+                if entry.get().contains(&function) {
+                    return;
+                }
+                trace!(target: "evm::traces", selector=%entry.key(), new=%function.signature(), "duplicate function selector");
+                entry.into_mut().push(function);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(vec![function]);
+            }
+        }
+    }
+
+    /// Adds a single error to the decoder.
+    pub fn push_error(&mut self, error: Error) {
+        self.revert_decoder.push_error(error);
+    }
+
     fn addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
-    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + 'a {
+    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
         arena
             .nodes()
             .iter()
             .map(|node| {
                 (
                     &node.trace.address,
-                    if node.trace.kind.is_any_create() {
-                        Some(node.trace.output.as_ref())
-                    } else {
-                        None
-                    },
+                    node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
                 )
             })
             .filter(|(address, _)| {
@@ -218,46 +248,43 @@ impl CallTraceDecoder {
     }
 
     fn collect_identities(&mut self, identities: Vec<AddressIdentity<'_>>) {
-        for identity in identities {
-            let address = identity.address;
+        // Skip logging if there are no identities.
+        if identities.is_empty() {
+            return;
+        }
 
-            if let Some(contract) = &identity.contract {
-                self.contracts.entry(address).or_insert_with(|| contract.to_string());
+        trace!(target: "evm::traces", len=identities.len(), "collecting address identities");
+        for AddressIdentity { address, label, contract, abi, artifact_id: _ } in identities {
+            let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
+
+            if let Some(contract) = contract {
+                self.contracts.entry(address).or_insert(contract);
             }
 
-            if let Some(label) = &identity.label {
-                self.labels.entry(address).or_insert_with(|| label.to_string());
+            if let Some(label) = label {
+                self.labels.entry(address).or_insert(label);
             }
 
-            if let Some(abi) = &identity.abi {
-                // Store known functions for the address
-                for function in abi.functions() {
-                    match self.functions.entry(function.selector()) {
-                        Entry::Occupied(entry) => {
-                            // This shouldn't happen that often
-                            debug!(target: "evm::traces", selector=%entry.key(), old=?entry.get(), new=?function, "Duplicate function");
-                            entry.into_mut().push(function.clone());
-                        }
-                        Entry::Vacant(entry) => {
-                            entry.insert(vec![function.clone()]);
-                        }
-                    }
-                }
+            if let Some(abi) = abi {
+                self.collect_abi(&abi, Some(&address));
+            }
+        }
+    }
 
-                // Flatten events from all ABIs
-                for event in abi.events() {
-                    let sig = (event.selector(), indexed_inputs(event));
-                    self.events.entry(sig).or_default().push(event.clone());
-                }
-
-                // Flatten errors from all ABIs
-                for error in abi.errors() {
-                    self.errors.errors.entry(error.name.clone()).or_default().push(error.clone());
-                }
-
-                if abi.receive.is_some() {
-                    self.receive_contracts.push(address);
-                }
+    fn collect_abi(&mut self, abi: &JsonAbi, address: Option<&Address>) {
+        trace!(target: "evm::traces", len=abi.len(), ?address, "collecting ABI");
+        for function in abi.functions() {
+            self.push_function(function.clone());
+        }
+        for event in abi.events() {
+            self.push_event(event.clone());
+        }
+        for error in abi.errors() {
+            self.push_error(error.clone());
+        }
+        if let Some(address) = address {
+            if abi.receive.is_some() {
+                self.receive_contracts.push(*address);
             }
         }
     }
@@ -323,11 +350,7 @@ impl CallTraceDecoder {
             DecodedCallTrace {
                 label,
                 return_data: if !trace.success {
-                    Some(decode::decode_revert(
-                        &trace.output,
-                        Some(&self.errors),
-                        Some(trace.status),
-                    ))
+                    Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
                 } else {
                     None
                 },
@@ -361,27 +384,42 @@ impl CallTraceDecoder {
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
-            "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
-            "rememberKey" | "startBroadcast" | "broadcast" => {
-                // these functions accept a private key as uint256, which should not be
-                // converted to plain text
-                if !func.inputs.is_empty() && func.inputs[0].ty != "uint256" {
-                    // redact private key input
+            "expectRevert" => Some(vec![self.revert_decoder.decode(data, None)]),
+            "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
+                // Redact private key in all cases
+                Some(vec!["<pk>".to_string()])
+            }
+            "broadcast" | "startBroadcast" => {
+                // Redact private key if defined
+                // broadcast(uint256) / startBroadcast(uint256)
+                if !func.inputs.is_empty() && func.inputs[0].ty == "uint256" {
                     Some(vec!["<pk>".to_string()])
                 } else {
                     None
                 }
             }
-            "sign" => {
-                // sign(uint256,bytes32)
+            "getNonce" => {
+                // Redact private key if defined
+                // getNonce(Wallet)
+                if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
+                    Some(vec!["<pk>".to_string()])
+                } else {
+                    None
+                }
+            }
+            "sign" | "signP256" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                if !decoded.is_empty() && func.inputs[0].ty != "uint256" {
+
+                // Redact private key and replace in trace
+                // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
+                if !decoded.is_empty() &&
+                    (func.inputs[0].ty == "uint256" || func.inputs[0].ty == "tuple")
+                {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
+
                 Some(decoded.iter().map(format_token).collect())
             }
-            "addr" => Some(vec!["<pk>".to_string()]),
-            "deriveKey" => Some(vec!["<pk>".to_string()]),
             "parseJson" |
             "parseJsonUint" |
             "parseJsonUintArray" |
@@ -398,9 +436,12 @@ impl CallTraceDecoder {
             "parseJsonBytes32" |
             "parseJsonBytes32Array" |
             "writeJson" |
-            "keyExists" |
+            // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+            "keyExists" | 
+            "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
+            "serializeUintToHex" |
             "serializeInt" |
             "serializeAddress" |
             "serializeBytes32" |
@@ -410,12 +451,31 @@ impl CallTraceDecoder {
                     None
                 } else {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                    let token =
-                        if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
-                            "<JSON file>"
-                        } else {
-                            "<stringified JSON>"
-                        };
+                    let token = if func.name.as_str() == "parseJson" ||
+                        // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
+                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExistsJson"
+                    {
+                        "<JSON file>"
+                    } else {
+                        "<stringified JSON>"
+                    };
+                    decoded[0] = DynSolValue::String(token.to_string());
+                    Some(decoded.iter().map(format_token).collect())
+                }
+            }
+            s if s.contains("Toml") => {
+                if self.verbosity >= 5 {
+                    None
+                } else {
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let token = if func.name.as_str() == "parseToml" ||
+                        func.name.as_str() == "keyExistsToml"
+                    {
+                        "<TOML file>"
+                    } else {
+                        "<stringified TOML>"
+                    };
                     decoded[0] = DynSolValue::String(token.to_string());
                     Some(decoded.iter().map(format_token).collect())
                 }
@@ -452,7 +512,7 @@ impl CallTraceDecoder {
 
             None
         } else {
-            Some(decode::decode_revert(data, Some(&self.errors), Some(trace.status)))
+            Some(self.revert_decoder.decode(data, Some(trace.status)))
         }
     }
 
@@ -460,7 +520,8 @@ impl CallTraceDecoder {
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
-            "deriveKey" => Some("<pk>"),
+            "createWallet" | "deriveKey" => Some("<pk>"),
+            "promptSecret" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,
@@ -559,4 +620,89 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
 
 fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::hex;
+
+    #[test]
+    fn test_should_redact_pk() {
+        let decoder = CallTraceDecoder::new();
+
+        // [function_signature, data, expected]
+        let cheatcode_input_test_cases = vec![
+            // Should redact private key from traces in all cases:
+            ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("createWallet(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("deriveKey(string,string,uint32,string)", vec![], Some(vec!["<pk>".to_string()])),
+            ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            //
+            // Should redact private key from traces in specific cases with exceptions:
+            ("broadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("broadcast()", vec![], None), // Ignore: `private key` is not passed.
+            ("startBroadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("startBroadcast()", vec![], None), // Ignore: `private key` is not passed.
+            ("getNonce((address,uint256,uint256,uint256))", vec![], Some(vec!["<pk>".to_string()])),
+            ("getNonce(address)", vec![], None), // Ignore: `address` is public.
+            //
+            // Should redact private key and replace in trace in cases:
+            (
+                "sign(uint256,bytes32)",
+                hex!(
+                    "
+                    e341eaa4
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+            (
+                "signP256(uint256,bytes32)",
+                hex!(
+                    "
+                    83211b40
+                    7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+                    0000000000000000000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<pk>\"".to_string(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ]),
+            ),
+        ];
+
+        // [function_signature, expected]
+        let cheatcode_output_test_cases = vec![
+            // Should redact private key on output in all cases:
+            ("createWallet(string)", Some("<pk>".to_string())),
+            ("deriveKey(string,uint32)", Some("<pk>".to_string())),
+        ];
+
+        for (function_signature, data, expected) in cheatcode_input_test_cases {
+            let function = Function::parse(function_signature).unwrap();
+            let result = decoder.decode_cheatcode_inputs(&function, &data);
+            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+        }
+
+        for (function_signature, expected) in cheatcode_output_test_cases {
+            let function = Function::parse(function_signature).unwrap();
+            let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
+            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+        }
+    }
 }

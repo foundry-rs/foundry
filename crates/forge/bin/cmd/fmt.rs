@@ -12,31 +12,31 @@ use std::{
     io::{Read, Write as _},
     path::{Path, PathBuf},
 };
-use yansi::Color;
+use yansi::{Color, Paint, Style};
 
 /// CLI arguments for `forge fmt`.
 #[derive(Clone, Debug, Parser)]
 pub struct FmtArgs {
     /// Path to the file, directory or '-' to read from stdin.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
+    #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
 
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
     /// Run in 'check' mode.
     ///
     /// Exits with 0 if input is formatted correctly.
     /// Exits with 1 if formatting is required.
-    #[clap(long)]
+    #[arg(long)]
     check: bool,
 
     /// In 'check' and stdin modes, outputs raw formatted code instead of the diff.
-    #[clap(long, short)]
+    #[arg(long, short)]
     raw: bool,
 }
 
@@ -217,24 +217,24 @@ where
         }
         for op in group {
             for change in diff.iter_inline_changes(&op) {
-                let dimmed = Color::Default.style().dimmed();
+                let dimmed = Style::new().dim();
                 let (sign, s) = match change.tag() {
-                    ChangeTag::Delete => ("-", Color::Red.style()),
-                    ChangeTag::Insert => ("+", Color::Green.style()),
+                    ChangeTag::Delete => ("-", Color::Red.foreground()),
+                    ChangeTag::Insert => ("+", Color::Green.foreground()),
                     ChangeTag::Equal => (" ", dimmed),
                 };
 
                 let _ = write!(
                     diff_summary,
                     "{}{} |{}",
-                    dimmed.paint(Line(change.old_index())),
-                    dimmed.paint(Line(change.new_index())),
-                    s.bold().paint(sign),
+                    Line(change.old_index()).paint(dimmed),
+                    Line(change.new_index()).paint(dimmed),
+                    sign.paint(s.bold()),
                 );
 
                 for (emphasized, value) in change.iter_strings_lossy() {
                     let s = if emphasized { s.underline().bg(Color::Black) } else { s };
-                    let _ = write!(diff_summary, "{}", s.paint(value));
+                    let _ = write!(diff_summary, "{}", value.paint(s));
                 }
 
                 if change.missing_newline() {

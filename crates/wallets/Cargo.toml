@@ -1,0 +1,46 @@
+[package]
+name = "foundry-wallets"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer-aws.workspace = true
+alloy-signer-ledger.workspace = true
+alloy-signer-trezor.workspace = true
+alloy-network.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
+alloy-dyn-abi.workspace = true
+
+aws-sdk-kms = { version = "1", default-features = false }
+aws-config = "1"
+
+foundry-config.workspace = true
+foundry-common.workspace = true
+
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+derive_builder = "0.20.0"
+eyre.workspace = true
+hex = { workspace = true, features = ["serde"] }
+itertools.workspace = true
+rpassword = "7"
+serde.workspace = true
+thiserror = "1"
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros"] }
+
+[features]
+default = ["rustls"]
+rustls = ["aws-sdk-kms/rustls"]

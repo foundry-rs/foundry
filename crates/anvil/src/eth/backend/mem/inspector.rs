@@ -1,18 +1,19 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::{eth::macros::node_info, revm::Database};
-use alloy_primitives::Log;
+use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
-    revm,
     revm::{
-        interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-        primitives::{Address, Bytes, B256},
-        EVMData,
+        self,
+        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+        primitives::U256,
+        EvmContext,
     },
     traces::TracingInspectorConfig,
+    InspectorExt,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -48,96 +49,95 @@ impl Inspector {
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
-    fn initialize_interp(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.initialize_interp(interp, data);
+            inspector.initialize_interp(interp, ecx);
         });
     }
 
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step(interp, data);
+            inspector.step(interp, ecx);
         });
     }
 
     #[inline]
-    fn log(
-        &mut self,
-        evm_data: &mut EVMData<'_, DB>,
-        address: &Address,
-        topics: &[B256],
-        data: &Bytes,
-    ) {
+    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        call_inspectors!([&mut self.tracer], |inspector| {
+            inspector.step_end(interp, ecx);
+        });
+    }
+
+    #[inline]
+    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            inspector.log(evm_data, address, topics, data);
+            inspector.log(ecx, log);
         });
     }
 
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step_end(interp, data);
-        });
-    }
-
-    #[inline]
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            inspector.call(data, call);
+            if let Some(outcome) = inspector.call(ecx, inputs) {
+                return Some(outcome);
+            }
         });
 
-        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &CallInputs,
-        remaining_gas: Gas,
-        ret: InstructionResult,
-        out: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.call_end(data, inputs, remaining_gas, ret, out.clone());
-        });
-        (ret, remaining_gas, out)
+        outcome: CallOutcome,
+    ) -> CallOutcome {
+        if let Some(tracer) = &mut self.tracer {
+            return tracer.call_end(ecx, inputs, outcome);
+        }
+
+        outcome
     }
 
     #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.create(data, call);
-        });
-
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        ecx: &mut EvmContext<DB>,
+        inputs: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        if let Some(tracer) = &mut self.tracer {
+            if let Some(out) = tracer.create(ecx, inputs) {
+                return Some(out);
+            }
+        }
+        None
     }
 
     #[inline]
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &CreateInputs,
-        status: InstructionResult,
-        address: Option<Address>,
-        gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.create_end(data, inputs, status, address, gas, retdata.clone());
-        });
-        (status, address, gas, retdata)
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        if let Some(tracer) = &mut self.tracer {
+            return tracer.create_end(ecx, inputs, outcome);
+        }
+
+        outcome
+    }
+
+    #[inline]
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        if let Some(tracer) = &mut self.tracer {
+            revm::Inspector::<DB>::selfdestruct(tracer, contract, target, value);
+        }
     }
 }
+
+impl<DB: Database> InspectorExt<DB> for Inspector {}
 
 /// Prints all the logs
 #[inline]

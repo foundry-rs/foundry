@@ -66,18 +66,15 @@ impl Debugger {
         breakpoints: Breakpoints,
     ) -> Self {
         let pc_ic_maps = contracts_sources
-            .0
-            .iter()
-            .flat_map(|(contract_name, files_sources)| {
-                files_sources.iter().filter_map(|(_, (_, contract))| {
-                    Some((
-                        contract_name.clone(),
-                        (
-                            PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
-                            PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
-                        ),
-                    ))
-                })
+            .entries()
+            .filter_map(|(contract_name, _, contract)| {
+                Some((
+                    contract_name.to_owned(),
+                    (
+                        PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
+                        PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
+                    ),
+                ))
             })
             .collect();
         Self { debug_arena, identified_contracts, contracts_sources, pc_ic_maps, breakpoints }
@@ -118,16 +115,13 @@ impl Debugger {
             .spawn(move || Self::event_listener(tx))
             .expect("failed to spawn thread");
 
-        // Draw the initial state.
-        cx.draw(terminal)?;
-
         // Start the event loop.
         loop {
+            cx.draw(terminal)?;
             match cx.handle_event(rx.recv()?) {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(reason) => return Ok(reason),
             }
-            cx.draw(terminal)?;
         }
     }
 

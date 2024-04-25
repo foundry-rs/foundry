@@ -2,11 +2,13 @@ use crate::{
     abi::*,
     utils::{ethers_http_provider, ethers_ws_provider},
 };
-use alloy_primitives::U256 as rU256;
-use alloy_rpc_types::BlockNumberOrTag;
-use alloy_signer::Signer as AlloySigner;
+use alloy_primitives::{Bytes, U256 as rU256};
+use alloy_rpc_types::{
+    request::TransactionRequest as AlloyTransactionRequest,
+    state::{AccountOverride, StateOverride},
+    BlockNumberOrTag, WithOtherFields,
+};
 use anvil::{spawn, Hardfork, NodeConfig};
-use anvil_core::eth::transaction::EthTransactionRequest;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{
@@ -18,7 +20,7 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
-use foundry_common::types::{to_call_request_from_tx_request, ToAlloy, ToEthers};
+use foundry_common::types::{ToAlloy, ToEthers};
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -431,11 +433,11 @@ async fn get_blocktimestamp_works() {
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.header.timestamp.to_ethers());
+    assert_eq!(timestamp.as_u64(), latest_block.header.timestamp);
 
     // repeat call same result
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.header.timestamp.to_ethers());
+    assert_eq!(timestamp.as_u64(), latest_block.header.timestamp);
 
     // mock timestamp
     let next_timestamp = timestamp.as_u64() + 1337;
@@ -959,9 +961,53 @@ async fn estimates_gas_on_pending_by_default() {
     let tx = TransactionRequest::new().from(sender).to(recipient).value(1e18 as u64);
     client.send_transaction(tx, None).await.unwrap();
 
-    let tx =
-        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
-    api.estimate_gas(to_call_request_from_tx_request(tx), None).await.unwrap();
+    let tx = AlloyTransactionRequest::default()
+        .from(recipient.to_alloy())
+        .to(sender.to_alloy())
+        .value(rU256::from(1e10))
+        .input(Bytes::from(vec![0x42]).into());
+    api.estimate_gas(WithOtherFields::new(tx), None, None).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let tx = AlloyTransactionRequest::default()
+        .from(recipient.to_alloy())
+        .to(sender.to_alloy())
+        .value(rU256::from(1e10))
+        .input(Bytes::from(vec![0x42]).into());
+    // Expect the gas estimation to fail due to insufficient funds.
+    let error_result = api.estimate_gas(WithOtherFields::new(tx.clone()), None, None).await;
+
+    assert!(error_result.is_err(), "Expected an error due to insufficient funds");
+    let error_message = error_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("Insufficient funds for gas * price + value"),
+        "Error message did not match expected: {}",
+        error_message
+    );
+
+    // Setup state override to simulate sufficient funds for the recipient.
+    let addr = alloy_primitives::Address::from_slice(recipient.as_bytes());
+    let account_override =
+        AccountOverride { balance: Some(alloy_primitives::U256::from(1e18)), ..Default::default() };
+    let mut state_override = StateOverride::new();
+    state_override.insert(addr, account_override);
+
+    // Estimate gas with state override implying sufficient funds.
+    let gas_estimate = api
+        .estimate_gas(WithOtherFields::new(tx), None, Some(state_override))
+        .await
+        .expect("Failed to estimate gas with state override");
+
+    // Assert the gas estimate meets the expected minimum.
+    assert!(gas_estimate >= rU256::from(21000), "Gas estimate is lower than expected minimum");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -987,8 +1033,7 @@ async fn test_reject_gas_too_low() {
 // <https://github.com/foundry-rs/foundry/issues/3783>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_high_gas_limit() {
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000).to_alloy()))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(100_000_000))).await;
     let provider = ethers_http_provider(&handle.http_endpoint());
 
     let wallet = handle.dev_wallets().next().unwrap().to_ethers();
@@ -1043,14 +1088,14 @@ async fn can_mine_multiple_in_block() {
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let tx = EthTransactionRequest {
+    let tx = AlloyTransactionRequest {
         from: Some("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap()),
         ..Default::default()
     };
 
     // broadcast it via the eth_sendTransaction API
-    let first = api.send_transaction(tx.clone()).await.unwrap();
-    let second = api.send_transaction(tx.clone()).await.unwrap();
+    let first = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
+    let second = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
 
     api.anvil_mine(Some(rU256::from(1)), Some(rU256::ZERO)).await.unwrap();
 
