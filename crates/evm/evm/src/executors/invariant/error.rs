@@ -233,19 +233,12 @@ impl FailedInvariantCaseData {
         for _ in 0..self.shrink_run_limit {
             // Check candidate sequence result.
             match self.check_sequence(executor.clone(), calls, shrinker.current().collect()) {
-                false => {
-                    // If candidate sequence still fails then shrink more if possible.
-                    if !shrinker.simplify() {
-                        break
-                    }
-                }
-                true => {
-                    // If candidate sequence pass then restore last removed call and shrink other
-                    // calls if possible.
-                    if !shrinker.complicate() {
-                        break
-                    }
-                }
+                // If candidate sequence still fails then shrink more if possible.
+                false if !shrinker.simplify() => break,
+                // If candidate sequence pass then restore last removed call and shrink other
+                // calls if possible.
+                true if !shrinker.complicate() => break,
+                _ => {}
             }
         }
 
