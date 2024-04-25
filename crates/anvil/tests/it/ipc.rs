@@ -22,7 +22,7 @@ fn ipc_config() -> NodeConfig {
 // TODO: throws: `Transport(Custom(Os { code: 2, kind: NotFound, message: "The system cannot find
 // the file specified." }))` on Windows
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(target_os = "windows", ignore)]
+// #[cfg_attr(target_os = "windows", ignore)]
 async fn can_get_block_number_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
@@ -38,11 +38,10 @@ async fn can_get_block_number_ipc() {
 // TODO: throws: `Transport(Custom(Os { code: 2, kind: NotFound, message: "The system cannot find
 // the file specified." }))` on Windows
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(target_os = "windows", ignore)]
+// #[cfg_attr(target_os = "windows", ignore)]
 async fn test_sub_new_heads_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
-    // TODO: update to `ipc_provider` once https://github.com/alloy-rs/alloy/issues/389 is fixed
     let provider = connect_pubsub(handle.ipc_path().unwrap().as_str()).await;
 
     let blocks = provider.subscribe_blocks().await.unwrap().into_stream();
