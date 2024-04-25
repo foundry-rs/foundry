@@ -4,11 +4,11 @@ use crate::{
     abi::*,
     utils::{self, ethers_http_provider},
 };
-use alloy_primitives::{address, U256 as rU256};
+use alloy_primitives::{address, TxKind, U256 as rU256};
 use alloy_provider::Provider as AlloyProvider;
 use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest as CallRequest},
-    BlockNumberOrTag, WithOtherFields,
+    BlockId, BlockNumberOrTag, WithOtherFields,
 };
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
@@ -273,8 +273,8 @@ async fn test_fork_snapshotting() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
     let provider = ethers_http_provider(&handle.http_endpoint());
@@ -287,18 +287,18 @@ async fn test_fork_snapshotting() {
 
     let provider = handle.http_provider();
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     assert!(api.evm_revert(snapshot).await.unwrap());
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce);
-    let balance = provider.get_balance(from, None).await.unwrap();
+    let balance = provider.get_balance(from, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
-    let balance = provider.get_balance(to, None).await.unwrap();
+    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 }
@@ -315,8 +315,8 @@ async fn test_fork_snapshotting_repeated() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(rU256::from(92u64)).unwrap();
 
     let tx = TransactionRequest::new()
@@ -326,20 +326,20 @@ async fn test_fork_snapshotting_repeated() {
     let tx_provider = ethers_http_provider(&handle.http_endpoint());
     let _ = tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     let _second_snapshot = api.evm_snapshot().await.unwrap();
 
     assert!(api.evm_revert(snapshot).await.unwrap());
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce);
-    let balance = provider.get_balance(from, None).await.unwrap();
+    let balance = provider.get_balance(from, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
-    let balance = provider.get_balance(to, None).await.unwrap();
+    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
@@ -366,8 +366,8 @@ async fn test_fork_snapshotting_blocks() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
-    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let initial_nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
     let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
 
     // send the transaction
@@ -380,26 +380,29 @@ async fn test_fork_snapshotting_blocks() {
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
 
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
-    let to_balance = provider.get_balance(to, None).await.unwrap();
+    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     // revert snapshot
     assert!(api.evm_revert(snapshot).await.unwrap());
 
-    assert_eq!(initial_nonce, provider.get_transaction_count(from, None).await.unwrap());
+    assert_eq!(
+        initial_nonce,
+        provider.get_transaction_count(from, BlockId::latest()).await.unwrap()
+    );
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number);
 
     // repeat transaction
     let _ = tx_provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
 
     // revert again: nothing to revert since snapshot gone
     assert!(!api.evm_revert(snapshot).await.unwrap());
-    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
@@ -469,31 +472,46 @@ async fn can_reset_properly() {
     let origin_nonce = 1u64;
     origin_api.anvil_set_nonce(account, rU256::from(origin_nonce)).await.unwrap();
 
-    assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce,
+        origin_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     let (fork_api, fork_handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.http_provider();
     let fork_tx_provider = ethers_http_provider(&fork_handle.http_endpoint());
-    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce,
+        fork_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     let to = Address::random();
-    let to_balance = fork_provider.get_balance(to.to_alloy(), None).await.unwrap();
+    let to_balance = fork_provider.get_balance(to.to_alloy(), BlockId::latest()).await.unwrap();
     let tx = TransactionRequest::new().from(account.to_ethers()).to(to).value(1337u64);
     let tx = fork_tx_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     // nonce incremented by 1
-    assert_eq!(origin_nonce + 1, fork_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce + 1,
+        fork_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     // resetting to origin state
     fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     // nonce reset to origin
-    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
+    assert_eq!(
+        origin_nonce,
+        fork_provider.get_transaction_count(account, BlockId::latest()).await.unwrap()
+    );
 
     // balance is reset
-    assert_eq!(to_balance, fork_provider.get_balance(to.to_alloy(), None).await.unwrap());
+    assert_eq!(
+        to_balance,
+        fork_provider.get_balance(to.to_alloy(), BlockId::latest()).await.unwrap()
+    );
 
     // tx does not exist anymore
     assert!(fork_tx_provider.get_transaction(tx.transaction_hash).await.is_err())
@@ -790,7 +808,7 @@ async fn test_fork_call() {
     let res1 = api
         .call(
             WithOtherFields::new(CallRequest {
-                to: Some(to.to_alloy()),
+                to: Some(TxKind::Call(to.to_alloy())),
                 input: input.to_alloy().into(),
                 ..Default::default()
             }),
@@ -1179,7 +1197,7 @@ async fn test_fork_execution_reverted() {
     let resp = api
         .call(
             WithOtherFields::new(CallRequest {
-                to: Some(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377")),
+                to: Some(TxKind::Call(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377"))),
                 input: TransactionInput::new("0x8f283b3c".as_bytes().into()),
                 ..Default::default()
             }),

@@ -4,7 +4,8 @@ use crate::{
     abi::{MulticallContract, SimpleStorage},
     utils::ethers_http_provider,
 };
-use alloy_primitives::{Address as rAddress, B256, U256 as rU256};
+use alloy_eips::BlockId;
+use alloy_primitives::{Address as rAddress, TxKind, B256, U256 as rU256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::{TransactionInput as CallInput, TransactionRequest as CallRequest},
@@ -45,7 +46,7 @@ async fn can_dev_get_balance() {
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
-        let balance = provider.get_balance(acc, None).await.unwrap();
+        let balance = provider.get_balance(acc, BlockId::latest()).await.unwrap();
         assert_eq!(balance, genesis_balance);
     }
 }
@@ -246,7 +247,7 @@ where
         .call(
             WithOtherFields::new(CallRequest {
                 input: CallInput::maybe_input(call.tx.data().cloned().map(|b| b.0.into())),
-                to: Some(to.to_alloy()),
+                to: Some(TxKind::Call(to.to_alloy())),
                 ..Default::default()
             }),
             None,

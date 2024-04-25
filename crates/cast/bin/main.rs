@@ -11,7 +11,7 @@ use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
-    ens::ProviderEnsExt,
+    ens::{namehash, ProviderEnsExt},
     fmt::{format_tokens, format_uint_exp},
     fs,
     selectors::{
@@ -346,7 +346,9 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let address = address.resolve(&provider).await?;
-            let value = provider.get_proof(address, slots.into_iter().collect(), block).await?;
+            let value = provider
+                .get_proof(address, slots.into_iter().collect(), block.unwrap_or(BlockId::latest()))
+                .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         CastSubcommand::Rpc(cmd) => cmd.run().await?,
@@ -446,19 +448,19 @@ async fn main() -> Result<()> {
         // ENS
         CastSubcommand::Namehash { name } => {
             let name = stdin::unwrap_line(name)?;
-            println!("{}", SimpleCast::namehash(&name)?);
+            println!("{}", namehash(&name));
         }
         CastSubcommand::LookupAddress { who, rpc, verify } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let name = provider.lookup_address(who).await?;
+            let name = provider.lookup_address(&who).await?;
             if verify {
                 let address = provider.resolve_name(&name).await?;
                 eyre::ensure!(
                     address == who,
-                    "Forward lookup verification failed: got `{name:?}`, expected `{who:?}`"
+                    "Reverse lookup verification failed: got `{address}`, expected `{who}`"
                 );
             }
             println!("{name}");
@@ -470,13 +472,13 @@ async fn main() -> Result<()> {
             let who = stdin::unwrap_line(who)?;
             let address = provider.resolve_name(&who).await?;
             if verify {
-                let name = provider.lookup_address(address).await?;
-                assert_eq!(
-                    name, who,
-                    "forward lookup verification failed. got {name}, expected {who}"
+                let name = provider.lookup_address(&address).await?;
+                eyre::ensure!(
+                    name == who,
+                    "Forward lookup verification failed: got `{name}`, expected `{who}`"
                 );
             }
-            println!("{}", address.to_checksum(None));
+            println!("{address}");
         }
 
         // Misc

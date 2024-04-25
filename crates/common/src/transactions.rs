@@ -50,7 +50,7 @@ impl TransactionReceiptWithRevertReason {
             match provider
                 .call(
                     &WithOtherFields::new(transaction.inner.into()),
-                    Some(BlockId::Hash(block_hash.into())),
+                    BlockId::Hash(block_hash.into()),
                 )
                 .await
             {

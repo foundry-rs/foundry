@@ -1503,7 +1503,7 @@ interface Vm {
 
     /// Gets the environment variable `name` and returns true if it exists, else returns false.
     #[cheatcode(group = Environment)]
-    function envExists(string calldata name) external view returns (bool exists);
+    function envExists(string calldata name) external view returns (bool result);
 
     /// Gets the environment variable `name` and parses it as `bool`.
     /// Reverts if the variable was not found or could not be parsed.
@@ -1861,6 +1861,11 @@ interface Vm {
     /// See `serializeJson`.
     #[cheatcode(group = Json)]
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value)
+        external
+        returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
+    function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value)
         external
         returns (string memory json);
     /// See `serializeJson`.

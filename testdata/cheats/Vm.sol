@@ -186,7 +186,7 @@ interface Vm {
     function envBytes32(string calldata name, string calldata delim) external view returns (bytes32[] memory value);
     function envBytes(string calldata name) external view returns (bytes memory value);
     function envBytes(string calldata name, string calldata delim) external view returns (bytes[] memory value);
-    function envExists(string calldata name) external view returns (bool exists);
+    function envExists(string calldata name) external view returns (bool result);
     function envInt(string calldata name) external view returns (int256 value);
     function envInt(string calldata name, string calldata delim) external view returns (int256[] memory value);
     function envOr(string calldata name, bool defaultValue) external view returns (bool value);
@@ -355,6 +355,7 @@ interface Vm {
     function serializeJson(string calldata objectKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string[] calldata values) external returns (string memory json);
+    function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256[] calldata values) external returns (string memory json);
     function setEnv(string calldata name, string calldata value) external;
