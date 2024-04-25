@@ -372,7 +372,7 @@ async fn can_mine_automatically() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = http_provider(&handle.http_endpoint());
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -388,16 +388,19 @@ async fn can_call_greeter_historic() {
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 
-    let block = provider.get_block_number().await.unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
 
     let _ = greeter_contract.setGreeting("Another Message".to_string()).send().await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Another Message", greeting._0);
 
+    // min
+    api.mine_one().await;
+
     // returns previous state
     let greeting =
-        greeter_contract.greet().block(BlockId::Number(block.into())).call().await.unwrap();
+        greeter_contract.greet().block(BlockId::Number(block_number.into())).call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 }
 
