@@ -109,6 +109,7 @@ alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 pretty_assertions.workspace = true
+tempfile.workspace = true
 tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
 

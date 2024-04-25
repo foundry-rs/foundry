@@ -32,10 +32,6 @@ pub enum InnerTransport {
 /// Error type for the runtime transport.
 #[derive(Error, Debug)]
 pub enum RuntimeTransportError {
-    /// Internal transport error test
-    #[error("Transport error with URL {1} and path {2}: {0}")]
-    TransportErrorTest(TransportError, String, String),
-
     /// Internal transport error
     #[error(transparent)]
     TransportError(TransportError),
@@ -199,11 +195,9 @@ impl RuntimeTransport {
     async fn connect_ipc(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let path = url_to_file_path(&self.url)
             .map_err(|_| RuntimeTransportError::BadPath(self.url.to_string()))?;
-        let path_string = path.to_string_lossy().to_string();
         let ipc_connector: IpcConnect<PathBuf> = path.into();
-        let ipc = ipc_connector.into_service().await.map_err(|e| {
-            RuntimeTransportError::TransportErrorTest(e, self.url.to_string(), path_string)
-        })?;
+        let ipc =
+            ipc_connector.into_service().await.map_err(RuntimeTransportError::TransportError)?;
         Ok(InnerTransport::Ipc(ipc))
     }
 

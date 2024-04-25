@@ -5,13 +5,18 @@ use alloy_primitives::U256;
 use alloy_provider::Provider;
 use anvil::{spawn, NodeConfig};
 use futures::StreamExt;
+use tempfile::NamedTempFile;
 
 pub fn rand_ipc_endpoint() -> String {
-    let num: u64 = rand::Rng::gen(&mut rand::thread_rng());
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.into_temp_path().to_path_buf();
+
+    // [Windows named pipes](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipes)
+    // are located at `\\<machine_address>\pipe\<pipe_name>`.
     if cfg!(windows) {
-        format!(r"\\.\pipe\anvil-ipc-{num}")
+        format!(r"\\.\pipe\{}", path.display())
     } else {
-        format!(r"/tmp/anvil-ipc-{num}")
+        path.display().to_string()
     }
 }
 
@@ -19,10 +24,7 @@ fn ipc_config() -> NodeConfig {
     NodeConfig::test().with_ipc(Some(Some(rand_ipc_endpoint())))
 }
 
-// TODO: throws: `Transport(Custom(Os { code: 2, kind: NotFound, message: "The system cannot find
-// the file specified." }))` on Windows
 #[tokio::test(flavor = "multi_thread")]
-// #[cfg_attr(target_os = "windows", ignore)]
 async fn can_get_block_number_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
@@ -35,10 +37,7 @@ async fn can_get_block_number_ipc() {
     assert_eq!(num, block_num.to::<u64>());
 }
 
-// TODO: throws: `Transport(Custom(Os { code: 2, kind: NotFound, message: "The system cannot find
-// the file specified." }))` on Windows
 #[tokio::test(flavor = "multi_thread")]
-// #[cfg_attr(target_os = "windows", ignore)]
 async fn test_sub_new_heads_ipc() {
     let (api, handle) = spawn(ipc_config()).await;
 
