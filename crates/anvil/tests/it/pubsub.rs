@@ -1,6 +1,6 @@
 //! tests for subscriptions
 
-use crate::utils::{connect_pubsub, connect_pubsub_with_signer, http_provider};
+use crate::utils::{connect_pubsub, connect_pubsub_with_signer};
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
@@ -144,7 +144,7 @@ async fn test_sub_logs_impersonated() {
         TransactionRequest::default().from(impersonate).to(*contract.address()).with_input(data);
 
     let tx = WithOtherFields::new(tx);
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 

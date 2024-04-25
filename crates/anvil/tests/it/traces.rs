@@ -1,6 +1,6 @@
 use crate::{
     fork::fork_config,
-    utils::{http_provider, http_provider_with_signer, ws_provider},
+    utils::{http_provider_with_signer, ws_provider},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
@@ -77,10 +77,7 @@ async fn test_parity_suicide_trace() {
     let call = call.send().await.unwrap();
     let tx = call.get_receipt().await.unwrap();
 
-    let traces = http_provider(&handle.http_endpoint())
-        .trace_transaction(tx.transaction_hash)
-        .await
-        .unwrap();
+    let traces = handle.http_provider().trace_transaction(tx.transaction_hash).await.unwrap();
     assert!(!traces.is_empty());
     assert!(traces[1].trace.action.is_selfdestruct());
 }
@@ -123,7 +120,8 @@ async fn test_transfer_debug_trace_call() {
         .to(*contract.address())
         .with_input(calldata);
 
-    let traces = http_provider(&handle.http_endpoint())
+    let traces = handle
+        .http_provider()
         .debug_trace_call(tx, BlockNumberOrTag::Latest, GethDebugTracingCallOptions::default())
         .await
         .unwrap();
@@ -142,7 +140,7 @@ async fn test_transfer_debug_trace_call() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_address_fork() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15291050u64))).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let input = hex::decode("43bcfab60000000000000000000000006b175474e89094c44da98b954eedeac495271d0f0000000000000000000000000000000000000000000000e0bd811c8769a824b00000000000000000000000000000000000000000000000e0ae9925047d8440b60000000000000000000000002e4777139254ff76db957e284b186a4507ff8c67").unwrap();
 
@@ -340,7 +338,7 @@ async fn test_trace_address_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_address_fork2() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15314401u64))).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let input = hex::decode("30000003000000000000000000000000adda1059a6c6c102b0fa562b9bb2cb9a0de5b1f4000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a300000004fffffffffffffffffffffffffffffffffffffffffffff679dc91ecfe150fb980c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2f4d2888d29d722226fafa5d9b24f9164c092421e000bb8000000000000004319b52bf08b65295d49117e790000000000000000000000000000000000000000000000008b6d9e8818d6141f000000000000000000000000000000000000000000000000000000086a23af210000000000000000000000000000000000000000000000000000000000").unwrap();
 

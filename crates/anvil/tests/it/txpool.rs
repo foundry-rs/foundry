@@ -1,6 +1,5 @@
 //! txpool related tests
 
-use crate::utils::http_provider;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::{txpool::TxPoolApi, Provider};
@@ -10,7 +9,7 @@ use anvil::{spawn, NodeConfig};
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     api.anvil_set_auto_mine(false).await.unwrap();
 

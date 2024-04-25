@@ -1,7 +1,7 @@
 //! tests for otterscan endpoints
 use crate::{
     abi::MulticallContract,
-    utils::{http_provider, http_provider_with_signer, ws_provider_with_signer},
+    utils::{http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumSigner;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -74,7 +74,7 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
 async fn can_call_ots_get_internal_operations_contract_transfer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();

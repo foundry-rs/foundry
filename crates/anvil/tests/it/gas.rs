@@ -1,6 +1,6 @@
 //! Gas related tests
 
-use crate::utils::{http_provider, http_provider_with_signer};
+use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
@@ -133,7 +133,7 @@ async fn test_respect_base_fee() {
     let base_fee = 50u128;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let tx = TransactionRequest::default().with_to(Address::random()).with_value(U256::from(100));
     let mut tx = WithOtherFields::new(tx);
@@ -154,7 +154,7 @@ async fn test_tip_above_fee_cap() {
     let base_fee = 50u128;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let tx = TransactionRequest::default()
         .max_fee_per_gas(base_fee)

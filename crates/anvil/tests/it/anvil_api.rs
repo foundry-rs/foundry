@@ -3,7 +3,6 @@
 use crate::{
     abi::{Greeter, MulticallContract, BUSD},
     fork::fork_config,
-    utils::http_provider,
 };
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
@@ -17,14 +16,13 @@ use anvil_core::{
 use foundry_evm::revm::primitives::SpecId;
 use std::{
     str::FromStr,
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let gas_price = U256::from(1337);
     api.anvil_set_min_gas_price(gas_price).await.unwrap();
@@ -64,7 +62,7 @@ async fn can_set_storage() {
 async fn can_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -103,7 +101,7 @@ async fn can_impersonate_account() {
 async fn can_auto_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -145,7 +143,7 @@ async fn can_auto_impersonate_account() {
 async fn can_impersonate_contract() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
     let impersonate = greeter_contract.address().to_owned();
@@ -184,7 +182,7 @@ async fn can_impersonate_contract() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_gnosis_safe() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
     let safe = address!("A063Cb7CFd8E57c30c788A0572CBbf2129ae56B6");
@@ -214,7 +212,7 @@ async fn can_impersonate_gnosis_safe() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_multiple_accounts() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let impersonate0 = Address::random();
     let impersonate1 = Address::random();
@@ -263,7 +261,7 @@ async fn can_impersonate_multiple_accounts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_manually() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let start_num = provider.get_block_number().await.unwrap();
 
@@ -277,7 +275,7 @@ async fn can_mine_manually() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -304,7 +302,7 @@ async fn test_set_next_timestamp() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -328,7 +326,7 @@ async fn test_evm_set_time() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time_in_past() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -348,7 +346,7 @@ async fn test_evm_set_time_in_past() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_timestamp_interval() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     api.evm_mine(None).await.unwrap();
     let interval = 10;
@@ -399,7 +397,7 @@ async fn test_timestamp_interval() {
 async fn test_can_set_storage_bsc_fork() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let busd_addr = address!("e9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
     let idx = U256::from_str("0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49")
@@ -427,7 +425,7 @@ async fn can_get_node_info() {
 
     let node_info = api.anvil_node_info().await.unwrap();
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let block_number = provider.get_block_number().await.unwrap();
     let block = provider.get_block(BlockId::from(block_number), false).await.unwrap().unwrap();
@@ -460,7 +458,7 @@ async fn can_get_metadata() {
 
     let metadata = api.anvil_metadata().await.unwrap();
 
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let block_number = provider.get_block_number().await.unwrap();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -483,7 +481,7 @@ async fn can_get_metadata() {
 async fn can_get_metadata_on_fork() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
-    let provider = Arc::new(http_provider(&handle.http_endpoint()));
+    let provider = handle.http_provider();
 
     let metadata = api.anvil_metadata().await.unwrap();
 
@@ -527,7 +525,7 @@ async fn metadata_changes_on_reset() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transaction_receipt() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     // set the base fee
     let new_base_fee = U256::from(1000);
@@ -557,7 +555,7 @@ async fn test_get_transaction_receipt() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_chain_id() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
     let chain_id = provider.get_chain_id().await.unwrap();
     assert_eq!(chain_id, 31337);
 
@@ -593,7 +591,7 @@ async fn test_fork_revert_next_block_timestamp() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_revert_call_latest_block_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
@@ -631,7 +629,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
 //     let signer: EthereumSigner = wallet.clone().into();
 //     let from = wallet.address();
 
-//     let provider = http_provider(&handle.http_endpoint());
+//     let provider = handle.http_provider();
 //     let provider_with_signer = http_provider_with_signer(&handle.http_endpoint(), signer);
 
 //     let sender = Address::random();
