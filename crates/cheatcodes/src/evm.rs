@@ -316,6 +316,18 @@ impl Cheatcode for blobhashesCall {
     }
 }
 
+impl Cheatcode for getBlobhashesCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`blobhash` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        Ok(ccx.ecx.env.tx.blob_hashes.clone().abi_encode())
+    }
+}
+
 impl Cheatcode for rollCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newHeight } = self;

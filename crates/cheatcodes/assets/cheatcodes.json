@@ -4733,6 +4733,26 @@
     },
     {
       "func": {
+        "id": "getBlobhashes",
+        "description": "Gets the blockhashes from the current transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function getBlobhashes() external view returns (bytes32[] memory blobhashes);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlobhashes()",
+        "selector": "0xf56ff18b",
+        "selectorBytes": [
+          245,
+          111,
+          241,
+          139
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "getBlockNumber",
         "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockNumber() external view returns (uint256 height);",
