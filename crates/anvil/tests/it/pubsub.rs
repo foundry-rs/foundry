@@ -261,13 +261,8 @@ async fn test_sub_new_heads_fast() {
 
     let mut block_numbers = Vec::new();
     for _ in 0..num {
-        let mine = api.mine_one();
-        let block = async {
-            let block = blocks.next().await.unwrap();
-            block.header.number.unwrap()
-        };
-        let _ = mine.await;
-        let block_number = block.await;
+        api.mine_one().await;
+        let block_number = blocks.next().await.unwrap().header.number.unwrap();
         block_numbers.push(block_number);
     }
 
