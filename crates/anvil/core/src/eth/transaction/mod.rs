@@ -778,31 +778,29 @@ impl TypedTransaction {
     /// It is the gas limit multiplied by the gas price,
     /// and if the transaction is EIP-4844, the result of (total blob gas cost * max fee per blob
     /// gas) is also added
-    pub fn max_cost(&self) -> U256 {
+    pub fn max_cost(&self) -> u128 {
         let mut max_cost = self.gas_limit().saturating_mul(self.gas_price());
 
         if self.is_eip4844() {
             max_cost = max_cost.saturating_add(
-                self.blob_gas()
-                    .map(U256::from)
-                    .unwrap_or(U256::ZERO)
-                    .mul(self.max_fee_per_blob_gas().unwrap_or(U256::ZERO)),
+                self.blob_gas().unwrap_or(0).mul(self.max_fee_per_blob_gas().unwrap_or(0)),
             )
         }
 
         max_cost
     }
 
-    pub fn blob_gas(&self) -> Option<u64> {
+    // TODO: Change blob_gas return type to u128 in alloy
+    pub fn blob_gas(&self) -> Option<u128> {
         match self {
-            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas()),
+            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas() as u128),
             _ => None,
         }
     }
 
-    pub fn max_fee_per_blob_gas(&self) -> Option<U256> {
+    pub fn max_fee_per_blob_gas(&self) -> Option<u128> {
         match self {
-            TypedTransaction::EIP4844(tx) => Some(U256::from(tx.tx().tx().max_fee_per_blob_gas)),
+            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().max_fee_per_blob_gas),
             _ => None,
         }
     }
