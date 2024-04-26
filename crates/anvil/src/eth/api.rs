@@ -1286,7 +1286,7 @@ impl EthApi {
         let mut rewards = Vec::new();
 
         {
-        let fee_history = self.fee_history_cache.lock();
+            let fee_history = self.fee_history_cache.lock();
 
             // iter over the requested block range
             for n in lowest..=highest {
