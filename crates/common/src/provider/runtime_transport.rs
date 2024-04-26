@@ -33,8 +33,8 @@ pub enum InnerTransport {
 #[derive(Error, Debug)]
 pub enum RuntimeTransportError {
     /// Internal transport error
-    #[error(transparent)]
-    TransportError(TransportError),
+    #[error("Internal transport error: {0} with {1}")]
+    TransportError(TransportError, String),
 
     /// Failed to lock the transport
     #[error("Failed to lock the transport")]
@@ -187,7 +187,7 @@ impl RuntimeTransport {
         let ws = WsConnect { url: self.url.to_string(), auth }
             .into_service()
             .await
-            .map_err(RuntimeTransportError::TransportError)?;
+            .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
         Ok(InnerTransport::Ws(ws))
     }
 
@@ -195,9 +195,10 @@ impl RuntimeTransport {
     async fn connect_ipc(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let path = url_to_file_path(&self.url)
             .map_err(|_| RuntimeTransportError::BadPath(self.url.to_string()))?;
-        let ipc_connector: IpcConnect<PathBuf> = path.into();
-        let ipc =
-            ipc_connector.into_service().await.map_err(RuntimeTransportError::TransportError)?;
+        let ipc_connector: IpcConnect<PathBuf> = path.clone().into();
+        let ipc = ipc_connector.into_service().await.map_err(|e| {
+            RuntimeTransportError::TransportError(e, path.clone().display().to_string())
+        })?;
         Ok(InnerTransport::Ipc(ipc))
     }
 
@@ -303,7 +304,7 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
 
 #[cfg(windows)]
 fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
-    const PREFIX: &str = "file:///./pipe/";
+    const PREFIX: &str = "file:///pipe/";
 
     let url_str = url.as_str();
 
