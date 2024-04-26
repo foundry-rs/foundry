@@ -303,7 +303,7 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
 
 #[cfg(windows)]
 fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
-    const PREFIX: &str = "file:///pipe/";
+    const PREFIX: &str = "file:///./pipe/";
 
     let url_str = url.as_str();
 
