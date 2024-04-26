@@ -20,14 +20,12 @@ pub mod fs;
 pub mod glob;
 pub mod provider;
 pub mod retry;
-pub mod runtime_client;
 pub mod selectors;
 pub mod serde_helpers;
 pub mod shell;
 pub mod term;
 pub mod traits;
 pub mod transactions;
-pub mod types;
 
 pub use constants::*;
 pub use contracts::*;

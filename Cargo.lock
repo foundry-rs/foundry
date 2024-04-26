@@ -101,6 +101,7 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-pubsub",
  "alloy-rpc-types",
  "alloy-sol-types",
  "alloy-transport",
@@ -336,6 +337,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-types-engine"
+version = "0.1.0"
+source = "git+https://github.com/alloy-rs/alloy?rev=8808d21#8808d21677ed9a05ff04000ac7f4acdd2fde94e3"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "alloy-serde",
+ "jsonwebtoken 9.3.0",
+ "rand 0.8.5",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "alloy-rpc-types-trace"
 version = "0.1.0"
 source = "git+https://github.com/alloy-rs/alloy?rev=8808d21#8808d21677ed9a05ff04000ac7f4acdd2fde94e3"
@@ -542,7 +560,9 @@ dependencies = [
  "futures",
  "interprocess",
  "pin-project",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
@@ -668,20 +688,26 @@ version = "0.2.0"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
+ "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-genesis",
  "alloy-json-abi",
+ "alloy-json-rpc",
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-pubsub",
  "alloy-rlp",
+ "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-trace",
  "alloy-signer",
  "alloy-signer-wallet",
  "alloy-sol-types",
  "alloy-transport",
+ "alloy-transport-ipc",
+ "alloy-transport-ws",
  "alloy-trie",
  "anvil-core",
  "anvil-rpc",
@@ -3136,7 +3162,7 @@ dependencies = [
  "hashers",
  "http 0.2.12",
  "instant",
- "jsonwebtoken",
+ "jsonwebtoken 8.3.0",
  "once_cell",
  "pin-project",
  "reqwest 0.11.27",
@@ -3460,7 +3486,6 @@ dependencies = [
  "dialoguer",
  "dunce",
  "ethers-contract",
- "ethers-core",
  "evm-disassembler",
  "eyre",
  "forge-doc",
@@ -3761,7 +3786,7 @@ dependencies = [
  "alloy-pubsub",
  "alloy-rpc-client",
  "alloy-rpc-types",
- "alloy-signer-wallet",
+ "alloy-rpc-types-engine",
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
@@ -3770,12 +3795,7 @@ dependencies = [
  "async-trait",
  "clap",
  "comfy-table",
- "const-hex",
  "dunce",
- "ethers-core",
- "ethers-middleware",
- "ethers-providers",
- "ethers-signers",
  "eyre",
  "foundry-block-explorers",
  "foundry-compilers",
@@ -3787,7 +3807,6 @@ dependencies = [
  "num-format",
  "once_cell",
  "pretty_assertions",
- "reqwest 0.11.27",
  "reqwest 0.12.4",
  "rustc-hash",
  "semver 1.0.22",
@@ -3805,9 +3824,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.3.18"
+version = "0.3.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a73252c7753488cf7779e2788e05088b3b3d9198fbbc5d4da94b5afd0f751d"
+checksum = "e5421772f768d43f81052159c5175e7d10941e0f0416dafd768f353ed9c554fd"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5200,9 +5219,9 @@ checksum = "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"
 
 [[package]]
 name = "jobserver"
-version = "0.1.30"
+version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "685a7d121ee3f65ae4fddd72b25a04bb36b6af81bc0828f7d5434c0fe60fa3a2"
+checksum = "d2b099aaa34a9751c5bf0878add70444e1ed2dd73f347be99003d4577277de6e"
 dependencies = [
  "libc",
 ]
@@ -5234,8 +5253,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6971da4d9c3aa03c3d8f3ff0f4155b534aad021292003895a469716b2a230378"
 dependencies = [
  "base64 0.21.7",
- "pem",
+ "pem 1.1.1",
  "ring 0.16.20",
+ "serde",
+ "serde_json",
+ "simple_asn1",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "9.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9ae10193d25051e74945f1ea2d0b42e03cc3b890f7e4cc5faa44997d808193f"
+dependencies = [
+ "base64 0.21.7",
+ "js-sys",
+ "pem 3.0.4",
+ "ring 0.17.8",
  "serde",
  "serde_json",
  "simple_asn1",
@@ -6149,6 +6183,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem"
+version = "3.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e459365e590736a54c3fa561947c84837534b8e9af6fc5bf781307e82658fae"
+dependencies = [
+ "base64 0.22.0",
+ "serde",
+]
+
+[[package]]
 name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6888,7 +6932,6 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "rustls 0.21.11",
- "rustls-native-certs 0.6.3",
  "rustls-pemfile 1.0.4",
  "serde",
  "serde_json",
@@ -7233,7 +7276,7 @@ dependencies = [
  "log",
  "ring 0.17.8",
  "rustls-pki-types",
- "rustls-webpki 0.102.2",
+ "rustls-webpki 0.102.3",
  "subtle",
  "zeroize",
 ]
@@ -7300,9 +7343,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.102.2"
+version = "0.102.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faaa0a62740bedb9b2ef5afa303da42764c012f743917351dc9a237ea1663610"
+checksum = "f3bce581c0dd41bce533ce695a1437fa16a7ab5ac3ccfa99fe1a620a7885eabf"
 dependencies = [
  "ring 0.17.8",
  "rustls-pki-types",

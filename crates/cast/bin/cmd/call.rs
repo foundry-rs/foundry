@@ -1,5 +1,5 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Bytes, TxKind, U256};
+use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use cast::Cast;
 use clap::Parser;
@@ -226,7 +226,7 @@ impl CallArgs {
             }
         };
 
-        req.set_input::<Bytes>(data.into());
+        req.set_input(data);
 
         println!("{}", Cast::new(provider).call(&req, func.as_ref(), block).await?);
 

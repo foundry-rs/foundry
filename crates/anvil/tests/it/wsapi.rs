@@ -1,16 +1,15 @@
 //! general eth api tests with websocket provider
 
-use alloy_eips::BlockId;
+use alloy_primitives::U256;
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
-use ethers::types::U256;
-use foundry_common::types::ToAlloy;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number_ws() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let block_num = api.block_number().unwrap();
-    assert_eq!(block_num, U256::zero().to_alloy());
+    assert_eq!(block_num, U256::ZERO);
 
     let provider = handle.ws_provider();
 

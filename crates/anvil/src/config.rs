@@ -27,8 +27,7 @@ use alloy_signer_wallet::{
 use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
 use foundry_common::{
-    provider::alloy::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
-    REQUEST_TIMEOUT,
+    provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{

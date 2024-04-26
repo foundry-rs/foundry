@@ -19,7 +19,7 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use alloy_signer_wallet::LocalWallet;
 use eth::backend::fork::ClientFork;
-use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
