@@ -1,34 +1,35 @@
 //! tests against local geth for local debug purposes
 
-use crate::abi::VENDING_MACHINE_CONTRACT;
-use ethers::{
-    abi::Address,
-    contract::{Contract, ContractFactory},
-    prelude::{Middleware, TransactionRequest},
-    providers::Provider,
-    types::U256,
-    utils::WEI_IN_ETHER,
+use crate::{
+    abi::{VendingMachine, VENDING_MACHINE_CONTRACT},
+    utils::{http_provider, http_provider_with_signer},
 };
-use ethers_solc::{project_util::TempProject, Artifact};
+use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_primitives::{Address, TxKind, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use anvil::{spawn, NodeConfig};
+use foundry_compilers::{project_util::TempProject, Artifact};
 use futures::StreamExt;
-use std::sync::Arc;
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_geth_pending_transaction() {
-    let client = Provider::try_from("http://127.0.0.1:8545").unwrap();
-    let accounts = client.get_accounts().await.unwrap();
-    let tx = TransactionRequest::new()
-        .from(accounts[0])
-        .to(Address::random())
-        .value(1337u64)
-        .nonce(2u64);
+    let provider = http_provider("http://127.0.0.1:8545");
 
-    let mut watch_tx_stream =
-        client.watch_pending_transactions().await.unwrap().transactions_unordered(1).fuse();
+    let account = provider.get_accounts().await.unwrap().remove(0);
 
-    let _res = client.send_transaction(tx, None).await.unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(account)
+        .with_to(Address::random())
+        .with_value(U256::from(1337u64))
+        .with_nonce(2u64);
+    let tx = WithOtherFields::new(tx);
+
+    let mut watch_tx_stream = provider.watch_pending_transactions().await.unwrap().into_stream();
+
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let pending = timeout(std::time::Duration::from_secs(3), watch_tx_stream.next()).await;
     pending.unwrap_err();
@@ -44,48 +45,59 @@ async fn test_geth_revert_transaction() {
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove_first("VendingMachine").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
 
-    let client = Arc::new(Provider::try_from("http://127.0.0.1:8545").unwrap());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
 
-    let account = client.get_accounts().await.unwrap().remove(0);
+    let provider = http_provider_with_signer("http://127.0.0.1:8545", signer);
 
     // deploy successfully
-    let factory =
-        ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), Arc::clone(&client));
+    provider
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = VendingMachine::new(contract_address, &provider);
 
-    let mut tx = factory.deploy(()).unwrap().tx;
-    tx.set_from(account);
-
-    let resp = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
-
-    let contract =
-        Contract::<Provider<_>>::new(resp.contract_address.unwrap(), abi.unwrap(), client);
-
-    let ten = WEI_IN_ETHER.saturating_mul(10u64.into());
-    let call = contract.method::<_, ()>("buyRevert", ten).unwrap().value(ten).from(account);
-    let resp = call.call().await;
-    let err = resp.unwrap_err().to_string();
-    assert!(err.contains("execution reverted: Not enough Ether provided."));
-    assert!(err.contains("code: 3"));
+    let res = contract
+        .buyRevert(U256::from(100))
+        .value(U256::from(1))
+        .from(sender)
+        .send()
+        .await
+        .unwrap_err();
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: Not enough Ether provided."));
+    assert!(msg.contains("code: 3"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_geth_low_gas_limit() {
-    let provider = Arc::new(Provider::try_from("http://127.0.0.1:8545").unwrap());
+    let provider = http_provider("http://127.0.0.1:8545");
 
     let account = provider.get_accounts().await.unwrap().remove(0);
 
-    let gas = 21_000u64 - 1;
-    let tx = TransactionRequest::new()
+    let gas_limit = 21_000u128 - 1;
+    let tx = TransactionRequest::default()
+        .from(account)
         .to(Address::random())
         .value(U256::from(1337u64))
-        .from(account)
-        .gas(gas);
+        .gas_limit(gas_limit);
+    let tx = WithOtherFields::new(tx);
 
-    let resp = provider.send_transaction(tx, None).await;
-
+    let resp = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await;
     let err = resp.unwrap_err().to_string();
     assert!(err.contains("intrinsic gas too low"));
 }

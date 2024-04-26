@@ -12,32 +12,32 @@ extern crate tracing;
 
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
-use revm::EVMData;
+use revm::{ContextPrecompiles, InnerEvmContext};
 
+pub use config::CheatsConfig;
+pub use error::{Error, ErrorKind, Result};
+pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
 pub use spec::{CheatcodeDef, Vm};
 
 #[macro_use]
 mod error;
-pub use error::{Error, ErrorKind, Result};
-
-mod config;
-pub use config::CheatsConfig;
-
-mod inspector;
-pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
-
 mod base64;
+mod config;
 mod env;
 mod evm;
 mod fs;
+mod inspector;
 mod json;
 mod script;
 mod string;
 mod test;
+mod toml;
 mod utils;
 
+pub use env::set_execution_context;
 pub use script::ScriptWallets;
 pub use test::expect::ExpectedCallTracker;
+pub use Vm::ForgeContext;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
@@ -59,15 +59,14 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
 
     #[inline]
     fn apply_traced<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let span = trace_span(self);
-        let _enter = span.enter();
-        trace_call();
+        let _span = trace_span_and_call(self);
         let result = self.apply_full(ccx);
         trace_return(&result);
         return result;
 
         // Separate and non-generic functions to avoid inline and monomorphization bloat.
-        fn trace_span(cheat: &dyn DynCheatcode) -> tracing::Span {
+        #[inline(never)]
+        fn trace_span_and_call(cheat: &dyn DynCheatcode) -> tracing::span::EnteredSpan {
             let span = debug_span!(target: "cheatcodes", "apply");
             if !span.is_disabled() {
                 if enabled!(tracing::Level::TRACE) {
@@ -76,13 +75,12 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
                     span.record("id", cheat.cheatcode().func.id);
                 }
             }
-            span
-        }
-
-        fn trace_call() {
+            let entered = span.entered();
             trace!(target: "cheatcodes", "applying");
+            entered
         }
 
+        #[inline(never)]
         fn trace_return(result: &Result) {
             trace!(
                 target: "cheatcodes",
@@ -111,18 +109,36 @@ impl<T: Cheatcode> DynCheatcode for T {
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
-pub(crate) struct CheatsCtxt<'a, 'b, 'c, DB: DatabaseExt> {
+pub(crate) struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
-    pub(crate) state: &'a mut Cheatcodes,
+    pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) data: &'b mut EVMData<'c, DB>,
+    pub(crate) ecx: &'evm mut InnerEvmContext<DB>,
+    /// The precompiles context.
+    pub(crate) precompiles: &'evm mut ContextPrecompiles<DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
 }
 
-impl<DB: DatabaseExt> CheatsCtxt<'_, '_, '_, DB> {
+impl<'cheats, 'evm, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'evm, DB> {
+    type Target = InnerEvmContext<DB>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.ecx
+    }
+}
+
+impl<'cheats, 'evm, DB: DatabaseExt> std::ops::DerefMut for CheatsCtxt<'cheats, 'evm, DB> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.ecx
+    }
+}
+
+impl<'cheats, 'evm, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.data.precompiles.contains(address)
+        self.precompiles.contains_key(address)
     }
 }

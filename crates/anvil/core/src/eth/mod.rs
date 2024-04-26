@@ -3,13 +3,13 @@ use crate::{
     types::{EvmMineOptions, Forking, Index},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
-use alloy_rpc_trace_types::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    BlockId, BlockNumberOrTag as BlockNumber, Filter,
+    BlockId, BlockNumberOrTag as BlockNumber, Filter, WithOtherFields,
 };
+use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 
 pub mod block;
 pub mod proof;
@@ -139,11 +139,11 @@ pub enum EthRequest {
     EthGetProof(Address, Vec<B256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
-    #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
+    #[cfg_attr(feature = "serde", serde(rename = "eth_sign", alias = "personal_sign"))]
     EthSign(Address, Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
-    EthSignTransaction(Box<TransactionRequest>),
+    EthSignTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
@@ -158,27 +158,27 @@ pub enum EthRequest {
     EthSignTypedDataV4(Address, alloy_dyn_abi::TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
-    EthSendTransaction(Box<TransactionRequest>),
+    EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
     EthSendRawTransaction(Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_call"))]
     EthCall(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_estimateGas"))]
     EthEstimateGas(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
@@ -272,7 +272,7 @@ pub enum EthRequest {
     /// geth's `debug_traceCall`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
     DebugTraceCall(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
     ),
@@ -370,6 +370,17 @@ pub enum EthRequest {
         )
     )]
     DropTransaction(B256),
+
+    /// Removes transactions from the pool
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_dropAllTransactions",
+            alias = "hardhat_dropAllTransactions",
+            with = "empty_params"
+        )
+    )]
+    DropAllTransactions(),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reset", alias = "hardhat_reset"))]
@@ -597,7 +608,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
     )]
-    EthSendUnsignedTransaction(Box<TransactionRequest>),
+    EthSendUnsignedTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
@@ -676,7 +687,7 @@ pub enum EthRequest {
     OtsGetBlockDetails(
         #[cfg_attr(
             feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number", default)
+            serde(deserialize_with = "lenient_block_number::lenient_block_number_seq", default)
         )]
         BlockNumber,
     ),
@@ -717,6 +728,13 @@ pub enum EthRequest {
     /// contract.
     #[cfg_attr(feature = "serde", serde(rename = "ots_getContractCreator", with = "sequence"))]
     OtsGetContractCreator(Address),
+
+    /// Removes transactions from the pool by sender origin.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "anvil_removePoolTransactions", with = "sequence")
+    )]
+    RemovePoolTransactions(Address),
 }
 
 /// Represents ethereum JSON-RPC API
@@ -1501,8 +1519,27 @@ true}]}"#;
     }
 
     #[test]
+    fn test_eth_sign() {
+        let s = r#"{"method": "eth_sign", "params":
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x00"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "personal_sign", "params":
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x00"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_eth_sign_typed_data() {
         let s = r#"{"method":"eth_signTypedData_v4","params":["0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826", {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Person":[{"name":"name","type":"string"},{"name":"wallet","type":"address"}],"Mail":[{"name":"from","type":"Person"},{"name":"to","type":"Person"},{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Ether Mail","version":"1","chainId":1,"verifyingContract":"0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"},"message":{"from":{"name":"Cow","wallet":"0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"},"to":{"name":"Bob","wallet":"0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"},"contents":"Hello, Bob!"}}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_remove_pool_transactions() {
+        let s = r#"{"method": "anvil_removePoolTransactions",  "params":["0x364d6D0333432C3Ac016Ca832fb8594A8cE43Ca6"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

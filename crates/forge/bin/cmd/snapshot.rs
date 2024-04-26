@@ -29,7 +29,7 @@ pub struct SnapshotArgs {
     /// Output a diff against a pre-existing snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.
-    #[clap(
+    #[arg(
         conflicts_with = "snap",
         long,
         value_hint = ValueHint::FilePath,
@@ -42,7 +42,7 @@ pub struct SnapshotArgs {
     /// Outputs a diff if the snapshots do not match.
     ///
     /// By default, the comparison is done with .gas-snapshot.
-    #[clap(
+    #[arg(
         conflicts_with = "diff",
         long,
         value_hint = ValueHint::FilePath,
@@ -52,11 +52,11 @@ pub struct SnapshotArgs {
 
     // Hidden because there is only one option
     /// How to format the output.
-    #[clap(long, hide(true))]
+    #[arg(long, hide(true))]
     format: Option<Format>,
 
     /// Output file for the snapshot.
-    #[clap(
+    #[arg(
         long,
         default_value = ".gas-snapshot",
         value_hint = ValueHint::FilePath,
@@ -65,7 +65,7 @@ pub struct SnapshotArgs {
     snap: PathBuf,
 
     /// Tolerates gas deviations up to the specified percentage.
-    #[clap(
+    #[arg(
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
@@ -73,11 +73,11 @@ pub struct SnapshotArgs {
     tolerance: Option<u32>,
 
     /// All test arguments are supported
-    #[clap(flatten)]
+    #[command(flatten)]
     pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
-    #[clap(flatten)]
+    #[command(flatten)]
     config: SnapshotConfig,
 }
 
@@ -141,19 +141,19 @@ impl FromStr for Format {
 #[derive(Clone, Debug, Default, Parser)]
 struct SnapshotConfig {
     /// Sort results by gas used (ascending).
-    #[clap(long)]
+    #[arg(long)]
     asc: bool,
 
     /// Sort results by gas used (descending).
-    #[clap(conflicts_with = "asc", long)]
+    #[arg(conflicts_with = "asc", long)]
     desc: bool,
 
     /// Only include tests that used more gas that the given amount.
-    #[clap(long, value_name = "MIN_GAS")]
+    #[arg(long, value_name = "MIN_GAS")]
     min: Option<u64>,
 
     /// Only include tests that used less gas that the given amount.
-    #[clap(long, value_name = "MAX_GAS")]
+    #[arg(long, value_name = "MAX_GAS")]
     max: Option<u64>,
 }
 
@@ -398,21 +398,21 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
+        Ordering::Less => format!("{change_pct:.3}%").green().to_string(),
         Ordering::Equal => {
             format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
+        Ordering::Greater => format!("{change_pct:.3}%").red().to_string(),
     }
 }
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Paint::green(format!("{change}")).to_string(),
+        Ordering::Less => format!("{change}").green().to_string(),
         Ordering::Equal => {
             format!("{change}")
         }
-        Ordering::Greater => Paint::red(format!("{change}")).to_string(),
+        Ordering::Greater => format!("{change}").red().to_string(),
     }
 }
 

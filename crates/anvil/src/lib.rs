@@ -17,9 +17,9 @@ use crate::{
     tasks::TaskManager,
 };
 use alloy_primitives::{Address, U256};
-use alloy_signer::{LocalWallet, Signer as AlloySigner};
+use alloy_signer_wallet::LocalWallet;
 use eth::backend::fork::ClientFork;
-use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -50,6 +50,9 @@ pub use hardfork::Hardfork;
 
 /// ethereum related implementations
 pub mod eth;
+/// Evm related abstractions
+mod evm;
+pub use evm::{inject_precompiles, PrecompileFactory};
 /// support for polling filters
 pub mod filter;
 /// commandline output
@@ -67,26 +70,56 @@ mod tasks;
 #[cfg(feature = "cmd")]
 pub mod cmd;
 
-/// Creates the node and runs the server
+/// Creates the node and runs the server.
 ///
 /// Returns the [EthApi] that can be used to interact with the node and the [JoinHandle] of the
 /// task.
 ///
-/// # Example
+/// # Panics
 ///
-/// ```rust
+/// Panics if any error occurs. For a non-panicking version, use [`try_spawn`].
+///
+///
+/// # Examples
+///
+/// ```no_run
 /// # use anvil::NodeConfig;
-/// # async fn spawn() {
+/// # async fn spawn() -> eyre::Result<()> {
 /// let config = NodeConfig::default();
 /// let (api, handle) = anvil::spawn(config).await;
 ///
 /// // use api
 ///
 /// // wait forever
-/// handle.await.unwrap();
+/// handle.await.unwrap().unwrap();
+/// # Ok(())
 /// # }
 /// ```
-pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
+pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+    try_spawn(config).await.expect("failed to spawn node")
+}
+
+/// Creates the node and runs the server
+///
+/// Returns the [EthApi] that can be used to interact with the node and the [JoinHandle] of the
+/// task.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anvil::NodeConfig;
+/// # async fn spawn() -> eyre::Result<()> {
+/// let config = NodeConfig::default();
+/// let (api, handle) = anvil::try_spawn(config).await?;
+///
+/// // use api
+///
+/// // wait forever
+/// handle.await??;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
@@ -171,18 +204,19 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let node_service =
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
-    let mut servers = Vec::new();
-    let mut addresses = Vec::new();
+    let mut servers = Vec::with_capacity(config.host.len());
+    let mut addresses = Vec::with_capacity(config.host.len());
 
-    for addr in config.host.iter() {
-        let sock_addr = SocketAddr::new(addr.to_owned(), port);
-        let srv = server::serve(sock_addr, api.clone(), server_config.clone());
+    for addr in &config.host {
+        let sock_addr = SocketAddr::new(*addr, port);
 
-        addresses.push(srv.local_addr());
+        // Create a TCP listener.
+        let tcp_listener = tokio::net::TcpListener::bind(sock_addr).await?;
+        addresses.push(tcp_listener.local_addr()?);
 
-        // spawn the server on a new task
-        let srv = tokio::task::spawn(srv.map_err(NodeError::from));
-        servers.push(srv);
+        // Spawn the server future on a new task.
+        let srv = server::serve_on(tcp_listener, api.clone(), server_config.clone());
+        servers.push(tokio::task::spawn(srv.map_err(Into::into)));
     }
 
     let tokio_handle = Handle::current();
@@ -203,10 +237,10 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     handle.print(fork.as_ref());
 
-    (api, handle)
+    Ok((api, handle))
 }
 
-type IpcTask = JoinHandle<io::Result<()>>;
+type IpcTask = JoinHandle<()>;
 
 /// A handle to the spawned node and server tasks
 ///
@@ -237,6 +271,9 @@ impl NodeHandle {
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
         if !self.config.silent {
+            if let Some(ipc_path) = self.ipc_path() {
+                println!("IPC path: {}", ipc_path);
+            }
             println!(
                 "Listening on {}",
                 self.addresses
@@ -244,7 +281,7 @@ impl NodeHandle {
                     .map(|addr| { addr.to_string() })
                     .collect::<Vec<String>>()
                     .join(", ")
-            )
+            );
         }
     }
 
@@ -308,7 +345,7 @@ impl NodeHandle {
     }
 
     /// Default gas price for all txs
-    pub fn gas_price(&self) -> U256 {
+    pub fn gas_price(&self) -> u128 {
         self.config.get_gas_price()
     }
 
@@ -353,7 +390,7 @@ impl Future for NodeHandle {
         // poll the ipc task
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
-                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)));
+                return Poll::Ready(res.map(|()| Ok(())));
             } else {
                 pin.ipc_task = Some(ipc);
             }

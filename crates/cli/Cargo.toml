@@ -22,9 +22,9 @@ foundry-compilers = { workspace = true, features = ["full"] }
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
-
-ethers-core.workspace = true
-ethers-providers.workspace = true
+alloy-provider.workspace = true
+alloy-transport.workspace = true
+alloy-chains.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre.workspace = true
@@ -40,12 +40,14 @@ tokio = { version = "1", features = ["macros"] }
 tracing-error = "0.2"
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter", "fmt"] }
 tracing.workspace = true
-yansi = "0.5"
+yansi.workspace = true
+hex.workspace = true
+futures = "0.3"
 
 [dev-dependencies]
-tempfile = "3.7"
+tempfile.workspace = true
 
 [features]
 default = ["rustls"]
-rustls = ["ethers-providers/rustls", "foundry-wallets/rustls"]
-openssl = ["ethers-providers/openssl", "foundry-compilers/openssl", "foundry-wallets/openssl"]
+rustls = ["foundry-wallets/rustls"]
+openssl = ["foundry-compilers/openssl"]

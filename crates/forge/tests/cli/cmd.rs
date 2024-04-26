@@ -5,6 +5,7 @@ use foundry_compilers::{artifacts::Metadata, remappings::Remapping, Configurable
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
+    rpc::next_etherscan_api_key,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
 use semver::Version;
@@ -393,7 +394,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/",);
+    assert_eq!(content, "forge-std/=lib/forge-std/src/",);
 });
 
 // checks that forge can init with template
@@ -430,6 +431,83 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root());
     cmd.assert_non_empty_stderr();
+});
+
+// checks that clone works
+forgetest!(can_clone, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that quiet mode does not print anything for clone
+forgetest!(can_clone_quiet, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--quiet",
+        "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec",
+    ])
+    .arg(prj.root());
+    cmd.assert_empty_stdout();
+});
+
+// checks that clone works with --no-remappings-txt
+forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-remappings-txt",
+        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// checks that clone works with --keep-directory-structure
+forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--keep-directory-structure",
+        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
 // checks that `clean` removes dapptools style paths
@@ -760,7 +838,7 @@ forgetest!(
             .to_string();
         println!("project root: \"{root}\"");
 
-        let eth_rpc_url = foundry_common::rpc::next_http_archive_rpc_endpoint();
+        let eth_rpc_url = foundry_test_utils::rpc::next_http_archive_rpc_endpoint();
         let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
         cmd.args([
@@ -1556,7 +1634,7 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
-    prj.clear_cache();
+    prj.clear();
 
     // only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
@@ -1573,8 +1651,6 @@ forgetest_init!(can_build_skip_contracts, |prj, cmd| {
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
-    prj.clear_cache();
-
     prj.add_test(
         "Foo",
         r"
@@ -1585,7 +1661,13 @@ function test_run() external {}
     .unwrap();
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
-    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
+    prj.clear();
+    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
+    );
+
+    cmd.forge_fuse().args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
     );

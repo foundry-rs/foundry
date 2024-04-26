@@ -1,32 +1,117 @@
-use super::fuzz_param_from_state;
 use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
-use alloy_dyn_abi::{DynSolType, JsonAbiExt};
-use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Log, B256, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use hashbrown::HashSet;
-use parking_lot::RwLock;
-use proptest::prelude::{BoxedStrategy, Strategy};
+use indexmap::IndexSet;
+use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
     db::{CacheDB, DatabaseRef},
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{fmt, io::Write, str::FromStr, sync::Arc};
+use std::{fmt, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
-pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
+#[derive(Clone, Debug)]
+pub struct EvmFuzzState {
+    inner: Arc<RwLock<FuzzDictionary>>,
+}
 
-#[derive(Default)]
+impl EvmFuzzState {
+    pub fn new(dictionary: FuzzDictionary) -> Self {
+        Self { inner: Arc::new(RwLock::new(dictionary)) }
+    }
+
+    pub fn collect_values(&self, values: impl IntoIterator<Item = [u8; 32]>) {
+        let mut dict = self.inner.write();
+        for value in values {
+            dict.insert_value(value);
+        }
+    }
+
+    /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to
+    /// the given [FuzzDictionaryConfig].
+    pub fn collect_state_from_call(&self, logs: &[Log], state_changeset: &StateChangeset) {
+        let mut dict = self.inner.write();
+
+        // Insert log topics and data.
+        for log in logs {
+            for topic in log.topics() {
+                dict.insert_value(topic.0);
+            }
+            let chunks = log.data.data.chunks_exact(32);
+            let rem = chunks.remainder();
+            for chunk in chunks {
+                dict.insert_value(chunk.try_into().unwrap());
+            }
+            if !rem.is_empty() {
+                dict.insert_value(B256::right_padding_from(rem).0);
+            }
+        }
+
+        for (address, account) in state_changeset {
+            // Insert basic account information
+            dict.insert_value(address.into_word().into());
+
+            if dict.config.include_push_bytes {
+                // Insert push bytes
+                if let Some(code) = &account.info.code {
+                    dict.insert_address(*address);
+                    for push_byte in collect_push_bytes(code.bytes()) {
+                        dict.insert_value(push_byte);
+                    }
+                }
+            }
+
+            if dict.config.include_storage {
+                // Insert storage
+                for (slot, value) in &account.storage {
+                    let value = value.present_value;
+                    dict.insert_value(B256::from(*slot).0);
+                    dict.insert_value(B256::from(value).0);
+                    // also add the value below and above the storage value to the dictionary.
+                    if value != U256::ZERO {
+                        let below_value = value - U256::from(1);
+                        dict.insert_value(B256::from(below_value).0);
+                    }
+                    if value != U256::MAX {
+                        let above_value = value + U256::from(1);
+                        dict.insert_value(B256::from(above_value).0);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Removes all newly added entries from the dictionary.
+    ///
+    /// Should be called between fuzz/invariant runs to avoid accumumlating data derived from fuzz
+    /// inputs.
+    pub fn revert(&self) {
+        self.inner.write().revert();
+    }
+
+    pub fn dictionary_read(&self) -> RwLockReadGuard<'_, RawRwLock, FuzzDictionary> {
+        self.inner.read()
+    }
+}
+
+// We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
+// for performance when iterating over the sets.
 pub struct FuzzDictionary {
     /// Collected state values.
-    state_values: HashSet<[u8; 32]>,
+    state_values: IndexSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
-    addresses: HashSet<Address>,
+    addresses: IndexSet<Address>,
+    /// Configuration for the dictionary.
+    config: FuzzDictionaryConfig,
+    /// New keys added to the dictionary since container initialization.
+    new_values: IndexSet<[u8; 32]>,
+    /// New addresses added to the dictionary since container initialization.
+    new_addreses: IndexSet<Address>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -39,75 +124,82 @@ impl fmt::Debug for FuzzDictionary {
 }
 
 impl FuzzDictionary {
+    pub fn new(
+        initial_values: IndexSet<[u8; 32]>,
+        initial_addresses: IndexSet<Address>,
+        config: FuzzDictionaryConfig,
+    ) -> Self {
+        Self {
+            state_values: initial_values,
+            addresses: initial_addresses,
+            config,
+            new_values: IndexSet::new(),
+            new_addreses: IndexSet::new(),
+        }
+    }
+
+    pub fn insert_value(&mut self, value: [u8; 32]) {
+        if self.state_values.len() < self.config.max_fuzz_dictionary_values &&
+            self.state_values.insert(value)
+        {
+            self.new_values.insert(value);
+        }
+    }
+
+    pub fn insert_address(&mut self, address: Address) {
+        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses &&
+            self.addresses.insert(address)
+        {
+            self.new_addreses.insert(address);
+        }
+    }
+
     #[inline]
-    pub fn values(&self) -> &HashSet<[u8; 32]> {
+    pub fn values(&self) -> &IndexSet<[u8; 32]> {
         &self.state_values
     }
 
     #[inline]
-    pub fn values_mut(&mut self) -> &mut HashSet<[u8; 32]> {
-        &mut self.state_values
-    }
-
-    #[inline]
-    pub fn addresses(&mut self) -> &HashSet<Address> {
+    pub fn addresses(&self) -> &IndexSet<Address> {
         &self.addresses
     }
 
-    #[inline]
-    pub fn addresses_mut(&mut self) -> &mut HashSet<Address> {
-        &mut self.addresses
+    pub fn revert(&mut self) {
+        for key in self.new_values.iter() {
+            self.state_values.swap_remove(key);
+        }
+        for address in self.new_addreses.iter() {
+            self.addresses.swap_remove(address);
+        }
+
+        self.new_values.clear();
+        self.new_addreses.clear();
     }
-}
-
-/// Given a function and some state, it returns a strategy which generated valid calldata for the
-/// given function's input types, based on state taken from the EVM.
-pub fn fuzz_calldata_from_state(func: Function, state: EvmFuzzState) -> BoxedStrategy<Bytes> {
-    let strats = func
-        .inputs
-        .iter()
-        .map(|input| {
-            fuzz_param_from_state(
-                &DynSolType::from_str(&input.selector_type()).unwrap(),
-                state.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    strats
-        .prop_map(move |tokens| {
-            func.abi_encode_input(&tokens)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Fuzzer generated invalid tokens for function `{}` with inputs {:?}: {:?}",
-                        func.name, func.inputs, tokens
-                    )
-                })
-                .into()
-        })
-        .no_shrink()
-        .boxed()
 }
 
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(
     db: &CacheDB<DB>,
-    config: &FuzzDictionaryConfig,
+    config: FuzzDictionaryConfig,
 ) -> EvmFuzzState {
-    let mut state = FuzzDictionary::default();
+    let mut values = IndexSet::new();
+    let mut addresses = IndexSet::new();
 
-    for (address, account) in db.accounts.iter() {
+    // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
+    let mut accs = db.accounts.iter().collect::<Vec<_>>();
+    accs.sort_by_key(|(address, _)| *address);
+
+    for (address, account) in accs {
         let address: Address = *address;
         // Insert basic account information
-        state.values_mut().insert(address.into_word().into());
+        values.insert(address.into_word().into());
 
         // Insert push bytes
         if config.include_push_bytes {
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(address) {
-                    for push_byte in collect_push_bytes(code.bytes()) {
-                        state.values_mut().insert(push_byte);
-                    }
+                addresses.insert(address);
+                for push_byte in collect_push_bytes(code.bytes()) {
+                    values.insert(push_byte);
                 }
             }
         }
@@ -115,16 +207,16 @@ pub fn build_initial_state<DB: DatabaseRef>(
         if config.include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
-                state.values_mut().insert(B256::from(*slot).0);
-                state.values_mut().insert(B256::from(*value).0);
+                values.insert(B256::from(*slot).0);
+                values.insert(B256::from(*value).0);
                 // also add the value below and above the storage value to the dictionary.
                 if *value != U256::ZERO {
                     let below_value = value - U256::from(1);
-                    state.values_mut().insert(B256::from(below_value).0);
+                    values.insert(B256::from(below_value).0);
                 }
                 if *value != U256::MAX {
                     let above_value = value + U256::from(1);
-                    state.values_mut().insert(B256::from(above_value).0);
+                    values.insert(B256::from(above_value).0);
                 }
             }
         }
@@ -132,74 +224,12 @@ pub fn build_initial_state<DB: DatabaseRef>(
 
     // need at least some state data if db is empty otherwise we can't select random data for state
     // fuzzing
-    if state.values().is_empty() {
+    if values.is_empty() {
         // prefill with a random addresses
-        state.values_mut().insert(Address::random().into_word().into());
+        values.insert(Address::random().into_word().into());
     }
 
-    Arc::new(RwLock::new(state))
-}
-
-/// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to the
-/// given [FuzzDictionaryConfig].
-pub fn collect_state_from_call(
-    logs: &[Log],
-    state_changeset: &StateChangeset,
-    state: EvmFuzzState,
-    config: &FuzzDictionaryConfig,
-) {
-    let mut state = state.write();
-
-    for (address, account) in state_changeset {
-        // Insert basic account information
-        state.values_mut().insert(address.into_word().into());
-
-        if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
-        {
-            // Insert push bytes
-            if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(*address) {
-                    for push_byte in collect_push_bytes(code.bytes()) {
-                        state.values_mut().insert(push_byte);
-                    }
-                }
-            }
-        }
-
-        if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
-            // Insert storage
-            for (slot, value) in &account.storage {
-                let value = value.present_value;
-                state.values_mut().insert(B256::from(*slot).0);
-                state.values_mut().insert(B256::from(value).0);
-                // also add the value below and above the storage value to the dictionary.
-                if value != U256::ZERO {
-                    let below_value = value - U256::from(1);
-                    state.values_mut().insert(B256::from(below_value).0);
-                }
-                if value != U256::MAX {
-                    let above_value = value + U256::from(1);
-                    state.values_mut().insert(B256::from(above_value).0);
-                }
-            }
-        } else {
-            return;
-        }
-
-        // Insert log topics and data
-        for log in logs {
-            log.data.topics().iter().for_each(|topic| {
-                state.values_mut().insert(topic.0);
-            });
-            log.data.data.chunks(32).for_each(|chunk| {
-                let mut buffer: [u8; 32] = [0; 32];
-                let _ = (&mut buffer[..])
-                    .write(chunk)
-                    .expect("log data chunk was larger than 32 bytes");
-                state.values_mut().insert(buffer);
-            });
-        }
-    }
+    EvmFuzzState::new(FuzzDictionary::new(values, addresses, config))
 }
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
@@ -251,23 +281,25 @@ pub fn collect_created_contracts(
     project_contracts: &ContractsByArtifact,
     setup_contracts: &ContractsByAddress,
     artifact_filters: &ArtifactFilters,
-    targeted_contracts: FuzzRunIdentifiedContracts,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.lock();
+    let mut writable_targeted = targeted_contracts.targets.lock();
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
                 if !code.is_empty() {
-                    if let Some((artifact, (abi, _))) =
-                        project_contracts.find_by_code(&code.original_bytes())
+                    if let Some((artifact, contract)) =
+                        project_contracts.find_by_deployed_code(&code.original_bytes())
                     {
                         if let Some(functions) =
-                            artifact_filters.get_targeted_functions(artifact, abi)?
+                            artifact_filters.get_targeted_functions(artifact, &contract.abi)?
                         {
                             created_contracts.push(*address);
-                            writable_targeted
-                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
+                            writable_targeted.insert(
+                                *address,
+                                (artifact.name.clone(), contract.abi.clone(), functions),
+                            );
                         }
                     }
                 }

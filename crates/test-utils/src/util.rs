@@ -13,9 +13,8 @@ use regex::Regex;
 use std::{
     env,
     ffi::OsStr,
-    fs,
-    fs::File,
-    io::{BufWriter, IsTerminal, Write},
+    fs::{self, File},
+    io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
@@ -51,7 +50,7 @@ pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 
 /// External test builder
 #[derive(Clone, Debug)]
-#[must_use = "call run()"]
+#[must_use = "ExtTester does nothing unless you `run` it"]
 pub struct ExtTester {
     pub org: &'static str,
     pub name: &'static str,
@@ -195,8 +194,7 @@ impl ExtTester {
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
-            test_cmd
-                .env("FOUNDRY_ETH_RPC_URL", foundry_common::rpc::next_http_archive_rpc_endpoint());
+            test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
 
@@ -237,21 +235,31 @@ pub fn initialize(target: &Path) {
 
         // Release the read lock and acquire a write lock, initializing the lock file.
         _read = None;
+
         let mut write = lock.write().unwrap();
-        write.write_all(b"1").unwrap();
 
-        // Initialize and build.
-        let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-        eprintln!("- initializing template dir in {}", prj.root().display());
+        let mut data = String::new();
+        write.read_to_string(&mut data).unwrap();
 
-        cmd.args(["init", "--force"]).assert_success();
-        cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+        if data != "1" {
+            // Initialize and build.
+            let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+            eprintln!("- initializing template dir in {}", prj.root().display());
 
-        // Remove the existing template, if any.
-        let _ = fs::remove_dir_all(tpath);
+            cmd.args(["init", "--force"]).assert_success();
+            cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
 
-        // Copy the template to the global template path.
-        pretty_err(tpath, copy_dir(prj.root(), tpath));
+            // Remove the existing template, if any.
+            let _ = fs::remove_dir_all(tpath);
+
+            // Copy the template to the global template path.
+            pretty_err(tpath, copy_dir(prj.root(), tpath));
+
+            // Update lockfile to mark that template is initialized.
+            write.set_len(0).unwrap();
+            write.seek(std::io::SeekFrom::Start(0)).unwrap();
+            write.write_all(b"1").unwrap();
+        }
 
         // Release the write lock and acquire a new read lock.
         drop(write);
@@ -444,6 +452,12 @@ impl TestProject {
         &self.paths().artifacts
     }
 
+    /// Removes the project's cache and artifacts directory.
+    pub fn clear(&self) {
+        self.clear_cache();
+        self.clear_artifacts();
+    }
+
     /// Removes this project's cache file.
     pub fn clear_cache(&self) {
         let _ = fs::remove_file(self.cache());
@@ -562,7 +576,7 @@ impl TestProject {
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/logs/console.sol");
+        let s = include_str!("../../../testdata/default/logs/console.sol");
         self.add_source("console.sol", s).unwrap()
     }
 

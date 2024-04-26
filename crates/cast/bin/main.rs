@@ -2,32 +2,36 @@
 extern crate tracing;
 
 use alloy_primitives::{keccak256, Address, B256};
-use cast::{Cast, SimpleCast, TxBuilder};
+use alloy_provider::Provider;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
+use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers_core::types::{BlockId, BlockNumber::Latest, NameOrAddress};
-use ethers_providers::{Middleware, Provider};
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
-    fmt::format_tokens,
+    ens::{namehash, ProviderEnsExt},
+    fmt::{format_tokens, format_uint_exp},
     fs,
-    runtime_client::RuntimeClient,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
         SelectorType,
     },
-    types::{ToAlloy, ToEthers},
 };
 use foundry_config::Config;
 use std::time::Instant;
 
 pub mod cmd;
 pub mod opts;
+pub mod tx;
 
 use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
+
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -209,35 +213,16 @@ async fn main() -> Result<()> {
         CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let account_addr = who.resolve(&provider).await?;
 
             match erc20 {
                 Some(token) => {
-                    let chain = utils::get_chain(config.chain, &provider).await?;
-                    let mut builder: TxBuilder<'_, Provider<RuntimeClient>> = TxBuilder::new(
-                        &provider,
-                        NameOrAddress::Address(Address::ZERO.to_ethers()),
-                        Some(NameOrAddress::Address(token.to_ethers())),
-                        chain,
-                        true,
-                    )
-                    .await?;
-
-                    let account_addr = match who {
-                        NameOrAddress::Name(ens_name) => provider.resolve_name(&ens_name).await?,
-                        NameOrAddress::Address(addr) => addr,
-                    };
-
-                    builder
-                        .set_args(
-                            "balanceOf(address) returns (uint256)",
-                            vec![format!("{account_addr:#x}")],
-                        )
-                        .await?;
-                    let builder_output = builder.build();
-                    println!("{}", Cast::new(provider).call(builder_output, block).await?);
+                    let balance =
+                        Cast::new(&provider).erc20_balance(token, account_addr, block).await?;
+                    println!("{}", format_uint_exp(balance));
                 }
                 None => {
-                    let value = Cast::new(provider).balance(who, block).await?;
+                    let value = Cast::new(&provider).balance(account_addr, block).await?;
                     if ether {
                         println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
                     } else {
@@ -282,16 +267,18 @@ async fn main() -> Result<()> {
         CastSubcommand::Client { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", provider.client_version().await?);
+            println!("{}", provider.get_client_version().await?);
         }
         CastSubcommand::Code { block, who, disassemble, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).codesize(who, block).await?);
         }
         CastSubcommand::ComputeAddress { address, nonce, rpc } => {
@@ -299,7 +286,7 @@ async fn main() -> Result<()> {
             let provider = utils::get_provider(&config)?;
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
-            let computed = Cast::new(&provider).compute_address(address, nonce).await?;
+            let computed = Cast::new(provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", computed.to_checksum(None));
         }
         CastSubcommand::Disassemble { bytecode } => {
@@ -340,23 +327,27 @@ async fn main() -> Result<()> {
         CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).implementation(who, block).await?);
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).admin(who, block).await?);
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
+            let address = address.resolve(&provider).await?;
             let value = provider
-                .get_proof(address, slots.into_iter().map(|s| s.to_ethers()).collect(), block)
+                .get_proof(address, slots.into_iter().collect(), block.unwrap_or(BlockId::latest()))
                 .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
@@ -366,18 +357,18 @@ async fn main() -> Result<()> {
         // Calls & transactions
         CastSubcommand::Call(cmd) => cmd.run().await?,
         CastSubcommand::Estimate(cmd) => cmd.run().await?,
+        CastSubcommand::MakeTx(cmd) => cmd.run().await?,
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
-            let tx_hash = *pending_tx;
+            let tx_hash = pending_tx.inner().tx_hash();
 
             if cast_async {
                 println!("{tx_hash:#x}");
             } else {
-                let receipt =
-                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;
+                let receipt = pending_tx.get_receipt().await?;
                 println!("{}", serde_json::json!(receipt));
             }
         }
@@ -457,19 +448,19 @@ async fn main() -> Result<()> {
         // ENS
         CastSubcommand::Namehash { name } => {
             let name = stdin::unwrap_line(name)?;
-            println!("{}", SimpleCast::namehash(&name)?);
+            println!("{}", namehash(&name));
         }
         CastSubcommand::LookupAddress { who, rpc, verify } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let name = provider.lookup_address(who.to_ethers()).await?;
+            let name = provider.lookup_address(&who).await?;
             if verify {
-                let address = provider.resolve_name(&name).await?.to_alloy();
+                let address = provider.resolve_name(&name).await?;
                 eyre::ensure!(
                     address == who,
-                    "Forward lookup verification failed: got `{name:?}`, expected `{who:?}`"
+                    "Reverse lookup verification failed: got `{address}`, expected `{who}`"
                 );
             }
             println!("{name}");
@@ -481,13 +472,13 @@ async fn main() -> Result<()> {
             let who = stdin::unwrap_line(who)?;
             let address = provider.resolve_name(&who).await?;
             if verify {
-                let name = provider.lookup_address(address).await?;
-                assert_eq!(
-                    name, who,
-                    "forward lookup verification failed. got {name}, expected {who}"
+                let name = provider.lookup_address(&address).await?;
+                eyre::ensure!(
+                    name == who,
+                    "Forward lookup verification failed: got `{name}`, expected `{who}`"
                 );
             }
-            println!("{}", address.to_alloy().to_checksum(None));
+            println!("{address}");
         }
 
         // Misc
@@ -549,14 +540,7 @@ async fn main() -> Result<()> {
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
-            let (tx, sig) = SimpleCast::decode_raw_transaction(&tx)?;
-
-            // Serialize tx, sig and constructed a merged json string
-            let mut tx = serde_json::to_value(&tx)?;
-            let tx_map = tx.as_object_mut().unwrap();
-            serde_json::to_value(sig)?.as_object().unwrap().iter().for_each(|(k, v)| {
-                tx_map.entry(k).or_insert(v.clone());
-            });
+            let tx = SimpleCast::decode_raw_transaction(&tx)?;
 
             println!("{}", serde_json::to_string_pretty(&tx)?);
         }

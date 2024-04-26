@@ -1,5 +1,6 @@
 use alloy_primitives::Address;
-use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address, LocalWallet, Signer};
+use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
+use alloy_signer_wallet::LocalWallet;
 use clap::{builder::TypedValueParser, Parser};
 use eyre::Result;
 use rayon::iter::{self, ParallelIterator};
@@ -18,7 +19,7 @@ pub type GeneratedWallet = (SigningKey, Address);
 #[derive(Clone, Debug, Parser)]
 pub struct VanityArgs {
     /// Prefix for the vanity address.
-    #[clap(
+    #[arg(
         long,
         required_unless_present = "ends_with",
         value_parser = HexAddressValidator,
@@ -27,20 +28,20 @@ pub struct VanityArgs {
     pub starts_with: Option<String>,
 
     /// Suffix for the vanity address.
-    #[clap(long, value_parser = HexAddressValidator, value_name = "HEX")]
+    #[arg(long, value_parser = HexAddressValidator, value_name = "HEX")]
     pub ends_with: Option<String>,
 
     // 2^64-1 is max possible nonce per [eip-2681](https://eips.ethereum.org/EIPS/eip-2681).
     /// Generate a vanity contract address created by the generated keypair with the specified
     /// nonce.
-    #[clap(long)]
+    #[arg(long)]
     pub nonce: Option<u64>,
 
     /// Path to save the generated vanity contract address to.
     ///
     /// If provided, the generated vanity addresses will appended to a JSON array in the specified
     /// file.
-    #[clap(
+    #[arg(
         long,
         value_hint = clap::ValueHint::FilePath,
         value_name = "PATH",

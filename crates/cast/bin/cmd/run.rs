@@ -1,6 +1,7 @@
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
+use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -25,36 +26,36 @@ pub struct RunArgs {
     tx_hash: String,
 
     /// Opens the transaction in the debugger.
-    #[clap(long, short)]
+    #[arg(long, short)]
     debug: bool,
 
     /// Print out opcode traces.
-    #[clap(long, short)]
+    #[arg(long, short)]
     trace_printer: bool,
 
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
-    #[clap(long, short)]
+    #[arg(long, short)]
     quick: bool,
 
     /// Prints the full address of the contract.
-    #[clap(long, short)]
+    #[arg(long, short)]
     verbose: bool,
 
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
-    #[clap(long, short)]
+    #[arg(long, short)]
     label: Vec<String>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[clap(long, short)]
+    #[arg(long, short)]
     evm_version: Option<EvmVersion>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -62,7 +63,7 @@ pub struct RunArgs {
     /// default value: 330
     ///
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(long, alias = "cups", value_name = "CUPS")]
+    #[arg(long, alias = "cups", value_name = "CUPS")]
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting for this node's provider.
@@ -70,7 +71,7 @@ pub struct RunArgs {
     /// default value: false
     ///
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
-    #[clap(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
+    #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 }
 
@@ -89,7 +90,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::alloy::ProviderBuilder::new(
+        let provider = foundry_common::provider::ProviderBuilder::new(
             &config.get_rpc_url_or_localhost_http()?,
         )
         .compute_units_per_second_opt(compute_units_per_second)
@@ -102,39 +103,49 @@ impl RunArgs {
             .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
-            tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
-        {
+        if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 tx.hash
             ));
         }
 
-        let tx_block_number = tx
-            .block_number
-            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
-            .to::<u64>();
+        let tx_block_number =
+            tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+
+        // fetch the block the transaction was mined in
+        let block = provider.get_block(tx_block_number.into(), true).await?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
         let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-        let mut executor =
-            TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug).await;
+        let mut evm_version = self.evm_version;
 
         env.block.number = U256::from(tx_block_number);
 
-        let block = provider.get_block(tx_block_number.into(), true).await?;
-        if let Some(ref block) = block {
-            env.block.timestamp = block.header.timestamp;
+        if let Some(block) = &block {
+            env.block.timestamp = U256::from(block.header.timestamp);
             env.block.coinbase = block.header.miner;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.header.gas_limit;
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
+
+            // TODO: we need a smarter way to map the block to the corresponding evm_version for
+            // commonly used chains
+            if evm_version.is_none() {
+                // if the block has the excess_blob_gas field, we assume it's a Cancun block
+                if block.header.excess_blob_gas.is_some() {
+                    evm_version = Some(EvmVersion::Cancun);
+                }
+            }
         }
+
+        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug);
+        let mut env =
+            EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {
@@ -153,8 +164,7 @@ impl RunArgs {
                     // we skip them otherwise this would cause
                     // reverts
                     if is_known_system_sender(tx.from) ||
-                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                            Some(SYSTEM_TRANSACTION_TYPE)
+                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
                         continue;

@@ -1,0 +1,50 @@
+basicString = "hai"
+nullString = "null"
+multilineString = """
+hai
+there
+"""
+stringArray = ["hai", "there"]
+
+address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+addressArray = [
+    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D",
+]
+H160NotAddress = "0000000000000000000000000000000000001337"
+
+boolTrue = true
+boolFalse = false
+boolArray = [true, false]
+boolString = "true"
+boolStringArray = ["true", "false"] # Array values can't have mixed types
+
+datetime = 2021-08-10T14:48:00Z
+datetimeArray = [2021-08-10T14:48:00Z, 2021-08-10T14:48:00Z]
+
+uintNumber = 9223372036854775807 # TOML is limited to 64-bit integers
+uintString = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+uintHex = "0x12C980"
+uintArray = [42, 43]
+uintStringArray = [
+    "1231232",
+    "0x12C980",
+    "1231232",
+] # Array values can't have mixed types
+
+intNumber = -12
+intString = "-12"
+intHex = "-0xC"
+
+bytesString = "0x01"
+bytesStringArray = ["0x01", "0x02"]
+
+[nestedObject]
+number = 9223372036854775807 # TOML is limited to 64-bit integers
+str = "NEST"
+
+[[advancedJsonPath]]
+id = 1
+
+[[advancedJsonPath]]
+id = 2

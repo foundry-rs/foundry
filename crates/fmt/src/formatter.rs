@@ -820,7 +820,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(self.transact(fun)?.buffer)
     }
 
-    /// Turn a chunk and its surrounding comments into a a string
+    /// Turn a chunk and its surrounding comments into a string
     fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
         self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
     }
@@ -895,7 +895,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 write_chunk!(fmt, "{}", stringified.trim_start())
             })?;
             if !last.content.trim_start().is_empty() {
-                self.write_whitespace_separator(true)?;
+                self.indented(1, |fmt| fmt.write_whitespace_separator(true))?;
             }
             let last_chunk =
                 self.chunk_at(last.loc_before(), last.loc_next(), last.spaced, &last.content);

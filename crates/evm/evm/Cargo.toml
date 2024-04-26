@@ -22,11 +22,16 @@ foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-sol-types.workspace = true
 alloy-rpc-types.workspace = true
 hashbrown = { version = "0.14", features = ["serde"] }
-revm = { workspace = true, features = [
+revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
@@ -34,17 +39,14 @@ revm = { workspace = true, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
-    "c-kzg"
+    "c-kzg",
 ] }
 revm-inspectors.workspace = true
 
-itertools.workspace = true
-
+arrayvec.workspace = true
 eyre = "0.6"
 hex.workspace = true
 parking_lot = "0.12"
 proptest = "1"
 thiserror = "1"
 tracing = "0.1"
-rayon = "1"
-rand.workspace = true

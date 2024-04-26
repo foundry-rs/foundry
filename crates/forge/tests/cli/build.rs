@@ -28,20 +28,15 @@ contract Dummy {
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     cmd.args(["build", "--force"]);
-    let (stdout, _) = cmd.unchecked_output_lossy();
-    // Expected output from build
-    let expected = r#"Compiling 24 files with 0.8.23
-Solc 0.8.23 finished in 2.36s
-Compiler run successful!
-"#;
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("Compiling"), "\n{stdout}");
+});
 
-    // skip all dynamic parts of the output (numbers)
-    let expected_words =
-        expected.split(|c: char| c == ' ').filter(|w| !w.chars().next().unwrap().is_numeric());
-    let output_words =
-        stdout.split(|c: char| c == ' ').filter(|w| !w.chars().next().unwrap().is_numeric());
-
-    for (expected, output) in expected_words.zip(output_words) {
-        assert_eq!(expected, output, "expected: {}, output: {}", expected, output);
-    }
+// tests build output is as expected
+forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
+    cmd.args(["build", "--sizes"]);
+    let stdout = cmd.stdout_lossy();
+    assert!(!stdout.contains("console"), "\n{stdout}");
+    assert!(!stdout.contains("std"), "\n{stdout}");
+    assert!(stdout.contains("Counter"), "\n{stdout}");
 });

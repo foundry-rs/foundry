@@ -19,7 +19,7 @@ const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 #[derive(Clone, Debug, Parser)]
 pub struct Create2Args {
     /// Prefix for the contract address.
-    #[clap(
+    #[arg(
         long,
         short,
         required_unless_present_any = &["ends_with", "matching"],
@@ -28,19 +28,19 @@ pub struct Create2Args {
     starts_with: Option<String>,
 
     /// Suffix for the contract address.
-    #[clap(long, short, value_name = "HEX")]
+    #[arg(long, short, value_name = "HEX")]
     ends_with: Option<String>,
 
     /// Sequence that the address has to match.
-    #[clap(long, short, value_name = "HEX")]
+    #[arg(long, short, value_name = "HEX")]
     matching: Option<String>,
 
     /// Case sensitive matching.
-    #[clap(short, long)]
+    #[arg(short, long)]
     case_sensitive: bool,
 
     /// Address of the contract deployer.
-    #[clap(
+    #[arg(
         short,
         long,
         default_value = DEPLOYER,
@@ -49,27 +49,27 @@ pub struct Create2Args {
     deployer: Address,
 
     /// Init code of the contract to be deployed.
-    #[clap(short, long, value_name = "HEX")]
+    #[arg(short, long, value_name = "HEX")]
     init_code: Option<String>,
 
     /// Init code hash of the contract to be deployed.
-    #[clap(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
+    #[arg(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
     init_code_hash: Option<String>,
 
     /// Number of threads to use. Defaults to and caps at the number of logical cores.
-    #[clap(short, long)]
+    #[arg(short, long)]
     jobs: Option<NonZeroUsize>,
 
     /// Address of the caller. Used for the first 20 bytes of the salt.
-    #[clap(long, value_name = "ADDRESS")]
+    #[arg(long, value_name = "ADDRESS")]
     caller: Option<Address>,
 
     /// The random number generator's seed, used to initialize the salt.
-    #[clap(long, value_name = "HEX")]
+    #[arg(long, value_name = "HEX")]
     seed: Option<B256>,
 
     /// Don't initialize the salt with a random value, and instead use the default value of 0.
-    #[clap(long, conflicts_with = "seed")]
+    #[arg(long, conflicts_with = "seed")]
     no_random: bool,
 }
 
@@ -135,14 +135,12 @@ impl Create2Args {
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
         let init_code_hash = if let Some(init_code_hash) = init_code_hash {
-            let mut hash: [u8; 32] = [0; 32];
-            hex::decode_to_slice(init_code_hash, &mut hash)?;
-            hash.into()
+            hex::FromHex::from_hex(init_code_hash)
         } else if let Some(init_code) = init_code {
-            keccak256(hex::decode(init_code)?)
+            hex::decode(init_code).map(keccak256)
         } else {
             unreachable!();
-        };
+        }?;
 
         let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         if let Some(jobs) = jobs {
@@ -168,7 +166,11 @@ impl Create2Args {
             rng.fill_bytes(remaining);
         }
 
-        println!("Starting to generate deterministic contract address...");
+        println!("Configuration:");
+        println!("Init code hash: {init_code_hash}");
+        println!("Regex patterns: {:?}", regex.patterns());
+        println!();
+        println!("Starting to generate deterministic contract address with {n_threads} threads...");
         let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
@@ -201,9 +203,9 @@ impl Create2Args {
 
                     // Calculate the `CREATE2` address.
                     #[allow(clippy::needless_borrows_for_generic_args)]
-                    let addr = deployer.create2(&salt.0, init_code_hash);
+                    let addr = deployer.create2(&salt.0, &init_code_hash);
 
-                    // Check if the the regex matches the calculated address' checksum.
+                    // Check if the regex matches the calculated address' checksum.
                     let _ = addr.to_checksum_raw(&mut checksum, None);
                     // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string
                     // is safe.
@@ -211,7 +213,7 @@ impl Create2Args {
                     if regex.matches(s).into_iter().count() == regex_len {
                         // Notify other threads that we found a result.
                         found.store(true, Ordering::Relaxed);
-                        break Some((salt.0, addr));
+                        break Some((addr, salt.0));
                     }
 
                     // Increment the salt for the next iteration.
@@ -221,15 +223,11 @@ impl Create2Args {
         }
 
         let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
-        println!("Successfully found contract address(es) in {:?}", timer.elapsed());
-        for (i, (salt, address)) in results.iter().enumerate() {
-            if i > 0 {
-                println!("---");
-            }
-            println!("Address: {address}\nSalt: {salt} ({})", U256::from_be_bytes(salt.0));
-        }
+        let (address, salt) = results.into_iter().next().unwrap();
+        println!("Successfully found contract address in {:?}", timer.elapsed());
+        println!("Address: {address}");
+        println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0));
 
-        let (salt, address) = results.into_iter().next().unwrap();
         Ok(Create2Output { address, salt })
     }
 }

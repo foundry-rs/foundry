@@ -1,9 +1,9 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
+use alloy_primitives::{Bytes, SignatureError, U256};
 use alloy_rpc_types::BlockNumberOrTag;
-use alloy_signer::Error as AlloySignerError;
+use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -38,14 +38,16 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode receipt")]
+    FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in th EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
-    AlloySignatureError(#[from] AlloySignatureError),
+    SignatureError(#[from] SignatureError),
     #[error(transparent)]
-    AlloySignerError(#[from] AlloySignerError),
+    SignerError(#[from] SignerError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
     #[error("Rpc error {0:?}")]
@@ -88,6 +90,8 @@ pub enum BlockchainError {
     DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
+    #[error("{0}")]
+    Message(String),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -108,6 +112,7 @@ where
                 InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => BlockchainError::Message(err),
         }
     }
 }
@@ -180,7 +185,7 @@ pub enum InvalidTransactionError {
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required exceeds allowance: {0:?}")]
-    BasicOutOfGas(U256),
+    BasicOutOfGas(u128),
     /// Thrown if executing a transaction failed during estimate/call
     #[error("execution reverted: {0:?}")]
     Revert(Option<Bytes>),
@@ -246,7 +251,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::NonceOverflowInTransaction => {
                 InvalidTransactionError::NonceMaxValue
             }
-            InvalidTransaction::CreateInitcodeSizeLimit => {
+            InvalidTransaction::CreateInitCodeSizeLimit => {
                 InvalidTransactionError::MaxInitCodeSizeExceeded
             }
             InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
@@ -356,13 +361,14 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
                 }
+                BlockchainError::FailedToDecodeReceipt => {
+                    RpcError::invalid_params("Failed to decode receipt")
+                }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
-                BlockchainError::AlloySignerError(err) => RpcError::invalid_params(err.to_string()),
-                BlockchainError::AlloySignatureError(err) => {
-                    RpcError::invalid_params(err.to_string())
-                }
+                BlockchainError::SignerError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
@@ -427,6 +433,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::ExcessBlobGasNotSet => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
             }
             .into(),
         }

@@ -28,7 +28,8 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.75" # Remember to update clippy.toml as well
+# Remember to update clippy.toml as well
+rust-version = "1.76"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -46,6 +47,7 @@ debug = 1
 # Solc and artifacts
 foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
+lalrpop-util.opt-level = 3
 serde_json.opt-level = 3
 
 # EVM
@@ -64,6 +66,7 @@ ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
 tiny-keccak.opt-level = 3
+bitvec.opt-level = 3
 
 # fuzzing
 proptest.opt-level = 3
@@ -104,9 +107,6 @@ codegen-units = 1
 [profile.release.package]
 mdbook.opt-level = 1
 protobuf.opt-level = 1
-rusoto_core.opt-level = 1
-rusoto_credential.opt-level = 1
-rusoto_kms.opt-level = 1
 toml_edit.opt-level = 1
 trezor-client.opt-level = 1
 
@@ -118,6 +118,8 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
+forge-verify = { path = "crates/verify" }
+forge-script = { path = "crates/script" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -132,106 +134,94 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
+foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.3", default-features = false }
-foundry-compilers = { version = "0.3.9", default-features = false }
+foundry-block-explorers = { version = "0.2.6", default-features = false }
+foundry-compilers = { version = "0.3.18", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "3" }
-revm-primitives = { version = "1", default-features = false }
-revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "e90052361276aebcdc67cb24d8e2c4d907b6d299", default-features = false }
+revm = { version = "8", default-features = false }
+revm-primitives = { version = "3", default-features = false }
+revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev = "813d7e7", features = [
+    "serde",
+] }
 
 ## ethers
-ethers = { version = "2.0", default-features = false }
-ethers-core = { version = "2.0", default-features = false }
-ethers-contract = { version = "2.0", default-features = false }
-ethers-contract-abigen = { version = "2.0", default-features = false }
-ethers-providers = { version = "2.0", default-features = false }
-ethers-signers = { version = "2.0", default-features = false }
-ethers-middleware = { version = "2.0", default-features = false }
-ethers-solc = { version = "2.0", default-features = false }
+ethers = { version = "2.0.14", default-features = false }
+ethers-core = { version = "2.0.14", default-features = false }
+ethers-contract = { version = "2.0.14", default-features = false }
+ethers-contract-abigen = { version = "2.0.14", default-features = false }
+ethers-providers = { version = "2.0.14", default-features = false }
+ethers-signers = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy" }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy" }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
-alloy-network = { git = "https://github.com/alloy-rs/alloy" }
-alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy" }
-alloy-providers = { git = "https://github.com/alloy-rs/alloy" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
-alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy" }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy" }
-alloy-primitives = { version = "0.6.3", features = ["getrandom"] }
-alloy-dyn-abi = "0.6.3"
-alloy-json-abi = "0.6.3"
-alloy-sol-types = "0.6.3"
-syn-solidity = "0.6.3"
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-rpc-types-engine = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-signer-wallet = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-primitives = { version = "0.7.1", features = ["getrandom"] }
+alloy-dyn-abi = "0.7.1"
+alloy-json-abi = "0.7.1"
+alloy-sol-types = "0.7.1"
+syn-solidity = "0.7.1"
 alloy-chains = "0.1"
-
+alloy-trie = "0.3.1"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+arrayvec = "0.7"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
+evm-disassembler = "0.5"
 eyre = "0.6"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
-itertools = "0.11"
+itertools = "0.12"
 jsonpath_lib = "0.3"
+k256 = "0.13"
 pretty_assertions = "1.4"
-protobuf = "=3.2.0"
 rand = "0.8"
+rustc-hash = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-base64 = "0.21"
 strum = "0.26"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-evm-disassembler = "0.4"
 vergen = { version = "8", default-features = false }
-# TODO: bumping to >=0.13.2 breaks ecrecover: https://github.com/foundry-rs/foundry/pull/6969
-# TODO: unpin on next revm release: https://github.com/bluealloy/revm/pull/870
-k256 = "=0.13.1"
+indexmap = "2.2"
+tikv-jemallocator = "0.5.4"
+num-format = "0.4.4"
+yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
+tempfile = "3.10"
 
-axum = "0.6"
-hyper = "0.14"
+axum = "0.7"
+hyper = "1.0"
+reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
-tower-http = "0.4"
-
-#[patch."https://github.com/gakonst/ethers-rs"]
-#ethers = { path = "../ethers-rs/ethers" }
-#ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
-#ethers-contract = { path = "../ethers-rs/ethers-contract" }
-#ethers-contract-abigen = { path = "../ethers-rs/ethers-contract/ethers-contract-abigen" }
-#ethers-core = { path = "../ethers-rs/ethers-core" }
-#ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
-#ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
-#ethers-providers = { path = "../ethers-rs/ethers-providers" }
-#ethers-signers = { path = "../ethers-rs/ethers-signers" }
-#ethers-solc = { path = "../ethers-rs/ethers-solc" }
-
-[patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "73e5de211c32a1f5777eb5194205bdb31f6a3502" }
-
-revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+tower-http = "0.5"

@@ -17,9 +17,8 @@ foundry-compilers = { workspace = true, features = ["project-util"] }
 foundry-config.workspace = true
 
 alloy-primitives.workspace = true
-
-ethers-core.workspace = true
-ethers-providers.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
 
 eyre.workspace = true
 fd-lock = "4.0.0"
@@ -31,6 +30,7 @@ serde_json.workspace = true
 tracing = "0.1"
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 walkdir = "2"
+rand.workspace = true
 
 [features]
 # feature for integration tests that test external projects

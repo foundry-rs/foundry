@@ -40,36 +40,36 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
+#[command(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
     /// Print compiled contract names.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub names: bool,
 
     /// Print compiled contract sizes.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub sizes: bool,
 
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[clap(long, num_args(1..))]
+    #[arg(long, num_args(1..))]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[clap(long, conflicts_with = "silent")]
+    #[arg(long, conflicts_with = "silent")]
     #[serde(skip)]
     pub format_json: bool,
 }
@@ -94,7 +94,8 @@ impl BuildArgs {
             .bail(!self.format_json);
         if let Some(skip) = self.skip {
             if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
+                compiler = compiler
+                    .filter(Box::new(SkipBuildFilters::new(skip, project.root().to_path_buf())?));
             }
         }
         let output = compiler.compile(&project)?;

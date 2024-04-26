@@ -1,6 +1,10 @@
 * @danipopes @evalir @mattsse
 
-crates/anvil/        @evalir @mattsse
-crates/evm/coverage/ @evalir @onbjerg
+crates/anvil/        @danipopes @mattsse @evalir
+crates/cheatcodes/   @danipopes @mattsse @klkvr @evalir
+crates/evm/coverage/ @onbjerg
 crates/fmt/          @rkrasiuk
-crates/macros/impls/ @danipopes
+crates/linking/      @klkvr
+crates/macros/       @danipopes
+crates/script/       @danipopes @mattsse @klkvr
+crates/wallets/      @klkvr

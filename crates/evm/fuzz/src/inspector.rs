@@ -1,8 +1,8 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
-use alloy_primitives::Bytes;
+use alloy_primitives::U256;
 use revm::{
-    interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
-    Database, EVMData, Inspector,
+    interpreter::{CallInputs, CallOutcome, CallScheme, Interpreter},
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that can fuzz and collect data for that effect.
@@ -18,41 +18,35 @@ pub struct Fuzzer {
 
 impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, _: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
-            self.collect_data(interpreter);
+            self.collect_data(interp);
             self.collect = false;
         }
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
-            self.override_call(call);
+        if self.call_generator.is_some() && ecx.env.tx.caller != inputs.context.caller {
+            self.override_call(inputs);
         }
 
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
         self.collect = true;
 
-        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
-        _: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        _context: &mut EvmContext<DB>,
+        _inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
         }
@@ -61,18 +55,14 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
         // this will be turned off on the next `step`
         self.collect = true;
 
-        (status, remaining_gas, retdata)
+        outcome
     }
 }
 
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    fn collect_data(&mut self, interpreter: &Interpreter<'_>) {
-        let mut state = self.fuzz_state.write();
-
-        for slot in interpreter.stack().data() {
-            state.values_mut().insert(slot.to_be_bytes());
-        }
+    fn collect_data(&mut self, interpreter: &Interpreter) {
+        self.fuzz_state.collect_values(interpreter.stack().data().iter().map(U256::to_be_bytes));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {

@@ -17,7 +17,7 @@ use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
@@ -195,7 +195,7 @@ impl ChiselDispatcher {
                     ChiselCommand::iter().map(CmdDescriptor::from).collect::<Vec<CmdDescriptor>>();
                 DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
-                    Paint::cyan(format!("{CHISEL_CHAR} Chisel help\n=============")),
+                    format!("{CHISEL_CHAR} Chisel help\n=============").cyan(),
                     CmdCategory::iter()
                         .map(|cat| {
                             // Get commands in the current category
@@ -209,13 +209,13 @@ impl ChiselDispatcher {
                             // Format the help menu for the current category
                             format!(
                                 "{}\n{}\n",
-                                Paint::magenta(cat),
+                                cat.magenta(),
                                 cat_cmds
                                     .iter()
                                     .map(|(cmds, desc, _)| format!(
                                         "\t{} - {}",
                                         cmds.iter()
-                                            .map(|cmd| format!("!{}", Paint::green(cmd)))
+                                            .map(|cmd| format!("!{}", cmd.green()))
                                             .collect::<Vec<_>>()
                                             .join(" | "),
                                         desc
@@ -274,7 +274,7 @@ impl ChiselDispatcher {
                     if let Err(e) = self.session.write() {
                         return DispatchResult::FileIoError(e.into())
                     }
-                    println!("{}", Paint::green("Saved current session!"));
+                    println!("{}", "Saved current session!".green());
                 }
 
                 // Parse the arguments
@@ -304,11 +304,11 @@ impl ChiselDispatcher {
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
                 Ok(sessions) => DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
-                    Paint::cyan(format!("{CHISEL_CHAR} Chisel Sessions")),
+                    format!("{CHISEL_CHAR} Chisel Sessions").cyan(),
                     sessions
                         .iter()
                         .map(|(time, name)| {
-                            format!("{} - {}", Paint::blue(format!("{time:?}")), name)
+                            format!("{} - {}", format!("{time:?}").blue(), name)
                         })
                         .collect::<Vec<String>>()
                         .join("\n")
@@ -372,7 +372,7 @@ impl ChiselDispatcher {
                 }
 
                 // Create success message before moving the fork_url
-                let success_msg = format!("Set fork URL to {}", Paint::yellow(&fork_url));
+                let success_msg = format!("Set fork URL to {}", &fork_url.yellow());
 
                 // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
                 // field
@@ -410,7 +410,7 @@ impl ChiselDispatcher {
                         self.source_mut().config.calldata = Some(calldata);
                         DispatchResult::CommandSuccess(Some(format!(
                             "Set calldata to '{}'",
-                            Paint::yellow(arg)
+                            arg.yellow()
                         )))
                     }
                     Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
@@ -428,8 +428,8 @@ impl ChiselDispatcher {
                                 (0..mem.len()).step_by(32).for_each(|i| {
                                     println!(
                                         "{}: {}",
-                                        Paint::yellow(format!("[0x{:02x}:0x{:02x}]", i, i + 32)),
-                                        Paint::cyan(hex::encode_prefixed(&mem[i..i + 32]))
+                                        format!("[0x{:02x}:0x{:02x}]", i, i + 32).yellow(),
+                                        hex::encode_prefixed(&mem[i..i + 32]).cyan()
                                     );
                                 });
                             } else {
@@ -437,8 +437,8 @@ impl ChiselDispatcher {
                                 (0..stack.len()).rev().for_each(|i| {
                                     println!(
                                         "{}: {}",
-                                        Paint::yellow(format!("[{}]", stack.len() - i - 1)),
-                                        Paint::cyan(format!("0x{:02x}", stack.data()[i]))
+                                        format!("[{}]", stack.len() - i - 1).yellow(),
+                                        format!("0x{:02x}", stack[i]).cyan()
                                     );
                                 });
                             }
@@ -698,7 +698,7 @@ impl ChiselDispatcher {
                                 // Show console logs, if there are any
                                 let decoded_logs = decode_console_logs(&res.logs);
                                 if !decoded_logs.is_empty() {
-                                    println!("{}", Paint::green("Logs:"));
+                                    println!("{}", "Logs:".green());
                                     for log in decoded_logs {
                                         println!("  {log}");
                                     }
@@ -842,7 +842,7 @@ impl ChiselDispatcher {
                             // Show console logs, if there are any
                             let decoded_logs = decode_console_logs(&res.logs);
                             if !decoded_logs.is_empty() {
-                                println!("{}", Paint::green("Logs:"));
+                                println!("{}", "Logs:".green());
                                 for log in decoded_logs {
                                     println!("  {log}");
                                 }
@@ -893,11 +893,6 @@ impl ChiselDispatcher {
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let mut etherscan_identifier = EtherscanIdentifier::new(
-            &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id(),
-        )?;
-
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::new(
@@ -906,9 +901,14 @@ impl ChiselDispatcher {
             )?)
             .build();
 
-        for (_, trace) in &mut result.traces {
-            // decoder.identify(trace, &mut local_identifier);
-            decoder.identify(trace, &mut etherscan_identifier);
+        let mut identifier = TraceIdentifiers::new().with_etherscan(
+            &session_config.foundry_config,
+            session_config.evm_opts.get_remote_chain_id(),
+        )?;
+        if !identifier.is_empty() {
+            for (_, trace) in &mut result.traces {
+                decoder.identify(trace, &mut identifier);
+            }
         }
         Ok(decoder)
     }
@@ -931,7 +931,7 @@ impl ChiselDispatcher {
             eyre::bail!("Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
         }
 
-        println!("{}", Paint::green("Traces:"));
+        println!("{}", "Traces:".green());
         for (kind, trace) in &result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
@@ -952,7 +952,7 @@ impl ChiselDispatcher {
     ///
     /// A formatted error [String].
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
-        format!("{} {}", Paint::red(format!("{CHISEL_CHAR} Chisel Error:")), Paint::red(msg))
+        format!("{} {}", format!("{CHISEL_CHAR} Chisel Error:").red(), msg.red())
     }
 }
 

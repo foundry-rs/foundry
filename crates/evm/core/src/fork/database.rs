@@ -267,14 +267,14 @@ impl DatabaseRef for ForkDbSnapshot {
 mod tests {
     use super::*;
     use crate::fork::BlockchainDbMeta;
-    use foundry_common::provider::alloy::get_http_provider;
+    use foundry_common::provider::get_http_provider;
     use std::collections::BTreeSet;
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
     /// `AccountInfo`
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_db_insert_basic_default() {
-        let rpc = foundry_common::rpc::next_http_rpc_endpoint();
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),

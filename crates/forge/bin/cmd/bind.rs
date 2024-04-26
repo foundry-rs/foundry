@@ -18,7 +18,7 @@ const DEFAULT_CRATE_VERSION: &str = "0.1.0";
 #[derive(Clone, Debug, Parser)]
 pub struct BindArgs {
     /// Path to where the contract artifacts are stored.
-    #[clap(
+    #[arg(
         long = "bindings-path",
         short,
         value_hint = ValueHint::DirPath,
@@ -27,61 +27,61 @@ pub struct BindArgs {
     pub bindings: Option<PathBuf>,
 
     /// Create bindings only for contracts whose names match the specified filter(s)
-    #[clap(long)]
+    #[arg(long)]
     pub select: Vec<regex::Regex>,
 
     /// Create bindings only for contracts whose names do not match the specified filter(s)
-    #[clap(long, conflicts_with = "select")]
+    #[arg(long, conflicts_with = "select")]
     pub skip: Vec<regex::Regex>,
 
     /// Explicitly generate bindings for all contracts
     ///
     /// By default all contracts ending with `Test` or `Script` are excluded.
-    #[clap(long, conflicts_with_all = &["select", "skip"])]
+    #[arg(long, conflicts_with_all = &["select", "skip"])]
     pub select_all: bool,
 
     /// The name of the Rust crate to generate.
     ///
     /// This should be a valid crates.io crate name,
     /// however, this is not currently validated by this command.
-    #[clap(long, default_value = DEFAULT_CRATE_NAME, value_name = "NAME")]
+    #[arg(long, default_value = DEFAULT_CRATE_NAME, value_name = "NAME")]
     crate_name: String,
 
     /// The version of the Rust crate to generate.
     ///
     /// This should be a standard semver version string,
     /// however, this is not currently validated by this command.
-    #[clap(long, default_value = DEFAULT_CRATE_VERSION, value_name = "VERSION")]
+    #[arg(long, default_value = DEFAULT_CRATE_VERSION, value_name = "VERSION")]
     crate_version: String,
 
     /// Generate the bindings as a module instead of a crate.
-    #[clap(long)]
+    #[arg(long)]
     module: bool,
 
     /// Overwrite existing generated bindings.
     ///
     /// By default, the command will check that the bindings are correct, and then exit. If
     /// --overwrite is passed, it will instead delete and overwrite the bindings.
-    #[clap(long)]
+    #[arg(long)]
     overwrite: bool,
 
     /// Generate bindings as a single file.
-    #[clap(long)]
+    #[arg(long)]
     single_file: bool,
 
     /// Skip Cargo.toml consistency checks.
-    #[clap(long)]
+    #[arg(long)]
     skip_cargo_toml: bool,
 
     /// Skips running forge build before generating binding
-    #[clap(long)]
+    #[arg(long)]
     skip_build: bool,
 
     /// Don't add any additional derives to generated bindings
-    #[clap(long)]
+    #[arg(long)]
     skip_extra_derives: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     build_args: CoreBuildArgs,
 }
 
@@ -143,7 +143,7 @@ impl BindArgs {
                 "console[2]?",
                 "CommonBase",
                 "Components",
-                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Storage(Safe)?)",
+                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Toml|Storage(Safe)?)",
                 "[Vv]m.*",
             ])
             .extend_names(["IMulticall3"])
@@ -155,6 +155,10 @@ impl BindArgs {
         let abigens = json_files(artifacts.as_ref())
             .into_iter()
             .filter_map(|path| {
+                if path.to_string_lossy().contains("/build-info/") {
+                    // ignore the build info json
+                    return None
+                }
                 // we don't want `.metadata.json files
                 let stem = path.file_stem()?;
                 if stem.to_str()?.ends_with(".metadata") {

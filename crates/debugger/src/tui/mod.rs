@@ -67,9 +67,9 @@ impl Debugger {
     ) -> Self {
         let pc_ic_maps = contracts_sources
             .entries()
-            .filter_map(|(contract_name, (_, contract))| {
+            .filter_map(|(contract_name, _, contract)| {
                 Some((
-                    contract_name.clone(),
+                    contract_name.to_owned(),
                     (
                         PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
                         PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
@@ -115,16 +115,13 @@ impl Debugger {
             .spawn(move || Self::event_listener(tx))
             .expect("failed to spawn thread");
 
-        // Draw the initial state.
-        cx.draw(terminal)?;
-
         // Start the event loop.
         loop {
+            cx.draw(terminal)?;
             match cx.handle_event(rx.recv()?) {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(reason) => return Ok(reason),
             }
-            cx.draw(terminal)?;
         }
     }
 

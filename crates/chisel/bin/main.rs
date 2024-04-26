@@ -27,6 +27,10 @@ use std::path::PathBuf;
 use tracing::debug;
 use yansi::Paint;
 
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(Chisel, opts, evm_opts);
 
@@ -41,7 +45,7 @@ const VERSION_MESSAGE: &str = concat!(
 
 /// Fast, utilitarian, and verbose Solidity REPL.
 #[derive(Debug, Parser)]
-#[clap(name = "chisel", version = VERSION_MESSAGE)]
+#[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
     #[command(subcommand)]
     pub cmd: Option<ChiselSubcommand>,
@@ -50,21 +54,21 @@ pub struct Chisel {
     ///
     /// These files will be evaluated before the top-level of the
     /// REPL, therefore functioning as a prelude
-    #[clap(long, help_heading = "REPL options")]
+    #[arg(long, help_heading = "REPL options")]
     pub prelude: Option<PathBuf>,
 
     /// Disable the default `Vm` import.
-    #[clap(long, help_heading = "REPL options", long_help = format!(
+    #[arg(long, help_heading = "REPL options", long_help = format!(
         "Disable the default `Vm` import.\n\n\
          The import is disabled by default if the Solc version is less than {}.",
         chisel::session_source::MIN_VM_VERSION
     ))]
     pub no_vm: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub evm_opts: EvmArgs,
 }
 
@@ -94,11 +98,6 @@ pub enum ChiselSubcommand {
 async fn main() -> eyre::Result<()> {
     handler::install();
     utils::subscriber();
-    #[cfg(windows)]
-    if !Paint::enable_windows_ascii() {
-        Paint::disable()
-    }
-
     utils::load_dotenv();
 
     // Parse command args
@@ -161,7 +160,7 @@ async fn main() -> eyre::Result<()> {
         }
         Some(ChiselSubcommand::ClearCache) => {
             match dispatcher.dispatch_command(ChiselCommand::ClearCache, &[]).await {
-                DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Paint::green(msg)),
+                DispatchResult::CommandSuccess(Some(msg)) => println!("{}", msg.green()),
                 DispatchResult::CommandFailed(e) => eprintln!("{e}"),
                 _ => panic!("Unexpected result! Please report this bug."),
             }
@@ -183,7 +182,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     // Print welcome header
-    println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
+    println!("Welcome to Chisel! Type `{}` to show available commands.", "!help".green());
 
     // Begin Rustyline loop
     loop {
@@ -246,17 +245,17 @@ async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> bo
         DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => {
             debug!(%line, ?msg, "dispatch success");
             if let Some(msg) = msg {
-                println!("{}", Paint::green(msg));
+                println!("{}", msg.green());
             }
         },
         DispatchResult::UnrecognizedCommand(e) => eprintln!("{e}"),
         DispatchResult::SolangParserFailed(e) => {
-            eprintln!("{}", Paint::red("Compilation error"));
-            eprintln!("{}", Paint::red(format!("{e:?}")));
+            eprintln!("{}", "Compilation error".red());
+            eprintln!("{}", format!("{e:?}").red());
         }
-        DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {e}"))),
-        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
-        DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
+        DispatchResult::FileIoError(e) => eprintln!("{}", format!("⚒️ Chisel File IO Error - {e}").red()),
+        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", msg.red()),
+        DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", "⚒️ Unknown Chisel Error ⚒️".red()),
     }
     r.is_error()
 }
@@ -269,19 +268,19 @@ async fn evaluate_prelude(
 ) -> eyre::Result<()> {
     let Some(prelude_dir) = maybe_prelude else { return Ok(()) };
     if prelude_dir.is_file() {
-        println!("{} {}", Paint::yellow("Loading prelude source file:"), prelude_dir.display(),);
+        println!("{} {}", "Loading prelude source file:".yellow(), prelude_dir.display(),);
         load_prelude_file(dispatcher, prelude_dir).await?;
-        println!("{}\n", Paint::green("Prelude source file loaded successfully!"));
+        println!("{}\n", "Prelude source file loaded successfully!".green());
     } else {
         let prelude_sources = fs::files_with_ext(prelude_dir, "sol");
         let print_success_msg = !prelude_sources.is_empty();
         for source_file in prelude_sources {
-            println!("{} {}", Paint::yellow("Loading prelude source file:"), source_file.display(),);
+            println!("{} {}", "Loading prelude source file:".yellow(), source_file.display(),);
             load_prelude_file(dispatcher, source_file).await?;
         }
 
         if print_success_msg {
-            println!("{}\n", Paint::green("All prelude source files loaded successfully!"));
+            println!("{}\n", "All prelude source files loaded successfully!".green());
         }
     }
     Ok(())

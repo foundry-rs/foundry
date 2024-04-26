@@ -19,7 +19,7 @@ mod visitor;
 #[derive(Clone, Debug, Parser)]
 pub struct GeigerArgs {
     /// Paths to files or directories to detect.
-    #[clap(
+    #[arg(
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
@@ -31,17 +31,17 @@ pub struct GeigerArgs {
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
     /// Run in "check" mode.
     ///
     /// The exit code of the program will be the number of unsafe cheatcodes found.
-    #[clap(long)]
+    #[arg(long)]
     pub check: bool,
 
     /// Globs to ignore.
-    #[clap(
+    #[arg(
         long,
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
@@ -50,7 +50,7 @@ pub struct GeigerArgs {
     ignore: Vec<PathBuf>,
 
     /// Print a report of all files, even if no unsafe functions are found.
-    #[clap(long)]
+    #[arg(long)]
     full: bool,
 }
 
@@ -91,7 +91,7 @@ impl GeigerArgs {
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {
-            eprintln!("{}\n", Paint::red("ffi enabled"));
+            eprintln!("{}\n", "ffi enabled".red());
         }
 
         let root = config.__root.0;

@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
-use alloy_signer::{LocalWallet, Signer};
+use alloy_signer_wallet::LocalWallet;
 use foundry_config::Config;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
@@ -111,6 +111,11 @@ impl ScriptWallets {
         self.inner.lock().multi_wallet.add_signer(WalletSigner::from_private_key(private_key)?);
         Ok(Default::default())
     }
+
+    /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
+    pub fn signers(&self) -> Result<Vec<Address>> {
+        Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
+    }
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
@@ -145,10 +150,10 @@ fn broadcast<DB: DatabaseExt>(
     }
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.data.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
         original_caller: ccx.caller,
-        original_origin: ccx.data.env.tx.caller,
-        depth: ccx.data.journaled_state.depth(),
+        original_origin: ccx.ecx.env.tx.caller,
+        depth: ccx.ecx.journaled_state.depth(),
         single_call,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
@@ -181,9 +186,9 @@ fn broadcast_key<DB: DatabaseExt>(
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
-    let sender = ccx.data.env.tx.caller;
+    let sender = ccx.ecx.env.tx.caller;
     if !ccx.state.corrected_nonce && sender != Config::DEFAULT_SENDER {
-        let account = super::evm::journaled_account(ccx.data, sender)?;
+        let account = super::evm::journaled_account(ccx.ecx, sender)?;
         let prev = account.info.nonce;
         account.info.nonce = prev.saturating_sub(1);
         debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");

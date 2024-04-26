@@ -1,9 +1,8 @@
 use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
+use alloy_signer::Signer;
 use clap::Parser;
-use ethers_signers::Signer;
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use serde::Serialize;
 
 /// The wallet options can either be:
@@ -13,10 +12,10 @@ use serde::Serialize;
 /// 4. Keystore (via file path)
 /// 5. AWS KMS
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
+#[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct WalletOpts {
     /// The sender account.
-    #[clap(
+    #[arg(
         long,
         short,
         value_name = "ADDRESS",
@@ -25,11 +24,11 @@ pub struct WalletOpts {
     )]
     pub from: Option<Address>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub raw: RawWalletOpts,
 
     /// Use the keystore in the given folder or file.
-    #[clap(
+    #[arg(
         long = "keystore",
         help_heading = "Wallet options - keystore",
         value_name = "PATH",
@@ -38,7 +37,7 @@ pub struct WalletOpts {
     pub keystore_path: Option<String>,
 
     /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
-    #[clap(
+    #[arg(
         long = "account",
         help_heading = "Wallet options - keystore",
         value_name = "ACCOUNT_NAME",
@@ -50,7 +49,7 @@ pub struct WalletOpts {
     /// The keystore password.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password",
         help_heading = "Wallet options - keystore",
         requires = "keystore_path",
@@ -61,7 +60,7 @@ pub struct WalletOpts {
     /// The keystore password file path.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password-file",
         help_heading = "Wallet options - keystore",
         requires = "keystore_path",
@@ -71,15 +70,15 @@ pub struct WalletOpts {
     pub keystore_password_file: Option<String>,
 
     /// Use a Ledger hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
     /// Use a Trezor hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - AWS KMS")]
+    #[arg(long, help_heading = "Wallet options - AWS KMS")]
     pub aws: bool,
 }
 
@@ -95,7 +94,7 @@ impl WalletOpts {
                 .await?
         } else if self.aws {
             let key_id = std::env::var("AWS_KMS_KEY_ID")?;
-            WalletSigner::from_aws(&key_id).await?
+            WalletSigner::from_aws(key_id).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -139,7 +138,7 @@ of the unlocked account you want to use, or provide the --from flag with the add
         if let Some(from) = self.from {
             from
         } else if let Ok(signer) = self.signer().await {
-            signer.address().to_alloy()
+            signer.address()
         } else {
             Address::ZERO
         }
@@ -176,7 +175,7 @@ mod tests {
         ]);
         let signer = wallet.signer().await.unwrap();
         assert_eq!(
-            signer.address().to_alloy(),
+            signer.address(),
             Address::from_str("ec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
         );
     }
@@ -207,7 +206,7 @@ mod tests {
             }
             Err(x) => {
                 assert!(
-                    x.to_string().contains("Failed to create wallet"),
+                    x.to_string().contains("Failed to decode private key"),
                     "Error message is not user-friendly"
                 );
             }

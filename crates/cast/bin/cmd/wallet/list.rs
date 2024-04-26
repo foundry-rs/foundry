@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
-use foundry_common::{fs, types::ToAlloy};
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
 
@@ -10,27 +10,27 @@ use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
 pub struct ListArgs {
     /// List all the accounts in the keystore directory.
     /// Default keystore directory is used if no path provided.
-    #[clap(long, default_missing_value = "", num_args(0..=1))]
+    #[arg(long, default_missing_value = "", num_args(0..=1))]
     dir: Option<String>,
 
     /// List accounts from a Ledger hardware wallet.
-    #[clap(long, short, group = "hw-wallets")]
+    #[arg(long, short, group = "hw-wallets")]
     ledger: bool,
 
     /// List accounts from a Trezor hardware wallet.
-    #[clap(long, short, group = "hw-wallets")]
+    #[arg(long, short, group = "hw-wallets")]
     trezor: bool,
 
     /// List accounts from AWS KMS.
-    #[clap(long)]
+    #[arg(long)]
     aws: bool,
 
     /// List all configured accounts.
-    #[clap(long, group = "hw-wallets")]
+    #[arg(long, group = "hw-wallets")]
     all: bool,
 
     /// Max number of addresses to display from hardware wallets.
-    #[clap(long, short, default_value = "3", requires = "hw-wallets")]
+    #[arg(long, short, default_value = "3", requires = "hw-wallets")]
     max_senders: Option<usize>,
 }
 
@@ -61,7 +61,7 @@ impl ListArgs {
                                 .available_senders(self.max_senders.unwrap())
                                 .await?
                                 .iter()
-                                .for_each(|sender| println!("{} ({})", sender.to_alloy(), $label));
+                                .for_each(|sender| println!("{} ({})", sender, $label));
                         }
                     }
                     Err(e) => {
@@ -91,17 +91,17 @@ impl ListArgs {
             dunce::canonicalize(keystore_path)?
         };
 
-        // list files within keystore dir
-        std::fs::read_dir(keystore_dir)?.flatten().for_each(|entry| {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_none() {
+        // List all files within the keystore directory.
+        for entry in std::fs::read_dir(keystore_dir)? {
+            let path = entry?.path();
+            if path.is_file() {
                 if let Some(file_name) = path.file_name() {
                     if let Some(name) = file_name.to_str() {
-                        println!("{} (Local)", name);
+                        println!("{name} (Local)");
                     }
                 }
             }
-        });
+        }
 
         Ok(())
     }

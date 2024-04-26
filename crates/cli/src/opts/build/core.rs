@@ -19,59 +19,66 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Build options")]
+#[command(next_help_heading = "Build options")]
 pub struct CoreBuildArgs {
     /// Clear the cache and artifacts folder and recompile.
-    #[clap(long, help_heading = "Cache options")]
+    #[arg(long, help_heading = "Cache options")]
     #[serde(skip)]
     pub force: bool,
 
     /// Disable the cache.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub no_cache: bool,
 
     /// Set pre-linked libraries.
-    #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
+    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
     /// Ignore solc warnings by error code.
-    #[clap(long, help_heading = "Compiler options", value_name = "ERROR_CODES")]
+    #[arg(long, help_heading = "Compiler options", value_name = "ERROR_CODES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
     /// Warnings will trigger a compiler error
-    #[clap(long, help_heading = "Compiler options")]
+    #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub deny_warnings: bool,
 
     /// Do not auto-detect the `solc` version.
-    #[clap(long, help_heading = "Compiler options")]
+    #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub no_auto_detect: bool,
 
     /// Specify the solc version, or a path to a local solc, to build with.
     ///
     /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[clap(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
+    #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
     #[serde(skip)]
     pub use_solc: Option<String>,
 
     /// Do not access the network.
     ///
     /// Missing solc versions will not be installed.
-    #[clap(help_heading = "Compiler options", long)]
+    #[arg(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,
 
     /// Use the Yul intermediate representation compilation pipeline.
-    #[clap(long, help_heading = "Compiler options")]
+    #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Do not append any metadata to the bytecode.
+    ///
+    /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub no_metadata: bool,
+
     /// The path to the contract artifacts folder.
-    #[clap(
+    #[arg(
         long = "out",
         short,
         help_heading = "Project options",
@@ -85,22 +92,22 @@ pub struct CoreBuildArgs {
     ///
     /// Possible values are "default", "strip" (remove),
     /// "debug" (Solidity-generated revert strings) and "verboseDebug"
-    #[clap(long, help_heading = "Project options", value_name = "REVERT")]
+    #[arg(long, help_heading = "Project options", value_name = "REVERT")]
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
 
     /// Don't print anything on startup.
-    #[clap(long, help_heading = "Compiler options")]
+    #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub silent: bool,
 
     /// Generate build info files.
-    #[clap(long, help_heading = "Project options")]
+    #[arg(long, help_heading = "Project options")]
     #[serde(skip)]
     pub build_info: bool,
 
     /// Output path to directory that build info files will be written to.
-    #[clap(
+    #[arg(
         long,
         help_heading = "Project options",
         value_hint = ValueHint::DirPath,
@@ -110,11 +117,11 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(flatten)]
     pub compiler: CompilerArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
 }
@@ -204,9 +211,15 @@ impl Provider for CoreBuildArgs {
             dict.insert("via_ir".to_string(), true.into());
         }
 
+        if self.no_metadata {
+            dict.insert("bytecode_hash".to_string(), "none".into());
+            dict.insert("cbor_metadata".to_string(), false.into());
+        }
+
         if self.force {
             dict.insert("force".to_string(), self.force.into());
         }
+
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());

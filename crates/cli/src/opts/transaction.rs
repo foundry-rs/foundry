@@ -1,17 +1,17 @@
 use crate::utils::parse_ether_value;
-use alloy_primitives::U256;
+use alloy_primitives::{U256, U64};
 use clap::Parser;
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize, Parser)]
-#[clap(next_help_heading = "Transaction options")]
+#[command(next_help_heading = "Transaction options")]
 pub struct TransactionOpts {
     /// Gas limit for the transaction.
-    #[clap(long, env = "ETH_GAS_LIMIT")]
+    #[arg(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[clap(
+    #[arg(
         long,
         env = "ETH_GAS_PRICE",
         value_parser = parse_ether_value,
@@ -20,7 +20,7 @@ pub struct TransactionOpts {
     pub gas_price: Option<U256>,
 
     /// Max priority fee per gas for EIP1559 transactions.
-    #[clap(
+    #[arg(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
         value_parser = parse_ether_value,
@@ -33,17 +33,17 @@ pub struct TransactionOpts {
     ///
     ///
     /// Examples: 1ether, 10gwei, 0.01ether
-    #[clap(long, value_parser = parse_ether_value)]
+    #[arg(long, value_parser = parse_ether_value)]
     pub value: Option<U256>,
 
     /// Nonce for the transaction.
-    #[clap(long)]
-    pub nonce: Option<U256>,
+    #[arg(long)]
+    pub nonce: Option<U64>,
 
     /// Send a legacy transaction instead of an EIP1559 transaction.
     ///
     /// This is automatically enabled for common networks without EIP1559.
-    #[clap(long)]
+    #[arg(long)]
     pub legacy: bool,
 }
 

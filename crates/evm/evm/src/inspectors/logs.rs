@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, Log, B256};
+use alloy_primitives::{Address, Bytes, Log};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
 use foundry_evm_core::{
@@ -6,8 +6,8 @@ use foundry_evm_core::{
     constants::HARDHAT_CONSOLE_ADDRESS,
 };
 use revm::{
-    interpreter::{CallInputs, Gas, InstructionResult},
-    Database, EVMData, Inspector,
+    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that collects logs during execution.
@@ -38,23 +38,31 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
-        if let Some(log) = Log::new(*address, topics.to_vec(), data.clone()) {
-            self.logs.push(log);
-        }
+    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+        self.logs.push(log.clone());
     }
 
+    #[inline]
     fn call(
         &mut self,
-        _: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
-        let (status, reason) = if call.contract == HARDHAT_CONSOLE_ADDRESS {
-            self.hardhat_log(call.input.to_vec())
-        } else {
-            (InstructionResult::Continue, Bytes::new())
-        };
-        (status, Gas::new(call.gas_limit), reason)
+        _context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        if inputs.contract == HARDHAT_CONSOLE_ADDRESS {
+            let (res, out) = self.hardhat_log(inputs.input.to_vec());
+            if res != InstructionResult::Continue {
+                return Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: res,
+                        output: out,
+                        gas: Gas::new(inputs.gas_limit),
+                    },
+                    memory_offset: inputs.return_memory_offset.clone(),
+                })
+            }
+        }
+
+        None
     }
 }
 

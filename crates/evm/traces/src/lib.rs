@@ -12,7 +12,7 @@ use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Write};
+use std::fmt::Write;
 use yansi::{Color, Paint};
 
 /// Call trace address identifiers.
@@ -122,23 +122,21 @@ pub async fn render_trace_arena(
 
             // Display trace return data
             let color = trace_color(&node.trace);
-            write!(s, "{child}{EDGE}{}", color.paint(RETURN))?;
-            if node.trace.kind.is_any_create() {
-                match &return_data {
-                    None => {
-                        writeln!(s, "{} bytes of code", node.trace.output.len())?;
-                    }
-                    Some(val) => {
-                        writeln!(s, "{val}")?;
-                    }
+            write!(
+                s,
+                "{child}{EDGE}{}{}",
+                RETURN.fg(color),
+                format!("[{:?}] ", node.trace.status).fg(color)
+            )?;
+            match return_data {
+                Some(val) => write!(s, "{val}"),
+                None if node.trace.kind.is_any_create() => {
+                    write!(s, "{} bytes of code", node.trace.output.len())
                 }
-            } else {
-                match &return_data {
-                    None if node.trace.output.is_empty() => writeln!(s, "()")?,
-                    None => writeln!(s, "{}", node.trace.output)?,
-                    Some(val) => writeln!(s, "{val}")?,
-                }
-            }
+                None if node.trace.output.is_empty() => Ok(()),
+                None => write!(s, "{}", node.trace.output),
+            }?;
+            writeln!(s)?;
 
             Ok(())
         }
@@ -166,8 +164,8 @@ pub async fn render_trace(
         write!(
             &mut s,
             "{}{} {}@{}",
-            Paint::yellow(CALL),
-            Paint::yellow("new"),
+            CALL.yellow(),
+            "new".yellow(),
             decoded.label.as_deref().unwrap_or("<unknown>"),
             address
         )?;
@@ -200,14 +198,14 @@ pub async fn render_trace(
         write!(
             &mut s,
             "{addr}::{func_name}{opt_value}({inputs}){action}",
-            addr = color.paint(decoded.label.as_deref().unwrap_or(&address)),
-            func_name = color.paint(func_name),
+            addr = decoded.label.as_deref().unwrap_or(&address).fg(color),
+            func_name = func_name.fg(color),
             opt_value = if trace.value.is_zero() {
                 String::new()
             } else {
                 format!("{{value: {}}}", trace.value)
             },
-            action = Paint::yellow(action),
+            action = action.yellow(),
         )?;
     }
 
@@ -229,11 +227,11 @@ async fn render_trace_log(
                     s,
                     "{:>13}: {}",
                     if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                    Paint::cyan(format!("{topic:?}"))
+                    format!("{topic:?}").cyan()
                 )?;
             }
 
-            write!(s, "          data: {}", Paint::cyan(hex::encode_prefixed(&log.data)))?;
+            write!(s, "          data: {}", hex::encode_prefixed(&log.data).cyan())?;
         }
         DecodedCallLog::Decoded(name, params) => {
             let params = params
@@ -242,7 +240,7 @@ async fn render_trace_log(
                 .collect::<Vec<String>>()
                 .join(", ");
 
-            write!(s, "emit {}({params})", Paint::cyan(name.clone()))?;
+            write!(s, "emit {}({params})", name.clone().cyan())?;
         }
     }
 
@@ -295,12 +293,8 @@ fn trace_color(trace: &CallTrace) -> Color {
 }
 
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
-pub fn load_contracts(
-    traces: Traces,
-    known_contracts: Option<&ContractsByArtifact>,
-) -> ContractsByAddress {
-    let Some(contracts) = known_contracts else { return BTreeMap::new() };
-    let mut local_identifier = LocalTraceIdentifier::new(contracts);
+pub fn load_contracts(traces: Traces, known_contracts: &ContractsByArtifact) -> ContractsByAddress {
+    let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
     let mut decoder = CallTraceDecoderBuilder::new().build();
     for (_, trace) in &traces {
         decoder.identify(trace, &mut local_identifier);
@@ -310,8 +304,8 @@ pub fn load_contracts(
         .contracts
         .iter()
         .filter_map(|(addr, name)| {
-            if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                return Some((*addr, (name.clone(), abi.clone())));
+            if let Ok(Some((_, contract))) = known_contracts.find_by_name_or_identifier(name) {
+                return Some((*addr, (name.clone(), contract.abi.clone())));
             }
             None
         })

@@ -3,11 +3,10 @@ use crate::{
     wallet_signer::{PendingSigner, WalletSigner},
 };
 use alloy_primitives::Address;
+use alloy_signer::Signer;
 use clap::Parser;
 use derive_builder::Builder;
-use ethers_signers::Signer;
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use foundry_config::Config;
 use serde::Serialize;
 use std::{collections::HashMap, iter::repeat, path::PathBuf};
@@ -24,15 +23,14 @@ pub struct MultiWallet {
 
 impl MultiWallet {
     pub fn new(pending_signers: Vec<PendingSigner>, signers: Vec<WalletSigner>) -> Self {
-        let signers =
-            signers.into_iter().map(|signer| (signer.address().to_alloy(), signer)).collect();
+        let signers = signers.into_iter().map(|signer| (signer.address(), signer)).collect();
         Self { pending_signers, signers }
     }
 
     fn maybe_unlock_pending(&mut self) -> Result<()> {
         for pending in self.pending_signers.drain(..) {
             let signer = pending.unlock()?;
-            self.signers.insert(signer.address().to_alloy(), signer);
+            self.signers.insert(signer.address(), signer);
         }
         Ok(())
     }
@@ -48,7 +46,7 @@ impl MultiWallet {
     }
 
     pub fn add_signer(&mut self, signer: WalletSigner) {
-        self.signers.insert(signer.address().to_alloy(), signer);
+        self.signers.insert(signer.address(), signer);
     }
 }
 
@@ -89,10 +87,10 @@ macro_rules! create_hw_wallets {
 /// 6. Private Keys (interactively via secure prompt)
 /// 7. AWS KMS
 #[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
-#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
+#[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
     /// The sender accounts.
-    #[clap(
+    #[arg(
         long,
         short = 'a',
         help_heading = "Wallet options - raw",
@@ -106,7 +104,7 @@ pub struct MultiWalletOpts {
     /// Open an interactive prompt to enter your private key.
     ///
     /// Takes a value for the number of keys to enter.
-    #[clap(
+    #[arg(
         long,
         short,
         help_heading = "Wallet options - raw",
@@ -116,12 +114,12 @@ pub struct MultiWalletOpts {
     pub interactives: u32,
 
     /// Use the provided private keys.
-    #[clap(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
+    #[arg(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
     #[builder(default = "None")]
     pub private_keys: Option<Vec<String>>,
 
     /// Use the provided private key.
-    #[clap(
+    #[arg(
         long,
         help_heading = "Wallet options - raw",
         conflicts_with = "private_keys",
@@ -131,19 +129,19 @@ pub struct MultiWalletOpts {
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrases of mnemonic files at the specified paths.
-    #[clap(long, alias = "mnemonic-paths", help_heading = "Wallet options - raw")]
+    #[arg(long, alias = "mnemonic-paths", help_heading = "Wallet options - raw")]
     #[builder(default = "None")]
     pub mnemonics: Option<Vec<String>>,
 
     /// Use a BIP39 passphrases for the mnemonic.
-    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
+    #[arg(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     #[builder(default = "None")]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
     /// The wallet derivation path.
     ///
     /// Works with both --mnemonic-path and hardware wallets.
-    #[clap(
+    #[arg(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
         help_heading = "Wallet options - raw",
@@ -155,7 +153,7 @@ pub struct MultiWalletOpts {
     /// Use the private key from the given mnemonic index.
     ///
     /// Can be used with --mnemonics, --ledger, --aws and --trezor.
-    #[clap(
+    #[arg(
         long,
         conflicts_with = "hd_paths",
         help_heading = "Wallet options - raw",
@@ -165,7 +163,7 @@ pub struct MultiWalletOpts {
     pub mnemonic_indexes: Option<Vec<u32>>,
 
     /// Use the keystore in the given folder or file.
-    #[clap(
+    #[arg(
         long = "keystore",
         visible_alias = "keystores",
         help_heading = "Wallet options - keystore",
@@ -176,7 +174,7 @@ pub struct MultiWalletOpts {
     pub keystore_paths: Option<Vec<String>>,
 
     /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
-    #[clap(
+    #[arg(
         long = "account",
         visible_alias = "accounts",
         help_heading = "Wallet options - keystore",
@@ -190,7 +188,7 @@ pub struct MultiWalletOpts {
     /// The keystore password.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password",
         help_heading = "Wallet options - keystore",
         requires = "keystore_paths",
@@ -202,7 +200,7 @@ pub struct MultiWalletOpts {
     /// The keystore password file path.
     ///
     /// Used with --keystore.
-    #[clap(
+    #[arg(
         long = "password-file",
         help_heading = "Wallet options - keystore",
         requires = "keystore_paths",
@@ -213,15 +211,15 @@ pub struct MultiWalletOpts {
     pub keystore_password_files: Option<Vec<String>>,
 
     /// Use a Ledger hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
     /// Use a Trezor hardware wallet.
-    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
+    #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - remote")]
+    #[arg(long, help_heading = "Wallet options - remote")]
     pub aws: bool,
 }
 
@@ -386,7 +384,7 @@ impl MultiWalletOpts {
                 .collect::<Vec<_>>();
 
             for key in aws_keys {
-                let aws_signer = WalletSigner::from_aws(&key).await?;
+                let aws_signer = WalletSigner::from_aws(key).await?;
                 wallets.push(aws_signer)
             }
 
@@ -399,7 +397,7 @@ impl MultiWalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::{path::Path, str::FromStr};
 
     #[test]
     fn parse_keystore_args() {
@@ -439,7 +437,7 @@ mod tests {
         assert_eq!(unlocked.len(), 1);
         assert_eq!(
             unlocked[0].address(),
-            "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
+            Address::from_str("0xec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
         );
     }
 

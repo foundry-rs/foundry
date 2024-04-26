@@ -133,8 +133,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@clippy
-        with:
-          toolchain: nightly-2024-02-03
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -168,7 +166,7 @@ jobs:
         # so running `forge fmt` with `--root testdata` won't actually check anything
         run: |
           shopt -s extglob
-          cargo run --bin forge -- fmt --check testdata/**/!(Vm).sol
+          cargo run --bin forge -- fmt --check $(find testdata -name '*.sol' ! -name Vm.sol)
 
   crate-checks:
     runs-on: ubuntu-latest
