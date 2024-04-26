@@ -104,12 +104,12 @@ ethers = { workspace = true, features = ["abigen", "optimism"] }
 ethers-core = { workspace = true, features = ["optimism"] }
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
 alloy-rpc-client = { workspace = true, features = ["pubsub"] }
+alloy-transport-ipc = { workspace = true, features = ["mock"] }
 alloy-transport-ws.workspace = true
 alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 pretty_assertions.workspace = true
-tempfile.workspace = true
 tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
 

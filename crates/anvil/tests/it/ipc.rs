@@ -5,18 +5,13 @@ use alloy_primitives::U256;
 use alloy_provider::Provider;
 use anvil::{spawn, NodeConfig};
 use futures::StreamExt;
-use tempfile::NamedTempFile;
 
 pub fn rand_ipc_endpoint() -> String {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.into_temp_path().to_path_buf();
-
-    // [Windows named pipes](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipes)
-    // are located at `\\<machine_address>\pipe\<pipe_name>`.
+    let num: u64 = rand::Rng::gen(&mut rand::thread_rng());
     if cfg!(windows) {
-        format!(r"\\.\pipe\{}", path.display())
+        format!(r"\\.\pipe\anvil-ipc-{num}")
     } else {
-        path.display().to_string()
+        format!(r"/tmp/anvil-ipc-{num}")
     }
 }
 
