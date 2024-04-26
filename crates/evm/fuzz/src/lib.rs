@@ -25,6 +25,7 @@ pub mod invariant;
 pub mod strategies;
 
 mod inspector;
+use crate::invariant::BasicTxDetails;
 pub use inspector::Fuzzer;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,33 +57,31 @@ pub struct BaseCounterExample {
 
 impl BaseCounterExample {
     pub fn create(
-        sender: Address,
-        addr: Address,
-        bytes: &Bytes,
+        tx: &BasicTxDetails,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Self {
-        if let Some((name, abi)) = &contracts.get(&addr) {
-            if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
-                // skip the function selector when decoding
-                if let Ok(args) = func.abi_decode_input(&bytes[4..], false) {
-                    return BaseCounterExample {
-                        sender: Some(sender),
-                        addr: Some(addr),
-                        calldata: bytes.clone(),
-                        signature: Some(func.signature()),
-                        contract_name: Some(name.clone()),
-                        traces,
-                        args,
-                    };
-                }
+        if let Some((name, _)) = &contracts.get(&tx.call_details.address) {
+            // skip the function selector when decoding
+            if let Ok(args) =
+                tx.call_details.function.abi_decode_input(&tx.call_details.calldata[4..], false)
+            {
+                return BaseCounterExample {
+                    sender: Some(tx.sender),
+                    addr: Some(tx.call_details.address),
+                    calldata: tx.call_details.calldata.clone(),
+                    signature: Some(tx.call_details.function.signature()),
+                    contract_name: Some(name.clone()),
+                    traces,
+                    args,
+                };
             }
         }
 
         BaseCounterExample {
-            sender: Some(sender),
-            addr: Some(addr),
-            calldata: bytes.clone(),
+            sender: Some(tx.sender),
+            addr: Some(tx.call_details.address),
+            calldata: tx.call_details.calldata.clone(),
             signature: None,
             contract_name: None,
             traces,

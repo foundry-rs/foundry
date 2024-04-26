@@ -2,7 +2,6 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
@@ -220,17 +219,26 @@ impl<'a> InvariantExecutor<'a> {
             let mut assume_rejects_counter = 0;
 
             while current_run < self.config.depth {
-                let (sender, (address, calldata, func, abi)) =
-                    inputs.last().expect("no input generated");
+                let tx = inputs.last().expect("no input generated");
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = if self.config.preserve_state {
                     executor
-                        .call_raw_committing(*sender, *address, calldata.clone(), U256::ZERO)
+                        .call_raw_committing(
+                            tx.sender,
+                            tx.call_details.address,
+                            tx.call_details.calldata.clone(),
+                            U256::ZERO,
+                        )
                         .expect("could not make raw evm call")
                 } else {
                     executor
-                        .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
+                        .call_raw(
+                            tx.sender,
+                            tx.call_details.address,
+                            tx.call_details.calldata.clone(),
+                            U256::ZERO,
+                        )
                         .expect("could not make raw evm call")
                 };
 
@@ -251,9 +259,7 @@ impl<'a> InvariantExecutor<'a> {
                     if !&call_result.reverted {
                         collect_data(
                             &mut state_changeset,
-                            sender,
-                            func,
-                            abi,
+                            tx,
                             &call_result,
                             &fuzz_state,
                             self.config.depth,
@@ -278,7 +284,7 @@ impl<'a> InvariantExecutor<'a> {
                     executor.backend.commit(state_changeset.clone());
 
                     fuzz_runs.push(FuzzCase {
-                        calldata: calldata.clone(),
+                        calldata: tx.call_details.calldata.clone(),
                         gas: call_result.gas_used,
                         stipend: call_result.stipend,
                     });
@@ -677,16 +683,15 @@ impl<'a> InvariantExecutor<'a> {
 /// randomly generated addresses.
 fn collect_data(
     state_changeset: &mut HashMap<Address, revm::primitives::Account>,
-    sender: &Address,
-    function: &Option<Function>,
-    abi: &JsonAbi,
+    tx: &BasicTxDetails,
     call_result: &RawCallResult,
     fuzz_state: &EvmFuzzState,
     run_depth: u32,
 ) {
     // Verify it has no code.
     let mut has_code = false;
-    if let Some(Some(code)) = state_changeset.get(sender).map(|account| account.info.code.as_ref())
+    if let Some(Some(code)) =
+        state_changeset.get(&tx.sender).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -694,12 +699,12 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(sender);
+        sender_changeset = state_changeset.remove(&tx.sender);
     }
 
     fuzz_state.collect_state_from_call(
-        function,
-        abi,
+        &tx.call_details.function,
+        &tx.call_details.abi,
         &call_result.result,
         &call_result.logs,
         &*state_changeset,
@@ -708,7 +713,7 @@ fn collect_data(
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(*sender, changed);
+        state_changeset.insert(tx.sender, changed);
     }
 }
 

@@ -170,9 +170,13 @@ impl FailedInvariantCaseData {
         set_up_inner_replay(&mut executor, &self.inner_sequence);
 
         // Replay each call from the sequence until we break the invariant.
-        for (sender, (addr, bytes, _, _)) in calls.iter() {
-            let call_result =
-                executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
+        for tx in calls.iter() {
+            let call_result = executor.call_raw_committing(
+                tx.sender,
+                tx.call_details.address,
+                tx.call_details.calldata.clone(),
+                U256::ZERO,
+            )?;
 
             logs.extend(call_result.logs);
             traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
@@ -184,9 +188,7 @@ impl FailedInvariantCaseData {
             ));
 
             counterexample_sequence.push(BaseCounterExample::create(
-                *sender,
-                *addr,
-                bytes,
+                tx,
                 &ided_contracts,
                 call_result.traces,
             ));
@@ -260,8 +262,15 @@ impl FailedInvariantCaseData {
     ) -> bool {
         // Apply the shrinked candidate sequence.
         sequence.iter().for_each(|call_index| {
-            let (sender, (addr, bytes, _, _)) = &calls[*call_index];
-            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO).unwrap();
+            let tx = &calls[*call_index];
+            executor
+                .call_raw_committing(
+                    tx.sender,
+                    tx.call_details.address,
+                    tx.call_details.calldata.clone(),
+                    U256::ZERO,
+                )
+                .unwrap();
         });
 
         // Check the invariant for candidate sequence.

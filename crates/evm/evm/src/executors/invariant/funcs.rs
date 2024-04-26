@@ -85,9 +85,13 @@ pub fn replay_run(
     // set_up_inner_replay(&mut executor, &inputs);
 
     // Replay each call from the sequence until we break the invariant.
-    for (sender, (addr, bytes, _, _)) in inputs.iter() {
-        let call_result =
-            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
+    for tx in inputs.iter() {
+        let call_result = executor.call_raw_committing(
+            tx.sender,
+            tx.call_details.address,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
 
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));

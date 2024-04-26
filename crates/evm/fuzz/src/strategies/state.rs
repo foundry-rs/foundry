@@ -38,7 +38,7 @@ impl EvmFuzzState {
     /// [EvmFuzzState] according to the given [FuzzDictionaryConfig].
     pub fn collect_state_from_call(
         &self,
-        function: &Option<Function>,
+        function: &Function,
         abi: &JsonAbi,
         result: &Bytes,
         logs: &[Log],
@@ -48,16 +48,11 @@ impl EvmFuzzState {
         let mut dict = self.inner.write();
         let mut samples = Vec::new();
 
-        match function {
-            Some(func) => {
-                // Decode result and collect samples to be used in subsequent fuzz runs.
-                if !result.is_empty() {
-                    if let Ok(decoded_result) = func.abi_decode_output(result, false) {
-                        samples.extend(decoded_result);
-                    }
-                }
+        if !function.outputs.is_empty() {
+            // Decode result and collect samples to be used in subsequent fuzz runs.
+            if let Ok(decoded_result) = function.abi_decode_output(result, false) {
+                samples.extend(decoded_result);
             }
-            None => {}
         }
 
         // Decode logs with known events and collect samples from indexed fields and event body.

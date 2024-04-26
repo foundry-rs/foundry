@@ -1,6 +1,5 @@
 use super::{BasicTxDetails, CallDetails};
-use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Address;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     option::weighted,
@@ -34,7 +33,7 @@ impl RandomCallGenerator {
     pub fn new(
         test_address: Address,
         runner: TestRunner,
-        strategy: SBoxedStrategy<(Address, Bytes, Option<Function>, JsonAbi)>,
+        strategy: SBoxedStrategy<CallDetails>,
         target_reference: Arc<RwLock<Address>>,
     ) -> Self {
         let strategy = weighted(0.9, strategy).sboxed();
@@ -78,9 +77,12 @@ impl RandomCallGenerator {
             *self.target_reference.write() = original_caller;
 
             // `original_caller` has a 80% chance of being the `new_target`.
-            let choice = self.strategy.new_tree(&mut self.runner.lock()).unwrap().current().map(
-                |(new_target, calldata, func, abi)| (new_caller, (new_target, calldata, func, abi)),
-            );
+            let choice = self
+                .strategy
+                .new_tree(&mut self.runner.lock())
+                .unwrap()
+                .current()
+                .map(|call_details| BasicTxDetails::new(new_caller, call_details));
 
             self.last_sequence.write().push(choice.clone());
             choice
