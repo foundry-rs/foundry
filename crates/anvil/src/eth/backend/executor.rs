@@ -127,7 +127,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             None
         };
 
-        let is_cancun = self.cfg_env.spec_id >= SpecId::CANCUN;
+        let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
         let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u128) } else { None };
 
@@ -226,7 +226,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             base_fee,
             parent_beacon_block_root: Default::default(),
             blob_gas_used: cumulative_blob_gas_used,
-            excess_blob_gas,
+            excess_blob_gas: excess_blob_gas.map(|g| g as u128),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -281,7 +281,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         }
 
         // check that we comply with the block's blob gas limit
-        if self.blob_gas_used.to::<u64>() > MAX_BLOB_GAS_PER_BLOCK {
+        if (self.blob_gas_used as u64) > MAX_BLOB_GAS_PER_BLOCK {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 

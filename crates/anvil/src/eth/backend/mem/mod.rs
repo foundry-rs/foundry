@@ -33,8 +33,7 @@ use crate::{
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U128, U256, U64};
-use alloy_rlp::Decodable;
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
 use alloy_rpc_types::{
     request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
     Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
@@ -1612,8 +1611,8 @@ impl Backend {
                 nonce: Some(nonce),
                 base_fee_per_gas,
                 withdrawals_root: None,
-                blob_gas_used: blob_gas_used.map(U64::from),
-                excess_blob_gas: excess_blob_gas.map(U64::from),
+                blob_gas_used,
+                excess_blob_gas,
                 parent_beacon_block_root,
             },
             size: Some(size),
@@ -2354,7 +2353,7 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-4844 Cancun hard fork validation steps
-        if env.cfg.spec_id >= SpecId::CANCUN && tx.transaction.is_eip4844() {
+        if env.spec_id() >= SpecId::CANCUN && tx.transaction.is_eip4844() {
             // Light checks first: see if the blob fee cap is too low.
             if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
                 if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
@@ -2454,7 +2453,8 @@ pub fn transaction_build(
             if eth_transaction.is_eip4844() {
                 transaction.gas_price = transaction
                     .gas_price
-                    .map(|g| g.checked_add(transaction.max_fee_per_blob_gas.unwrap_or_default()));
+                    .map(|g| g.checked_add(transaction.max_fee_per_blob_gas.unwrap_or_default()))
+                    .unwrap_or(Some(u128::MAX));
             }
         }
     } else {

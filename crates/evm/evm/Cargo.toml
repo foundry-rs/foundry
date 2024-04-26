@@ -29,8 +29,6 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-sol-types.workspace = true
-alloy-rpc-types.workspace = true
-hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",

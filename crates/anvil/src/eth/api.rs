@@ -31,7 +31,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{Signed, TxEip4844Variant, TxLegacy};
+use alloy_consensus::TxEip4844Variant;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::calc_blob_gasprice;
 use alloy_network::eip2718::Decodable2718;
@@ -1358,13 +1358,9 @@ impl EthApi {
         // Same goes for the `base_fee_per_blob_gas`:
         // > "[..] includes the next block after the newest of the returned range, because this
         // > value can be derived from the newest block.
-        response.base_fee_per_blob_gas.push(
-            newest_header
-                .excess_blob_gas
-                .map(|excess| calc_blob_gasprice(excess.to::<u64>()))
-                .map(U256::from)
-                .unwrap_or(U256::ZERO),
-        );
+        response
+            .base_fee_per_blob_gas
+            .push(newest_header.excess_blob_gas.map(calc_blob_gasprice).unwrap_or(0));
 
         Ok(response)
     }
@@ -2474,9 +2470,9 @@ impl EthApi {
                 TypedTransactionRequest::EIP4844(match m {
                     // We only accept the TxEip4844 variant which has the sidecar.
                     TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
-                        m.tx.nonce = nonce.to::<u64>();
+                        m.tx.nonce = nonce;
                         m.tx.chain_id = chain_id;
-                        m.tx.gas_limit = gas_limit.to::<u64>();
+                        m.tx.gas_limit = gas_limit;
                         if max_fee_per_gas.is_none() {
                             m.tx.max_fee_per_gas =
                                 self.gas_price().unwrap_or_default().to::<u128>();

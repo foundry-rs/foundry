@@ -178,7 +178,7 @@ impl FeeManager {
 
     /// Calculates the next block blob base fee, using the provided excess blob gas
     pub fn get_next_block_blob_base_fee_per_gas(&self, excess_blob_gas: u128) -> u128 {
-        crate::revm::primitives::calc_blob_gasprice(excess_blob_gas.to::<u64>())
+        crate::revm::primitives::calc_blob_gasprice(excess_blob_gas as u64)
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and
@@ -188,10 +188,7 @@ impl FeeManager {
         blob_gas_used: u128,
         blob_excess_gas: u128,
     ) -> u64 {
-        crate::revm::primitives::calc_excess_blob_gas(
-            blob_gas_used.to::<u64>(),
-            blob_excess_gas.to::<u64>(),
-        )
+        crate::revm::primitives::calc_excess_blob_gas(blob_gas_used as u64, blob_excess_gas as u64)
     }
 }
 
@@ -267,7 +264,7 @@ impl FeeHistoryService {
             gas_used_ratio: 0f64,
             blob_gas_used_ratio: 0f64,
             rewards: Vec::new(),
-            excess_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.excess_blob_gas),
+            excess_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.excess_blob_gas as u128),
             base_fee_per_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.blob_gasprice),
             blob_gas_used: excess_blob_gas_and_price.as_ref().map(|_| 0),
         };
