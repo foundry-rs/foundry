@@ -25,6 +25,7 @@ pub struct InvariantConfig {
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
     /// Attempt to shrink the failure case to its smallest sequence of calls
+    /// TODO: remove this setting as it is now redundant with shrink_run_limit = 0
     pub shrink_sequence: bool,
     /// The maximum number of attempts to shrink the sequence
     pub shrink_run_limit: usize,

@@ -1264,7 +1264,7 @@ impl EthApi {
         }
 
         const MAX_BLOCK_COUNT: u64 = 1024u64;
-        let block_count = block_count.to::<u64>().max(MAX_BLOCK_COUNT);
+        let block_count = block_count.to::<u64>().min(MAX_BLOCK_COUNT);
 
         // highest and lowest block num in the requested range
         let highest = number;

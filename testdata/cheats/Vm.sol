@@ -145,6 +145,7 @@ interface Vm {
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
+    function blobhashes(bytes32[] calldata hashes) external;
     function breakpoint(string calldata char) external;
     function breakpoint(string calldata char, bool value) external;
     function broadcast() external;
@@ -231,6 +232,7 @@ interface Vm {
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
+    function getBlobhashes() external view returns (bytes32[] memory hashes);
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
