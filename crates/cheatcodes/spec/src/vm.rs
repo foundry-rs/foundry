@@ -385,13 +385,13 @@ interface Vm {
     /// Not available on EVM versions before Cancun.
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function blobhashes(bytes32[] calldata blobhashes) external;
+    function blobhashes(bytes32[] calldata hashes) external;
 
     /// Gets the blockhashes from the current transaction.
     /// Not available on EVM versions before Cancun.
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function getBlobhashes() external view returns (bytes32[] memory blobhashes);
+    function getBlobhashes() external view returns (bytes32[] memory hashes);
 
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]

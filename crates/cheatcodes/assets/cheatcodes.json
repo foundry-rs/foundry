@@ -2995,7 +2995,7 @@
       "func": {
         "id": "blobhashes",
         "description": "Sets the blobhashes in the transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
-        "declaration": "function blobhashes(bytes32[] calldata blobhashes) external;",
+        "declaration": "function blobhashes(bytes32[] calldata hashes) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "blobhashes(bytes32[])",
@@ -4735,7 +4735,7 @@
       "func": {
         "id": "getBlobhashes",
         "description": "Gets the blockhashes from the current transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
-        "declaration": "function getBlobhashes() external view returns (bytes32[] memory blobhashes);",
+        "declaration": "function getBlobhashes() external view returns (bytes32[] memory hashes);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getBlobhashes()",
