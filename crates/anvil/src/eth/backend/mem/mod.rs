@@ -1055,11 +1055,11 @@ impl Backend {
             header.base_fee_per_gas.unwrap_or_default(),
         );
 
-        // notify all listeners
-        self.notify_on_new_block(header, block_hash);
-
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee);
+
+        // notify all listeners
+        self.notify_on_new_block(header, block_hash);
 
         outcome
     }
