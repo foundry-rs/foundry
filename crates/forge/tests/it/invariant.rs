@@ -178,21 +178,21 @@ async fn test_invariant() {
                 vec![("invariant_shrink_big_sequence()", true, None, None, None)],
             ),
             (
-                "default/fuzz/invariant/common/InvariantScrapeReturnValue.t.sol:FindFromReturnValueTest",
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromReturnValueTest",
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value found".into()),
+                    Some("revert: value from return found".into()),
                     None,
                     None,
                 )],
             ),
             (
-                "default/fuzz/invariant/common/InvariantScrapeLogs.t.sol:FindFromLogValueTest",
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromLogValueTest",
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value found".into()),
+                    Some("revert: value from logs found".into()),
                     None,
                     None,
                 )],
@@ -558,46 +558,33 @@ async fn test_invariant_fixtures() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_invariant_scrape_return_values() {
-    let filter =
-        Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeReturnValue.t.sol");
+async fn test_invariant_scrape_values() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeValues.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options.invariant.fail_on_revert = true;
     let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
         BTreeMap::from([
             (
-                "default/fuzz/invariant/common/InvariantScrapeReturnValue.t.sol:FindFromReturnValueTest",
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromReturnValueTest",
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value found".into()),
+                    Some("revert: value from return found".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromLogValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from logs found".into()),
                     None,
                     None,
                 )],
             ),
         ]),
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_invariant_scrape_logs() {
-    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeLogs.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options.invariant.fail_on_revert = false;
-    let results = runner.test_collect(&filter);
-    assert_multiple(
-        &results,
-        BTreeMap::from([(
-            "default/fuzz/invariant/common/InvariantScrapeLogs.t.sol:FindFromLogValueTest",
-            vec![(
-                "invariant_value_not_found()",
-                false,
-                Some("revert: value found".into()),
-                None,
-                None,
-            )],
-        )]),
     );
 }
