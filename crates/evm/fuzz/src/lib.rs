@@ -7,7 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, Log};
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
@@ -67,15 +67,6 @@ impl BaseCounterExample {
             None
         };
 
-        // Decode input args, skip the function selector when decoding.
-        let args = if let Ok(args) =
-            tx.call_details.function.abi_decode_input(&tx.call_details.calldata[4..], false)
-        {
-            args
-        } else {
-            vec![]
-        };
-
         BaseCounterExample {
             sender: Some(tx.sender),
             addr: Some(tx.call_details.address),
@@ -83,7 +74,7 @@ impl BaseCounterExample {
             signature: Some(tx.call_details.function.signature()),
             contract_name,
             traces,
-            args,
+            args: tx.call_details.args(),
         }
     }
 }

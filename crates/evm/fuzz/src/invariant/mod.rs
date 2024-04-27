@@ -1,3 +1,4 @@
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use parking_lot::Mutex;
@@ -50,7 +51,7 @@ pub struct CallDetails {
     pub address: Address,
     // The data of the transaction.
     pub calldata: Bytes,
-    // Target function, used to decode and collect values from result and to create counterexample.
+    // Target function, used to decode values from result and to create counterexample.
     pub function: Function,
     // Target contract abi, used to decode and collect values from logs.
     pub abi: JsonAbi,
@@ -59,6 +60,16 @@ pub struct CallDetails {
 impl CallDetails {
     pub fn new(address: Address, calldata: Bytes, function: Function, abi: JsonAbi) -> Self {
         Self { address, calldata, function, abi }
+    }
+
+    // Returns args of the call (decoded from calldata).
+    pub fn args(&self) -> Vec<DynSolValue> {
+        // Skip the function selector when decoding.
+        if let Ok(args) = self.function.abi_decode_input(&self.calldata[4..], false) {
+            args
+        } else {
+            vec![]
+        }
     }
 }
 
