@@ -2224,8 +2224,8 @@ impl EthApi {
                 }
                 // amount of gas the sender can afford with the `gas_price`
                 let allowance =
-                    available_funds.to::<u128>().checked_div(gas_price).unwrap_or_default();
-                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance);
+                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
             }
         }
 
