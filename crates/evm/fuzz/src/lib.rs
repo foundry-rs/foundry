@@ -56,36 +56,34 @@ pub struct BaseCounterExample {
 }
 
 impl BaseCounterExample {
-    pub fn create(
+    pub fn from_tx_details(
         tx: &BasicTxDetails,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Self {
-        if let Some((name, _)) = &contracts.get(&tx.call_details.address) {
-            // skip the function selector when decoding
-            if let Ok(args) =
-                tx.call_details.function.abi_decode_input(&tx.call_details.calldata[4..], false)
-            {
-                return BaseCounterExample {
-                    sender: Some(tx.sender),
-                    addr: Some(tx.call_details.address),
-                    calldata: tx.call_details.calldata.clone(),
-                    signature: Some(tx.call_details.function.signature()),
-                    contract_name: Some(name.clone()),
-                    traces,
-                    args,
-                };
-            }
-        }
+        let contract_name = if let Some((name, _)) = &contracts.get(&tx.call_details.address) {
+            Some(name.clone())
+        } else {
+            None
+        };
+
+        // Decode input args, skip the function selector when decoding.
+        let args = if let Ok(args) =
+            tx.call_details.function.abi_decode_input(&tx.call_details.calldata[4..], false)
+        {
+            args
+        } else {
+            vec![]
+        };
 
         BaseCounterExample {
             sender: Some(tx.sender),
             addr: Some(tx.call_details.address),
             calldata: tx.call_details.calldata.clone(),
-            signature: None,
-            contract_name: None,
+            signature: Some(tx.call_details.function.signature()),
+            contract_name,
             traces,
-            args: vec![],
+            args,
         }
     }
 }

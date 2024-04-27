@@ -187,7 +187,7 @@ impl FailedInvariantCaseData {
                 known_contracts,
             ));
 
-            counterexample_sequence.push(BaseCounterExample::create(
+            counterexample_sequence.push(BaseCounterExample::from_tx_details(
                 tx,
                 &ided_contracts,
                 call_result.traces,
