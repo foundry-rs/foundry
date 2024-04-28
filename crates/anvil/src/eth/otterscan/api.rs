@@ -9,9 +9,7 @@ use crate::eth::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber};
-use alloy_rpc_types_trace::parity::{
-    Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,
-};
+use alloy_rpc_types_trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
 use itertools::Itertools;
 
 impl EthApi {
@@ -134,38 +132,31 @@ impl EthApi {
         let best = self.backend.best_number();
         // we go from given block (defaulting to best) down to first block
         // considering only post-fork
-        let from = if block_number == 0 { best } else { block_number };
+        let from = if block_number == 0 { best } else { block_number - 1 };
         let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
 
-        let first_page = from == best;
+        let first_page = from >= best;
         let mut last_page = false;
 
         let mut res: Vec<_> = vec![];
 
         for n in (to..=from).rev() {
-            if n == to {
-                last_page = true;
-            }
-
             if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| match trace.trace.action {
-                        Action::Call(CallAction { from, to, .. })
-                            if from == address || to == address =>
-                        {
-                            trace.transaction_hash
-                        }
-                        _ => None,
-                    })
+                    .filter_map(|trace| OtsSearchTransactions::mentions_address(trace, address))
                     .unique();
-
-                res.extend(hashes);
 
                 if res.len() >= page_size {
                     break
                 }
+
+                res.extend(hashes);
+            }
+
+            if n == to {
+                last_page = true;
             }
         }
 
@@ -183,20 +174,17 @@ impl EthApi {
 
         let best = self.backend.best_number();
         // we go from the first post-fork block, up to the tip
-        let from = if block_number == 0 {
-            self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1)
-        } else {
-            block_number
-        };
+        let first_block = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        let from = if block_number == 0 { first_block } else { block_number + 1 };
         let to = best;
 
-        let first_page = from == best;
+        let mut first_page = from >= best;
         let mut last_page = false;
 
         let mut res: Vec<_> = vec![];
 
         for n in from..=to {
-            if n == to {
+            if n == first_block {
                 last_page = true;
             }
 
@@ -204,30 +192,23 @@ impl EthApi {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| match trace.trace.action {
-                        Action::Call(CallAction { from, to, .. })
-                            if from == address || to == address =>
-                        {
-                            trace.transaction_hash
-                        }
-                        Action::Create(CreateAction { from, .. }) if from == address => {
-                            trace.transaction_hash
-                        }
-                        Action::Reward(RewardAction { author, .. }) if author == address => {
-                            trace.transaction_hash
-                        }
-                        _ => None,
-                    })
+                    .filter_map(|trace| OtsSearchTransactions::mentions_address(trace, address))
                     .unique();
-
-                res.extend(hashes);
 
                 if res.len() >= page_size {
                     break
                 }
+
+                res.extend(hashes);
+            }
+
+            if n == to {
+                first_page = true;
             }
         }
 
+        // Results are always sent in reverse chronological order, according to the Otterscan spec
+        res.reverse();
         OtsSearchTransactions::build(res, &self.backend, first_page, last_page).await
     }
 

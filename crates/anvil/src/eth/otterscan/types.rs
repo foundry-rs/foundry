@@ -2,9 +2,12 @@ use crate::eth::{
     backend::mem::{storage::MinedTransaction, Backend},
     error::{BlockchainError, Result},
 };
-use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256 as rU256, U256};
 use alloy_rpc_types::{Block, BlockTransactions, Transaction, WithOtherFields};
-use alloy_rpc_types_trace::parity::{Action, CallType, LocalizedTransactionTrace};
+use alloy_rpc_types_trace::parity::{
+    Action, CallAction, CallType, CreateAction, CreateOutput, LocalizedTransactionTrace,
+    RewardAction, TraceOutput,
+};
 use anvil_core::eth::transaction::ReceiptResponse;
 use foundry_evm::{revm::interpreter::InstructionResult, traces::CallKind};
 use futures::future::join_all;
@@ -250,6 +253,29 @@ impl OtsSearchTransactions {
         .into_iter()
         .collect::<Result<Vec<_>>>()
         .map(|receipts| Self { txs, receipts, first_page, last_page })
+    }
+
+    pub fn mentions_address(
+        trace: LocalizedTransactionTrace,
+        address: Address,
+    ) -> Option<FixedBytes<32>> {
+        match (trace.trace.action, trace.trace.result) {
+            (Action::Call(CallAction { from, to, .. }), _) if from == address || to == address => {
+                trace.transaction_hash
+            }
+            (_, Some(TraceOutput::Create(CreateOutput { address: created_address, .. })))
+                if created_address == address =>
+            {
+                trace.transaction_hash
+            }
+            (Action::Create(CreateAction { from, .. }), _) if from == address => {
+                trace.transaction_hash
+            }
+            (Action::Reward(RewardAction { author, .. }), _) if author == address => {
+                trace.transaction_hash
+            }
+            _ => None,
+        }
     }
 }
 

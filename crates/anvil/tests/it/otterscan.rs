@@ -586,17 +586,18 @@ async fn can_call_ots_search_transactions_before() {
 
     let page_size = 2;
     let mut block = 0;
-    for _ in 0..4 {
+    for i in 0..4 {
         let result = api.ots_search_transactions_before(sender, block, page_size).await.unwrap();
 
-        assert!(result.txs.len() <= page_size);
+        assert_eq!(result.first_page, i == 0);
+        assert_eq!(result.last_page, i == 3);
 
         // check each individual hash
         result.txs.iter().for_each(|tx| {
             assert_eq!(hashes.pop(), Some(tx.hash));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap() - 1;
+        block = result.txs.last().unwrap().block_number.unwrap();
     }
 
     assert!(hashes.is_empty());
@@ -626,17 +627,18 @@ async fn can_call_ots_search_transactions_after() {
 
     let page_size = 2;
     let mut block = 0;
-    for _ in 0..4 {
+    for i in 0..4 {
         let result = api.ots_search_transactions_after(sender, block, page_size).await.unwrap();
 
-        assert!(result.txs.len() <= page_size);
+        assert_eq!(result.first_page, i == 3);
+        assert_eq!(result.last_page, i == 0);
 
         // check each individual hash
-        result.txs.iter().for_each(|tx| {
+        result.txs.iter().rev().for_each(|tx| {
             assert_eq!(hashes.pop_back(), Some(tx.hash));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap() + 1;
+        block = result.txs.first().unwrap().block_number.unwrap();
     }
 
     assert!(hashes.is_empty());
