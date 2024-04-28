@@ -28,7 +28,7 @@ use foundry_compilers::{
 };
 use inflector::Inflector;
 use regex::Regex;
-use revm_primitives::{fixed_bytes, FixedBytes, SpecId};
+use revm_primitives::{FixedBytes, SpecId};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -454,10 +454,7 @@ impl Config {
     pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Default salt for create2 library deployments
-    ///
-    /// cast keccak 'foundry create2'
-    pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> =
-        fixed_bytes!("19bf59b7b67ae8edcbc6e53616080f61fa99285c061450ad601b0bc40c9adfc9");
+    pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
 
     /// Returns the current `Config`
     ///
