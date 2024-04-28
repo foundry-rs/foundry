@@ -283,6 +283,24 @@ async fn can_sign_typed_data_os() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_sign_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    // craft the tx
+    // specify the `from` field so that the client knows which account to use
+    let tx = TransactionRequest::default().to(to).value(U256::from(1001u64)).from(from);
+    let tx = WithOtherFields::new(tx);
+    // sign it via the eth_signTransaction API
+    let signed_tx = api.sign_transaction(tx).await.unwrap();
+
+    assert_eq!(signed_tx, "0x02f86c827a69808084773594008252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c082f4f6a05b8c3e67a3cecdad35d8be49df75c6bb07f720dbd9742a4240d3cdee97653e36a02c946c4a6ce6e66803ff22af7b7d1c39307339ca122fa16a0ef63ace382e8d56");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn rejects_different_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap().with_chain_id(Some(1));
