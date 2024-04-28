@@ -178,12 +178,11 @@ impl<'a> InvariantExecutor<'a> {
         // This does not count as a fuzz run. It will just register the revert.
         let last_call_results = RefCell::new(assert_invariants(
             &invariant_contract,
+            &self.config,
             &targeted_contracts,
             &self.executor,
             &[],
             &mut failures.borrow_mut(),
-            self.config.shrink_sequence,
-            self.config.shrink_run_limit,
         )?);
 
         if last_call_results.borrow().is_none() {
@@ -274,15 +273,13 @@ impl<'a> InvariantExecutor<'a> {
                     let RichInvariantResults { success: can_continue, call_result: call_results } =
                         can_continue(
                             &invariant_contract,
+                            &self.config,
                             call_result,
                             &executor,
                             &inputs,
                             &mut failures.borrow_mut(),
                             &targeted_contracts,
                             &state_changeset,
-                            self.config.fail_on_revert,
-                            self.config.shrink_sequence,
-                            self.config.shrink_run_limit,
                             &mut run_traces,
                         )
                         .map_err(|e| TestCaseError::fail(e.to_string()))?;
@@ -350,7 +347,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-    ) -> eyre::Result<InvariantPreparation> {
+    ) -> Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -405,7 +402,7 @@ impl<'a> InvariantExecutor<'a> {
     /// Priority:
     ///
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
-    pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> eyre::Result<()> {
+    pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> Result<()> {
         let result = self
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
@@ -471,7 +468,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         contract: String,
         selectors: &[FixedBytes<4>],
-    ) -> eyre::Result<String> {
+    ) -> Result<String> {
         if let Some((artifact, contract_data)) =
             self.project_contracts.find_by_name_or_identifier(&contract)?
         {
@@ -494,7 +491,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn select_contracts_and_senders(
         &self,
         to: Address,
-    ) -> eyre::Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
+    ) -> Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
         let targeted_senders =
             self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
         let excluded_senders =
@@ -545,7 +542,7 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         invariant_address: Address,
         targeted_contracts: &mut TargetedContracts,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let interfaces = self
             .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {})
             .targetedInterfaces;
@@ -593,7 +590,7 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         address: Address,
         targeted_contracts: &mut TargetedContracts,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let some_abi_selectors = self
             .artifact_filters
             .targeted
@@ -696,17 +693,15 @@ fn collect_data(
 #[allow(clippy::too_many_arguments)]
 fn can_continue(
     invariant_contract: &InvariantContract<'_>,
+    invariant_config: &InvariantConfig,
     call_result: RawCallResult,
     executor: &Executor,
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     targeted_contracts: &FuzzRunIdentifiedContracts,
     state_changeset: &StateChangeset,
-    fail_on_revert: bool,
-    shrink_sequence: bool,
-    shrink_run_limit: usize,
     run_traces: &mut Vec<CallTraceArena>,
-) -> eyre::Result<RichInvariantResults> {
+) -> Result<RichInvariantResults> {
     let mut call_results = None;
 
     // Detect handler assertion failures first.
@@ -722,12 +717,11 @@ fn can_continue(
 
         call_results = assert_invariants(
             invariant_contract,
+            invariant_config,
             targeted_contracts,
             executor,
             calldata,
             failures,
-            shrink_sequence,
-            shrink_run_limit,
         )?;
         if call_results.is_none() {
             return Ok(RichInvariantResults::new(false, None));
@@ -736,16 +730,14 @@ fn can_continue(
         // Increase the amount of reverts.
         failures.reverts += 1;
         // If fail on revert is set, we must return immediately.
-        if fail_on_revert {
+        if invariant_config.fail_on_revert {
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
+                invariant_config,
                 targeted_contracts,
-                None,
                 calldata,
                 call_result,
                 &[],
-                shrink_sequence,
-                shrink_run_limit,
             );
             failures.revert_reason = Some(case_data.revert_reason.clone());
             let error = InvariantFuzzError::Revert(case_data);
