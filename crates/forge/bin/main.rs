@@ -81,11 +81,12 @@ fn main() -> Result<()> {
         }
         ForgeSubcommand::Clean { root } => {
             let config = utils::load_config_with_root(root);
-            config.project()?.cleanup()?;
+            let proj = config.project()?;
+            proj.cleanup()?;
 
             // Remove fuzz cache directory.
             if let Some(fuzz_cache) = config.fuzz.failure_persist_dir {
-                let _ = std::fs::remove_dir_all(fuzz_cache);
+                let _ = std::fs::remove_dir_all(proj.root().join(fuzz_cache));
             }
             Ok(())
         }
