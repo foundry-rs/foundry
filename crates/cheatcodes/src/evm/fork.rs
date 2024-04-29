@@ -4,7 +4,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use eyre::WrapErr;
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::provider::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
 

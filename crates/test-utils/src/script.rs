@@ -3,7 +3,7 @@ use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use eyre::Result;
-use foundry_common::provider::alloy::{get_http_provider, RetryProvider};
+use foundry_common::provider::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";

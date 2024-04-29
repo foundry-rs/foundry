@@ -12,7 +12,7 @@ use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
     compile::{ContractSources, ProjectCompiler},
-    provider::alloy::try_get_http_provider,
+    provider::try_get_http_provider,
     ContractData, ContractsByArtifact,
 };
 use foundry_compilers::{

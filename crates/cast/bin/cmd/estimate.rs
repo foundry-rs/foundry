@@ -1,5 +1,5 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use clap::Parser;
@@ -121,7 +121,7 @@ impl EstimateArgs {
             }
         };
 
-        req.set_input::<Bytes>(data.into());
+        req.set_input(data);
 
         let gas = provider.estimate_gas(&req, BlockId::latest()).await?;
         println!("{gas}");

@@ -56,7 +56,7 @@ pub async fn build_tx<
     let chain = chain.into();
 
     let from = from.into().resolve(provider).await?;
-    // TODO: Possible bug here?
+
     let to: Option<Address> =
         if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
 

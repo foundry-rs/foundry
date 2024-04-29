@@ -16,7 +16,7 @@ use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
-    provider::alloy::{get_http_provider, RpcUrl},
+    provider::get_http_provider,
     shell, ContractData, ContractsByArtifact,
 };
 use foundry_config::{Config, NamedChain};
@@ -225,7 +225,7 @@ impl PreExecutionState {
 /// Container for information about RPC-endpoints used during script execution.
 pub struct RpcData {
     /// Unique list of rpc urls present.
-    pub total_rpcs: HashSet<RpcUrl>,
+    pub total_rpcs: HashSet<String>,
     /// If true, one of the transactions did not have a rpc.
     pub missing_rpc: bool,
 }

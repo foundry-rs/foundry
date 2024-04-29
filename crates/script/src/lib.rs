@@ -19,7 +19,6 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::SkipBuildFilter,
     evm::{Breakpoints, EvmArgs},
-    provider::alloy::RpcUrl,
     shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::ArtifactId;
@@ -513,7 +512,7 @@ pub struct ScriptConfig {
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
-    pub backends: HashMap<RpcUrl, Backend>,
+    pub backends: HashMap<String, Backend>,
 }
 
 impl ScriptConfig {

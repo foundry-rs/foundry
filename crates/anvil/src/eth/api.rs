@@ -62,7 +62,7 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::provider::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,
@@ -1313,30 +1313,11 @@ impl EthApi {
 
         response.reward = Some(rewards);
 
-        // calculate next base fee
+        // add the next block's base fee to the response
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
         // newest block"
-        if let (Some(last_gas_used), Some(last_fee_per_gas)) =
-            (response.gas_used_ratio.last(), response.base_fee_per_gas.last())
-        {
-            let elasticity = self.backend.elasticity();
-            let last_fee_per_gas = *last_fee_per_gas as f64;
-            if last_gas_used > &0.5 {
-                // increase base gas
-                let increase = ((last_gas_used - 0.5) * 2f64) * elasticity;
-                let new_base_fee = (last_fee_per_gas + (last_fee_per_gas * increase)) as u128;
-                response.base_fee_per_gas.push(new_base_fee);
-            } else if last_gas_used < &0.5 {
-                // decrease gas
-                let increase = ((0.5 - last_gas_used) * 2f64) * elasticity;
-                let new_base_fee = (last_fee_per_gas - (last_fee_per_gas * increase)) as u128;
-                response.base_fee_per_gas.push(new_base_fee);
-            } else {
-                // same base gas
-                response.base_fee_per_gas.push(last_fee_per_gas as u128);
-            }
-        }
+        response.base_fee_per_gas.push(self.backend.fees().base_fee());
 
         Ok(response)
     }
@@ -2188,11 +2169,11 @@ impl EthApi {
     {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
-        let to = if let Some(TxKind::Call(to)) = request.to { Some(to) } else { None };
+        let to = request.to.as_ref().and_then(TxKind::to);
         let likely_transfer = request.input.clone().into_input().is_none();
         if likely_transfer {
             if let Some(to) = to {
-                if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
+                if let Ok(target_code) = self.backend.get_code_with_state(&state, *to) {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_TRANSACTION_GAS);
                     }
@@ -2225,8 +2206,8 @@ impl EthApi {
                 }
                 // amount of gas the sender can afford with the `gas_price`
                 let allowance =
-                    available_funds.to::<u128>().checked_div(gas_price).unwrap_or_default();
-                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance);
+                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
             }
         }
 

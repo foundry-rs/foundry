@@ -155,7 +155,6 @@ ethers-contract = { version = "2.0.14", default-features = false }
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 ethers-providers = { version = "2.0.14", default-features = false }
 ethers-signers = { version = "2.0.14", default-features = false }
-ethers-middleware = { version = "2.0.14", default-features = false }
 
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
@@ -168,6 +167,7 @@ alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "8808d2
 alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-rpc-types-engine = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
@@ -180,10 +180,10 @@ alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "8808d
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-primitives = { version = "0.7.1", features = ["getrandom"] }
-alloy-dyn-abi = "0.7.0"
-alloy-json-abi = "0.7.0"
-alloy-sol-types = "0.7.0"
-syn-solidity = "0.7.0"
+alloy-dyn-abi = "0.7.1"
+alloy-json-abi = "0.7.1"
+alloy-sol-types = "0.7.1"
+syn-solidity = "0.7.1"
 alloy-chains = "0.1"
 alloy-trie = "0.3.1"
 alloy-rlp = "0.3.3"
