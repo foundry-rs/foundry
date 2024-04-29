@@ -551,6 +551,7 @@ impl EthApi {
         Ok(U256::from(self.backend.gas_price()))
     }
 
+    /// Returns the excess blob gas and current blob gas price
     pub fn excess_blob_gas_and_price(&self) -> Result<Option<BlobExcessGasAndPrice>> {
         Ok(self.backend.excess_blob_gas_and_price())
     }
