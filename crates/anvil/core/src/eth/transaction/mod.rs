@@ -128,7 +128,7 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), Some(to)) => {
+        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), to) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
@@ -138,47 +138,10 @@ pub fn transaction_request_to_typed(
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
                 to: match to {
-                    TxKind::Call(to) => to,
-                    TxKind::Create => Address::ZERO,
-                },
-                chain_id: 0,
-                access_list: access_list.unwrap_or_default(),
-                blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
-            };
-            let blob_sidecar = BlobTransactionSidecar {
-                blobs: sidecar
-                    .blobs
-                    .into_iter()
-                    .map(|b| c_kzg::Blob::from_bytes(b.as_slice()).unwrap())
-                    .collect(),
-                commitments: sidecar
-                    .commitments
-                    .into_iter()
-                    .map(|c| c_kzg::Bytes48::from_bytes(c.as_slice()).unwrap())
-                    .collect(),
-                proofs: sidecar
-                    .proofs
-                    .into_iter()
-                    .map(|p| c_kzg::Bytes48::from_bytes(p.as_slice()).unwrap())
-                    .collect(),
-            };
-            Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
-                TxEip4844WithSidecar::from_tx_and_sidecar(tx, blob_sidecar),
-            )))
-        }
-        // EIP4844
-        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), _) => {
-            let tx = TxEip4844 {
-                nonce: nonce.unwrap_or_default(),
-                max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
-                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_blob_gas: max_fee_per_blob_gas.unwrap_or_default(),
-                gas_limit: gas.unwrap_or_default(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(TxKind::Call(to)) => to,
-                    Some(TxKind::Create) => Address::ZERO,
+                    Some(to) => match to {
+                        TxKind::Call(to) => to,
+                        TxKind::Create => Address::ZERO,
+                    },
                     None => Address::ZERO,
                 },
                 chain_id: 0,

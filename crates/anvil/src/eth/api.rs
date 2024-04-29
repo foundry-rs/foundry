@@ -1329,20 +1329,12 @@ impl EthApi {
         // newest block"
         response.base_fee_per_gas.push(self.backend.fees().base_fee());
 
-        // Fetch the newest header. We'll need this to calculate the next blob base fee.
-        let newest_header = self
-            .backend
-            .block_by_number(newest_block)
-            .await?
-            .ok_or(FeeHistoryError::BlockNotFound(newest_block))?
-            .header;
-
         // Same goes for the `base_fee_per_blob_gas`:
         // > "[..] includes the next block after the newest of the returned range, because this
         // > value can be derived from the newest block.
         response
             .base_fee_per_blob_gas
-            .push(newest_header.excess_blob_gas.map(calc_blob_gasprice).unwrap_or(0));
+            .push(self.backend.fees().base_fee_per_blob_gas().to::<u128>());
 
         Ok(response)
     }
@@ -2463,11 +2455,7 @@ impl EthApi {
                             m.tx.max_fee_per_blob_gas = self
                                 .excess_blob_gas_and_price()
                                 .unwrap_or_default()
-                                .unwrap_or(BlobExcessGasAndPrice {
-                                    blob_gasprice: 0,
-                                    excess_blob_gas: 0,
-                                })
-                                .blob_gasprice
+                                .map_or(0, |g| g.blob_gasprice)
                         }
                         TxEip4844Variant::TxEip4844WithSidecar(m)
                     }
@@ -2610,11 +2598,6 @@ fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> 
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            // TODO: Revisit - EIP-4844 base gas is MIN_TRANSACTION_GAS??
-            // TypedTransactionRequest::EIP4844(req) => match req.tx() {
-            //     // TxKind::Call(_) => MIN_TRANSACTION_GAS,
-            //     // TxKind::Create => MIN_CREATE_GAS,
-            // },
             TypedTransactionRequest::EIP4844(_) => MIN_TRANSACTION_GAS,
             TypedTransactionRequest::Deposit(req) => match req.kind {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,

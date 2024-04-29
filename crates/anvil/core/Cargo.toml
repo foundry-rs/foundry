@@ -32,12 +32,6 @@ alloy-trie.workspace = true
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = "1.4"
-# trie
-# hash-db = { version = "0.15", default-features = false }
-# hash256-std-hasher = { version = "0.15", default-features = false }
-# triehash = { version = "0.8", default-features = false }
-# reference-trie = "0.25"
-# keccak-hasher = "0.15"
 c-kzg = { version = "1", features = ["serde"] }
 
 # misc
