@@ -1,14 +1,16 @@
 use super::{error::FailedInvariantCaseData, InvariantFailures, InvariantFuzzError};
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_json_abi::Function;
 use alloy_primitives::Log;
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::constants::CALLER;
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract};
+use foundry_evm_fuzz::{
+    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract},
+    BaseCounterExample, CounterExample,
+};
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
 use revm::primitives::U256;
 use std::borrow::Cow;
@@ -65,7 +67,8 @@ pub fn assert_invariants(
     Ok(Some(call_result))
 }
 
-/// Replays the provided invariant run for collecting the logs and traces from all depths.
+/// Replays a call sequence for collecting logs and traces.
+/// Returns counterexample to be used when the call sequence is a failed scenario.
 #[allow(clippy::too_many_arguments)]
 pub fn replay_run(
     invariant_contract: &InvariantContract<'_>,
@@ -75,19 +78,17 @@ pub fn replay_run(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
-    func: Function,
     inputs: Vec<BasicTxDetails>,
-) -> Result<()> {
+) -> Result<Option<CounterExample>> {
     // We want traces for a failed case.
     executor.set_tracing(true);
 
-    // set_up_inner_replay(&mut executor, &inputs);
+    let mut counterexample_sequence = vec![];
 
-    // Replay each call from the sequence until we break the invariant.
+    // Replay each call from the sequence, collect logs, traces and coverage.
     for (sender, (addr, bytes)) in inputs.iter() {
         let call_result =
             executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
-
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
 
@@ -105,17 +106,30 @@ pub fn replay_run(
             known_contracts,
         ));
 
-        // Checks the invariant.
+        // Create counter example to be used in failed case.
+        counterexample_sequence.push(BaseCounterExample::create(
+            *sender,
+            *addr,
+            bytes,
+            &ided_contracts,
+            call_result.traces,
+        ));
+
+        // Replay invariant to collect logs and traces.
         let error_call_result = executor.call_raw(
             CALLER,
             invariant_contract.address,
-            func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
+            invariant_contract
+                .invariant_function
+                .abi_encode_input(&[])
+                .expect("invariant should have no inputs")
+                .into(),
             U256::ZERO,
         )?;
-
         traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
-
         logs.extend(error_call_result.logs);
     }
-    Ok(())
+
+    Ok((!counterexample_sequence.is_empty())
+        .then_some(CounterExample::Sequence(counterexample_sequence)))
 }

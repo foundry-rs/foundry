@@ -580,12 +580,16 @@ impl<'a> ContractRunner<'a> {
             Some(error) => match error {
                 InvariantFuzzError::BrokenInvariant(case_data) |
                 InvariantFuzzError::Revert(case_data) => {
-                    match case_data.replay(
+                    // Replay error to create counterexample and to collect logs, traces and
+                    // coverage.
+                    match case_data.replay_error(
+                        &invariant_contract,
                         self.executor.clone(),
                         known_contracts,
                         identified_contracts.clone(),
                         &mut logs,
                         &mut traces,
+                        &mut coverage,
                     ) {
                         Ok(c) => counterexample = c,
                         Err(err) => {
@@ -607,7 +611,6 @@ impl<'a> ContractRunner<'a> {
                     &mut logs,
                     &mut traces,
                     &mut coverage,
-                    func.clone(),
                     last_run_inputs.clone(),
                 ) {
                     error!(%err, "Failed to replay last invariant run");

@@ -39,6 +39,7 @@ mod funcs;
 mod shrink;
 
 pub use funcs::{assert_invariants, replay_run};
+pub use shrink::shrink_sequence;
 
 sol! {
     interface IInvariantTest {
@@ -155,6 +156,10 @@ impl<'a> InvariantExecutor<'a> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
             return Err(eyre!("Invariant test function should have no inputs"))
+        }
+
+        if !self.config.shrink_sequence {
+            error!(target: "forge::test", "shrink_sequence config is deprecated and will be removed, use shrink_run_limit = 0")
         }
 
         let (fuzz_state, targeted_contracts, strat) =
