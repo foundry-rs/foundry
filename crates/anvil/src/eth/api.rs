@@ -863,9 +863,8 @@ impl EthApi {
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        let signed_transaction =
-            alloy_primitives::hex::encode(self.sign_request(&from, request)?.encoded_2718());
-        Ok(format!("0x{signed_transaction}"))
+        let signed_transaction = self.sign_request(&from, request)?.encoded_2718();
+        Ok(alloy_primitives::hex::encode_prefixed(signed_transaction))
     }
 
     /// Sends a transaction
