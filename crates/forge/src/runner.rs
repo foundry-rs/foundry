@@ -20,7 +20,10 @@ use foundry_evm::{
     decode::{decode_console_logs, RevertDecoder},
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
-        invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
+        invariant::{
+            replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
+            InvariantFuzzTestResult,
+        },
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
     fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
@@ -582,7 +585,8 @@ impl<'a> ContractRunner<'a> {
                 InvariantFuzzError::Revert(case_data) => {
                     // Replay error to create counterexample and to collect logs, traces and
                     // coverage.
-                    match case_data.replay_error(
+                    match replay_error(
+                        &case_data,
                         &invariant_contract,
                         self.executor.clone(),
                         known_contracts,

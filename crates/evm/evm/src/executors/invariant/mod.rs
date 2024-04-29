@@ -9,7 +9,7 @@ use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    utils::{get_function, StateChangeset},
+    utils::get_function,
 };
 use foundry_evm_fuzz::{
     invariant::{
@@ -29,16 +29,17 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{primitives::HashMap, DatabaseCommit};
-use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
-use self::error::FailedInvariantCaseData;
-pub use error::{InvariantFailures, InvariantFuzzError, InvariantFuzzTestResult};
+pub use error::{InvariantFailures, InvariantFuzzError};
 
-mod funcs;
+mod replay;
+mod result;
 mod shrink;
 
-pub use funcs::{assert_invariants, replay_run};
+pub use replay::{replay_error, replay_run};
+pub use result::{assert_invariants, can_continue, InvariantFuzzTestResult, RichInvariantResults};
 pub use shrink::shrink_sequence;
 
 sol! {
@@ -93,20 +94,6 @@ sol! {
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation =
     (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<BasicTxDetails>);
-
-/// Enriched results of an invariant run check.
-///
-/// Contains the success condition and call results of the last run
-struct RichInvariantResults {
-    success: bool,
-    call_result: Option<RawCallResult>,
-}
-
-impl RichInvariantResults {
-    fn new(success: bool, call_result: Option<RawCallResult>) -> Self {
-        Self { success, call_result }
-    }
-}
 
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`].
 ///
@@ -275,29 +262,28 @@ impl<'a> InvariantExecutor<'a> {
                         stipend: call_result.stipend,
                     });
 
-                    let RichInvariantResults { success: can_continue, call_result: call_results } =
-                        can_continue(
-                            &invariant_contract,
-                            &self.config,
-                            call_result,
-                            &executor,
-                            &inputs,
-                            &mut failures.borrow_mut(),
-                            &targeted_contracts,
-                            &state_changeset,
-                            &mut run_traces,
-                        )
-                        .map_err(|e| TestCaseError::fail(e.to_string()))?;
+                    let result = can_continue(
+                        &invariant_contract,
+                        &self.config,
+                        call_result,
+                        &executor,
+                        &inputs,
+                        &mut failures.borrow_mut(),
+                        &targeted_contracts,
+                        &state_changeset,
+                        &mut run_traces,
+                    )
+                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
-                    if !can_continue || current_run == self.config.depth - 1 {
+                    if !result.can_continue || current_run == self.config.depth - 1 {
                         last_run_calldata.borrow_mut().clone_from(&inputs);
                     }
 
-                    if !can_continue {
+                    if !result.can_continue {
                         break
                     }
 
-                    *last_call_results.borrow_mut() = call_results;
+                    *last_call_results.borrow_mut() = result.call_result;
                     current_run += 1;
                 }
 
@@ -690,66 +676,4 @@ fn collect_data(
     if let Some(changed) = sender_changeset {
         state_changeset.insert(*sender, changed);
     }
-}
-
-/// Verifies that the invariant run execution can continue.
-/// Returns the mapping of (Invariant Function Name -> Call Result, Logs, Traces) if invariants were
-/// asserted.
-#[allow(clippy::too_many_arguments)]
-fn can_continue(
-    invariant_contract: &InvariantContract<'_>,
-    invariant_config: &InvariantConfig,
-    call_result: RawCallResult,
-    executor: &Executor,
-    calldata: &[BasicTxDetails],
-    failures: &mut InvariantFailures,
-    targeted_contracts: &FuzzRunIdentifiedContracts,
-    state_changeset: &StateChangeset,
-    run_traces: &mut Vec<CallTraceArena>,
-) -> Result<RichInvariantResults> {
-    let mut call_results = None;
-
-    // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts.targets.lock().iter().any(|contract| {
-        !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
-    });
-
-    // Assert invariants IF the call did not revert and the handlers did not fail.
-    if !call_result.reverted && !handlers_failed {
-        if let Some(traces) = call_result.traces {
-            run_traces.push(traces);
-        }
-
-        call_results = assert_invariants(
-            invariant_contract,
-            invariant_config,
-            targeted_contracts,
-            executor,
-            calldata,
-            failures,
-        )?;
-        if call_results.is_none() {
-            return Ok(RichInvariantResults::new(false, None));
-        }
-    } else {
-        // Increase the amount of reverts.
-        failures.reverts += 1;
-        // If fail on revert is set, we must return immediately.
-        if invariant_config.fail_on_revert {
-            let case_data = FailedInvariantCaseData::new(
-                invariant_contract,
-                invariant_config,
-                targeted_contracts,
-                calldata,
-                call_result,
-                &[],
-            );
-            failures.revert_reason = Some(case_data.revert_reason.clone());
-            let error = InvariantFuzzError::Revert(case_data);
-            failures.error = Some(error);
-
-            return Ok(RichInvariantResults::new(false, None));
-        }
-    }
-    Ok(RichInvariantResults::new(true, call_results))
 }
