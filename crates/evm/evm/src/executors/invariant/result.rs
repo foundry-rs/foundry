@@ -30,9 +30,9 @@ pub struct InvariantFuzzTestResult {
 /// Enriched results of an invariant run check.
 ///
 /// Contains the success condition and call results of the last run
-pub struct RichInvariantResults {
-    pub can_continue: bool,
-    pub call_result: Option<RawCallResult>,
+pub(crate) struct RichInvariantResults {
+    pub(crate) can_continue: bool,
+    pub(crate) call_result: Option<RawCallResult>,
 }
 
 impl RichInvariantResults {
@@ -44,7 +44,7 @@ impl RichInvariantResults {
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 /// Either returns the call result if successful, or nothing if there was an error.
-pub fn assert_invariants(
+pub(crate) fn assert_invariants(
     invariant_contract: &InvariantContract<'_>,
     invariant_config: &InvariantConfig,
     targeted_contracts: &FuzzRunIdentifiedContracts,
@@ -97,7 +97,7 @@ pub fn assert_invariants(
 /// Returns the mapping of (Invariant Function Name -> Call Result, Logs, Traces) if invariants were
 /// asserted.
 #[allow(clippy::too_many_arguments)]
-pub fn can_continue(
+pub(crate) fn can_continue(
     invariant_contract: &InvariantContract<'_>,
     invariant_config: &InvariantConfig,
     call_result: RawCallResult,

@@ -28,19 +28,21 @@ use proptest::{
     strategy::{BoxedStrategy, Strategy},
     test_runner::{TestCaseError, TestRunner},
 };
+use result::{assert_invariants, can_continue};
 use revm::{primitives::HashMap, DatabaseCommit};
+use shrink::shrink_sequence;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
 
 mod replay;
-mod result;
-mod shrink;
-
 pub use replay::{replay_error, replay_run};
-pub use result::{assert_invariants, can_continue, InvariantFuzzTestResult, RichInvariantResults};
-pub use shrink::shrink_sequence;
+
+mod result;
+pub use result::InvariantFuzzTestResult;
+
+mod shrink;
 
 sol! {
     interface IInvariantTest {

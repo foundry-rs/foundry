@@ -79,7 +79,7 @@ impl CallSequenceShrinker {
 ///
 /// The shrinked call sequence always respect the order failure is reproduced as it is tested
 /// top-down.
-pub fn shrink_sequence(
+pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,
     calls: &[BasicTxDetails],
     executor: &Executor,
