@@ -1,5 +1,7 @@
 use crate::utils::http_provider;
-use alloy_consensus::{Blob, BlobTransactionSidecar, Bytes48, SidecarBuilder, TxEip4844};
+use alloy_consensus::{
+    Blob, BlobTransactionSidecar, Bytes48, SidecarBuilder, SimpleCoder, TxEip4844,
+};
 use alloy_eips::BlockId;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
@@ -20,11 +22,9 @@ async fn can_send_eip4844_transaction() {
     let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
-    let sidecar = BlobTransactionSidecar {
-        blobs: vec![Blob::from([1; 131072])],
-        commitments: vec![Bytes48::from([1; 48])],
-        proofs: vec![Bytes48::from([1; 48])],
-    };
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice("Hello World".as_bytes());
+
+    let sidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
