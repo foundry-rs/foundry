@@ -33,7 +33,6 @@ use crate::{
 };
 use alloy_consensus::TxEip4844Variant;
 use alloy_dyn_abi::TypedData;
-use alloy_eips::calc_blob_gasprice;
 use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{

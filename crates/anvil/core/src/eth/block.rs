@@ -66,7 +66,7 @@ impl Block {
                 timestamp: partial_header.timestamp,
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
-                withdrawals_root: Some(partial_header.mix_hash),
+                withdrawals_root: None,
                 blob_gas_used: partial_header.blob_gas_used,
                 excess_blob_gas: partial_header.excess_blob_gas,
                 parent_beacon_block_root: partial_header.parent_beacon_block_root,

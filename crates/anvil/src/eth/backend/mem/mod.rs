@@ -2456,14 +2456,6 @@ pub fn transaction_build(
             let base_fee = base_fee.unwrap_or(0u128);
             let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
             transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
-
-            // if the tx is eip4844 we need to also add the max fee per blob gas.
-            if eth_transaction.is_eip4844() {
-                transaction.gas_price = transaction
-                    .gas_price
-                    .map(|g| g.checked_add(transaction.max_fee_per_blob_gas.unwrap_or_default()))
-                    .unwrap_or(Some(u128::MAX));
-            }
         }
     } else {
         transaction.max_fee_per_gas = None;
