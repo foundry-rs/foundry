@@ -292,12 +292,18 @@ async fn can_sign_transaction() {
 
     // craft the tx
     // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::default().to(to).value(U256::from(1001u64)).from(from);
+    let tx = TransactionRequest::default()
+        .nonce(10)
+        .max_fee_per_gas(100)
+        .max_priority_fee_per_gas(101)
+        .to(to)
+        .value(U256::from(1001u64))
+        .from(from);
     let tx = WithOtherFields::new(tx);
     // sign it via the eth_signTransaction API
     let signed_tx = api.sign_transaction(tx).await.unwrap();
 
-    assert_eq!(signed_tx, "0x02f86c827a69808084773594008252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c082f4f6a05b8c3e67a3cecdad35d8be49df75c6bb07f720dbd9742a4240d3cdee97653e36a02c946c4a6ce6e66803ff22af7b7d1c39307339ca122fa16a0ef63ace382e8d56");
+    assert_eq!(signed_tx, "0x02f868827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da");
 }
 
 #[tokio::test(flavor = "multi_thread")]
