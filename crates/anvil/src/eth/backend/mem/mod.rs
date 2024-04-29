@@ -79,7 +79,9 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
-    primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
+    primitives::{
+        calc_blob_gasprice, BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState,
+    },
 };
 use std::{
     collections::BTreeMap,
@@ -1947,6 +1949,7 @@ impl Backend {
         hash: B256,
     ) -> Result<Option<ReceiptResponse>, BlockchainError> {
         if let Some(receipt) = self.mined_transaction_receipt(hash) {
+            println!("returned mined transaction receipt");
             return Ok(Some(receipt.inner));
         }
 
@@ -1997,6 +2000,11 @@ impl Backend {
         let index = info.transaction_index as usize;
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
         let transaction = block.transactions[index].clone();
+
+        // Cancun specific
+        let excess_blob_gas = block.header.excess_blob_gas;
+        let blob_gas_price = calc_blob_gasprice(excess_blob_gas.map_or(0, |g| g as u64));
+        let blob_gas_used = transaction.blob_gas();
 
         let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.tx().gas_price,
@@ -2064,8 +2072,8 @@ impl Backend {
             from: info.from,
             to: info.to,
             state_root: Some(block.header.state_root),
-            blob_gas_price: None,
-            blob_gas_used: None,
+            blob_gas_price: Some(blob_gas_price),
+            blob_gas_used,
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })

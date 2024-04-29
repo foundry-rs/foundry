@@ -10,7 +10,7 @@ use anvil::{spawn, Hardfork, NodeConfig};
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction() {
     let node_config = NodeConfig::default().with_hardfork(Some(Hardfork::Cancun));
-    let (api, handle) = spawn(node_config).await;
+    let (_api, handle) = spawn(node_config).await;
 
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let from = wallets[0].address();
@@ -43,9 +43,10 @@ async fn can_send_eip4844_transaction() {
 
     let build_tx = tx.can_build();
 
-    assert!(build_tx); // Passes
+    assert!(build_tx);
 
-    let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let blob_gas = api.excess_blob_gas_and_price().unwrap();
+    assert_eq!(receipt.blob_gas_used, Some(131072));
+    assert_eq!(receipt.blob_gas_price, Some(0x1)); // 1 wei
 }
