@@ -1,7 +1,5 @@
 use crate::utils::http_provider;
-use alloy_consensus::{
-    Blob, BlobTransactionSidecar, Bytes48, SidecarBuilder, SimpleCoder, TxEip4844,
-};
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_eips::BlockId;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
@@ -12,7 +10,7 @@ use anvil::{spawn, Hardfork, NodeConfig};
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction() {
     let node_config = NodeConfig::default().with_hardfork(Some(Hardfork::Cancun));
-    let (_api, handle) = spawn(node_config).await;
+    let (api, handle) = spawn(node_config).await;
 
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let from = wallets[0].address();
@@ -41,17 +39,13 @@ async fn can_send_eip4844_transaction() {
 
     tx.set_gas_limit(gas_limit);
 
-    println!("Before {:#?}", tx.blob_versioned_hashes);
-
     tx.populate_blob_hashes();
-
-    println!("After {:#?}", tx.blob_versioned_hashes); // Populated successfully
 
     let build_tx = tx.can_build();
 
     assert!(build_tx); // Passes
 
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    println!("{:#?}", receipt);
+    let blob_gas = api.excess_blob_gas_and_price().unwrap();
 }
