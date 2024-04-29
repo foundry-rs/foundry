@@ -1061,7 +1061,7 @@ latest block number: {latest_block}"
         // limit is enabled, since there are networks where this is not used and is always
         // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
         let gas_limit = if self.disable_block_gas_limit || block.header.gas_limit == 0 {
-            u128::MAX
+            u64::MAX as u128
         } else {
             block.header.gas_limit
         };

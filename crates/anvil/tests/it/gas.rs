@@ -170,3 +170,25 @@ async fn test_tip_above_fee_cap() {
         .to_string()
         .contains("max priority fee per gas higher than max fee per gas"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_use_fee_history() {
+    let base_fee = 50u128;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..10 {
+        let fee_history = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
+        let next_base_fee = fee_history.base_fee_per_gas.last().unwrap();
+
+        let tx = TransactionRequest::default()
+            .with_to(Address::random())
+            .with_value(U256::from(100))
+            .with_gas_price(*next_base_fee);
+        let tx = WithOtherFields::new(tx);
+
+        let receipt =
+            provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.inner.inner.is_success());
+    }
+}

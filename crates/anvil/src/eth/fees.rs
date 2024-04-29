@@ -242,7 +242,6 @@ impl FeeHistoryService {
 
     /// Create a new history entry for the block
     fn create_cache_entry(&self, hash: B256) -> (FeeHistoryCacheItem, Option<u64>) {
-        let elasticity = self.fees.elasticity();
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
         let reward_percentiles: Vec<f64> = {
@@ -276,11 +275,8 @@ impl FeeHistoryService {
             block_number = Some(block.header.number);
 
             let gas_used = block.header.gas_used as f64;
-            let gas_limit = block.header.gas_limit as f64;
             let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
-
-            let gas_target = gas_limit / elasticity;
-            item.gas_used_ratio = gas_used / (gas_target * elasticity);
+            item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
             item.blob_gas_used_ratio =
                 blob_gas_used.map(|g| g / MAX_DATA_GAS_PER_BLOCK as f64).unwrap_or(0 as f64);
 

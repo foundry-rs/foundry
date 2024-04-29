@@ -177,6 +177,10 @@ async fn test_invariant() {
                 "default/fuzz/invariant/common/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest",
                 vec![("invariant_shrink_big_sequence()", true, None, None, None)],
             ),
+            (
+                "default/fuzz/invariant/common/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest",
+                vec![("invariant_shrink_fail_on_revert()", true, None, None, None)],
+            ),
         ]),
     );
 }
@@ -367,6 +371,45 @@ async fn test_shrink_big_sequence() {
         CounterExample::Sequence(sequence) => {
             // ensure shrinks to same sequence of 77
             assert_eq!(sequence.len(), 77);
+        }
+    };
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
+async fn test_shrink_fail_on_revert() {
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    let filter =
+        Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantShrinkFailOnRevert.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options = opts.clone();
+    runner.test_options.invariant.fail_on_revert = true;
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 100;
+    let results = runner.test_collect(&filter);
+    let results =
+        results.values().last().expect("`InvariantShrinkFailOnRevert` should be testable.");
+
+    let result = results
+        .test_results
+        .values()
+        .last()
+        .expect("`InvariantShrinkFailOnRevert` should be testable.");
+
+    assert_eq!(result.status, TestStatus::Failure);
+
+    let counter = result
+        .counterexample
+        .as_ref()
+        .expect("`InvariantShrinkFailOnRevert` should have failed with a counterexample.");
+
+    match counter {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => {
+            // ensure shrinks to sequence of 10
+            assert_eq!(sequence.len(), 10);
         }
     };
 }

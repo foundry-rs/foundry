@@ -1068,13 +1068,13 @@ impl Backend {
             header.blob_gas_used.unwrap_or_default(),
         );
 
-        // notify all listeners
-        self.notify_on_new_block(header, block_hash);
-
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee);
         self.fees
             .set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(next_block_excess_blob_gas));
+
+        // notify all listeners
+        self.notify_on_new_block(header, block_hash);
 
         outcome
     }

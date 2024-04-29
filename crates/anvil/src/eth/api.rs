@@ -1322,30 +1322,11 @@ impl EthApi {
 
         response.reward = Some(rewards);
 
-        // calculate next base fee
+        // add the next block's base fee to the response
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
         // newest block"
-        if let (Some(last_gas_used), Some(last_fee_per_gas)) =
-            (response.gas_used_ratio.last(), response.base_fee_per_gas.last())
-        {
-            let elasticity = self.backend.elasticity();
-            let last_fee_per_gas = *last_fee_per_gas as f64;
-            if last_gas_used > &0.5 {
-                // increase base gas
-                let increase = ((last_gas_used - 0.5) * 2f64) * elasticity;
-                let new_base_fee = (last_fee_per_gas + (last_fee_per_gas * increase)) as u128;
-                response.base_fee_per_gas.push(new_base_fee);
-            } else if last_gas_used < &0.5 {
-                // decrease gas
-                let increase = ((0.5 - last_gas_used) * 2f64) * elasticity;
-                let new_base_fee = (last_fee_per_gas - (last_fee_per_gas * increase)) as u128;
-                response.base_fee_per_gas.push(new_base_fee);
-            } else {
-                // same base gas
-                response.base_fee_per_gas.push(last_fee_per_gas as u128);
-            }
-        }
+        response.base_fee_per_gas.push(self.backend.fees().base_fee());
 
         // Fetch the newest header. We'll need this to calculate the next blob base fee.
         let newest_header = self
@@ -2251,8 +2232,8 @@ impl EthApi {
                 }
                 // amount of gas the sender can afford with the `gas_price`
                 let allowance =
-                    available_funds.to::<u128>().checked_div(gas_price).unwrap_or_default();
-                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance);
+                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
             }
         }
 
