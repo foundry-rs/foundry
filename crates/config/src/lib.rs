@@ -455,6 +455,14 @@ impl Config {
         Config::from_provider(Config::figment())
     }
 
+    /// Returns the current `Config` with the given `providers` preset
+    ///
+    /// See `Config::to_figment`
+    #[track_caller]
+    pub fn load_with_providers(providers: FigmentProviders) -> Self {
+        Config::default().to_figment(providers).extract().unwrap()
+    }
+
     /// Returns the current `Config`
     ///
     /// See `Config::figment_with_root`
@@ -1753,6 +1761,10 @@ pub enum FigmentProviders {
     ///
     /// This will exclude more expensive providers such as remappings
     Cast,
+    /// Only include necessary providers that are useful for anvil
+    ///
+    /// This will exclude more expensive providers such as remappings
+    Anvil,
 }
 
 impl FigmentProviders {

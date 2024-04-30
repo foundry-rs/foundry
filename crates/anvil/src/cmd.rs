@@ -9,7 +9,7 @@ use alloy_signer_wallet::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
-use foundry_config::{Chain, Config};
+use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
 use std::{
@@ -516,7 +516,7 @@ pub struct AnvilEvmArgs {
 impl AnvilEvmArgs {
     pub fn resolve_rpc_alias(&mut self) {
         if let Some(fork_url) = &self.fork_url {
-            let config = Config::load();
+            let config = Config::load_with_providers(FigmentProviders::Anvil);
             if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
                 self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
             }
