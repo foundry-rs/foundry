@@ -77,8 +77,8 @@ pub fn replay_run(
                 .into(),
             U256::ZERO,
         )?;
-        logs.extend(error_call_result.logs);
         traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
+        logs.extend(error_call_result.logs);
         contexts.extend(error_call_result.contexts);
     }
 

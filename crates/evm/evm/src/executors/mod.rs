@@ -824,9 +824,8 @@ fn convert_executed_result(
         _ => None,
     };
 
-    let mut contexts = Vec::new();
-
     // Only collect non-genesis block contexts
+    let mut contexts = Vec::new();
     if env.block.number > U256::from(1) {
         contexts.push(Context { block_number: env.block.number });
     }
