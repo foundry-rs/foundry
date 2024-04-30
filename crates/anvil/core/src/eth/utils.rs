@@ -1,4 +1,5 @@
 use alloy_primitives::Parity;
+
 /// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
 /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
 /// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the

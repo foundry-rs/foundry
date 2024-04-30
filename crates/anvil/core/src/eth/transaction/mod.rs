@@ -137,12 +137,9 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
-                    Some(to) => match to {
-                        TxKind::Call(to) => to,
-                        TxKind::Create => Address::ZERO,
-                    },
-                    None => Address::ZERO,
+                to: match to.unwrap_or(TxKind::Create) {
+                    TxKind::Call(to) => to,
+                    TxKind::Create => Address::ZERO,
                 },
                 chain_id: 0,
                 access_list: access_list.unwrap_or_default(),
@@ -693,7 +690,6 @@ impl TypedTransaction {
         max_cost
     }
 
-    // TODO: Change blob_gas return type to u128 in alloy
     pub fn blob_gas(&self) -> Option<u128> {
         match self {
             TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas() as u128),
@@ -925,7 +921,6 @@ impl Encodable for TypedTransaction {
     }
 }
 
-// TODO: Revisit this after resolving conflicts, double check the logic
 impl Decodable for TypedTransaction {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let mut h_decode_copy = *buf;
