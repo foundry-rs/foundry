@@ -119,7 +119,7 @@ async fn cannot_exceed_six_blobs() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_send_blobs_in_diff_txs() {
+async fn can_mine_blobs_when_exceeds_max_blobs() {
     let node_config = NodeConfig::default().with_hardfork(Some(Hardfork::Cancun));
     let (api, handle) = spawn(node_config).await;
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -139,8 +139,6 @@ async fn can_send_blobs_in_diff_txs() {
 
     let num_blobs_first = sidecar.clone().take().len();
 
-    println!("num_blobs_first: {}", num_blobs_first);
-
     let sidecar = sidecar.build().unwrap();
 
     let tx = TransactionRequest::default()
@@ -155,25 +153,40 @@ async fn can_send_blobs_in_diff_txs() {
 
     tx.populate_blob_hashes();
 
-    let first_receipt = provider.send_transaction(tx.clone()).await.unwrap();
+    let first_tx = provider.send_transaction(tx.clone()).await.unwrap();
 
     let second_batch = vec![1u8; DATA_GAS_PER_BLOB as usize * 2];
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&second_batch);
 
     let num_blobs_second = sidecar.clone().take().len();
-    println!("num_blobs_second: {}", num_blobs_second);
+
     let sidecar = sidecar.build().unwrap();
     tx.set_blob_sidecar(sidecar);
     tx.set_nonce(1);
     tx.populate_blob_hashes();
-    let second_receipt = provider.send_transaction(tx).await.unwrap();
+    let second_tx = provider.send_transaction(tx).await.unwrap();
 
     api.mine_one().await;
 
-    let first_receipt = first_receipt.get_receipt().await.unwrap();
-    let second_receipt = second_receipt.get_receipt().await.unwrap();
+    let first_receipt = first_tx.get_receipt().await.unwrap();
 
-    assert_eq!(first_receipt.block_number, second_receipt.block_number); // This should have failed
-                                                                         // as total blobs > 6.
+    api.mine_one().await;
+    let second_receipt = second_tx.get_receipt().await.unwrap();
+
+    let (first_block, second_block) = tokio::join!(
+        provider.get_block_by_number(first_receipt.block_number.unwrap().into(), false),
+        provider.get_block_by_number(second_receipt.block_number.unwrap().into(), false)
+    );
+    assert_eq!(
+        first_block.unwrap().unwrap().header.blob_gas_used,
+        Some(DATA_GAS_PER_BLOB as u128 * num_blobs_first as u128)
+    );
+
+    assert_eq!(
+        second_block.unwrap().unwrap().header.blob_gas_used,
+        Some(DATA_GAS_PER_BLOB as u128 * num_blobs_second as u128)
+    );
+    assert_eq!(first_receipt.block_number.unwrap() + 1, second_receipt.block_number.unwrap()); // Mined in two
+                                                                                               // different blocks
 }

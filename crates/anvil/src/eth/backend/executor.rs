@@ -280,7 +280,10 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         }
 
         // check that we comply with the block's blob gas limit
-        if (self.blob_gas_used as u64) > MAX_BLOB_GAS_PER_BLOCK {
+        let max_blob_gas = self.blob_gas_used.saturating_add(
+            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0u128),
+        );
+        if max_blob_gas > MAX_BLOB_GAS_PER_BLOCK as u128 {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 
