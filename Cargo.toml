@@ -225,3 +225,7 @@ hyper = "1.0"
 reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
+
+[patch.crates-io]
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "a424a9b" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "509585d" }

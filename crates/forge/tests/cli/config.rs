@@ -2,7 +2,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
-use foundry_compilers::artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails};
+use foundry_compilers::{
+    artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
+    compilers::{solc::SolcVersionManager, CompilerVersionManager},
+};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -356,9 +359,8 @@ contract Foo {}
     assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
-    let local_solc = foundry_compilers::Solc::find_svm_installed_version(OTHER_SOLC_VERSION)
-        .unwrap()
-        .expect("solc is installed");
+    let local_solc =
+        SolcVersionManager.get_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));

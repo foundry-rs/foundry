@@ -149,7 +149,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.solc_config.settings.output_selection =
+        project.settings.output_selection =
             OutputSelection::common_output_selection(["abi".to_string()]);
         let output = project.compile()?;
 

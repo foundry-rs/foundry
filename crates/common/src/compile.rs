@@ -6,10 +6,11 @@ use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
+    compilers::{solc::SolcVersionManager, CompilerVersionManager},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, FileFilter, Project, ProjectCompileOutput, ProjectPathsConfig, Solc,
-    SolcConfig,
+    Artifact, ArtifactId, CompilerConfig, FileFilter, Project, ProjectCompileOutput,
+    ProjectPathsConfig, SolcConfig,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -545,17 +546,17 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
-    let v = format!("{}.{}.{}", v.major, v.minor, v.patch);
-    let solc = Solc::find_or_install_svm_version(v)?;
+    let vm = SolcVersionManager;
+    let solc = vm.get_or_install(&v)?;
+
+    let compiler_config = CompilerConfig::Specific(solc);
 
     Ok(Project::builder()
-        .solc_config(SolcConfig::builder().settings(settings).build())
-        .no_auto_detect()
+        .settings(SolcConfig::builder().settings(settings).build().settings)
         .paths(paths)
-        .solc(solc)
         .ephemeral()
         .no_artifacts()
-        .build()?)
+        .build(compiler_config)?)
 }
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`

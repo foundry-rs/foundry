@@ -3669,8 +3669,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b64cb03e297eb85b9f84a195fec7390a5e9805d9b82b11b2af57f65fc6d4ceb7"
+source = "git+https://github.com/foundry-rs/block-explorers?rev=509585d#509585d2b46d6f10c73d2c8b4e7f7df055db6ee7"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3823,11 +3822,11 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.3.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5421772f768d43f81052159c5175e7d10941e0f0416dafd768f353ed9c554fd"
+source = "git+https://github.com/foundry-rs/compilers?rev=a424a9b#a424a9b39f4b5dfd81c93a8f5c700e056c681d93"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
+ "auto_impl",
  "cfg-if",
  "dirs 5.0.1",
  "dunce",
