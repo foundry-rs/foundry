@@ -43,7 +43,7 @@ mod snapshot;
 pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
 
 // A `revm::Database` that is used in forking mode
-type ForkDB = CacheDB<SharedBackend>;
+pub type ForkDB = CacheDB<SharedBackend>;
 
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
 /// The difference between `ForkId` and `LocalForkId` is that `ForkId` tracks pairs of `endpoint +
