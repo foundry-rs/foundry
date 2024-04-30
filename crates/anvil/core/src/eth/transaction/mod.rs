@@ -21,6 +21,7 @@ use revm::{
 };
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
+
 pub mod optimism;
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
