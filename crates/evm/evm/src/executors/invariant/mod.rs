@@ -29,7 +29,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_invariants, can_continue};
-use revm::{primitives::HashMap, DatabaseCommit};
+use revm::primitives::HashMap;
 use shrink::shrink_sequence;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
@@ -214,16 +214,10 @@ impl<'a> InvariantExecutor<'a> {
             while current_run < self.config.depth {
                 let (sender, (address, calldata)) = inputs.last().expect("no input generated");
 
-                // Executes the call from the randomly generated sequence.
-                let call_result = if self.config.preserve_state {
-                    executor
-                        .call_raw_committing(*sender, *address, calldata.clone(), U256::ZERO)
-                        .expect("could not make raw evm call")
-                } else {
-                    executor
-                        .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
-                        .expect("could not make raw evm call")
-                };
+                // Execute call from the randomly generated sequence and commit state changes.
+                let call_result = executor
+                    .call_raw_committing(*sender, *address, calldata.clone(), U256::ZERO)
+                    .expect("could not make raw evm call");
 
                 if call_result.result.as_ref() == MAGIC_ASSUME {
                     inputs.pop();
@@ -255,8 +249,6 @@ impl<'a> InvariantExecutor<'a> {
                             warn!(target: "forge::test", "{error}");
                         }
                     }
-                    // Commit changes to the database.
-                    executor.backend.commit(state_changeset.clone());
 
                     fuzz_runs.push(FuzzCase {
                         calldata: calldata.clone(),
