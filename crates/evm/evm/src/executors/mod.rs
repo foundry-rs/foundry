@@ -814,7 +814,7 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { logs, labels, traces, contexts, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
         inspector.collect();
 
     let transactions = match cheatcodes.as_ref() {
@@ -823,6 +823,13 @@ fn convert_executed_result(
         }
         _ => None,
     };
+
+    let mut contexts = Vec::new();
+
+    // Only collect non-genesis block contexts
+    if env.block.number > U256::from(1) {
+        contexts.push(Context { block_number: env.block.number });
+    }
 
     Ok(RawCallResult {
         exit_reason,
