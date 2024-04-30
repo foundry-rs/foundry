@@ -378,31 +378,6 @@ impl UIfmt for EthValue {
     }
 }
 
-// TODO: replace these above and remove this module once types are converted
-mod temp_ethers {
-    use super::UIfmt;
-    use ethers_core::types::{Address, Bloom, Bytes, H256, H64, I256, U256, U64};
-    use foundry_common::types::ToAlloy;
-
-    macro_rules! with_alloy {
-        ($($t:ty),*) => {$(
-            impl UIfmt for $t {
-                fn pretty(&self) -> String {
-                    self.to_alloy().pretty()
-                }
-            }
-        )*};
-    }
-
-    impl UIfmt for Bytes {
-        fn pretty(&self) -> String {
-            self.clone().to_alloy().pretty()
-        }
-    }
-
-    with_alloy!(Address, Bloom, H64, H256, I256, U256, U64);
-}
-
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
     match attr {

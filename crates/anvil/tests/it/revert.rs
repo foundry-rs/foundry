@@ -1,13 +1,14 @@
-use crate::abi::VENDING_MACHINE_CONTRACT;
-use anvil::{spawn, NodeConfig};
-use ethers::{
-    contract::{ContractFactory, ContractInstance},
-    middleware::SignerMiddleware,
-    types::U256,
-    utils::WEI_IN_ETHER,
+use crate::{
+    abi::{VendingMachine, VENDING_MACHINE_CONTRACT},
+    utils::ws_provider_with_signer,
 };
+use alloy_network::EthereumSigner;
+use alloy_primitives::{TxKind, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_sol_types::sol;
+use anvil::{spawn, NodeConfig};
 use foundry_compilers::{project_util::TempProject, Artifact};
-use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deploy_reverting() {
@@ -28,20 +29,25 @@ contract Contract {
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
-
     let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
 
-    let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await;
-    assert!(contract.is_err());
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
 
     // should catch the revert during estimation which results in an err
-    let err = contract.unwrap_err();
+    let err = provider
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("execution reverted"));
 }
 
@@ -55,7 +61,7 @@ pragma solidity 0.8.13;
 contract Contract {
     address owner;
     constructor() public {
-        owner = msg.sender;
+        owner = address(1);
     }
     modifier onlyOwner() {
         require(msg.sender == owner, "!authorized");
@@ -69,31 +75,45 @@ contract Contract {
     )
     .unwrap();
 
+    sol!(
+        #[sol(rpc)]
+        contract Contract {
+            function getSecret() external;
+        }
+    );
+
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+    provider
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
 
-    let contract = ContractInstance::new(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
-    );
+    let res = contract.getSecret().send().await.unwrap_err();
 
-    let resp = contract.method::<_, U256>("getSecret", ()).unwrap().call().await;
-
-    let err = resp.unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("execution reverted: !authorized"));
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: !authorized"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -104,35 +124,50 @@ async fn test_solc_revert_example() {
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove_first("VendingMachine").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+    provider
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = VendingMachine::new(contract_address, &provider);
 
-    let contract = ContractInstance::new(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
-    );
+    let res = contract
+        .buyRevert(U256::from(100))
+        .value(U256::from(1))
+        .from(sender)
+        .send()
+        .await
+        .unwrap_err();
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: Not enough Ether provided."));
 
-    for fun in ["buyRevert", "buyRequire"] {
-        let resp = contract.method::<_, ()>(fun, U256::zero()).unwrap().call().await;
-        resp.unwrap();
-
-        let ten = WEI_IN_ETHER.saturating_mul(10u64.into());
-        let call = contract.method::<_, ()>(fun, ten).unwrap().value(ten);
-
-        let resp = call.clone().call().await;
-        let err = resp.unwrap_err().to_string();
-        assert!(err.contains("execution reverted: Not enough Ether provided."));
-        assert!(err.contains("code: 3"));
-    }
+    let res = contract
+        .buyRequire(U256::from(100))
+        .value(U256::from(1))
+        .from(sender)
+        .send()
+        .await
+        .unwrap_err();
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: Not enough Ether provided."));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/1871>
@@ -155,31 +190,45 @@ contract Contract {
     )
     .unwrap();
 
+    sol!(
+        #[sol(rpc)]
+        contract Contract {
+            function setNumber(uint256 num) external;
+        }
+    );
+
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
 
     // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+    provider
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
 
-    let contract = ContractInstance::new(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
-    );
-    let call = contract.method::<_, ()>("setNumber", U256::zero()).unwrap();
-    let resp = call.send().await;
+    let res = contract.setNumber(U256::from(0)).send().await.unwrap_err();
 
-    let err = resp.unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("execution reverted: RevertStringFooBar"));
+    let msg = res.to_string();
+    assert!(msg.contains("execution reverted: revert: RevertStringFooBar"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -201,25 +250,41 @@ contract Contract {
     )
     .unwrap();
 
+    sol!(
+        #[sol(rpc)]
+        contract Contract {
+            function revertAddress() external;
+        }
+    );
+
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+    let bytecode = contract.into_bytecode_bytes().unwrap();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumSigner = wallet.clone().into();
+    let sender = wallet.address();
 
-    let provider = handle.ws_provider();
-    let wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
 
     // deploy successfully
-    let factory =
-        ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), Arc::clone(&client));
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+    provider
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Create),
+            input: bytecode.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = sender.create(0);
+    let contract = Contract::new(contract_address, &provider);
 
-    let call = contract.method::<_, ()>("revertAddress", ()).unwrap().gas(150000);
-
-    let resp = call.call().await;
-
-    let _ = resp.unwrap_err();
+    let res = contract.revertAddress().send().await.unwrap_err();
+    assert!(res.to_string().contains("execution reverted"));
 }

@@ -2,7 +2,9 @@
 
 use crate::constants::*;
 use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
-use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, SolidityErrorCode,
+};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
@@ -542,6 +544,20 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     cmd.forge_fuse().arg("clean");
     cmd.output();
     assert!(!artifact.exists());
+});
+
+// checks that `clean` removes fuzz cache dir
+forgetest_init!(can_clean_fuzz_cache, |prj, cmd| {
+    let config = Config { fuzz: FuzzConfig::new("cache/fuzz".into()), ..Default::default() };
+    prj.write_config(config);
+    // default test contract is written in custom out directory
+    let cache_dir = prj.root().join("cache/fuzz");
+    let _ = fs::create_dir(cache_dir.clone());
+    assert!(cache_dir.exists());
+
+    cmd.forge_fuse().arg("clean");
+    cmd.output();
+    assert!(!cache_dir.exists());
 });
 
 // checks that extra output works

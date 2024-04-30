@@ -200,6 +200,7 @@ pub fn reverse_address(addr: &Address) -> String {
 #[cfg(test)]
 mod test {
     use super::*;
+    use alloy_primitives::hex;
 
     fn assert_hex(hash: B256, val: &str) {
         assert_eq!(hash.0[..], hex::decode(val).unwrap()[..]);

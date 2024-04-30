@@ -698,7 +698,7 @@ mod tests {
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
     };
-    use foundry_common::provider::alloy::get_http_provider;
+    use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use std::{collections::BTreeSet, path::PathBuf};
 

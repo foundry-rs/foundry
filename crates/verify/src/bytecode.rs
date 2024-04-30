@@ -10,7 +10,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
-    provider::alloy::ProviderBuilder,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},

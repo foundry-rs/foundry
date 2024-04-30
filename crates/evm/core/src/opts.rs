@@ -4,10 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Block;
 use eyre::WrapErr;
-use foundry_common::{
-    provider::alloy::{ProviderBuilder, RpcUrl},
-    ALCHEMY_FREE_TIER_CUPS,
-};
+use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
@@ -21,7 +18,7 @@ pub struct EvmOpts {
 
     /// Fetch state over a remote instead of starting from empty state.
     #[serde(rename = "eth_rpc_url")]
-    pub fork_url: Option<RpcUrl>,
+    pub fork_url: Option<String>,
 
     /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,

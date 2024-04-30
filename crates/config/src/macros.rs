@@ -184,12 +184,16 @@ macro_rules! merge_impl_figment_convert {
 }
 
 /// A macro to implement converters from a type to [`Config`] and [`figment::Figment`]
+///
+/// Via [Config::to_figment](crate::Config::to_figment) and the
+/// [Cast](crate::FigmentProviders::Cast) profile.
 #[macro_export]
 macro_rules! impl_figment_convert_cast {
     ($name:ty) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
-                $crate::Config::figment_with_root($crate::find_project_root_path(None).unwrap())
+                $crate::Config::with_root($crate::find_project_root_path(None).unwrap())
+                    .to_figment($crate::FigmentProviders::Cast)
                     .merge(args)
             }
         }

@@ -81,7 +81,8 @@ fn main() -> Result<()> {
         }
         ForgeSubcommand::Clean { root } => {
             let config = utils::load_config_with_root(root);
-            config.project()?.cleanup()?;
+            let project = config.project()?;
+            config.cleanup(&project)?;
             Ok(())
         }
         ForgeSubcommand::Snapshot(cmd) => {

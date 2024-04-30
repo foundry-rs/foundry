@@ -1,6 +1,6 @@
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::provider::alloy::{get_http_provider, RetryProvider, RpcUrl};
+use foundry_common::provider::{get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -11,7 +11,7 @@ use std::{
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
 #[derive(Default)]
 pub struct ProvidersManager {
-    pub inner: HashMap<RpcUrl, ProviderInfo>,
+    pub inner: HashMap<String, ProviderInfo>,
 }
 
 impl ProvidersManager {
@@ -32,7 +32,7 @@ impl ProvidersManager {
 }
 
 impl Deref for ProvidersManager {
-    type Target = HashMap<RpcUrl, ProviderInfo>;
+    type Target = HashMap<String, ProviderInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

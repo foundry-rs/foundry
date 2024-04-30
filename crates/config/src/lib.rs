@@ -20,7 +20,7 @@ use foundry_compilers::{
         RevertStrings, Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
-    error::SolcError,
+    error::{SolcError, SolcIoError},
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
@@ -509,6 +509,86 @@ impl Config {
         Ok(config)
     }
 
+    /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
+    ///
+    /// This will merge various providers, such as env,toml,remappings into the figment.
+    pub fn to_figment(self, providers: FigmentProviders) -> Figment {
+        let mut c = self;
+        let profile = Config::selected_profile();
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+
+        // merge global foundry.toml file
+        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = Config::merge_toml_provider(
+                figment,
+                TomlFileProvider::new(None, global_toml).cached(),
+                profile.clone(),
+            );
+        }
+        // merge local foundry.toml file
+        figment = Config::merge_toml_provider(
+            figment,
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+                .cached(),
+            profile.clone(),
+        );
+
+        // merge environment variables
+        figment = figment
+            .merge(
+                Env::prefixed("DAPP_")
+                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(
+                Env::prefixed("DAPP_TEST_")
+                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(DappEnvCompatProvider)
+            .merge(EtherscanEnvProvider::default())
+            .merge(
+                Env::prefixed("FOUNDRY_")
+                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .map(|key| {
+                        let key = key.as_str();
+                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
+                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                        }) {
+                            key.replacen('_', ".", 1).into()
+                        } else {
+                            key.into()
+                        }
+                    })
+                    .global(),
+            )
+            .select(profile.clone());
+
+        // only resolve remappings if all providers are requested
+        if providers.is_all() {
+            // we try to merge remappings after we've merged all other providers, this prevents
+            // redundant fs lookups to determine the default remappings that are eventually updated
+            // by other providers, like the toml file
+            let remappings = RemappingsProvider {
+                auto_detect_remappings: figment
+                    .extract_inner::<bool>("auto_detect_remappings")
+                    .unwrap_or(true),
+                lib_paths: figment
+                    .extract_inner::<Vec<PathBuf>>("libs")
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
+                root: &c.__root.0,
+                remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+            };
+            figment = figment.merge(remappings);
+        }
+
+        // normalize defaults
+        figment = c.normalize_defaults(figment);
+
+        Figment::from(c).merge(figment).select(profile)
+    }
+
     /// The config supports relative paths and tracks the root path separately see
     /// `Config::with_root`
     ///
@@ -691,7 +771,7 @@ impl Config {
             .build()?;
 
         if self.force {
-            project.cleanup()?;
+            self.cleanup(&project)?;
         }
 
         if let Some(solc) = self.ensure_solc()? {
@@ -699,6 +779,21 @@ impl Config {
         }
 
         Ok(project)
+    }
+
+    /// Cleans the project.
+    pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
+        project.cleanup()?;
+
+        // Remove fuzz cache directory.
+        if let Some(fuzz_cache) = &self.fuzz.failure_persist_dir {
+            let path = project.root().join(fuzz_cache);
+            if path.exists() {
+                std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Ensures that the configured version is installed if explicitly set
@@ -1643,77 +1738,32 @@ impl Config {
 }
 
 impl From<Config> for Figment {
-    fn from(mut c: Config) -> Figment {
-        let profile = Config::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+    fn from(c: Config) -> Figment {
+        c.to_figment(FigmentProviders::All)
+    }
+}
 
-        // merge global foundry.toml file
-        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = Config::merge_toml_provider(
-                figment,
-                TomlFileProvider::new(None, global_toml).cached(),
-                profile.clone(),
-            );
-        }
-        // merge local foundry.toml file
-        figment = Config::merge_toml_provider(
-            figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
-                .cached(),
-            profile.clone(),
-        );
+/// Determines what providers should be used when loading the [Figment] for a [Config]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FigmentProviders {
+    /// Include all providers
+    #[default]
+    All,
+    /// Only include necessary providers that are useful for cast commands
+    ///
+    /// This will exclude more expensive providers such as remappings
+    Cast,
+}
 
-        // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global(),
-            )
-            .select(profile.clone());
+impl FigmentProviders {
+    /// Returns true if all providers should be included
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
 
-        // we try to merge remappings after we've merged all other providers, this prevents
-        // redundant fs lookups to determine the default remappings that are eventually updated by
-        // other providers, like the toml file
-        let remappings = RemappingsProvider {
-            auto_detect_remappings: figment
-                .extract_inner::<bool>("auto_detect_remappings")
-                .unwrap_or(true),
-            lib_paths: figment
-                .extract_inner::<Vec<PathBuf>>("libs")
-                .map(Cow::Owned)
-                .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
-            root: &c.__root.0,
-            remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
-        };
-        let merge = figment.merge(remappings);
-
-        // normalize defaults
-        let merge = c.normalize_defaults(merge);
-
-        Figment::from(c).merge(merge).select(profile)
+    /// Returns true if this is the cast preset
+    pub const fn is_cast(&self) -> bool {
+        matches!(self, Self::Cast)
     }
 }
 

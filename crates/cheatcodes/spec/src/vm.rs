@@ -381,6 +381,18 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prevrandao(uint256 newPrevrandao) external;
 
+    /// Sets the blobhashes in the transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function blobhashes(bytes32[] calldata hashes) external;
+
+    /// Gets the blockhashes from the current transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function getBlobhashes() external view returns (bytes32[] memory hashes);
+
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function roll(uint256 newHeight) external;

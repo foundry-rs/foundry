@@ -27,8 +27,7 @@ use alloy_signer_wallet::{
 use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
 use foundry_common::{
-    provider::alloy::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
-    REQUEST_TIMEOUT,
+    provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -1043,7 +1042,7 @@ latest block number: {latest_block}"
         // limit is enabled, since there are networks where this is not used and is always
         // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
         let gas_limit = if self.disable_block_gas_limit || block.header.gas_limit == 0 {
-            u128::MAX
+            u64::MAX as u128
         } else {
             block.header.gas_limit
         };

@@ -5,9 +5,7 @@
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
 use foundry_common::provider::{
-    alloy::{ProviderBuilder, RetryProvider},
-    runtime_transport::RuntimeTransport,
-    tower::RetryBackoffService,
+    runtime_transport::RuntimeTransport, tower::RetryBackoffService, ProviderBuilder, RetryProvider,
 };
 use foundry_config::Config;
 use futures::{

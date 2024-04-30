@@ -5,7 +5,7 @@ use crate::{
     StorageInfo,
 };
 use alloy_primitives::TxHash;
-use alloy_rpc_types::{Filter, FilteredParams, Log as AlloyLog};
+use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
@@ -162,14 +162,14 @@ pub struct LogsFilter {
     /// existing logs that matched the filter when the listener was installed
     ///
     /// They'll be returned on the first pill
-    pub historic: Option<Vec<AlloyLog>>,
+    pub historic: Option<Vec<Log>>,
 }
 
 // === impl LogsFilter ===
 
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<AlloyLog> {
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<Log> {
         let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
             let b = self.storage.block(block.hash);

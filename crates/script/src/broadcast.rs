@@ -4,11 +4,11 @@ use crate::{
     ScriptConfig,
 };
 use alloy_chains::Chain;
-use alloy_eips::{eip2718::Encodable2718, BlockId};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
@@ -18,9 +18,7 @@ use foundry_cli::{
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
-    provider::alloy::{
-        estimate_eip1559_fees, get_http_provider, try_get_http_provider, RetryProvider,
-    },
+    provider::{get_http_provider, try_get_http_provider, RetryProvider},
     shell,
 };
 use foundry_config::Config;
@@ -258,9 +256,7 @@ impl BundledState {
                         }),
                     ),
                     (false, _, _) => {
-                        let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
-                                .await
-                            .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let mut fees = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();
