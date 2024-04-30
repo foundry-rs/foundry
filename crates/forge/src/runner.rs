@@ -843,10 +843,9 @@ impl<'a> ContractRunner<'a> {
     }
 
     /// Returns the environment of the test runner
-    ///
-    /// If the [RawCallResult] contains a non-genesis context, the
-    /// environment is a fork. Otherwise, it is a standard environment.
     fn get_environment(&self, contexts: &[Context]) -> TestEnvironment {
+        // If there are contexts, we are in a fork environment
+        // and we return the block number of the last context
         if let Some(context) = contexts.last() {
             return TestEnvironment::Fork { block_number: context.block_number }
         }
