@@ -380,10 +380,6 @@ pub struct TestResult {
     #[serde(skip)]
     pub traces: Traces,
 
-    /// Execution context switches made inside of the test that was run.
-    #[serde(skip)]
-    pub contexts: Vec<Context>,
-
     /// Additional traces to use for gas report.
     #[serde(skip)]
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,

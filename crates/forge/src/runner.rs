@@ -472,7 +472,6 @@ impl<'a> ContractRunner<'a> {
                     decoded_logs: decode_console_logs(&logs),
                     traces,
                     environment: self.get_environment(&contexts),
-                    contexts,
                     labeled_addresses,
                     kind: TestKind::Standard(0),
                     duration: start.elapsed(),
@@ -486,7 +485,6 @@ impl<'a> ContractRunner<'a> {
                     decoded_logs: decode_console_logs(&logs),
                     traces,
                     environment: self.get_environment(&contexts),
-                    contexts,
                     labeled_addresses,
                     kind: TestKind::Standard(0),
                     duration: start.elapsed(),
@@ -541,7 +539,6 @@ impl<'a> ContractRunner<'a> {
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             environment: self.get_environment(&contexts),
             traces,
-            contexts,
             coverage,
             labeled_addresses,
             debug: debug_arena,
@@ -589,7 +586,6 @@ impl<'a> ContractRunner<'a> {
                 decoded_logs: decode_console_logs(&logs),
                 traces,
                 environment: self.get_environment(&contexts),
-                contexts,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
                 coverage,
@@ -621,7 +617,6 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&logs),
                         traces,
                         environment: self.get_environment(&contexts),
-                        contexts,
                         labeled_addresses,
                         kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
                         duration: start.elapsed(),
@@ -700,7 +695,6 @@ impl<'a> ContractRunner<'a> {
             coverage,
             traces,
             environment: self.get_environment(&contexts),
-            contexts,
             labeled_addresses: labeled_addresses.clone(),
             duration: start.elapsed(),
             gas_report_traces,
@@ -762,7 +756,6 @@ impl<'a> ContractRunner<'a> {
                 decoded_logs: decode_console_logs(&logs),
                 traces,
                 environment: self.get_environment(&contexts),
-                contexts,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
                 debug,
@@ -840,7 +833,6 @@ impl<'a> ContractRunner<'a> {
             kind,
             traces,
             environment: self.get_environment(&contexts),
-            contexts,
             coverage,
             labeled_addresses,
             debug,
@@ -854,9 +846,6 @@ impl<'a> ContractRunner<'a> {
     ///
     /// If the [RawCallResult] contains a non-genesis context, the
     /// environment is a fork. Otherwise, it is a standard environment.
-    ///
-    /// If the backend has forks, return the block number of the fork.
-    /// If the backend does not have forks, return [TestEnvironment::Standard].
     fn get_environment(&self, contexts: &[Context]) -> TestEnvironment {
         if let Some(context) = contexts.last() {
             return TestEnvironment::Fork { block_number: context.block_number }

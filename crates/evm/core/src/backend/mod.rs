@@ -523,11 +523,6 @@ impl Backend {
         }
     }
 
-    /// Returns whether the backend has any forks
-    pub fn has_forks(&self) -> bool {
-        self.inner.has_forks()
-    }
-
     /// Returns all snapshots created in this backend
     pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots
@@ -1602,19 +1597,6 @@ impl BackendInner {
 
     pub fn ensure_fork_index_by_local_id(&self, id: LocalForkId) -> eyre::Result<ForkLookupIndex> {
         self.ensure_fork_index(self.ensure_fork_id(id)?)
-    }
-
-    /// Returns whether there are any forks
-    pub fn has_forks(&self) -> bool {
-        if self.launched_with_fork.is_some() {
-            return true;
-        }
-
-        if !self.created_forks.is_empty() {
-            return true;
-        }
-
-        self.forks.iter().any(|fork| fork.is_some())
     }
 
     /// Returns the underlying fork mapped to the index
