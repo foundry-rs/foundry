@@ -1949,7 +1949,6 @@ impl Backend {
         hash: B256,
     ) -> Result<Option<ReceiptResponse>, BlockchainError> {
         if let Some(receipt) = self.mined_transaction_receipt(hash) {
-            println!("returned mined transaction receipt");
             return Ok(Some(receipt.inner));
         }
 
