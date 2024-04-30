@@ -157,20 +157,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     continue
                 }
             };
+            if is_cancun {
+                let tx_blob_gas = tx
+                    .transaction
+                    .pending_transaction
+                    .transaction
+                    .transaction
+                    .blob_gas()
+                    .unwrap_or(0);
+                cumulative_blob_gas_used =
+                    Some(cumulative_blob_gas_used.unwrap_or(0u128).saturating_add(tx_blob_gas));
+            }
             let receipt = tx.create_receipt(&mut cumulative_gas_used);
 
-            if is_cancun {
-                cumulative_blob_gas_used = Some(
-                    cumulative_blob_gas_used.unwrap_or(0u128).saturating_add(
-                        tx.transaction
-                            .pending_transaction
-                            .transaction
-                            .transaction
-                            .blob_gas()
-                            .unwrap_or(0),
-                    ),
-                );
-            }
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             build_logs_bloom(logs.clone(), &mut bloom);
 
