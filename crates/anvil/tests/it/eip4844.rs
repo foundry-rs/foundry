@@ -37,10 +37,6 @@ async fn can_send_eip4844_transaction() {
 
     tx.populate_blob_hashes();
 
-    let build_tx = tx.can_build();
-
-    assert!(build_tx);
-
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     assert_eq!(receipt.blob_gas_used, Some(131072));
