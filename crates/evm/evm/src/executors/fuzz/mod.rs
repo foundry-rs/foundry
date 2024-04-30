@@ -131,9 +131,8 @@ impl FuzzedExecutor {
                     // to run at least one more case to find a minimal failure
                     // case.
                     let call_res = _counterexample.1.result.clone();
-                    let _logs = _counterexample.1.logs.clone();
+                    logs.borrow_mut().extend(_counterexample.1.logs.clone());
                     *counterexample.borrow_mut() = _counterexample;
-                    logs.borrow_mut().extend(_logs);
                     // HACK: we have to use an empty string here to denote `None`
                     let reason = rd.maybe_decode(&call_res, Some(status));
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
