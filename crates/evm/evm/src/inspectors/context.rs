@@ -14,6 +14,8 @@ pub struct ContextCollector {
 
 impl<DB: Database> Inspector<DB> for ContextCollector {
     fn call(&mut self, ecx: &mut EvmContext<DB>, _call: &mut CallInputs) -> Option<CallOutcome> {
+        // Note: in case there are any cheatcodes executed that modify the environment, this will
+        // update the `env` of the `EvmContext` and the block number will be reflect that change.
         let block_number = ecx.inner.env.block.number;
 
         // Skip if the block number is at genesis
