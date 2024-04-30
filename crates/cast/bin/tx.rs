@@ -1,3 +1,4 @@
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
@@ -52,6 +53,7 @@ pub async fn build_tx<
     tx: TransactionOpts,
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
+    blob_data: Option<String>,
 ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
     let chain = chain.into();
 
@@ -60,11 +62,24 @@ pub async fn build_tx<
     let to: Option<Address> =
         if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
 
+    let sidecar = blob_data
+        .map(|data| {
+            SidecarBuilder::<SimpleCoder>::from_slice(data.as_bytes())
+                .build()
+                .map_err(|e| eyre::eyre!("Failed to parse blob data: {}", e))
+        })
+        .transpose()?;
+
     let mut req = WithOtherFields::new(TransactionRequest::default())
         .with_to(to.unwrap_or_default())
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
+
+    if let Some(sidecar) = sidecar {
+        req.set_blob_sidecar(sidecar);
+        // TODO: req.set_max_fee_per_blob_gas()
+    }
 
     req.set_nonce(if let Some(nonce) = tx.nonce {
         nonce.to()

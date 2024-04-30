@@ -75,6 +75,13 @@ pub enum SendTxSubcommands {
         /// The arguments of the function to call.
         args: Vec<String>,
     },
+    Blob {
+        /// The blob data to post to ethereum.
+        data: Option<String>,
+        /// Path to the file containing the blob data.
+        #[arg(long, short, conflicts_with = "data")]
+        path: Option<String>, // TODO: Change type to PathBuf
+    },
 }
 
 impl SendTxArgs {
@@ -92,6 +99,14 @@ impl SendTxArgs {
             command,
             unlocked,
         } = self;
+
+        let blob_data = match &command {
+            Some(SendTxSubcommands::Blob { data: Some(data), .. }) => Some(data.clone()),
+            Some(SendTxSubcommands::Blob { path: Some(path), .. }) => {
+                Some(std::fs::read_to_string(path)?)
+            }
+            _ => None,
+        };
 
         let code = if let Some(SendTxSubcommands::Create {
             code,
@@ -161,6 +176,7 @@ impl SendTxArgs {
                 cast_async,
                 confirmations,
                 to_json,
+                blob_data,
             )
             .await
         // Case 2:
@@ -196,6 +212,7 @@ impl SendTxArgs {
                 cast_async,
                 confirmations,
                 to_json,
+                blob_data,
             )
             .await
         }
@@ -216,9 +233,11 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     cast_async: bool,
     confs: u64,
     to_json: bool,
+    blob_data: Option<String>,
 ) -> Result<()> {
     let (tx, _) =
-        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key).await?;
+        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key, blob_data)
+            .await?;
 
     let cast = Cast::new(provider);
 
