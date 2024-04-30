@@ -20,7 +20,7 @@ use foundry_compilers::{
         RevertStrings, Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
-    error::SolcError,
+    error::{SolcError, SolcIoError},
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
@@ -691,7 +691,7 @@ impl Config {
             .build()?;
 
         if self.force {
-            project.cleanup()?;
+            self.cleanup(&project)?;
         }
 
         if let Some(solc) = self.ensure_solc()? {
@@ -699,6 +699,21 @@ impl Config {
         }
 
         Ok(project)
+    }
+
+    /// Cleans the project.
+    pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
+        project.cleanup()?;
+
+        // Remove fuzz cache directory.
+        if let Some(fuzz_cache) = &self.fuzz.failure_persist_dir {
+            let path = project.root().join(fuzz_cache);
+            if path.exists() {
+                std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Ensures that the configured version is installed if explicitly set
