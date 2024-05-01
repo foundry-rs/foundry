@@ -3669,7 +3669,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.2.6"
-source = "git+https://github.com/foundry-rs/block-explorers?rev=fdfdf5e#fdfdf5eb7255c69d2b468ac9ee9225deac971a1f"
+source = "git+https://github.com/foundry-rs/block-explorers?rev=6107af1#6107af1e67ded30ae86c340afcbbcc2255d6d3b7"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3822,7 +3822,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.3.19"
-source = "git+https://github.com/foundry-rs/compilers?rev=a424a9b#a424a9b39f4b5dfd81c93a8f5c700e056c681d93"
+source = "git+https://github.com/foundry-rs/compilers?rev=39acf1b#39acf1b181affdd0c5b6b8cc8b163b9cb859ebd5"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

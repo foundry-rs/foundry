@@ -1277,7 +1277,7 @@ impl Config {
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         // autodetect paths
         let root = root.into();
-        let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),

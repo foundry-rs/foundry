@@ -3,6 +3,7 @@ use eyre::Result;
 use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{fs, glob::expand_globs, term::cli_warn};
+use foundry_compilers::SOLC_EXTENSIONS;
 use foundry_config::impl_figment_convert_basic;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
@@ -81,7 +82,10 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        inputs.extend(foundry_compilers::utils::source_files_iter(path));
+                        inputs.extend(foundry_compilers::utils::source_files_iter(
+                            path,
+                            SOLC_EXTENSIONS,
+                        ));
                     } else if path.is_sol() {
                         inputs.push(path.to_path_buf());
                     } else {
