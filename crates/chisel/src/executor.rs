@@ -1693,7 +1693,7 @@ mod tests {
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
-                let solc = SolcVersionManager
+                let solc = SolcVersionManager::default()
                     .get_or_install(&version.parse().unwrap())
                     .map(|solc| (solc.version.clone(), solc));
                 match solc {
@@ -1715,8 +1715,8 @@ mod tests {
             }
         }
 
-        let solc = SolcVersionManager
-            .get_or_install(&Version::parse("0.8.19").unwrap())
+        let solc = SolcVersionManager::default()
+            .get_or_install(&Version::new(0, 8, 19))
             .expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }

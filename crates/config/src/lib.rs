@@ -806,7 +806,7 @@ impl Config {
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(ref solc) = self.solc {
-            let version_manager = SolcVersionManager;
+            let version_manager = SolcVersionManager::default();
             let solc = match solc {
                 SolcReq::Version(version) => {
                     if let Ok(solc) = version_manager.get_installed(version) {
@@ -901,7 +901,7 @@ impl Config {
         if let Some(solc) = self.ensure_solc()? {
             Ok(CompilerConfig::Specific(solc))
         } else {
-            Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager)))
+            Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
         }
     }
 
@@ -3757,7 +3757,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
                 "foundry.toml",
@@ -3768,7 +3768,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
                 "foundry.toml",
@@ -3783,7 +3783,7 @@ mod tests {
 
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
             Ok(())
         });
     }
@@ -3802,7 +3802,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             Ok(())
         });
@@ -3817,7 +3817,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.20".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
 
             Ok(())
         });

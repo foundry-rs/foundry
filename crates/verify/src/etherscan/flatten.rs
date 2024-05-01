@@ -67,7 +67,7 @@ impl EtherscanFlattenedSource {
         version: &Version,
         contract_path: &Path,
     ) -> Result<()> {
-        let vm = SolcVersionManager;
+        let vm = SolcVersionManager::default();
         let version = strip_build_meta(version.clone());
         let solc = vm.get_or_install(&version)?;
 

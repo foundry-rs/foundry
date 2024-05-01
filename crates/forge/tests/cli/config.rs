@@ -360,7 +360,7 @@ contract Foo {}
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
     let local_solc =
-        SolcVersionManager.get_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+        SolcVersionManager::default().get_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));

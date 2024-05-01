@@ -141,7 +141,7 @@ impl StorageArgs {
         let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
 
-        let vm = SolcVersionManager;
+        let vm = SolcVersionManager::default();
         project.compiler_config = if auto_detect {
             CompilerConfig::AutoDetect(Arc::new(vm))
         } else {
@@ -159,7 +159,7 @@ impl StorageArgs {
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
                 eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
-                let solc = SolcVersionManager.get_or_install(&MIN_SOLC)?;
+                let solc = SolcVersionManager::default().get_or_install(&MIN_SOLC)?;
                 project.compiler_config = CompilerConfig::Specific(solc);
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
                     out = output;

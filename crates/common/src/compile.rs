@@ -546,7 +546,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
-    let vm = SolcVersionManager;
+    let vm = SolcVersionManager::default();
     let solc = vm.get_or_install(&v)?;
 
     let compiler_config = CompilerConfig::Specific(solc);

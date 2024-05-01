@@ -5,11 +5,12 @@ use foundry_compilers::{
     Solc,
 };
 use once_cell::sync::Lazy;
+use semver::Version;
 use std::hint::black_box;
 use tokio::runtime::Runtime;
 
 static SOLC: Lazy<Solc> =
-    Lazy::new(|| SolcVersionManager.get_or_install(&"0.8.19".parse().unwrap()).unwrap());
+    Lazy::new(|| SolcVersionManager::default().get_or_install(&Version::new(0, 8, 19)).unwrap());
 
 /// Benchmark for the `clone_with_new_line` function in [SessionSource]
 fn clone_with_new_line(c: &mut Criterion) {

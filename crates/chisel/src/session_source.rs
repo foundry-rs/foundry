@@ -101,10 +101,10 @@ impl SessionSourceConfig {
                 print!("{}", "No solidity versions installed! ".green());
             }
             // use default
-            SolcReq::Version("0.8.19".parse().unwrap())
+            SolcReq::Version(Version::new(0, 8, 19))
         };
 
-        let vm = SolcVersionManager;
+        let vm = SolcVersionManager::default();
 
         match solc_req {
             SolcReq::Version(version) => {
