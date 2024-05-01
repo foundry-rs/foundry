@@ -2373,15 +2373,8 @@ impl TransactionValidator for Backend {
 
             // Heavy (blob validation) checks
             let tx = match &tx.transaction {
-                TypedTransaction::EIP4844(tx) => tx.tx().clone(),
-                // This should not happen. The transaction should explicitly be an eip 4844 tx.
-                _ => {
-                    return Err(InvalidTransactionError::BlobTransactionValidationError(
-                        alloy_consensus::BlobTransactionValidationError::NotBlobTransaction(
-                            tx.transaction.r#type().unwrap_or(u8::MAX),
-                        ),
-                    ))
-                }
+                TypedTransaction::EIP4844(tx) => tx.tx(),
+                _ => unreachable!(),
             };
 
             let blob_count = tx.tx().blob_versioned_hashes.len();
