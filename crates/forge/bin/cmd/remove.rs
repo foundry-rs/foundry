@@ -11,6 +11,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Parser)]
 pub struct RemoveArgs {
     /// The dependencies you want to remove.
+    #[arg(required = true)]
     dependencies: Vec<Dependency>,
 
     /// The project's root path.

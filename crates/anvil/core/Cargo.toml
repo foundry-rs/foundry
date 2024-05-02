@@ -16,6 +16,7 @@ revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
+    "c-kzg",
 ] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }

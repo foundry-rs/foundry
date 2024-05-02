@@ -2,6 +2,7 @@ mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
+mod eip4844;
 mod fork;
 mod ganache;
 mod gas;
@@ -14,7 +15,6 @@ mod otterscan;
 mod proof;
 mod pubsub;
 mod revert;
-
 mod sign;
 mod state;
 mod traces;

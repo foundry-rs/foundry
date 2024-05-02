@@ -22,7 +22,12 @@ foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-sol-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -32,6 +37,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
+    "c-kzg",
 ] }
 revm-inspectors.workspace = true
 
