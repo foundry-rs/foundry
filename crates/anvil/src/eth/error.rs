@@ -215,11 +215,20 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
-    #[error("too many blobs: have {0}, want {1}")]
+    #[error("too many blobs in one transaction, have {0}, max {1}")]
     TooManyBlobs(usize, usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
+    /// Thrown when Blob transaction is a create transaction. `to` must be present.
+    #[error("Blob transaction can't be a create transaction. `to` must be present.")]
+    BlobCreateTransaction,
+    /// Thrown when Blob transaction contains a versioned hash with an incorrect version.
+    #[error("Blob transaction contains a versioned hash with an incorrect version")]
+    BlobVersionNotSupported,
+    /// Thrown when there are no `blob_hashes` in the transaction.
+    #[error("There should be at least one blob in a Blob transaction.")]
+    EmptyBlobs,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -268,8 +277,14 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::MaxFeePerBlobGasNotSupported => {
                 InvalidTransactionError::MaxFeePerBlobGasNotSupported
             }
-            // TODO: Blob-related errors should be handled once the Reth migration is done and code
-            // is moved over.
+            InvalidTransaction::BlobCreateTransaction => {
+                InvalidTransactionError::BlobCreateTransaction
+            }
+            InvalidTransaction::BlobVersionNotSupported => {
+                InvalidTransactionError::BlobVersionedHashesNotSupported
+            }
+            InvalidTransaction::EmptyBlobs => InvalidTransactionError::EmptyBlobs,
+            InvalidTransaction::TooManyBlobs => InvalidTransactionError::TooManyBlobs(7, 6),
             _ => todo!(),
         }
     }
