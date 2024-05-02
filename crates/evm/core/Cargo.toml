@@ -26,7 +26,7 @@ alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 
-revm = { workspace = true, default-features = false, features = [
+revm = { workspace = true, features = [
     "std",
     "serde",
     "memory_limit",
@@ -35,6 +35,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
     "optimism",
+    "c-kzg"
 ] }
 revm-inspectors.workspace = true
 

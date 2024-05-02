@@ -67,9 +67,9 @@ impl Block {
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
                 withdrawals_root: None,
-                blob_gas_used: None,
-                excess_blob_gas: None,
-                parent_beacon_block_root: None,
+                blob_gas_used: partial_header.blob_gas_used,
+                excess_blob_gas: partial_header.excess_blob_gas,
+                parent_beacon_block_root: partial_header.parent_beacon_block_root,
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
             },
@@ -94,6 +94,9 @@ pub struct PartialHeader {
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: B256,
+    pub blob_gas_used: Option<u128>,
+    pub excess_blob_gas: Option<u128>,
+    pub parent_beacon_block_root: Option<B256>,
     pub nonce: B64,
     pub base_fee: Option<u128>,
 }
@@ -115,6 +118,9 @@ impl From<Header> for PartialHeader {
             mix_hash: value.mix_hash,
             nonce: value.nonce,
             base_fee: value.base_fee_per_gas,
+            blob_gas_used: value.blob_gas_used,
+            excess_blob_gas: value.excess_blob_gas,
+            parent_beacon_block_root: value.parent_beacon_block_root,
         }
     }
 }

@@ -20,7 +20,7 @@ use revm::{
     primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
 };
 use serde::{Deserialize, Serialize};
-use std::ops::Deref;
+use std::ops::{Deref, Mul};
 
 pub mod optimism;
 
@@ -45,12 +45,12 @@ pub fn transaction_request_to_typed(
                 max_fee_per_gas,
                 max_priority_fee_per_gas,
                 max_fee_per_blob_gas,
-                mut blob_versioned_hashes,
+                blob_versioned_hashes,
                 gas,
                 value,
                 input,
                 nonce,
-                mut access_list,
+                access_list,
                 sidecar,
                 transaction_type,
                 ..
@@ -77,9 +77,9 @@ pub fn transaction_request_to_typed(
         gas_price,
         max_fee_per_gas,
         max_priority_fee_per_gas,
-        access_list.take(),
+        access_list.as_ref(),
         max_fee_per_blob_gas,
-        blob_versioned_hashes.take(),
+        blob_versioned_hashes.as_ref(),
         sidecar,
         to,
     ) {
@@ -129,7 +129,7 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), Some(to)) => {
+        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), to) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
@@ -138,7 +138,7 @@ pub fn transaction_request_to_typed(
                 gas_limit: gas.unwrap_or_default(),
                 value: value.unwrap_or(U256::ZERO),
                 input: input.into_input().unwrap_or_default(),
-                to: match to {
+                to: match to.unwrap_or(TxKind::Create) {
                     TxKind::Call(to) => to,
                     TxKind::Create => Address::ZERO,
                 },
@@ -619,9 +619,9 @@ pub enum TypedTransaction {
 }
 
 impl TypedTransaction {
-    /// Returns true if the transaction uses dynamic fees: EIP1559
+    /// Returns true if the transaction uses dynamic fees: EIP1559 or EIP4844
     pub fn is_dynamic_fee(&self) -> bool {
-        matches!(self, TypedTransaction::EIP1559(_))
+        matches!(self, TypedTransaction::EIP1559(_)) || matches!(self, TypedTransaction::EIP4844(_))
     }
 
     pub fn gas_price(&self) -> u128 {
@@ -676,8 +676,33 @@ impl TypedTransaction {
     }
 
     /// Max cost of the transaction
+    /// It is the gas limit multiplied by the gas price,
+    /// and if the transaction is EIP-4844, the result of (total blob gas cost * max fee per blob
+    /// gas) is also added
     pub fn max_cost(&self) -> u128 {
-        self.gas_limit().saturating_mul(self.gas_price())
+        let mut max_cost = self.gas_limit().saturating_mul(self.gas_price());
+
+        if self.is_eip4844() {
+            max_cost = max_cost.saturating_add(
+                self.blob_gas().unwrap_or(0).mul(self.max_fee_per_blob_gas().unwrap_or(0)),
+            )
+        }
+
+        max_cost
+    }
+
+    pub fn blob_gas(&self) -> Option<u128> {
+        match self {
+            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas() as u128),
+            _ => None,
+        }
+    }
+
+    pub fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        match self {
+            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().max_fee_per_blob_gas),
+            _ => None,
+        }
     }
 
     /// Returns a helper type that contains commonly used values as fields

@@ -741,6 +741,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "rand 0.8.5",
+ "revm",
  "serde",
  "serde_json",
  "serde_repr",
@@ -7082,10 +7083,12 @@ dependencies = [
  "bitvec",
  "c-kzg",
  "cfg-if",
+ "derive_more",
  "dyn-clone",
  "enumn",
  "hashbrown",
  "hex",
+ "once_cell",
  "serde",
 ]
 

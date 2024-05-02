@@ -39,6 +39,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use rand::thread_rng;
+use revm::primitives::BlobExcessGasAndPrice;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -98,6 +99,8 @@ pub struct NodeConfig {
     pub gas_price: Option<u128>,
     /// Default base fee
     pub base_fee: Option<u128>,
+    /// Default blob excess gas and price
+    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
     pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
@@ -398,6 +401,7 @@ impl Default for NodeConfig {
             fork_block_number: None,
             account_generator: None,
             base_fee: None,
+            blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
             enable_auto_impersonate: false,
@@ -445,6 +449,17 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_gas_price(&self) -> u128 {
         self.gas_price.unwrap_or(INITIAL_GAS_PRICE)
+    }
+
+    pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
+        if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
+            blob_excess_gas_and_price.clone()
+        } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
+        {
+            BlobExcessGasAndPrice::new(excess_blob_gas as u64)
+        } else {
+            BlobExcessGasAndPrice { blob_gasprice: 0, excess_blob_gas: 0 }
+        }
     }
 
     /// Returns the base fee to use
@@ -876,8 +891,12 @@ impl NodeConfig {
         };
         let mut env = EnvWithHandlerCfg::new(Box::new(env), cfg.handler_cfg);
 
-        let fees =
-            FeeManager::new(cfg.handler_cfg.spec_id, self.get_base_fee(), self.get_gas_price());
+        let fees = FeeManager::new(
+            cfg.handler_cfg.spec_id,
+            self.get_base_fee(),
+            self.get_gas_price(),
+            self.get_blob_excess_gas_and_price(),
+        );
 
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
@@ -1074,6 +1093,17 @@ latest block number: {latest_block}"
                 );
                 // update next base fee
                 fees.set_base_fee(next_block_base_fee);
+            }
+            if let (Some(blob_excess_gas), Some(blob_gas_used)) =
+                (block.header.excess_blob_gas, block.header.blob_gas_used)
+            {
+                env.block.blob_excess_gas_and_price =
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas as u64));
+                let next_block_blob_excess_gas =
+                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
+                fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                    next_block_blob_excess_gas,
+                ));
             }
         }
 
