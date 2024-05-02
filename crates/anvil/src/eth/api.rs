@@ -1331,9 +1331,7 @@ impl EthApi {
         // Same goes for the `base_fee_per_blob_gas`:
         // > [..] includes the next block after the newest of the returned range, because this
         // > value can be derived from the newest block.
-        response
-            .base_fee_per_blob_gas
-            .push(self.backend.fees().base_fee_per_blob_gas().to::<u128>());
+        response.base_fee_per_blob_gas.push(self.backend.fees().base_fee_per_blob_gas());
 
         Ok(response)
     }

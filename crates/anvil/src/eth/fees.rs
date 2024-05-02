@@ -96,11 +96,11 @@ impl FeeManager {
     }
 
     /// Calculates the current blob gas price
-    pub fn blob_gas_price(&self) -> U256 {
+    pub fn blob_gas_price(&self) -> u128 {
         if self.is_eip4844() {
             self.base_fee_per_blob_gas()
         } else {
-            U256::ZERO
+            0
         }
     }
 
@@ -125,11 +125,11 @@ impl FeeManager {
         }
     }
 
-    pub fn base_fee_per_blob_gas(&self) -> U256 {
+    pub fn base_fee_per_blob_gas(&self) -> u128 {
         if self.is_eip4844() {
-            U256::from(self.blob_excess_gas_and_price.read().blob_gasprice)
+            self.blob_excess_gas_and_price.read().blob_gasprice
         } else {
-            U256::ZERO
+            0
         }
     }
 
