@@ -1,0 +1,3279 @@
+org	100h
+	jmp	demo
+	;;;	Given an 0-terminated ASCII string containing digits in [DE],
+	;;;	see if it matches its check digit. Returns with zero flag set
+	;;;	if the string matches.
+damm:	mvi	c,0	; Interim digit in C, starts off at 0.
+	ldax	d	; Get current byte from string
+	inx	d 	; Advance the pointer
+	ana	a	; Is the byte zero?
+	jnz	$+5	; If not, go look up interim digit
+	cmp	c	; But if so, see if the interim digit is also zero
+	ret		; And return whether this was the case
+	sui	'0'	; Subtract ASCII 0
+	mov	b,a	; Keep digit to be processed in B
+	mov	a,c	; Calculate C*10 (interim digit row index)
+	add	a	; * 2
+	add	a	; * 4
+	add	c	; * 5
+	add	a	; * 10
+	add	b	; Add column index
+	lxi	h,dammit
+	add	l	; Table lookup (assuming H doesn't change, i.e. it
+	mov	l,a	; doesn't cross a page boundary).
+	mov	c,m	; Get new interim digit from table
+	jmp	damm+2	; And check next character
+	;;;	Table of interim digits
+	;;;	NOTE: must not cross page boundary
+dammit:	db	0,3,1,7,5,9,8,6,4,2
+	db	7,0,9,2,1,5,4,8,6,3
+	db	4,2,0,6,8,7,1,3,5,9
+	db	1,7,5,0,9,8,3,4,2,6
+	db	6,1,2,3,0,4,5,9,7,8
+	db	3,6,7,4,2,0,9,5,8,1
+	db	5,8,6,9,7,2,0,1,3,4
+	db	8,9,4,5,3,6,2,0,1,7
+	db	9,4,3,8,6,1,7,2,0,5
+	db	2,5,8,1,4,3,6,7,9,0
+	;;;	Demo code: see if the argument on the CP/M command line
+	;;;	matches its input.
+demo:	lxi	h,80h	; Zero-terminate input
+	mov	e,m
+	mvi	d,0
+	inx	d
+	dad	d
+	mov	m,d
+	lxi	d,82h	; Command line argument, skipping first space
+	call	damm	; See if it validates
+	mvi	c,9
+	lxi	d,ok	; Print OK...
+	jz	5	; ...if the checksum matches,
+	lxi	d,no	; Print NOT OK otherwise.
+	jmp	5
+no:	db	'NOT '
+ok:	db	'OK$'
+Output:
+A>damm 5724
+OK
+A>damm 5727
+NOT OK
+A>damm 112946
+OK
+A>damm 112949
+NOT OK
+8086 Assembly
+	cpu	8086
+	bits	16
+section	.text
+	org	100h
+	jmp	demo
+	;;;	Given a 0-terminated ASCII string containing digits in
+	;;;	[DS:SI], see if the check digit matches. Returns with zero flag
+	;;;	set if it matches.
+damm:	xor	cl,cl	; Interim digit starts out at 0
+	mov	bx,.tab	; Index for table lookup
+.dgt:	lodsb		; Get next string byte
+	test	al,al	; If it is zero, we're done
+	jz	.out
+	sub	al,'0'	; Make ASCII digit
+	mov	ah,cl	; Table lookup, AH = interim digit
+	aad		; AL += AH * 10 (such handy instructions the 8086 has)
+	cs 	xlatb	; AL = CS:table[AL]
+	mov	cl,al	; CL = new interim digit
+	jmp	.dgt	; Get next string
+.out:	test	cl,cl	; Interim digit should be zero at the end
+	ret
+.tab:	db	0,3,1,7,5,9,8,6,4,2	; Table can be stored as part of the
+	db	7,0,9,2,1,5,4,8,6,3	; code
+	db	4,2,0,6,8,7,1,3,5,9
+	db	1,7,5,0,9,8,3,4,2,6
+	db	6,1,2,3,0,4,5,9,7,8
+	db	3,6,7,4,2,0,9,5,8,1
+	db	5,8,6,9,7,2,0,1,3,4
+	db	8,9,4,5,3,6,2,0,1,7
+	db	9,4,3,8,6,1,7,2,0,5
+	db	2,5,8,1,4,3,6,7,9,0
+	;;;	Demo: see if the argument on the MS-DOS command line is valid
+demo:	xor	bh,bh	; Zero-terminate the input
+	mov	bl,[80h]
+	mov	[bx+81h],bh
+	mov	si,82h	; Start of input skipping first space
+	call	damm	; Is it valid?
+	mov	dx,ok	; If so, print OK
+	jz	.print
+	mov	dx,no 	; Otherwise, print NOT OK
+.print:	mov	ah,9
+	int	21h
+	ret
+section	.data
+no:	db	'NOT '
+ok: 	db	'OK$'
+Output:
+C:\>damm86 5724
+OK
+C:\>damm86 5725
+NOT OK
+C:\>damm86 112946
+OK
+C:\>damm86 112949
+NOT OK
+
+Action!
+BYTE FUNC Damm(CHAR ARRAY a)
+  BYTE ARRAY table=[
+    0 3 1 7 5 9 8 6 4 2
+    7 0 9 2 1 5 4 8 6 3
+    4 2 0 6 8 7 1 3 5 9
+    1 7 5 0 9 8 3 4 2 6
+    6 1 2 3 0 4 5 9 7 8
+    3 6 7 4 2 0 9 5 8 1
+    5 8 6 9 7 2 0 1 3 4
+    8 9 4 5 3 6 2 0 1 7
+    9 4 3 8 6 1 7 2 0 5
+    2 5 8 1 4 3 6 7 9 0]
+  BYTE i,x,c
+
+  x=0
+  FOR i=1 TO a(0)
+  DO
+    c=a(i)
+    IF c<'0 OR c>'9 THEN
+      RETURN (0)
+    FI
+    c==-'0
+    x=table(x*10+c)
+  OD
+  IF x=0 THEN
+    RETURN (1)
+  FI
+RETURN (0)
+
+PROC Test(CHAR ARRAY a)
+  BYTE i
+
+  Print(a) Print(" -> ")
+  IF Damm(a)=1 THEN
+    PrintE("valid")
+  ELSE
+    PrintE("invalid")
+  FI
+RETURN
+
+PROC Main()
+  Test("5724")
+  Test("5727")
+  Test("112946")
+  Test("112949")
+RETURN
+Output:
+Screenshot from Atari 8-bit computer
+
+5724 -> valid
+5727 -> invalid
+112946 -> valid
+112949 -> invalid
+Ada
+with Ada.Text_IO;
+
+procedure Damm_Algorithm is
+
+   function Damm (Input : in String) return Boolean
+   is
+      subtype Digit is Character range '0' .. '9';
+
+      Table : constant array (Digit, Digit) of Digit :=
+        (('0', '3', '1', '7', '5', '9', '8', '6', '4', '2'),
+         ('7', '0', '9', '2', '1', '5', '4', '8', '6', '3'),
+         ('4', '2', '0', '6', '8', '7', '1', '3', '5', '9'),
+         ('1', '7', '5', '0', '9', '8', '3', '4', '2', '6'),
+         ('6', '1', '2', '3', '0', '4', '5', '9', '7', '8'),
+         ('3', '6', '7', '4', '2', '0', '9', '5', '8', '1'),
+         ('5', '8', '6', '9', '7', '2', '0', '1', '3', '4'),
+         ('8', '9', '4', '5', '3', '6', '2', '0', '1', '7'),
+         ('9', '4', '3', '8', '6', '1', '7', '2', '0', '5'),
+         ('2', '5', '8', '1', '4', '3', '6', '7', '9', '0'));
+      Intern : Digit := '0';
+   begin
+      for D of Input loop
+         Intern := Table (Intern, D);
+      end loop;
+      return Intern = '0';
+   end Damm;
+
+   procedure Put_Damm (Input : in String) is
+      use Ada.Text_IO;
+   begin
+      Put_Line ("Damm of " & Input & " validates as " & Damm (Input)'Image);
+   end Put_Damm;
+
+begin
+   Put_Damm ("5724");
+   Put_Damm ("5727");
+   Put_Damm ("112946");
+   Put_Damm ("112949");
+end Damm_Algorithm;
+Output:
+Damm of 5724 validates as TRUE
+Damm of 5727 validates as FALSE
+Damm of 112946 validates as TRUE
+Damm of 112949 validates as FALSE
+ALGOL 68
+BEGIN
+    # returns TRUE if the check digit of s is correct according to the Damm algorithm, #
+    # FALSE otherwise #
+    PROC has valid damm check digit = ( STRING s )BOOL:
+         BEGIN
+            # operation table - as per wikipedia example #
+            [,]INT operation table =
+                ( [,]INT( ( 0, 3, 1, 7, 5, 9, 8, 6, 4, 2 )
+                        , ( 7, 0, 9, 2, 1, 5, 4, 8, 6, 3 )
+                        , ( 4, 2, 0, 6, 8, 7, 1, 3, 5, 9 )
+                        , ( 1, 7, 5, 0, 9, 8, 3, 4, 2, 6 )
+                        , ( 6, 1, 2, 3, 0, 4, 5, 9, 7, 8 )
+                        , ( 3, 6, 7, 4, 2, 0, 9, 5, 8, 1 )
+                        , ( 5, 8, 6, 9, 7, 2, 0, 1, 3, 4 )
+                        , ( 8, 9, 4, 5, 3, 6, 2, 0, 1, 7 )
+                        , ( 9, 4, 3, 8, 6, 1, 7, 2, 0, 5 )
+                        , ( 2, 5, 8, 1, 4, 3, 6, 7, 9, 0 )
+                        )
+                ) [ AT 0, AT 0 ]
+                ;
+            INT interim digit := 0;
+            FOR s pos FROM LWB s TO UPB s DO
+                INT next digit = ABS s[ s pos ] - ABS "0";
+                IF next digit < 0 OR next digit > 9 THEN
+                    # invalid digit #
+                    print( ( "Invalid damm digit: ", s[ s pos ], newline ) );
+                    stop
+                ELSE
+                    # have a valid digit #
+                    interim digit := operation table[ interim digit, next digit ]
+                FI
+            OD;
+            interim digit = 0
+         END # has valid damm check digit # ;
+ 
+    # test the damm algorithm #
+    PROC test damm algorithm = ( STRING s, BOOL expected )VOID:
+         BEGIN
+            BOOL valid = has valid damm check digit( s );
+            print( ( "check digit of ", s, " is "
+                   , IF valid THEN "valid" ELSE "invalid" FI
+                   , IF valid = expected THEN "" ELSE " *** NOT AS EXPECTED" FI
+                   , newline
+                   )
+                 )
+         END # test damm algorithm # ;
+    # test cases - as per other language samples #
+    test damm algorithm( "5724",   TRUE  );
+    test damm algorithm( "5727",   FALSE );
+    test damm algorithm( "112946", TRUE  )
+END
+Output:
+check digit of 5724 is valid
+check digit of 5727 is invalid
+check digit of 112946 is valid
+APL
+Works with: Dyalog APL
+This is a function that takes a vector of digits and returns a boolean.
+
+ damm←{⎕IO←0
+    tbl←⍉⍪0 3 1 7 5 9 8 6 4 2
+    tbl⍪← 7 0 9 2 1 5 4 8 6 3
+    tbl⍪← 4 2 0 6 8 7 1 3 5 9
+    tbl⍪← 1 7 5 0 9 8 3 7 2 6
+    tbl⍪← 6 1 2 3 0 4 5 9 7 8
+    tbl⍪← 3 6 7 4 2 0 9 5 8 1
+    tbl⍪← 5 8 6 9 7 2 0 1 3 4
+    tbl⍪← 8 9 4 5 3 6 2 0 1 7
+    tbl⍪← 9 4 3 8 6 1 7 2 0 5
+    tbl⍪← 2 5 8 1 4 3 6 7 9 0
+    0={tbl[⍵;⍺]}/⌽0,⍵
+ }
+Output:
+      damm 5 7 2 4
+1
+      damm 5 7 2 5
+0
+      damm 1 1 2 9 4 6
+1
+      damm 1 1 2 9 4 9
+0
+AppleScript
+-- Return a check digit value for the given integer value or numeric string.
+-- The result is 0 if the input's last digit is already a valid check digit for it.
+on damm(n)
+    set digits to {n mod 10}
+    set n to n div 10
+    repeat until (n is 0)
+        set beginning of digits to n mod 10
+        set n to n div 10
+    end repeat
+    
+    script o
+        property table : {0, 3, 1, 7, 5, 9, 8, 6, 4, 2, ¬
+            7, 0, 9, 2, 1, 5, 4, 8, 6, 3, ¬
+            4, 2, 0, 6, 8, 7, 1, 3, 5, 9, ¬
+            1, 7, 5, 0, 9, 8, 3, 4, 2, 6, ¬
+            6, 1, 2, 3, 0, 4, 5, 9, 7, 8, ¬
+            3, 6, 7, 4, 2, 0, 9, 5, 8, 1, ¬
+            5, 8, 6, 9, 7, 2, 0, 1, 3, 4, ¬
+            8, 9, 4, 5, 3, 6, 2, 0, 1, 7, ¬
+            9, 4, 3, 8, 6, 1, 7, 2, 0, 5, ¬
+            2, 5, 8, 1, 4, 3, 6, 7, 9, 0}
+    end script
+    set interim to 0
+    repeat with d in digits
+        set interim to item (interim * 10 + d + 1) of o's table -- AppleScript indices are 1-based.
+    end repeat
+    
+    return interim
+end damm
+
+-- Task code:
+local testNumbers, possibilities, output, n
+set testNumbers to {5724, 57240, 572400, 87591, 100}
+-- Include a number with a check digit actually generated by the handler.
+tell (random number 1000000) to set end of testNumbers to it * 10 + (my damm(it))
+set possibilities to {" is invalid", " is valid"}
+set output to {}
+repeat with n in testNumbers
+    set end of output to (n as text) & item (((damm(n) is 0) as integer) + 1) of possibilities
+end repeat
+return output
+Output:
+{"5724 is valid", "57240 is valid", "572400 is valid", "87591 is invalid", "100 is invalid", "3922446 is valid"}
+ARM Assembly
+.text
+.global	_start
+	@@@	Check if the zero-terminated ASCII string in [r0],
+	@@@	which should contain a decimal number, has a
+	@@@	matching check digit. Zero flag set if true,
+	@@@	check digit returned in r0.
+damm:	mov	r1,#0		@ R1 = interim digit
+	ldr	r2,=3f		@ R2 = table base address
+1:	ldrb	r3,[r0],#1	@ Load byte
+	tst	r3,r3		@ Zero yet?
+	beq	2f		@ If so, stop
+	sub	r3,r3,#'0	@ Subtract ASCII 0
+	lsl	r1,r1,#1	@ Table lookup 
+	add	r1,r1,r1,lsl#2	@ R3 = R1*10 + R3
+	add	r3,r1,r3
+	ldrb	r1,[r2,r3]	@ R1 = new interim digit
+	b	1b		@ Next value
+2:	movs	r0,r1		@ Set flag according to r0.
+	bx	lr
+3:	.byte	0,3,1,7,5,9,8,6,4,2	@ Since the table is constant,
+	.byte	7,0,9,2,1,5,4,8,6,3	@ it can be stored as part of
+	.byte	4,2,0,6,8,7,1,3,5,9	@ the subroutine.
+	.byte	1,7,5,0,9,8,3,4,2,6	@ This way the OS will even mark
+	.byte	6,1,2,3,0,4,5,9,7,8	@ it as read-only, so we can
+	.byte	3,6,7,4,2,0,9,5,8,1	@ be sure nothing changes it.
+	.byte	5,8,6,9,7,2,0,1,3,4
+	.byte	8,9,4,5,3,6,2,0,1,7
+	.byte	9,4,3,8,6,1,7,2,0,5
+	.byte	2,5,8,1,4,3,6,7,9,0
+.align	4			@ Instructions must be word-aligned
+	@@@	Grab the argument from the command line, and see
+	@@@	if it matches.
+_start:	pop	{r0}		@ Is there even an argument?
+	cmp 	r0,#2
+	movne	r7,#1		@ If not, exit immediately
+	swine	#0
+	add	sp,sp,#4	@ Discard program name
+	pop	{r0}		@ Grab argument
+	bl	damm		@ Check if it matches
+	ldreq	r1,=pass	@ If yes, say 'pass'
+	ldrne	r1,=fail	@ If not, say 'fail'
+	mov	r0,#1		@ Print string to stdout
+	mov	r2,#5		@ Both are 5 characters
+	mov	r7,#4		@ Write syscall = 4
+	swi	#0
+	mov	r0,#0		@ Exit
+	mov	r7,#1
+	swi	#0 
+pass:	.ascii	"Pass\n"
+fail:	.ascii	"Fail\n"
+Output:
+$ for x in 5724 5725 112946 112949; do echo -n $x:; ./damm $x; done
+5724:Pass
+5725:Fail
+112946:Pass
+112949:Fail
+Arturo
+; by @Krenium
+
+table: [
+    [0 3 1 7 5 9 8 6 4 2]
+    [7 0 9 2 1 5 4 8 6 3]
+    [4 2 0 6 8 7 1 3 5 9]
+    [1 7 5 0 9 8 3 4 2 6]
+    [6 1 2 3 0 4 5 9 7 8]
+    [3 6 7 4 2 0 9 5 8 1]
+    [5 8 6 9 7 2 0 1 3 4]
+    [8 9 4 5 3 6 2 0 1 7]
+    [9 4 3 8 6 1 7 2 0 5]
+    [2 5 8 1 4 3 6 7 9 0]
+]
+
+damm?: function [z][zero? fold digits to :integer z .seed: 0 [x y]-> table\[x]\[y] ]
+
+; Or, being more explicit:
+digits2: function [str][
+    chars: split str
+    result: map chars 'ch -> to :integer ch
+    return result
+]
+
+damm2?: function [str][
+    d: digits2 str
+    r: fold d .seed: 0 [x y] -> get get table x y
+    return r = 0
+]
+
+test: function [str][
+    result: switch damm? str -> "valid"
+                             -> "invalid"
+    print [str "is" result]
+]
+
+loop ["5724" "5727" "112946" "112949"] => test
+Output:
+5724 is valid 
+5727 is invalid 
+112946 is valid 
+112949 is invalid
+AutoHotkey
+Damm(num){
+	row := 1, Damm := [[0,3,1,7,5,9,8,6,4,2]
+			  ,[7,0,9,2,1,5,4,8,6,3]
+			  ,[4,2,0,6,8,7,1,3,5,9]
+			  ,[1,7,5,0,9,8,3,4,2,6]
+			  ,[6,1,2,3,0,4,5,9,7,8]
+			  ,[3,6,7,4,2,0,9,5,8,1]
+			  ,[5,8,6,9,7,2,0,1,3,4]
+			  ,[8,9,4,5,3,6,2,0,1,7]
+			  ,[9,4,3,8,6,1,7,2,0,5]
+			  ,[2,5,8,1,4,3,6,7,9,0]]
+	for i, v in StrSplit(SubStr(num, 1, -1)){
+		++row := Damm[row, v+1]
+	}
+	return (SubStr(num, 0)=row-1 && !Damm[row, row])
+}
+Examples:
+
+result := ""
+for i, num in [5724, 5727, 112946, 112949]
+	result .= num "`tis " (Damm(num) ? "valid" : "not valid") "`n"
+MsgBox % result
+Outputs:
+
+5724	is valid
+5727	is not valid
+112946	is valid
+112949	is not valid
+AWK
+# syntax: GAWK -f DAMM_ALGORITHM.AWK
+BEGIN {
+    damm_init()
+    leng = split("5724,5727,112946",arr,",") # test cases
+    for (i=1; i<=leng; i++) {
+      n = arr[i]
+      printf("%s %s\n",damm_check(n),n)
+    }
+    exit(0)
+}
+function damm_check(n,  a,i) {
+    a = 0
+    for (i=1; i<=length(n); i++) {
+      a = substr(damm[a],substr(n,i,1)+1,1)
+    }
+    return(a == 0 ? "T" : "F")
+}
+function damm_init() {
+#              0123456789
+    damm[0] = "0317598642"
+    damm[1] = "7092154863"
+    damm[2] = "4206871359"
+    damm[3] = "1750983426"
+    damm[4] = "6123045978"
+    damm[5] = "3674209581"
+    damm[6] = "5869720134"
+    damm[7] = "8945362017"
+    damm[8] = "9438617205"
+    damm[9] = "2581436790"
+}
+Output:
+T 5724
+F 5727
+T 112946
+BASIC
+ANSI BASIC
+Translation of: GW-BASIC
+Works with: Decimal BASIC
+100 REM Damm algorithm
+110 OPTION BASE 0
+120 DIM DT(9, 9)
+130 FOR Y = 0 TO 9
+140    FOR X = 0 TO 9
+150       READ DT(X, Y)
+160    NEXT X
+170 NEXT Y
+180 INPUT N$
+190 DO WHILE N$ <> ""
+200    LET D = 0
+210    FOR I = 1 TO LEN(N$)
+220       LET D = DT(VAL(MID$(N$, I, 1)), D)
+230    NEXT I
+240    IF D <> 0 THEN PRINT "FAIL" ELSE PRINT "PASS"
+250    INPUT N$
+260 LOOP
+270 DATA 0, 3, 1, 7, 5, 9, 8, 6, 4, 2
+280 DATA 7, 0, 9, 2, 1, 5, 4, 8, 6, 3
+290 DATA 4, 2, 0, 6, 8, 7, 1, 3, 5, 9
+300 DATA 1, 7, 5, 0, 9, 8, 3, 4, 2, 6
+310 DATA 6, 1, 2, 3, 0, 4, 5, 9, 7, 8
+320 DATA 3, 6, 7, 4, 2, 0, 9, 5, 8, 1
+330 DATA 5, 8, 6, 9, 7, 2, 0, 1, 3, 4
+340 DATA 8, 9, 4, 5, 3, 6, 2, 0, 1, 7
+350 DATA 9, 4, 3, 8, 6, 1, 7, 2, 0, 5
+360 DATA 2, 5, 8, 1, 4, 3, 6, 7, 9, 0
+370 END
+Output:
+<pre>
+? 5724
+PASS
+? 5727
+FAIL
+? 112946
+PASS
+? 112949
+FAIL
+? 
+BASIC256
+arraybase 1
+global matrix
+matrix = {{0, 3, 1, 7, 5, 9, 8, 6, 4, 2}, {7, 0, 9, 2, 1, 5, 4, 8, 6, 3}, {4, 2, 0, 6, 8, 7, 1, 3, 5, 9}, {1, 7, 5, 0, 9, 8, 3, 4, 2, 6}, {6, 1, 2, 3, 0, 4, 5, 9, 7, 8}, {3, 6, 7, 4, 2, 0, 9, 5, 8, 1}, {5, 8, 6, 9, 7, 2, 0, 1, 3, 4}, {8, 9, 4, 5, 3, 6, 2, 0, 1, 7}, {9, 4, 3, 8, 6, 1, 7, 2, 0, 5}, {2, 5, 8, 1, 4, 3, 6, 7, 9, 0}}
+test = {5724, 5727, 112946}
+
+for i = 1 to 3
+	print "Checksum test: "; rjust(string(test[i]),8); encode(test[i])
+next i
+end
+
+function encode(n)
+	cad = string(n)
+	check = 0
+	for d = 1 to length(cad)
+		check = matrix[int(mid(cad, d, 1)), d]
+	next d
+	if check = 0 then
+		return " is valid"
+	else
+		return " is invalid"
+	end if
+end function
+Output:
+Similar to FreeBASIC entry.
+FreeBASIC
+' version 04-07-2018
+' compile with: fbc -s console
+
+Function Damm(digit_str As String) As UInteger
+
+    Dim As UInteger table(10,10) => { { 0, 3, 1, 7, 5, 9, 8, 6, 4, 2 } , _
+   { 7, 0, 9, 2, 1, 5, 4, 8, 6, 3 } , { 4, 2, 0, 6, 8, 7, 1, 3, 5, 9 } , _
+   { 1, 7, 5, 0, 9, 8, 3, 4, 2, 6 } , { 6, 1, 2, 3, 0, 4, 5, 9, 7, 8 } , _
+   { 3, 6, 7, 4, 2, 0, 9, 5, 8, 1 } , { 5, 8, 6, 9, 7, 2, 0, 1, 3, 4 } , _
+   { 8, 9, 4, 5, 3, 6, 2, 0, 1, 7 } , { 9, 4, 3, 8, 6, 1, 7, 2, 0, 5 } , _
+   { 2, 5, 8, 1, 4, 3, 6, 7, 9, 0 } }
+
+    Dim As UInteger i, col_i, old_row_i, new_row_i
+
+    For i = 0 To Len(digit_str) -1
+        col_i = digit_str[i] - Asc("0")
+        new_row_i = table(old_row_i, col_i)
+        old_row_i = new_row_i
+    Next
+
+    Return new_row_i
+
+End Function
+
+' ------=< MAIN >=------
+
+Data "5724", "5727", "112946", ""
+
+Dim As UInteger checksum, t
+Dim As String test_string
+
+Do
+
+    Read test_string
+    If test_string = "" Then Exit Do
+    Print "Checksum test: ";test_string;
+
+    checksum = Damm(test_string)
+    If checksum = 0 Then
+        Print " is valid"
+    Else
+        Print " is invalid"
+    End If
+
+Loop
+
+' empty keyboard buffer
+While Inkey <> "" : Wend
+Print : Print "hit any key to end program"
+Sleep
+End
+Output:
+Checksum test: 5724 is valid
+Checksum test: 5727 is invalid
+Checksum test: 112946 is valid
+GW-BASIC
+Works with: BASICA
+10 DEFINT D,I,X,Y: DIM DT(9,9)
+20 FOR Y=0 TO 9: FOR X=0 TO 9: READ DT(X,Y): NEXT X,Y
+30 INPUT N$: IF N$="" THEN END
+40 D=0
+50 FOR I=1 TO LEN(N$): D=DT(VAL(MID$(N$,I,1)),D): NEXT I
+60 IF D THEN PRINT "FAIL" ELSE PRINT "PASS"
+70 GOTO 30
+100 DATA 0,3,1,7,5,9,8,6,4,2
+110 DATA 7,0,9,2,1,5,4,8,6,3
+120 DATA 4,2,0,6,8,7,1,3,5,9
+130 DATA 1,7,5,0,9,8,3,4,2,6
+140 DATA 6,1,2,3,0,4,5,9,7,8
+150 DATA 3,6,7,4,2,0,9,5,8,1
+160 DATA 5,8,6,9,7,2,0,1,3,4
+170 DATA 8,9,4,5,3,6,2,0,1,7
+180 DATA 9,4,3,8,6,1,7,2,0,5
+190 DATA 2,5,8,1,4,3,6,7,9,0
+Output:
+? 5724
+PASS
+? 5727
+FAIL
+? 112946
+PASS
+? 112949
+FAIL
+Liberty BASIC
+Works with: Just BASIC
+Dim DT(9, 9)
+
+For y = 0 To 9
+    For x = 0 To 9
+        Read val
+        DT(x, y) = val
+    Next x
+Next y
+
+Input check$
+While (check$ <> "")
+    D = 0
+    For i = 1 To Len(check$)
+        D = DT(Val(Mid$(check$, i, 1)), D)
+    Next i
+    If D Then
+        Print "Invalid"
+    Else
+        Print "Valid"
+    End If
+    Input check$
+Wend
+End
+
+DATA 0,3,1,7,5,9,8,6,4,2
+DATA 7,0,9,2,1,5,4,8,6,3
+DATA 4,2,0,6,8,7,1,3,5,9
+DATA 1,7,5,0,9,8,3,4,2,6
+DATA 6,1,2,3,0,4,5,9,7,8
+DATA 3,6,7,4,2,0,9,5,8,1
+DATA 5,8,6,9,7,2,0,1,3,4
+DATA 8,9,4,5,3,6,2,0,1,7
+DATA 9,4,3,8,6,1,7,2,0,5
+DATA 2,5,8,1,4,3,6,7,9,0
+Output:
+?5724
+Valid
+?5727
+Invalid
+?112946
+Valid
+?112949
+Invalid
+Nascom BASIC
+Translation of: GW-BASIC
+Works with: Nascom ROM BASIC version 4.7
+10 REM Damm algorithm
+20 DIM DT(9,9)
+30 FOR Y=0 TO 9:FOR X=0 TO 9
+40 READ DT(X,Y)
+50 NEXT X:NEXT Y
+60 N$="":INPUT N$:IF N$="" THEN 130
+70 D=0
+80 FOR I=1 TO LEN(N$)
+90 D=DT(VAL(MID$(N$,I,1)),D)
+100 NEXT I
+110 IF D THEN PRINT "FAIL":GOTO 60 
+120 PRINT "PASS":GOTO 60
+130 END
+140 DATA 0,3,1,7,5,9,8,6,4,2
+150 DATA 7,0,9,2,1,5,4,8,6,3
+160 DATA 4,2,0,6,8,7,1,3,5,9
+170 DATA 1,7,5,0,9,8,3,4,2,6
+180 DATA 6,1,2,3,0,4,5,9,7,8
+190 DATA 3,6,7,4,2,0,9,5,8,1
+200 DATA 5,8,6,9,7,2,0,1,3,4
+210 DATA 8,9,4,5,3,6,2,0,1,7
+220 DATA 9,4,3,8,6,1,7,2,0,5
+230 DATA 2,5,8,1,4,3,6,7,9,0
+Output:
+? 5724
+PASS
+? 5727
+FAIL
+? 112946
+PASS
+? 112949
+FAIL
+? 
+PureBasic
+DataSection
+  DT_Start:
+        Data.b	0,3,1,7,5,9,8,6,4,2	
+	Data.b	7,0,9,2,1,5,4,8,6,3	
+	Data.b	4,2,0,6,8,7,1,3,5,9
+	Data.b	1,7,5,0,9,8,3,4,2,6
+	Data.b	6,1,2,3,0,4,5,9,7,8
+	Data.b	3,6,7,4,2,0,9,5,8,1
+	Data.b	5,8,6,9,7,2,0,1,3,4
+	Data.b	8,9,4,5,3,6,2,0,1,7
+	Data.b	9,4,3,8,6,1,7,2,0,5
+	Data.b	2,5,8,1,4,3,6,7,9,0  	
+EndDataSection
+
+Procedure.i Adr(Row,Col) : ProcedureReturn ?DT_Start+Row+10*Col : EndProcedure
+
+Procedure.b CheckDamm(Value.s)
+  *ipc.Character=@Value : it=0  
+  While *ipc\c
+    it=PeekB(Adr(*ipc\c-'0',it)) : *ipc+SizeOf(Character)
+  Wend
+  ProcedureReturn Bool(it)
+EndProcedure
+
+If OpenConsole()
+  Repeat
+    Print("Check Damm: ") : i$=Input()
+    If CheckDamm(i$) : PrintN(Space(12)+"FALSE") : Else : PrintN(Space(12)+"TRUE") : EndIf
+  Until i$=""
+EndIf
+End
+Output:
+Check Damm: 5724
+            TRUE
+Check Damm: 5727
+            FALSE
+Check Damm: 112946
+            TRUE
+Check Damm: 112949
+            FALSE
+Check Damm: 
+uBasic/4tH
+Translation of: Visual Basic .NET
+Works with: v3.64
+Push 0, 3, 1, 7, 5, 9, 8, 6, 4, 2: i = FUNC(_Data(0))
+Push 7, 0, 9, 2, 1, 5, 4, 8, 6, 3: i = FUNC(_Data(i))
+Push 4, 2, 0, 6, 8, 7, 1, 3, 5, 9: i = FUNC(_Data(i))
+Push 1, 7, 5, 0, 9, 8, 3, 4, 2, 6: i = FUNC(_Data(i))
+Push 6, 1, 2, 3, 0, 4, 5, 9, 7, 8: i = FUNC(_Data(i))
+Push 3, 6, 7, 4, 2, 0, 9, 5, 8, 1: i = FUNC(_Data(i))
+Push 5, 8, 6, 9, 7, 2, 0, 1, 3, 4: i = FUNC(_Data(i))
+Push 8, 9, 4, 5, 3, 6, 2, 0, 1, 7: i = FUNC(_Data(i))
+Push 9, 4, 3, 8, 6, 1, 7, 2, 0, 5: i = FUNC(_Data(i))
+Push 2, 5, 8, 1, 4, 3, 6, 7, 9, 0: i = FUNC(_Data(i))
+                                       ' Read the table
+Push 112949, 112946, 5727, 5724        ' Put numbers on the stack
+
+For i = 1 To Used()                    ' Read up to the number of stack items
+  Print Using "______"; Tos();" is ";  ' Print the header
+  If FUNC(_Damm (Str(Pop()))) Then Print "in";
+  Print "valid"                        ' invalid only if Damm() returns TRUE
+Next                                   ' Next stack item
+
+End
+
+_Data Param (1)                        ' Reads data in reverse order,
+  Local (2)                            ' starting with A@
+  
+  c@ = a@ + Used()                     ' Calculate next offset
+
+  For b@ = c@-1 To a@ Step -1          ' Now place the elements 
+    @(b@) = Pop()                      ' that are retrieved from the stack
+  Next b@                              ' Next item
+
+Return (c@)                            ' Return new offset
+
+
+_Damm Param (1)                        ' Perform the Damm algorithm
+  Local (2)                            
+
+  c@ = 0                               ' Reset the flag
+  For b@ = 0 To Len(a@) - 1            ' Check all characters in the string
+    c@ = @(c@*10 + peek(a@, b@) - ord("0"))
+  Next                                 ' Next character
+
+Return (c@)                            ' Return Flag
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+
+0 OK, 0:984
+Although the output of this version is virtually identical, it uses uBasic/4tH features consistently and is consequently much shorter.
+
+Proc _IsDamm (5724)
+Proc _IsDamm (5727)
+Proc _IsDamm (112946)
+Proc _IsDamm (112949)
+
+End
+
+_Damm
+   Param (1)
+   Local (1)
+
+   b@ := "0317598642709215486342068713591750983426612304597836742095815869720134894536201794386172052581436790"
+
+   Do Until a@ = 0                     ' until number is consumed
+     Push a@ % 10 : a@ = a@ / 10       ' extract digit and put on stack
+   Loop
+
+   Do While Used ()                    ' last number retrieved?
+     a@ = Peek(b@, (a@ * 10) + Pop ()) - Ord ("0")
+   Loop                                ' calculate checksum
+Return (a@)                            ' return checksum
+
+_IsDamm                                ' evaluate and print checksum
+  Param (1)
+  Print Using "______";a@;" is ";Show (Iif (Func (_Damm (a@)), "invalid", "valid"))
+Return
+Visual Basic .NET
+Translation of: C#
+Module Module1
+
+    ReadOnly table = {
+            {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+            {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+            {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+            {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+            {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+            {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+            {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+            {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+            {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+            {2, 5, 8, 1, 4, 3, 6, 7, 9, 0}
+        }
+
+    Function Damm(s As String) As Boolean
+        Dim interim = 0
+        For Each c In s
+            interim = table(interim, AscW(c) - AscW("0"))
+        Next
+        Return interim = 0
+    End Function
+
+    Sub Main()
+        Dim numbers = {5724, 5727, 112946, 112949}
+        For Each number In numbers
+            Dim isvalid = Damm(number.ToString())
+            If isvalid Then
+                Console.WriteLine("{0,6} is valid", number)
+            Else
+                Console.WriteLine("{0,6} is invalid", number)
+            End If
+        Next
+    End Sub
+
+End Module
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+BCPL
+get "libhdr"
+
+let Damm(ns) = valof
+$(  let dt = table
+        0,3,1,7,5,9,8,6,4,2,
+        7,0,9,2,1,5,4,8,6,3,
+        4,2,0,6,8,7,1,3,5,9,
+        1,7,5,0,9,8,3,4,2,6,
+        6,1,2,3,0,4,5,9,7,8,
+        3,6,7,4,2,0,9,5,8,1,
+        5,8,6,9,7,2,0,1,3,4,
+        8,9,4,5,3,6,2,0,1,7,
+        9,4,3,8,6,1,7,2,0,5,
+        2,5,8,1,4,3,6,7,9,0
+    let idgt = 0
+    for i=1 to ns%0
+        test '0' <= ns%i <= '9'
+            do idgt := dt!(ns%i-'0' + 10*idgt)
+            or resultis false
+    resultis idgt = 0
+$)
+
+let check(ns) be
+    writef("%S: %S*N", ns, damm(ns) -> "pass", "fail")
+ 
+let start() be
+$(  check("5724")
+    check("5727")
+    check("112946")
+    check("112949")
+$)
+Output:
+5724: pass
+5727: fail
+112946: pass
+112949: fail
+BQN
+Translation of: J
+
+table ← >⟨ 0‿3‿1‿7‿5‿9‿8‿6‿4‿2
+           7‿0‿9‿2‿1‿5‿4‿8‿6‿3
+           4‿2‿0‿6‿8‿7‿1‿3‿5‿9
+           1‿7‿5‿0‿9‿8‿3‿4‿2‿6
+           6‿1‿2‿3‿0‿4‿5‿9‿7‿8
+           3‿6‿7‿4‿2‿0‿9‿5‿8‿1
+           5‿8‿6‿9‿7‿2‿0‿1‿3‿4
+           8‿9‿4‿5‿3‿6‿2‿0‿1‿7
+           9‿4‿3‿8‿6‿1‿7‿2‿0‿5
+           2‿5‿8‿1‿4‿3‿6‿7‿9‿0 ⟩
+
+
+Digits ← 10{⌽𝕗|⌊∘÷⟜𝕗⍟(↕1+·⌊𝕗⋆⁼1⌈⊢)}
+
+Damm ← {0=0(table⊑˜⋈)˜´⌽Digits 𝕩}
+
+Damm¨5724‿5727‿112946
+⟨ 1 0 1 ⟩
+Try It!
+
+C
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+bool damm(unsigned char *input, size_t length) {
+    static const unsigned char table[10][10] = {
+        {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+        {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+        {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+        {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+        {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+        {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+        {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+        {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+        {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+        {2, 5, 8, 1, 4, 3, 6, 7, 9, 0},
+    };
+    
+    unsigned char interim = 0;
+    for (size_t i = 0; i < length; i++) {
+        interim = table[interim][input[i]];
+    }
+    return interim == 0;
+}
+
+int main() {
+    unsigned char input[4] = {5, 7, 2, 4};
+    puts(damm(input, 4) ? "Checksum correct" : "Checksum incorrect");
+    return 0;
+}
+Output:
+Checksum correct
+C#
+Translation of: Java
+using System;
+
+namespace DammAlgorithm {
+    class Program {
+        static int[,] table = {
+            {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+            {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+            {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+            {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+            {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+            {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+            {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+            {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+            {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+            {2, 5, 8, 1, 4, 3, 6, 7, 9, 0},
+        };
+
+        static bool Damm(string s) {
+            int interim = 0;
+            foreach (char c in s) {
+                interim = table[interim, c - '0'];
+            }
+            return interim == 0;
+        }
+
+        static void Main(string[] args) {
+            int[] numbers = { 5724, 5727, 112946, 112949 };
+            foreach (int number in numbers) {
+                bool isValid = Damm(number.ToString());
+                if (isValid) {
+                    Console.WriteLine("{0,6} is valid", number);
+                }
+                else {
+                    Console.WriteLine("{0,6} is invalid", number);
+                }
+            }
+        }
+    }
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+C++
+Version 1
+Translation of: C# – C sharp
+#include <string>
+
+#include <cstdio>
+
+inline constexper int TABLE[][10] = {
+	{0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+	{7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+	{4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+	{1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+	{6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+	{3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+	{5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+	{8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+	{9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+	{2, 5, 8, 1, 4, 3, 6, 7, 9, 0},
+};
+
+[[nodiscard]] bool damm(std::string s) noexcept {
+	int interim = 0;
+	for (const auto c : s) {
+		interim = TABLE[interim][c - '0'];
+	}
+	return interim == 0;
+}
+
+int main() {
+	for (const auto num : { 5724, 5727, 112946, 112949 }) {
+		if (damm(std::to_string(num))) {
+	 	 	std::printf("%6d is valid\n", num);
+		}	
+		else std::printf("%6d is invalid\n", num);
+	}
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+Version 2
+// Compile with:
+// g++ -std=c++20 -Wall -Wextra -pedantic damm.cpp -o damm
+
+#include <iostream>
+#include <array> // for std::array
+#include <string> // for std::string, std::to_string and std::string::find
+
+const std::array<std::array<int, 10>, 10> table = {{ // Operation table
+    {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+    {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+    {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+    {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+    {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+    {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+    {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+    {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+    {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+    {2, 5, 8, 1, 4, 3, 6, 7, 9, 0}
+}};
+
+bool damm(int input) {
+    int interim = 0; // initialise to 0
+    const std::string digit = "0123456789";
+    for (const auto c : std::to_string(input))
+        interim = table[interim][digit.find(c)];
+    // Process the number digit by digit:
+    //   1. The column index = number's digit
+    //   2. The row index = interim digit
+    //   3. Replace interim digit with table entry (table[<interim digit>][<number's digit>])
+    return interim == 0; // Is interim digit equals zero? If so, the input is valid, invalid otherwise.
+}
+
+int main() {
+    for (const auto num : {5724, 5727, 112946, 112949})
+        std::cout << num << "\t" << "Checksum is " << (damm(num) ? "valid" : "invalid") << std::endl;
+    return 0;
+}
+Output:
+5724	Checksum is valid
+5727	Checksum is invalid
+112946	Checksum is valid
+112949	Checksum is invalid
+Caché ObjectScript
+Class Utils.Check [ Abstract ]
+{
+
+ClassMethod Damm(num As %Integer, mode As %Integer = 1) As %Integer
+{
+	TRY {
+		I mode=0 RETURN ..Damm(num,2)=0
+		S res=0, str=num
+		S table=[
+			[0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+			[7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+			[4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+			[1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+			[6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+			[3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+			[5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+			[8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+			[9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+			[2, 5, 8, 1, 4, 3, 6, 7, 9, 0]
+		]
+		F i=1:1:$L(str) S res=table.%Get(res).%Get($E(str,i))
+		I mode=1 S res=num_res
+	} CATCH {
+		S res=""
+	}
+	Q res
+}
+
+}
+Examples:
+USER>For  { Read n Quit:n=""  Write ": "_##class(Utils.Check).Damm(n, 0), ! }
+5724: 1
+5727: 0
+112946: 1
+112949: 0
+
+USER>w ##class(Utils.Check).Damm(11294)
+112946
+USER>
+Clojure
+(def tbl [[0 3 1 7 5 9 8 6 4 2]
+          [7 0 9 2 1 5 4 8 6 3]
+          [4 2 0 6 8 7 1 3 5 9]
+          [1 7 5 0 9 8 3 4 2 6]
+          [6 1 2 3 0 4 5 9 7 8]
+          [3 6 7 4 2 0 9 5 8 1]
+          [5 8 6 9 7 2 0 1 3 4]
+          [8 9 4 5 3 6 2 0 1 7]
+          [9 4 3 8 6 1 7 2 0 5]
+          [2 5 8 1 4 3 6 7 9 0]])
+
+(defn damm? [digits]
+  (= 0 (reduce #(nth (nth tbl %1) %2) 0 
+    (map #(Character/getNumericValue %) (seq digits)))))
+Output:
+=> (damm? "5724")
+true
+=> (damm? "5727")
+false
+=> (damm? "112946")
+true
+CLU
+% Verify that the Damm check digit of a string of digits is correct.
+% Signals 'bad_format' if the string contains non-digits.
+damm = proc (s: string) returns (bool) signals (bad_format)
+    ai = array[int]
+    aai = array[ai]
+    own damm_table: aai := aai$[0: 
+        ai$[0: 0,3,1,7,5,9,8,6,4,2],
+        ai$[0: 7,0,9,2,1,5,4,8,6,3],
+        ai$[0: 4,2,0,6,8,7,1,3,5,9],
+        ai$[0: 1,7,5,0,9,8,3,4,2,6],
+        ai$[0: 6,1,2,3,0,4,5,9,7,8],
+        ai$[0: 3,6,7,4,2,0,9,5,8,1],
+        ai$[0: 5,8,6,9,7,2,0,1,3,4],
+        ai$[0: 8,9,4,5,3,6,2,0,1,7],
+        ai$[0: 9,4,3,8,6,1,7,2,0,5],
+        ai$[0: 2,5,8,1,4,3,6,7,9,0]
+    ]
+    
+    interim: int := 0
+    for c: char in string$chars(s) do
+        d: int := int$parse(string$c2s(c)) resignal bad_format
+        interim := damm_table[interim][d]
+    end
+    
+    return(interim = 0)
+end damm
+
+% Checks
+start_up = proc ()
+    po: stream := stream$primary_output()
+    tests: sequence[string] := sequence[string]$[
+        "5724", "5727", "112946", "112949"
+    ]
+    
+    for test: string in sequence[string]$elements(tests) do
+        stream$puts(po, test || ": ")
+        if damm(test) then
+            stream$putl(po, "pass")
+        else
+            stream$putl(po, "fail")
+        end
+    end
+end start_up
+Output:
+5724: pass
+5727: fail
+112946: pass
+112949: fail
+Cowgol
+include "cowgol.coh";
+
+# Damm test on number given as ASCII string
+# Returns check digit
+sub damm(num: [uint8]): (chk: uint8) is
+    var table: uint8[] := {
+        0,3,1,7,5,9,8,6,4,2,
+        7,0,9,2,1,5,4,8,6,3,
+        4,2,0,6,8,7,1,3,5,9,
+        1,7,5,0,9,8,3,4,2,6,
+        6,1,2,3,0,4,5,9,7,8,
+        3,6,7,4,2,0,9,5,8,1,
+        5,8,6,9,7,2,0,1,3,4,
+        8,9,4,5,3,6,2,0,1,7,
+        9,4,3,8,6,1,7,2,0,5,
+        2,5,8,1,4,3,6,7,9,0
+    };
+    
+    chk := 0;
+    while [num] != 0 loop
+        chk := table[(chk<<1) + (chk<<3) + ([num] - '0')];
+        num := @next num;
+    end loop;
+end sub;
+
+# Test and print
+sub test(num: [uint8]) is
+    print(num);
+    print(":");
+    if damm(num) == 0 then
+        print("Pass\n");
+    else
+        print("Fail\n");
+    end if;
+end sub;
+
+test("5724");
+test("5727");
+test("112946");
+test("112949");
+Output:
+5724:Pass
+5727:Fail
+112946:Pass
+112949:Fail
+D
+import std.stdio;
+
+auto table = [
+    [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+    [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+    [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+    [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+    [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+    [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+    [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+    [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+    [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+    [2, 5, 8, 1, 4, 3, 6, 7, 9, 0],
+];
+
+bool damm(string s) {
+    int interim = 0;
+    foreach (c; s) {
+        interim = table[interim][c - '0'];
+    }
+    return interim == 0;
+}
+
+void main() {
+    import std.conv : to;
+    auto numbers = [5724, 5727, 112946, 112949];
+    foreach (number; numbers) {
+        bool isValid = damm(number.to!string());
+        writef("%6d is ", number);
+        if (isValid) {
+            writeln("valid");
+        } else {
+            writeln("invalid");
+        }
+    }
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+Delphi
+See Pascal.
+
+Dyalect
+let table = [
+    [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+    [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+    [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+    [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+    [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+    [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+    [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+    [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+    [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+    [2, 5, 8, 1, 4, 3, 6, 7, 9, 0]
+]
+
+func damm(s) {
+    var interim = 0
+    for c in s {
+        interim = table[interim][Integer(c)]
+    }
+    return interim == 0;
+}
+
+let numbers = [5724, 5727, 112946, 112949]
+for number in numbers {
+    let isValid = damm(number.ToString())
+    if isValid {
+        print("\(number) is valid")
+    } else {
+        print("\(number) is invalid")
+    }
+}
+Output:
+5724 is valid
+5727 is invalid
+112946 is valid
+112949 is invalid
+Draco
+proc damm(*char str) bool:
+    [10][10]byte dammtbl = (
+        (0,3,1,7,5,9,8,6,4,2),
+        (7,0,9,2,1,5,4,8,6,3),
+        (4,2,0,6,8,7,1,3,5,9),
+        (1,7,5,0,9,8,3,4,2,6),
+        (6,1,2,3,0,4,5,9,7,8),
+        (3,6,7,4,2,0,9,5,8,1),
+        (5,8,6,9,7,2,0,1,3,4),
+        (8,9,4,5,3,6,2,0,1,7),
+        (9,4,3,8,6,1,7,2,0,5),
+        (2,5,8,1,4,3,6,7,9,0)
+    );
+    byte interim;
+    char c;
+    channel input text ch;
+    
+    interim := 0;
+    open(ch, str);
+    while read(ch; c) do
+        interim := dammtbl[interim][c-'0']
+    od;
+    close(ch);
+    interim = 0
+corp
+
+proc check(*char str) void:
+    writeln(str, ": ", if damm(str) then "pass" else "fail" fi)
+corp
+
+proc main() void:
+    check("5724");
+    check("5727");
+    check("112946");
+    check("112949");
+corp
+Output:
+5724: pass
+5727: fail
+112946: pass
+112949: fail
+EasyLang
+Translation of: Java
+func damm inp$ .
+   table[][] = [ [ 0 3 1 7 5 9 8 6 4 2 ] [ 7 0 9 2 1 5 4 8 6 3 ] [ 4 2 0 6 8 7 1 3 5 9 ] [ 1 7 5 0 9 8 3 4 2 6 ] [ 6 1 2 3 0 4 5 9 7 8 ] [ 3 6 7 4 2 0 9 5 8 1 ] [ 5 8 6 9 7 2 0 1 3 4 ] [ 8 9 4 5 3 6 2 0 1 7 ] [ 9 4 3 8 6 1 7 2 0 5 ] [ 2 5 8 1 4 3 6 7 9 0 ] ]
+   inp[] = number strchars inp$
+   for v in inp[]
+      inter = table[inter + 1][v + 1]
+   .
+   return if inter = 0
+.
+nums[] = [ 5724 5727 112946 112949 ]
+for v in nums[]
+   write v & " is "
+   if damm v = 1
+      print "valid"
+   else
+      print "invalid"
+   .
+.
+Excel
+Place your number in A1 and the formula at any cell.
+
+=REDUCE(0,MID(A1,SEQUENCE(1,LEN(A1)),1),LAMBDA(i,j,INDEX({0,3,1,7,5,9,8,6,4,2;7,0,9,2,1,5,4,8,6,3;4,2,0,6,8,7,1,3,5,9;1,7,5,0,9,8,3,4,2,6;6,1,2,3,0,4,5,9,7,8;3,6,7,4,2,0,9,5,8,1;5,8,6,9,7,2,0,1,3,4;8,9,4,5,3,6,2,0,1,7;9,4,3,8,6,1,7,2,0,5;2,5,8,1,4,3,6,7,9,0},i+1,j+1)))
+For Google Sheets, you need to use arrayformula
+
+=REDUCE(0,arrayformula(MID(A1,SEQUENCE(1,LEN(A1)),1)),lambda(i,j,INDEX({0,3,1,7,5,9,8,6,4,2;7,0,9,2,1,5,4,8,6,3;4,2,0,6,8,7,1,3,5,9;1,7,5,0,9,8,3,4,2,6;6,1,2,3,0,4,5,9,7,8;3,6,7,4,2,0,9,5,8,1;5,8,6,9,7,2,0,1,3,4;8,9,4,5,3,6,2,0,1,7;9,4,3,8,6,1,7,2,0,5;2,5,8,1,4,3,6,7,9,0},i+1,j+1)))
+For countries that uses comma as a decimal divisor, use:
+
+=REDUCE(0;MID(A2;SEQUENCE(1;LEN(A2));1);lambda(i;j;INDEX({0\3\1\7\5\9\8\6\4\2;7\0\9\2\1\5\4\8\6\3;4\2\0\6\8\7\1\3\5\9;1\7\5\0\9\8\3\4\2\6;6\1\2\3\0\4\5\9\7\8;3\6\7\4\2\0\9\5\8\1;5\8\6\9\7\2\0\1\3\4;8\9\4\5\3\6\2\0\1\7;9\4\3\8\6\1\7\2\0\5;2\5\8\1\4\3\6\7\9\0};i+1;j+1)))
+F#
+open System
+
+let TABLE = [|
+    [|0; 3; 1; 7; 5; 9; 8; 6; 4; 2|];
+    [|7; 0; 9; 2; 1; 5; 4; 8; 6; 3|];
+    [|4; 2; 0; 6; 8; 7; 1; 3; 5; 9|];
+    [|1; 7; 5; 0; 9; 8; 3; 4; 2; 6|];
+    [|6; 1; 2; 3; 0; 4; 5; 9; 7; 8|];
+    [|3; 6; 7; 4; 2; 0; 9; 5; 8; 1|];
+    [|5; 8; 6; 9; 7; 2; 0; 1; 3; 4|];
+    [|8; 9; 4; 5; 3; 6; 2; 0; 1; 7|];
+    [|9; 4; 3; 8; 6; 1; 7; 2; 0; 5|];
+    [|2; 5; 8; 1; 4; 3; 6; 7; 9; 0|];
+|]
+
+let damm str =
+    let rec helper (v:string) interim =
+        if v.Length = 0 then 0 = interim
+        else helper (v.Substring(1)) (TABLE.[interim].[(int (v.[0])) - (int '0')])
+    helper str 0
+ 
+[<EntryPoint>]
+let main _ = 
+    let numbers = [|5724; 5727; 112946; 112949|]
+    for number in numbers do
+        let isValid = damm (number.ToString())
+        if isValid then
+            printfn "%6d is valid" number
+        else
+            printfn "%6d is invalid" number
+
+    0 // return an integer exit code
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+Factor
+USING: interpolate kernel math math.parser qw sequences ;
+
+CONSTANT: table
+{
+    { 0 3 1 7 5 9 8 6 4 2 }
+    { 7 0 9 2 1 5 4 8 6 3 }
+    { 4 2 0 6 8 7 1 3 5 9 }
+    { 1 7 5 0 9 8 3 4 2 6 }
+    { 6 1 2 3 0 4 5 9 7 8 }
+    { 3 6 7 4 2 0 9 5 8 1 }
+    { 5 8 6 9 7 2 0 1 3 4 }
+    { 8 9 4 5 3 6 2 0 1 7 }
+    { 9 4 3 8 6 1 7 2 0 5 }
+    { 2 5 8 1 4 3 6 7 9 0 }
+}
+
+: damm? ( str -- ? )
+    0 [ digit> swap table nth nth ] reduce zero? ;
+
+qw{ 5724 5727 112946 112949 }
+[ dup damm? "" "in" ? [I ${} is ${}validI] nl ] each
+Output:
+5724 is valid
+5727 is invalid
+112946 is valid
+112949 is invalid
+
+Forth
+Works with: gforth version 0.7.3
+: newdigit ( col row -- u ) 10 * + C" 0317598642709215486342068713591750983426612304597836742095815869720134894536201794386172052581436790" 1+ + c@ 48 - ;
+: nextdigit ( addr -- addr+1 u ) dup c@ 48 - swap 1+ swap ;
+
+: damm ( c u -- u )
+0 rot rot
+0 do
+  nextdigit
+  rot newdigit swap
+loop drop
+;
+
+: isdamm? damm 0= if ." yes" else ." no" then ;
+
+: .damm
+2dup damm
+rot rot type 48 + emit
+;
+Output:
+s" 5724" isdamm? yes ok
+s" 5727" isdamm? no ok
+s" 572" .damm 5724 ok
+Fortran
+Thanks to the ability standardised in F90 to define an array with a lower bound other than one, this can be achieved without the need for annoying offsets, as in A(i + 1) instead of just A(i). However, right from the start, Fortran has stored arrays in column-major order, so statements that initialise two-dimensional arrays via a list of consecutive values can look odd when they are nicely laid out, because they will have to be be in transposed order. Alternatively, if the layout is the same as the expected (row,column) usage, the actual usage of the array will have to be (column,row). Rather than transpose a ten by ten matrix, this is the approach here. The continuation column has the (apparent) row count, but row zero can't have the digit zero in the continuation column as this is taken to be equivalent to a space (meaning "no continuation") just in case it is used for the first line of a statement to be continued. However, the letter o will do instead. A capital O looks too much like a 0...
+
+Possibly a more useful function would be one that returned the check digit that must be appended to a sequence to provide the full sequence, as when preparing a checksummed sequence for output. For checking input, such a function would be applied to all but the last digit of the suspect sequence, and its result compared to the supplied last digit. But for simplicity here, all that is reported is "good" or "bad", without hints as to what would have been good.
+
+      LOGICAL FUNCTION DAMM(DIGIT)	!Check that a sequence of digits checks out..
+Calculates according to the method of H. Michael Damm, described in 2004.
+       CHARACTER*(*) DIGIT		!A sequence of digits only.
+       INTEGER*1 OPTABLE(0:9,0:9)	!The special "Operation table" of the method.
+       PARAMETER (OPTABLE = (/		!A set of constants...
+     o  0, 3, 1, 7, 5, 9, 8, 6, 4, 2,	!        CAREFUL!
+     1  7, 0, 9, 2, 1, 5, 4, 8, 6, 3,	!Fortran stores arrays in column-major order.
+     2  4, 2, 0, 6, 8, 7, 1, 3, 5, 9,	!Despite the manifest row and column layout apparent here
+     3  1, 7, 5, 0, 9, 8, 3, 4, 2, 6,	!This sequence of consecutive items will go into storage order.
+     4  6, 1, 2, 3, 0, 4, 5, 9, 7, 8,	!The table resulting from this sequence of constants
+     5  3, 6, 7, 4, 2, 0, 9, 5, 8, 1,	!Will appear to be transposed if referenced as (row,column)
+     6  5, 8, 6, 9, 7, 2, 0, 1, 3, 4,	!What appears to be row=6 column=1 (counting from zero)
+     7  8, 9, 4, 5, 3, 6, 2, 0, 1, 7,	!is to be accessed as OPTABLE(1,6) = 8, not OPTABLE(6,1)
+     8  9, 4, 3, 8, 6, 1, 7, 2, 0, 5,	!Storage order is (0,0), (1,0), (2,0), ... (9,0)
+     9  2, 5, 8, 1, 4, 3, 6, 7, 9, 0/))	!Followed by      (0,1), (1,1), (2,1), ... (9,1)
+       INTEGER I,D,ID	!Assistants.
+        ID = 0		!Here we go.
+        DO I = 1,LEN(DIGIT)	!Step through the text.
+          D = ICHAR(DIGIT(I:I)) - ICHAR("0")	!Convert to an integer. (ASCII or EBCDIC)
+          IF (D.LT.0 .OR. D.GT.9) STOP "DAMM! Not a digit!"	!This shouldn't happen!
+          ID = OPTABLE(D,ID)		!Transposed: D is the column index and ID the row.
+        END DO			!On to the next.
+        DAMM = ID .EQ. 0	!Somewhere, a check digit should ensure this.
+      END FUNCTION DAMM	!Simple, fast, and alas, rarely used.
+ 
+      LOGICAL DAMM	!Not a default type.
+ 
+      WRITE (6,*) DAMM("5724"),"5724"
+      WRITE (6,*) DAMM("5727"),"5727"
+      WRITE (6,*) DAMM("112946"),"112946"
+ 
+      END
+Output:
+
+ T 5724
+ F 5727
+ T 112946
+Fōrmulæ
+Fōrmulæ programs are not textual, visualization/edition of programs is done showing/manipulating structures but not text. Moreover, there can be multiple visual representations of the same program. Even though it is possible to have textual representation —i.e. XML, JSON— they are intended for storage and transfer purposes more than visualization and edition.
+
+Programs in Fōrmulæ are created/edited online in its website.
+
+In this page you can see and run the program(s) related to this task and their results. You can also change either the programs or the parameters they are called with, for experimentation, but remember that these programs were created with the main purpose of showing a clear solution of the task, and they generally lack any kind of validation.
+
+Solution
+
+
+
+Test cases
+
+
+
+
+
+Go
+package main
+
+import "fmt"
+
+var table = [10][10]byte{
+    {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+    {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+    {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+    {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+    {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+    {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+    {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+    {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+    {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+    {2, 5, 8, 1, 4, 3, 6, 7, 9, 0},
+}
+
+func damm(input string) bool {
+    var interim byte
+    for _, c := range []byte(input) {
+        interim = table[interim][c-'0']
+    }
+    return interim == 0
+}
+
+func main() {
+    for _, s := range []string{"5724", "5727", "112946", "112949"} {
+        fmt.Printf("%6s  %t\n", s, damm(s))
+    }
+}
+Output:
+  5724  true
+  5727  false
+112946  true
+112949  false
+Groovy
+Translation of: Java
+class DammAlgorithm {
+    private static final int[][] TABLE = [
+        [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+        [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+        [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+        [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+        [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+        [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+        [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+        [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+        [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+        [2, 5, 8, 1, 4, 3, 6, 7, 9, 0],
+    ]
+
+    private static boolean damm(String s) {
+        int interim = 0
+        for (char c : s.toCharArray()) interim = TABLE[interim][c - ('0' as Character)]
+        return interim == 0
+    }
+
+    static void main(String[] args) {
+        int[] numbers = [5724, 5727, 112946, 112949]
+        for (Integer number : numbers) {
+            boolean isValid = damm(number.toString())
+            if (isValid) {
+                System.out.printf("%6d is valid\n", number)
+            } else {
+                System.out.printf("%6d is invalid\n", number)
+            }
+        }
+    }
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+Haskell
+import Data.Char   (digitToInt)
+import Text.Printf (printf)
+
+damm :: String -> Bool
+damm = (==0) . foldl (\r -> (table !! r !!) . digitToInt) 0
+  where
+    table =
+      [ [0, 3, 1, 7, 5, 9, 8, 6, 4, 2]
+      , [7, 0, 9, 2, 1, 5, 4, 8, 6, 3]
+      , [4, 2, 0, 6, 8, 7, 1, 3, 5, 9]
+      , [1, 7, 5, 0, 9, 8, 3, 4, 2, 6]
+      , [6, 1, 2, 3, 0, 4, 5, 9, 7, 8]
+      , [3, 6, 7, 4, 2, 0, 9, 5, 8, 1]
+      , [5, 8, 6, 9, 7, 2, 0, 1, 3, 4]
+      , [8, 9, 4, 5, 3, 6, 2, 0, 1, 7]
+      , [9, 4, 3, 8, 6, 1, 7, 2, 0, 5]
+      , [2, 5, 8, 1, 4, 3, 6, 7, 9, 0] ]
+
+main :: IO ()
+main = mapM_ (uncurry(printf "%6s is valid: %s\n") . ((,) <*> show . damm) . show)
+  [5724, 5727, 112946, 112949]
+Output:
+  5724 is valid: True
+  5727 is valid: False
+112946 is valid: True
+112949 is valid: False
+J
+Solution:
+
+OpTbl=: _99 ". ];._2 noun define
+0 3 1 7 5 9 8 6 4 2
+7 0 9 2 1 5 4 8 6 3
+4 2 0 6 8 7 1 3 5 9
+1 7 5 0 9 8 3 4 2 6
+6 1 2 3 0 4 5 9 7 8
+3 6 7 4 2 0 9 5 8 1
+5 8 6 9 7 2 0 1 3 4
+8 9 4 5 3 6 2 0 1 7
+9 4 3 8 6 1 7 2 0 5
+2 5 8 1 4 3 6 7 9 0
+)
+
+getdigits=: 10&#.inv
+
+getDamm=: verb define
+  row=. 0
+  for_digit. getdigits y do.
+    row=. OpTbl {~ <row,digit    
+  end.   
+)
+
+checkDamm=: 0 = getDamm
+Example Usage:
+
+   checkDamm&> 5724 5727 112946
+1 0 1
+Or,
+
+checkdamm=: {{0=((".;._2{{)n
+0 7 4 1 6 3 5 8 9 2
+3 0 2 7 1 6 8 9 4 5
+1 9 0 5 2 7 6 4 3 8
+7 2 6 0 3 4 9 5 8 1
+5 1 8 9 0 2 7 3 6 4
+9 5 7 8 4 0 2 6 1 3
+8 4 1 3 5 9 0 2 7 6
+6 8 3 4 9 5 1 0 2 7
+4 6 5 2 7 8 3 1 0 9
+2 3 9 6 8 1 4 7 5 0
+}}){~<@,)/|.0,10#.inv y}}"0
+   checkdamm 5724 5727 112946
+1 0 1
+We could probably replace that embedded table with something more concise if the description of the math behind the algorithm on the wikipedia page was more complete. (See talk page.)
+
+Java
+Translation of: Kotlin
+public class DammAlgorithm {
+    private static final int[][] table = {
+        {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+        {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+        {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+        {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+        {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+        {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+        {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+        {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+        {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+        {2, 5, 8, 1, 4, 3, 6, 7, 9, 0},
+    };
+
+    private static boolean damm(String s) {
+        int interim = 0;
+        for (char c : s.toCharArray()) interim = table[interim][c - '0'];
+        return interim == 0;
+    }
+
+    public static void main(String[] args) {
+        int[] numbers = {5724, 5727, 112946, 112949};
+        for (Integer number : numbers) {
+            boolean isValid = damm(number.toString());
+            if (isValid) {
+                System.out.printf("%6d is valid\n", number);
+            } else {
+                System.out.printf("%6d is invalid\n", number);
+            }
+        }
+    }
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+JavaScript
+const table = [
+    [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+    [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+    [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+    [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+    [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+    [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+    [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+    [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+    [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+    [2, 5, 8, 1, 4, 3, 6, 7, 9, 0],
+ ];
+
+const lookup = (p, c) => table[p][parseInt(c, 10)]
+const damm = input => [...input].reduce(lookup, 0) === 0;
+
+// ----------------------------------------------------------[ Tests ]----
+const test = () => ["5724", "5727", "112946", "112949"].forEach(e =>
+    console.log(`${e} => ${damm(e) ? 'Pass' : 'Fail'}`)
+);
+test();
+Output:
+5724 => Pass
+5727 => Fail
+112946 => Pass
+112949 => Fail
+jq
+def checkdigit:
+       [[0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+        [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+        [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+        [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+        [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+        [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+        [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+        [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+        [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+        [2, 5, 8, 1, 4, 3, 6, 7, 9, 0]]
+      as $m
+    | tostring | explode
+      # "0" is 48
+    | 0 == reduce (.[] - 48) as $d (0; $m[.][$d] );
+	
+# The task:
+5724, 5727, 112946, 112949
+| checkdigit as $d
+| [., $d]
+Output:
+[5724,true]
+[5727,false]
+[112946,true]
+[112949,false]
+Julia
+function checkdigit(n)
+    matrix = (
+        (0, 3, 1, 7, 5, 9, 8, 6, 4, 2),
+        (7, 0, 9, 2, 1, 5, 4, 8, 6, 3),
+        (4, 2, 0, 6, 8, 7, 1, 3, 5, 9),
+        (1, 7, 5, 0, 9, 8, 3, 4, 2, 6),
+        (6, 1, 2, 3, 0, 4, 5, 9, 7, 8),
+        (3, 6, 7, 4, 2, 0, 9, 5, 8, 1),
+        (5, 8, 6, 9, 7, 2, 0, 1, 3, 4),
+        (8, 9, 4, 5, 3, 6, 2, 0, 1, 7),
+        (9, 4, 3, 8, 6, 1, 7, 2, 0, 5),
+        (2, 5, 8, 1, 4, 3, 6, 7, 9, 0))
+    row = 0
+    for d in string(n)
+        row = matrix[row + 1][d - '0' + 1]
+    end
+    return row
+end
+
+foreach(i -> println("$i validates as: ", checkdigit(string(i)) == 0), [5724, 5727, 112946])
+Output:
+5724 validates as: true
+5727 validates as: false
+112946 validates as: true
+Kotlin
+// version 1.1.2
+
+val table = arrayOf(
+    intArrayOf(0, 3, 1,	7, 5, 9, 8, 6, 4, 2),
+    intArrayOf(7, 0, 9, 2, 1, 5, 4, 8, 6, 3),
+    intArrayOf(4, 2, 0, 6, 8, 7, 1, 3, 5, 9),
+    intArrayOf(1, 7, 5, 0, 9, 8, 3, 4, 2, 6),
+    intArrayOf(6, 1, 2, 3, 0, 4, 5, 9, 7, 8),
+    intArrayOf(3, 6, 7, 4, 2, 0, 9, 5, 8, 1),
+    intArrayOf(5, 8, 6, 9, 7, 2, 0, 1, 3, 4),
+    intArrayOf(8, 9, 4, 5, 3, 6, 2, 0, 1, 7),
+    intArrayOf(9, 4, 3, 8, 6, 1, 7, 2, 0, 5),
+    intArrayOf(2, 5, 8, 1, 4, 3, 6, 7, 9, 0)
+) 
+
+fun damm(s: String): Boolean {
+    var interim = 0
+    for (c in s) interim = table[interim][c - '0']
+    return interim == 0
+}
+
+fun main(args: Array<String>) {
+    val numbers = intArrayOf(5724, 5727, 112946, 112949)
+    for (number in numbers) {
+        val isValid = damm(number.toString())
+        println("${"%6d".format(number)} is ${if (isValid) "valid" else "invalid"}")
+    }
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+Lua
+local tab = {
+    {0,3,1,7,5,9,8,6,4,2}, {7,0,9,2,1,5,4,8,6,3},
+    {4,2,0,6,8,7,1,3,5,9}, {1,7,5,0,9,8,3,4,2,6},
+    {6,1,2,3,0,4,5,9,7,8}, {3,6,7,4,2,0,9,5,8,1},
+    {5,8,6,9,7,2,0,1,3,4}, {8,9,4,5,3,6,2,0,1,7},
+    {9,4,3,8,6,1,7,2,0,5}, {2,5,8,1,4,3,6,7,9,0}
+}
+function check( n )
+    local idx, a = 0, tonumber( n:sub( 1, 1 ) )
+    for i = 1, #n do
+        a = tonumber( n:sub( i, i ) )
+        if a == nil then return false end
+        idx = tab[idx + 1][a + 1]
+    end
+    return idx == 0
+end
+local n, r
+while( true ) do
+    io.write( "Enter the number to check: " )
+    n = io.read(); if n == "0" then break end
+    r = check( n ); io.write( n, " is " )
+    if not r then io.write( "in" ) end
+    io.write( "valid!\n" )
+end
+Output:
+Enter the number to check: 5724
+5724 is valid!
+Enter the number to check: 5727
+5727 is invalid!
+Enter the number to check: 112946
+112946 is valid!
+Enter the number to check: 0
+M2000 Interpreter
+Module Damm_Algorithm{
+	Function Prepare {
+		function OperationTable {
+			data    (0, 3, 1, 7, 5, 9, 8, 6, 4, 2)
+			data    (7, 0, 9, 2, 1, 5, 4, 8, 6, 3)
+			data    (4, 2, 0, 6, 8, 7, 1, 3, 5, 9)
+			data    (1, 7, 5, 0, 9, 8, 3, 4, 2, 6)
+			data    (6, 1, 2, 3, 0, 4, 5, 9, 7, 8)
+			data    (3, 6, 7, 4, 2, 0, 9, 5, 8, 1)
+			data    (5, 8, 6, 9, 7, 2, 0, 1, 3, 4)
+			data    (8, 9, 4, 5, 3, 6, 2, 0, 1, 7)
+			data    (9, 4, 3, 8, 6, 1, 7, 2, 0, 5)
+			data    (2, 5, 8, 1, 4, 3, 6, 7, 9, 0)
+			=array([])
+		}
+		Digits= Lambda (d) ->{
+			d$=str$(d,"")
+			for i=1 to len(d$)
+				data val(mid$(d$,i,1))
+			next
+			=Array([])
+		}
+		=Lambda a()=OperationTable(), Digits  (N) -> {
+			dim b()
+			b()=Digits(N)
+			m=0
+			for i=0 to len(b())-1
+				m=a(m)(b(i))
+			next i
+			=m
+		}
+	}
+	Damm=Prepare()
+	Data 5724, 5727, 112946, 112940
+	while not empty
+		over  ' double the top of stack
+		over
+		Print number, Damm(number),  Damm(number)=0
+	End While
+}
+Damm_Algorithm
+Output:
+  5724     0   True
+  5727     9  False
+112946     0   True
+112940     5  False
+MACRO-11
+        .TITLE  DAMMAL
+        .MCALL  .GTLIN,.PRINT,.EXIT
+DAMMAL::JMP     DEMO
+
+        ; VALIDATE DAMM STRING IN R0; ZERO FLAG SET IF VALID
+DAMM:   CLR     R2              ; INTERIM DIGIT
+        BR      2$
+1$:     SUB     #60,R1          ; DIGIT?
+        BCS     3$              ; IF NOT, NOT VALID
+        CMP     R1,#^D9
+        BGT     3$
+        MOV     R2,R3           ; CALCULATE DAMM TABLE INDEX
+        ASL     R3
+        ASL     R3
+        ADD     R2,R3
+        ASL     R3
+        ADD     R1,R3
+        MOVB    4$(R3),R2       ; GET NEW INTERIM DIGIT FROM TABLE
+2$:     MOVB    (R0)+,R1        ; NEXT CHAR
+        BNE     1$              ; END OF STRING?
+        TST     R2              ; IF SO, CHECK IF INTERIM DIGIT IS 0
+3$:     RTS     PC
+4$:     .BYTE   ^D0,^D3,^D1,^D7,^D5,^D9,^D8,^D6,^D4,^D2
+        .BYTE   ^D7,^D0,^D9,^D2,^D1,^D5,^D4,^D8,^D6,^D3
+        .BYTE   ^D4,^D2,^D0,^D6,^D8,^D7,^D1,^D3,^D5,^D9
+        .BYTE   ^D1,^D7,^D5,^D0,^D9,^D8,^D3,^D4,^D2,^D6
+        .BYTE   ^D6,^D1,^D2,^D3,^D0,^D4,^D5,^D9,^D7,^D8
+        .BYTE   ^D3,^D6,^D7,^D4,^D2,^D0,^D9,^D5,^D8,^D1
+        .BYTE   ^D5,^D8,^D6,^D9,^D7,^D2,^D0,^D1,^D3,^D4
+        .BYTE   ^D8,^D9,^D4,^D5,^D3,^D6,^D2,^D0,^D1,^D7
+        .BYTE   ^D9,^D4,^D4,^D8,^D6,^D1,^D7,^D2,^D0,^D5
+        .BYTE   ^D2,^D5,^D8,^D1,^D4,^D3,^D6,^D7,^D9,^D0
+
+DEMO:   .GTLIN  #5$             ; READ LINE
+        MOV     #5$,R0
+        TSTB    (R0)            ; EMPTY LINE?
+        BNE     1$
+        .EXIT                   ; IF SO, STOP
+1$:     JSR     PC,DAMM         ; TEST LINE
+        BNE     2$              ; FAIL?
+        .PRINT  #3$
+        BR      DEMO
+2$:     .PRINT  #4$             ; PASS?
+        BR      DEMO
+3$:     .ASCIZ  /PASS/
+4$:     .ASCIZ  /FAIL/
+5$:     .BLKB   200
+        .END    DAMMAL
+Output:
+5724
+PASS
+5727
+FAIL
+112946
+PASS
+112949
+FAIL
+MAD
+            NORMAL MODE IS INTEGER
+
+          R VERIFY DAMM CHECKSUM OF NUMBER
+            INTERNAL FUNCTION(CKNUM)
+            VECTOR VALUES DAMMIT = 
+          0        0,3,1,7,5,9,8,6,4,2
+          1     ,  7,0,9,2,1,5,4,8,6,3
+          2     ,  4,2,0,6,8,7,1,3,5,9
+          3     ,  1,7,5,0,9,8,3,4,2,6
+          4     ,  6,1,2,3,0,4,5,9,7,8
+          5     ,  3,6,7,4,2,0,9,5,8,1
+          6     ,  5,8,6,9,7,2,0,1,3,4
+          7     ,  8,9,4,5,3,6,2,0,1,7
+          8     ,  9,4,3,8,6,1,7,2,0,5
+          9     ,  2,5,8,1,4,3,6,7,9,0           
+            DIMENSION DAMDGT(10)
+            ENTRY TO DAMM.
+            TMP=CKNUM
+            THROUGH GETDGT, FOR NDGT=0, 1, TMP.E.0
+            DAMDGT(NDGT) = TMP-TMP/10*10
+GETDGT      TMP = TMP/10
+            INTRM = 0
+            THROUGH CKDGT, FOR NDGT=NDGT, -1, NDGT.L.0
+CKDGT       INTRM = DAMMIT(INTRM*10 + DAMDGT(NDGT))
+            FUNCTION RETURN INTRM.E.0
+            END OF FUNCTION
+            
+          R TEST SOME NUMBERS
+            THROUGH TEST, FOR VALUES OF N = 5724,5727,112946,112949
+            WHENEVER DAMM.(N)
+                PRINT FORMAT VALID,N
+            OTHERWISE
+                PRINT FORMAT INVAL,N
+TEST        END OF CONDITIONAL
+            
+            VECTOR VALUES VALID = $I9,S1,5HVALID*$
+            VECTOR VALUES INVAL = $I9,S1,7HINVALID*$
+            END OF PROGRAM
+Output:
+     5724 VALID
+     5727 INVALID
+   112946 VALID
+   112949 INVALID
+Mathematica / Wolfram Language
+matrix = {{0, 3, 1, 7, 5, 9, 8, 6, 4, 2}, {7, 0, 9, 2, 1, 5, 4, 8, 6, 
+    3}, {4, 2, 0, 6, 8, 7, 1, 3, 5, 9}, {1, 7, 5, 0, 9, 8, 3, 4, 2, 
+    6}, {6, 1, 2, 3, 0, 4, 5, 9, 7, 8}, {3, 6, 7, 4, 2, 0, 9, 5, 8, 
+    1}, {5, 8, 6, 9, 7, 2, 0, 1, 3, 4}, {8, 9, 4, 5, 3, 6, 2, 0, 1, 
+    7}, {9, 4, 3, 8, 6, 1, 7, 2, 0, 5}, {2, 5, 8, 1, 4, 3, 6, 7, 9, 
+    0}};
+Damm[num_Integer] := Module[{row},
+  row = 0;
+  Do[
+   row = matrix[[row + 1, d + 1]]
+   ,
+   {d, IntegerDigits[num]}
+   ];
+  row == 0
+  ]
+Damm /@ {5724, 5727, 112946}
+Output:
+{True, False, True}
+MATLAB
+Translation of: Julia
+clear all;close all;clc;
+
+% Test the function with the provided numbers
+numbers = [5724, 5727, 112946];
+for i = 1:length(numbers)
+    if checkdigit(numbers(i))
+        fprintf('%d validates as: true\n', numbers(i));
+    else
+        fprintf('%d validates as: false\n', numbers(i));
+    end
+end
+
+function isValid = checkdigit(n)
+    matrix = [
+        0, 3, 1, 7, 5, 9, 8, 6, 4, 2;
+        7, 0, 9, 2, 1, 5, 4, 8, 6, 3;
+        4, 2, 0, 6, 8, 7, 1, 3, 5, 9;
+        1, 7, 5, 0, 9, 8, 3, 4, 2, 6;
+        6, 1, 2, 3, 0, 4, 5, 9, 7, 8;
+        3, 6, 7, 4, 2, 0, 9, 5, 8, 1;
+        5, 8, 6, 9, 7, 2, 0, 1, 3, 4;
+        8, 9, 4, 5, 3, 6, 2, 0, 1, 7;
+        9, 4, 3, 8, 6, 1, 7, 2, 0, 5;
+        2, 5, 8, 1, 4, 3, 6, 7, 9, 0
+    ];
+
+    row = 0;
+    nString = num2str(n);
+    for i = 1:length(nString)
+        d = str2double(nString(i));
+        row = matrix(row+1, d + 1);
+    end
+    isValid = (row == 0);
+end
+Output:
+5724 validates as: true
+5727 validates as: false
+112946 validates as: true
+Modula-2
+This example does not show the output mentioned in the task description on this page (or a page linked to from here). Please ensure that it meets all task requirements and remove this message.
+Note that phrases in task descriptions such as "print and display" and "print and show" for example, indicate that (reasonable length) output be a part of a language's solution.
+
+MODULE DammAlgorithm;
+FROM FormatString IMPORT FormatString;
+FROM Terminal IMPORT WriteString,WriteLn,ReadChar;
+
+TYPE TA = ARRAY[0..9],[0..9] OF INTEGER;
+CONST table = TA{
+        {0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+        {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+        {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+        {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+        {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+        {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+        {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+        {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+        {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+        {2, 5, 8, 1, 4, 3, 6, 7, 9, 0}
+    };
+
+PROCEDURE Damm(s : ARRAY OF CHAR) : BOOLEAN;
+VAR interim,i : INTEGER;
+BEGIN
+    interim := 0;
+
+    i := 0;
+    WHILE s[i] # 0C DO
+        interim := table[interim,INT(s[i])-INT('0')];
+        INC(i);
+    END;
+    RETURN interim=0;
+END Damm;
+
+PROCEDURE Print(number : INTEGER);
+VAR
+    isValid : BOOLEAN;
+    buf : ARRAY[0..16] OF CHAR;
+BEGIN
+    FormatString("%i", buf, number);
+    isValid := Damm(buf);
+    WriteString(buf);
+    IF isValid THEN
+        WriteString(" is valid");
+    ELSE
+        WriteString(" is invalid");
+    END;
+    WriteLn;
+END Print;
+
+BEGIN
+    Print(5724);
+    Print(5727);
+    Print(112946);
+    Print(112949);
+
+    ReadChar;
+END DammAlgorithm.
+Modula-3
+MODULE DammAlgorithm EXPORTS Main;
+
+IMPORT IO, Text;
+
+VAR
+  Numbers:ARRAY[0..3] OF TEXT := ARRAY OF TEXT{"5724", "5727", "112946", "112949"};
+  
+PROCEDURE Damm(READONLY Str:TEXT):BOOLEAN =
+  TYPE
+    TTable = ARRAY[0..9],[0..9] OF INTEGER;
+  VAR
+    Table := TTable
+    {ARRAY OF INTEGER{0,3,1,7,5,9,8,6,4,2},
+     ARRAY OF INTEGER{7,0,9,2,1,5,4,8,6,3},
+     ARRAY OF INTEGER{4,2,0,6,8,7,1,3,5,9},
+     ARRAY OF INTEGER{1,7,5,0,9,8,3,4,2,6},
+     ARRAY OF INTEGER{6,1,2,3,0,4,5,9,7,8},
+     ARRAY OF INTEGER{3,6,7,4,2,0,9,5,8,1},
+     ARRAY OF INTEGER{5,8,6,9,7,2,0,1,3,4},
+     ARRAY OF INTEGER{8,9,4,5,3,6,2,0,1,7},
+     ARRAY OF INTEGER{9,4,3,8,6,1,7,2,0,5},
+     ARRAY OF INTEGER{2,5,8,1,4,3,6,7,9,0}};
+    Interim,I:INTEGER := 0;
+  BEGIN
+    WHILE I <= Text.Length(Str)-1 DO
+      Interim := Table[Interim, ORD(Text.GetChar(Str, I)) - ORD('0')];
+      INC(I);
+    END;
+    RETURN Interim = 0;
+  END Damm;
+
+BEGIN
+  FOR I := FIRST(Numbers) TO LAST(Numbers) DO
+    IF Damm(Numbers[I]) THEN
+      IO.Put(Numbers[I] & " is valid\n");
+    ELSE
+      IO.Put(Numbers[I] & " is invalid\n");
+    END;
+  END;
+END DammAlgorithm.
+Output:
+5724 is valid
+5727 is invalid
+112946 is valid
+112949 is invalid
+Nim
+from algorithm import reverse
+
+const Table = [[0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+               [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+               [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+               [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+               [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+               [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+               [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+               [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+               [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+               [2, 5, 8, 1, 4, 3, 6, 7, 9, 0]]
+
+type Digit = range[0..9]
+
+func isValid(digits: openArray[Digit]): bool =
+  ## Apply Damm algorithm to check validity of a digit sequence.
+  var interim = 0
+  for d in digits:
+    interim = Table[interim][d]
+  result = interim == 0
+
+proc toDigits(n: int): seq[Digit] =
+  ## Return the digits of a number.
+  var n = n
+  while true:
+    result.add(n mod 10)
+    n = n div 10
+    if n == 0:
+      break
+  result.reverse()
+
+proc checkData(digits: openArray[Digit]) =
+  ## Check if a digit sequence if valid.
+  if isValid(digits):
+    echo "Sequence ", digits, " is valid."
+  else:
+    echo "Sequence ", digits, " is invalid."
+
+checkData(5724.toDigits)
+checkData(5727.toDigits)
+checkData([Digit 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 6, 7, 8, 9, 0, 1])
+checkData([Digit 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 6, 7, 8, 9, 0, 8])
+Output:
+Sequence [5, 7, 2, 4] is valid.
+Sequence [5, 7, 2, 7] is invalid.
+Sequence [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 6, 7, 8, 9, 0, 1] is valid.
+Sequence [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 6, 7, 8, 9, 0, 8] is invalid.
+Objeck
+Translation of: C#
+class DammAlgorithm  {
+  @table : static : Int[,];
+
+  function : Main(args : String[]) ~ Nil {
+    @table := [
+      [0, 3, 1, 7, 5, 9, 8, 6, 4, 2]
+      [7, 0, 9, 2, 1, 5, 4, 8, 6, 3]
+      [4, 2, 0, 6, 8, 7, 1, 3, 5, 9]
+      [1, 7, 5, 0, 9, 8, 3, 4, 2, 6]
+      [6, 1, 2, 3, 0, 4, 5, 9, 7, 8]
+      [3, 6, 7, 4, 2, 0, 9, 5, 8, 1]
+      [5, 8, 6, 9, 7, 2, 0, 1, 3, 4]
+      [8, 9, 4, 5, 3, 6, 2, 0, 1, 7]
+      [9, 4, 3, 8, 6, 1, 7, 2, 0, 5]
+      [2, 5, 8, 1, 4, 3, 6, 7, 9, 0]];
+
+    numbers := [ 5724, 5727, 112946, 112949 ];
+    each (i : numbers) {
+      number := numbers[i];
+      isValid := Damm(number->ToString());
+      if (isValid) {
+        "{$number} is valid"->PrintLine();
+      }
+      else {
+        "{$number} is invalid"->PrintLine();
+      };
+    };
+  }
+
+  function : Damm(s : String) ~ Bool {
+    interim := 0;
+    each (i : s) {
+      interim := @table[interim, s->Get(i) - '0'];
+    };
+    return interim = 0;
+  }
+}
+Output:
+5724 is valid
+5727 is invalid
+112946 is valid
+112949 is invalid
+Pascal
+Works with: Free Pascal
+Translation of: Modula-2
+nearly copy&paste
+
+program DammAlgorithm;
+uses
+  sysutils;
+
+TYPE TA = ARRAY[0..9,0..9] OF UInt8;
+CONST table : TA =
+                ((0,3,1,7,5,9,8,6,4,2),
+                 (7,0,9,2,1,5,4,8,6,3),
+                 (4,2,0,6,8,7,1,3,5,9),
+                 (1,7,5,0,9,8,3,4,2,6),
+                 (6,1,2,3,0,4,5,9,7,8),
+                 (3,6,7,4,2,0,9,5,8,1),
+                 (5,8,6,9,7,2,0,1,3,4),
+                 (8,9,4,5,3,6,2,0,1,7),
+                 (9,4,3,8,6,1,7,2,0,5),
+                 (2,5,8,1,4,3,6,7,9,0));
+
+function Damm(s : string) : BOOLEAN;
+VAR
+  interim,i : UInt8;
+BEGIN
+  interim := 0;
+  i := 1;
+  WHILE i <= length(s) DO
+  Begin
+    interim := table[interim,ORD(s[i])-ORD('0')];
+    INC(i);
+  END;
+  Damm := interim=0;
+END;
+
+PROCEDURE Print(number : Uint32);
+VAR
+    isValid : BOOLEAN;
+    buf :string;
+BEGIN
+    buf := IntToStr(number);
+    isValid := Damm(buf);
+    Write(buf);
+    IF isValid THEN
+      Write(' is valid')
+    ELSE
+      Write(' is invalid');
+    WriteLn;
+END;
+
+BEGIN
+    Print(5724);
+    Print(5727);
+    Print(112946);
+    Print(112949);
+    Readln;
+END.
+Output:
+5724 is valid
+5727 is invalid
+112946 is valid
+112949 is invalid
+Perl
+sub damm {
+    my(@digits) = split '', @_[0];
+    my @tbl =([< 0 3 1 7 5 9 8 6 4 2 >],
+              [< 7 0 9 2 1 5 4 8 6 3 >],
+              [< 4 2 0 6 8 7 1 3 5 9 >],
+              [< 1 7 5 0 9 8 3 4 2 6 >],
+              [< 6 1 2 3 0 4 5 9 7 8 >],
+              [< 3 6 7 4 2 0 9 5 8 1 >],
+              [< 5 8 6 9 7 2 0 1 3 4 >],
+              [< 8 9 4 5 3 6 2 0 1 7 >],
+              [< 9 4 3 8 6 1 7 2 0 5 >],
+              [< 2 5 8 1 4 3 6 7 9 0 >]
+              );
+    my $row = 0;
+    for my $col (@digits) { $row = $tbl[$row][$col] }
+    not $row
+}
+
+for (5724, 5727, 112946) {
+    print "$_:\tChecksum digit @{[damm($_) ? '' : 'in']}correct.\n"
+}
+Output:
+5724:	Checksum digit correct.
+5727:	Checksum digit incorrect.
+112946:	Checksum digit correct.
+Phix
+As phix uses 1-based indexes, 1 must be added to the operation table, and validity is given by ending on one, rather than zero.
+
+constant tbl = sq_add(1,{{0, 3, 1, 7, 5, 9, 8, 6, 4, 2},
+                         {7, 0, 9, 2, 1, 5, 4, 8, 6, 3},
+                         {4, 2, 0, 6, 8, 7, 1, 3, 5, 9},
+                         {1, 7, 5, 0, 9, 8, 3, 4, 2, 6},
+                         {6, 1, 2, 3, 0, 4, 5, 9, 7, 8},
+                         {3, 6, 7, 4, 2, 0, 9, 5, 8, 1},
+                         {5, 8, 6, 9, 7, 2, 0, 1, 3, 4},
+                         {8, 9, 4, 5, 3, 6, 2, 0, 1, 7},
+                         {9, 4, 3, 8, 6, 1, 7, 2, 0, 5},
+                         {2, 5, 8, 1, 4, 3, 6, 7, 9, 0}})
+ 
+function damm(string s)
+    integer interim = 1
+    for i=1 to length(s) do
+        integer nxt = s[i]-'0'+1
+        if nxt<1 or nxt>10 then return 0 end if
+        interim = tbl[interim][nxt]
+    end for
+    return interim == 1
+end function
+ 
+constant tests = {"5724", "5727", "112946", "112949"}
+for i=1 to length(tests) do
+    string ti = tests[i]
+    printf(1,"%7s is %svalid\n",{ti,iff(damm(ti)?"":"in")})
+end for
+Output:
+   5724 is valid
+   5727 is invalid
+ 112946 is valid
+ 112949 is invalid
+PHP
+<?php
+function lookup($r,$c) {
+    $table = array(
+        array(0, 3, 1, 7, 5, 9, 8, 6, 4, 2),
+        array(7, 0, 9, 2, 1, 5, 4, 8, 6, 3),
+        array(4, 2, 0, 6, 8, 7, 1, 3, 5, 9),
+        array(1, 7, 5, 0, 9, 8, 3, 4, 2, 6),
+        array(6, 1, 2, 3, 0, 4, 5, 9, 7, 8),
+        array(3, 6, 7, 4, 2, 0, 9, 5, 8, 1),
+        array(5, 8, 6, 9, 7, 2, 0, 1, 3, 4),
+        array(8, 9, 4, 5, 3, 6, 2, 0, 1, 7),
+        array(9, 4, 3, 8, 6, 1, 7, 2, 0, 5),
+        array(2, 5, 8, 1, 4, 3, 6, 7, 9, 0),
+    );
+    return $table[$r][$c];
+}
+
+function isDammValid($input) {
+    return array_reduce(str_split($input), "lookup", 0) == 0;
+}
+
+foreach(array("5724", "5727", "112946", "112949") as $i) {
+    echo "{$i} is ".(isDammValid($i) ? "valid" : "invalid")."<br>";
+}
+?>
+Output:
+5724 is valid
+5727 is invalid
+112946 is valid
+112949 is invalid
+PicoLisp
+(setq *D                                                                                                                                
+   (quote                                                                                                                               
+      (0 3 1 7 5 9 8 6 4 2)                                                                                                             
+      (7 0 9 2 1 5 4 8 6 3)                                                                                                             
+      (4 2 0 6 8 7 1 3 5 9)                                                                                                             
+      (1 7 5 0 9 8 3 4 2 6)                                                                                                             
+      (6 1 2 3 0 4 5 9 7 8)                                                                                                             
+      (3 6 7 4 2 0 9 5 8 1)                                                                                                             
+      (5 8 6 9 7 2 0 1 3 4)                                                                                                             
+      (8 9 4 5 3 6 2 0 1 7)                                                                                                             
+      (9 4 3 8 6 1 7 2 0 5)                                                                                                             
+      (2 5 8 1 4 3 6 7 9 0) ) )                                                                                                         
+(de damm? (N)                                                                                                                           
+   (let R 1                                                                                                                             
+      (for N (mapcar format (chop N))                                                                                                   
+         (setq R (inc (get *D R (inc N)))) )                                                                                            
+      (= 1 R) ) )                                                                                                                       
+(println (damm? 5724))                                                                                                                  
+(println (damm? 5727))                                                                                                                  
+(println (damm? 112946))                                                                                                                
+(println (damm? 112940))
+Output:
+T
+NIL
+T
+NIL
+PL/M
+100H:
+
+/* DAMM CHECKSUM FOR DECIMAL NUMBER IN GIVEN STRING */
+CHECK$DAMM: PROCEDURE (PTR) BYTE;
+    DECLARE PTR ADDRESS, CH BASED PTR BYTE;
+    DECLARE DAMM DATA
+        ( 0,3,1,7,5,9,8,6,4,2,
+          7,0,9,2,1,5,4,8,6,3,
+          4,2,0,6,8,7,1,3,5,9,
+          1,7,5,0,9,8,3,4,2,6,
+          6,1,2,3,0,4,5,9,7,8,
+          3,6,7,4,2,0,9,5,8,1,
+          5,8,6,9,7,2,0,1,3,4,
+          8,9,4,5,3,6,2,0,1,7,
+          9,4,3,8,6,1,7,2,0,5,
+          2,5,8,1,4,3,6,7,9,0 );
+    DECLARE I BYTE;
+    I = 0;
+    DO WHILE CH <> '$';
+        I = DAMM((I*10) + (CH-'0'));
+        PTR = PTR + 1;
+    END;
+    RETURN I = 0;
+END CHECK$DAMM;
+
+/* CP/M BDOS CALLS */
+BDOS: PROCEDURE (FN, ARG);
+    DECLARE FN BYTE, ARG ADDRESS;
+    GO TO 5;
+END BDOS;
+
+PRINT: PROCEDURE (STR);
+    DECLARE STR ADDRESS;
+    CALL BDOS(9, STR);
+END PRINT;
+
+/* TESTS */
+DECLARE TEST (4) ADDRESS;
+TEST(0) = .'5724$';
+TEST(1) = .'5727$';
+TEST(2) = .'112946$';
+TEST(3) = .'112949$';
+
+DECLARE N BYTE;
+DO N = 0 TO LAST(TEST);
+    CALL PRINT(TEST(N));
+    CALL PRINT(.': $');
+    IF CHECK$DAMM(TEST(N)) THEN
+        CALL PRINT(.'PASS$');
+    ELSE
+        CALL PRINT(.'FAIL$');
+    CALL PRINT(.(13,10,'$'));
+END;
+
+CALL BDOS(0,0);
+EOF
+Output:
+5724: PASS
+5727: FAIL
+112946: PASS
+112949: FAIL
+PowerShell
+Translation of: C#
+$table = (
+    (0, 3, 1, 7, 5, 9, 8, 6, 4, 2),
+    (7, 0, 9, 2, 1, 5, 4, 8, 6, 3),
+    (4, 2, 0, 6, 8, 7, 1, 3, 5, 9),
+    (1, 7, 5, 0, 9, 8, 3, 4, 2, 6),
+    (6, 1, 2, 3, 0, 4, 5, 9, 7, 8),
+    (3, 6, 7, 4, 2, 0, 9, 5, 8, 1),
+    (5, 8, 6, 9, 7, 2, 0, 1, 3, 4),
+    (8, 9, 4, 5, 3, 6, 2, 0, 1, 7),
+    (9, 4, 3, 8, 6, 1, 7, 2, 0, 5),
+    (2, 5, 8, 1, 4, 3, 6, 7, 9, 0)
+)
+
+function Test-Damm([string]$s) {
+    $interim = 0
+    foreach ($c in $s.ToCharArray()) {
+        $interim = $table[$interim][[int]$c - [int][char]'0']
+    }
+    return $interim -eq 0
+}
+
+foreach ($number in 5724, 5727, 112946, 112949) {
+    $validity = if (Test-Damm $number) {'valid'} else {'invalid'}
+    '{0,6} is {1}' -f $number, $validity
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+112949 is invalid
+Python
+def damm(num: int) -> bool:
+    row = 0
+    for digit in str(num):
+        row = _matrix[row][int(digit)] 
+    return row == 0
+
+_matrix = (
+    (0, 3, 1, 7, 5, 9, 8, 6, 4, 2),
+    (7, 0, 9, 2, 1, 5, 4, 8, 6, 3),
+    (4, 2, 0, 6, 8, 7, 1, 3, 5, 9),
+    (1, 7, 5, 0, 9, 8, 3, 4, 2, 6),
+    (6, 1, 2, 3, 0, 4, 5, 9, 7, 8),
+    (3, 6, 7, 4, 2, 0, 9, 5, 8, 1),
+    (5, 8, 6, 9, 7, 2, 0, 1, 3, 4),
+    (8, 9, 4, 5, 3, 6, 2, 0, 1, 7),
+    (9, 4, 3, 8, 6, 1, 7, 2, 0, 5),
+    (2, 5, 8, 1, 4, 3, 6, 7, 9, 0)
+)
+
+if __name__ == '__main__':
+    for test in [5724, 5727, 112946]:
+        print(f'{test}\t Validates as: {damm(test)}')
+Output:
+5724     Validates as: True
+5727     Validates as: False
+112946   Validates as: True
+Quackery
+  [ 0 swap witheach
+      [ char 0 - dip
+          [ table
+            [ 0 3 1 7 5 9 8 6 4 2 ]
+            [ 7 0 9 2 1 5 4 8 6 3 ]
+            [ 4 2 0 6 8 7 1 3 5 9 ]
+            [ 1 7 5 0 9 8 3 4 2 6 ]
+            [ 6 1 2 3 0 4 5 9 7 8 ]
+            [ 3 6 7 4 2 0 9 5 8 1 ]
+            [ 5 8 6 9 7 2 0 1 3 4 ]
+            [ 8 9 4 5 3 6 2 0 1 7 ]
+            [ 9 4 3 8 6 1 7 2 0 5 ]
+            [ 2 5 8 1 4 3 6 7 9 0 ] ]
+        peek ] ]                      is damm      ( $ --> n )
+
+  [ damm 0 = ]                        is dammvalid ( $ --> b )
+
+  [ dup echo$ say " is "
+    dammvalid not if [ say "not " ]
+    say "valid." cr ]                 is validate  ( & -->   )
+
+  $ "5724 5725 112946 112949"
+  nest$ witheach validate
+Output:
+5724 is valid.
+5725 is not valid.
+112946 is valid.
+112949 is not valid.
+R
+Damm_algo <- function(number){
+  row_i = 0
+  
+  iterable = strsplit(toString(number), "")[[1]]
+  
+  validation_matrix = 
+    matrix(
+      c(
+        0, 3, 1, 7, 5, 9, 8, 6, 4, 2,
+        7, 0, 9, 2, 1, 5, 4, 8, 6, 3,
+        4, 2, 0, 6, 8, 7, 1, 3, 5, 9,
+        1, 7, 5, 0, 9, 8, 3, 4, 2, 6,
+        6, 1, 2, 3, 0, 4, 5, 9, 7, 8,
+        3, 6, 7, 4, 2, 0, 9, 5, 8, 1,
+        5, 8, 6, 9, 7, 2, 0, 1, 3, 4,
+        8, 9, 4, 5, 3, 6, 2, 0, 1, 7,
+        9, 4, 3, 8, 6, 1, 7, 2, 0, 5,
+        2, 5, 8, 1, 4, 3, 6, 7, 9, 0),
+      nrow = 10, ncol = 10, byrow = T
+    )
+  
+  for(digit in as.integer(iterable)){
+    row_i = validation_matrix[row_i + 1, digit + 1]    #in R indexes start from 1 and not from zero
+  }
+  
+  test <- ifelse(row_i == 0, "VALID", "NOT VALID")
+  message(paste("Number", number, "is", test))
+}
+
+for(number in c(5724, 5727, 112946, 112949)){
+Damm_algo(number)
+  }
+Output:
+Number 5724 is VALID
+Number 5727 is NOT VALID
+Number 112946 is VALID
+Number 112949 is NOT VALID
+Racket
+#lang racket/base
+(require racket/match)
+
+(define operation-table
+  #(#(0 3 1 7 5 9 8 6 4 2)
+    #(7 0 9 2 1 5 4 8 6 3)
+    #(4 2 0 6 8 7 1 3 5 9)
+    #(1 7 5 0 9 8 3 4 2 6)
+    #(6 1 2 3 0 4 5 9 7 8)
+    #(3 6 7 4 2 0 9 5 8 1)
+    #(5 8 6 9 7 2 0 1 3 4)
+    #(8 9 4 5 3 6 2 0 1 7)
+    #(9 4 3 8 6 1 7 2 0 5)
+    #(2 5 8 1 4 3 6 7 9 0)))
+
+(define (integer->digit-list n)
+  (let loop ((n n) (a null))
+    (if (zero? n) a (let-values (([q r] (quotient/remainder n 10))) (loop q (cons r a))))))
+
+(define/match (check-digit n)
+  [((list ds ...))
+   (foldl
+    (λ (d interim)
+      (vector-ref (vector-ref operation-table interim) d))
+    0 ds)]
+  [((? integer? i))
+   (check-digit (integer->digit-list i))])
+
+(define/match (valid-number? n)
+  [((? integer? i))
+   (valid-number? (integer->digit-list i))]
+  [((list ds ...))
+   (zero? (check-digit ds))])
+
+(module+ test
+  (require rackunit)
+  (check-equal? (integer->digit-list 572) '(5 7 2))
+  (check-equal? (check-digit 572) 4)
+  (check-equal? (check-digit '(5 7 2)) 4)
+  (check-true (valid-number? 5724))
+  (check-false (valid-number? 5274))
+  (check-true (valid-number? 112946)))
+No output from checks means that all tests passed.
+
+
+Raku
+(formerly Perl 6)
+
+Works with: Rakudo version 2017.05
+sub damm ( *@digits ) {
+    my @tbl = [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+              [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+              [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+              [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+              [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+              [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+              [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+              [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+              [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+              [2, 5, 8, 1, 4, 3, 6, 7, 9, 0];
+    my $row = 0;
+    for @digits -> $col { $row = @tbl[$row][$col] }
+    not $row
+}
+
+# Testing
+for 5724, 5727, 112946 {
+    say "$_:\tChecksum digit { damm( $_.comb ) ?? '' !! 'in' }correct."
+}
+Output:
+5724:	Checksum digit correct.
+5727:	Checksum digit incorrect.
+112946:	Checksum digit correct.
+Refal
+$ENTRY Go {
+    = <Test '5724'>
+      <Test '5727'>
+      <Test '112946'>
+      <Test '112949'>;
+};
+
+Test {
+    e.Ds = <Prout e.Ds ': ' <Damm e.Ds>>;
+};
+
+Damm {
+    ('0') = Pass;
+    (s.Int) = Fail;
+    (s.Int) s.D e.Ds,
+        <Item <Numb s.Int> <DammTable>>: (e.Row),
+        <Item <Numb s.D> e.Row>: s.Next
+        = <Damm (s.Next) e.Ds>;
+    e.Ds = <Damm ('0') e.Ds>;
+};
+
+DammTable {
+    = ('0317598642')
+      ('7092154863')
+      ('4206871359')
+      ('1750983426')
+      ('6123045978')
+      ('3674209581')
+      ('5869720134')
+      ('8945362017')
+      ('9438617205')
+      ('2581436790')
+};
+
+Item {
+    0   t.I e.X = t.I;
+    s.N t.I e.X = <Item <- s.N 1> e.X>;
+};
+Output:
+5724: Pass
+5727: Fail
+112946: Pass
+112949: Fail
+REXX
+manufactured table
+/* REXX */
+Call init
+Call test 5724
+Call test 5727
+Call test 112946
+Call test 112940
+Exit
+
+test:
+Parse Arg number
+int_digit=0
+Do p=1 To length(number)
+  d=substr(number,p,1)
+  int_digit=grid.int_digit.d
+  If p<length(number) Then cd=int_digit
+  End
+If int_digit=0 Then
+  Say number 'is ok'
+Else
+  Say number 'is not ok, check-digit should be' cd '(instead of' d')'
+Return
+
+init:
+i=-2
+Call setup '* 0 1 2 3 4 5 6 7 8 9'
+Call setup '0 0 3 1 7 5 9 8 6 4 2'
+Call setup '1 7 0 9 2 1 5 4 8 6 3'
+Call setup '2 4 2 0 6 8 7 1 3 5 9'
+Call setup '3 1 7 5 0 9 8 3 4 2 6'
+Call setup '4 6 1 2 3 0 4 5 9 7 8'
+Call setup '5 3 6 7 4 2 0 9 5 8 1'
+Call setup '6 5 8 6 9 7 2 0 1 3 4'
+Call setup '7 8 9 4 5 3 6 2 0 1 7'
+Call setup '8 9 4 3 8 6 1 7 2 0 5'
+Call setup '9 2 5 8 1 4 3 6 7 9 0'
+Return
+setup:
+  Parse Arg list
+  i=i+1
+  Do col=-1 To 9
+    grid.i.col=word(list,col+2)
+    End
+  Return
+Output:
+5724 is ok
+5727 is not ok, check-digit should be 4 (instead of 7)
+112946 is ok
+112940 is not ok, check-digit should be 6 (instead of 0)
+static table
+Using a static table is over four times faster than manufacturing it.
+
+/*REXX pgm uses H. Michael Damm's algorithm to validate numbers with suffixed check sum. digit*/
+ a.0= 0317598642; a.1= 7092154863; a.2= 4206871359; a.3= 1750983426; a.4= 6123045978
+ a.5= 3674209581; a.6= 5869720134; a.7= 8945362017; a.8= 9438617205; a.9= 2581436790
+Call Damm 5724, 5727, 112946, 112940         /*invoke Damm's algorithm To some #'s.*/
+Exit                                         /*stick a Tok in it,  we're all Done. */
+/*---------------------------------------------------------------------------------*/
+Damm:
+  Do j=1 To arg()                            /* loop over numbers          */
+    x=arg(j)
+    d=0
+    Do p=1 To length(x)-1                  /* compute the checksum digit */
+      d=substr(a.d,substr(x,p,1)+1,1)
+      end   /*p*/
+    z=right(x,1)                             /* the given digit            */
+    If z=d Then Say '   valid checksum digit '  z  " for "  x
+    Else Say ' invalid checksum digit '  z  " for "  x    '   (should be'  d")"
+    End   /*j*/
+  Return  /syntaxhighlight>
+{{out|output|text=&nbsp; when using the (internal) default inputs:}}
+<pre>  
+   valid checksum digit  4  for  5724
+ invalid checksum digit  7  for  5727    (should be 4)
+   valid checksum digit  6  for  112946
+ invalid checksum digit  0  for  112940    (should be 6)
+</pre>
+
+=={{header|Ring}}==
+<syntaxhighlight lang="ring"># Project : Damm algorithm
+
+matrix = [[0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+               [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+               [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+               [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+               [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+               [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+               [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+               [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+               [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+               [2, 5, 8, 1, 4, 3, 6, 7, 9, 0]]
+
+see "5724" + encode(5724 ) + nl
+see "5727" + encode(5727 ) + nl
+see "112946" + encode(112946) + nl
+
+func encode(n)
+       check = 0
+       for d in string(n)
+           check = matrix[check+1][d-'0'+1]
+       next
+       if check = 0
+          return " is valid"
+       else
+          return " is invalid"
+       ok
+Output:
+
+5724 is valid
+5727 is invalid
+112946 is valid
+RPL
+Translation of: Python
+Array version
+
+≪ →STR
+   [[ 0 3 1 7 5 9 8 6 4 2 ]
+    [ 7 0 9 2 1 5 4 8 6 3 ]
+    [ 4 2 0 6 8 7 1 3 5 9 ]
+    [ 1 7 5 0 9 8 3 4 2 6 ]
+    [ 6 1 2 3 0 4 5 9 7 8 ]
+    [ 3 6 7 4 2 0 9 5 8 1 ]
+    [ 5 8 6 9 7 2 0 1 3 4 ]
+    [ 8 9 4 5 3 6 2 0 1 7 ]
+    [ 9 4 3 8 6 1 7 2 0 5 ]
+    [ 2 5 8 1 4 3 6 7 9 0 ]]
+    → num table
+   ≪ 0 
+      1 num SIZE FOR d
+         1 + num d DUP SUB STR→ 1 + 
+         2 →LIST table SWAP GET 
+      NEXT
+      NOT
+≫ ≫ 'DAMM?' STO
+String version
+
+Program flow is quite the same, but storing the table needs only 210 nibbles of RAM, instead of 1625 with a 2-dimensional array.
+
+≪ →STR "0317598642709215486342068713591750983426612304597836742095815869720134894536201794386172052581436790"
+   → num table
+   ≪ 0 
+     1 num SIZE FOR d
+        10 * num d DUP SUB STR→ 1 + + 
+        table SWAP DUP SUB STR→ 
+     NEXT
+     NOT
+≫ ≫ 'DAMM?' STO
+≪ { 5724 5727 112946 } { }
+   1 3 PICK SIZE FOR j 
+      OVER j GET 'DAMM?' STO "True" "False" IFTE NEXT
+≫ EVAL
+Output:
+2: { 5724 5727 112946 }
+1: { "True" "False" True" }
+Ruby
+TABLE = [
+    [0,3,1,7,5,9,8,6,4,2], [7,0,9,2,1,5,4,8,6,3],
+    [4,2,0,6,8,7,1,3,5,9], [1,7,5,0,9,8,3,4,2,6],
+    [6,1,2,3,0,4,5,9,7,8], [3,6,7,4,2,0,9,5,8,1],
+    [5,8,6,9,7,2,0,1,3,4], [8,9,4,5,3,6,2,0,1,7],
+    [9,4,3,8,6,1,7,2,0,5], [2,5,8,1,4,3,6,7,9,0]
+]
+
+def damm_valid?(n) = n.digits.reverse.inject(0){|idx, a| TABLE[idx][a] } == 0
+
+[5724, 5727, 112946].each{|n| puts "#{n}: #{damm_valid?(n) ? "" : "in"}valid"}
+Output:
+5724: valid
+5727: invalid
+112946: valid
+
+
+Rust
+fn damm(number: &str) -> u8 {
+    static TABLE: [[u8; 10]; 10] = [
+        [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+        [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+        [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+        [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+        [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+        [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+        [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+        [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+        [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+        [2, 5, 8, 1, 4, 3, 6, 7, 9, 0],
+    ];
+
+    number.chars().fold(0, |row, digit| {
+        let digit = digit.to_digit(10).unwrap();
+        TABLE[row as usize][digit as usize]
+    })
+}
+
+fn damm_validate(number: &str) -> bool {
+    damm(number) == 0
+}
+
+fn main() {
+    let numbers = &["5724", "5727", "112946"];
+    for number in numbers {
+        let is_valid = damm_validate(number);
+        if is_valid {
+            println!("{:>6} is valid", number);
+        } else {
+            println!("{:>6} is invalid", number);
+        }
+    }
+}
+Output:
+  5724 is valid
+  5727 is invalid
+112946 is valid
+Scala
+Functional, (tail) recursive, concise and clean
+import scala.annotation.tailrec
+
+object DammAlgorithm extends App {
+
+  private val numbers = Seq(5724, 5727, 112946, 112949)
+
+  @tailrec
+  private def damm(s: String, interim: Int): String = {
+    def table =
+      Vector(
+        Vector(0, 3, 1, 7, 5, 9, 8, 6, 4, 2),
+        Vector(7, 0, 9, 2, 1, 5, 4, 8, 6, 3),
+        Vector(4, 2, 0, 6, 8, 7, 1, 3, 5, 9),
+        Vector(1, 7, 5, 0, 9, 8, 3, 4, 2, 6),
+        Vector(6, 1, 2, 3, 0, 4, 5, 9, 7, 8),
+        Vector(3, 6, 7, 4, 2, 0, 9, 5, 8, 1),
+        Vector(5, 8, 6, 9, 7, 2, 0, 1, 3, 4),
+        Vector(8, 9, 4, 5, 3, 6, 2, 0, 1, 7),
+        Vector(9, 4, 3, 8, 6, 1, 7, 2, 0, 5),
+        Vector(2, 5, 8, 1, 4, 3, 6, 7, 9, 0)
+      )
+
+    if (s.isEmpty) if (interim == 0) "✔" else "✘"
+    else damm(s.tail, table(interim)(s.head - '0'))
+  }
+
+  for (number <- numbers) println(f"$number%6d is ${damm(number.toString, 0)}.")
+
+}
+Output:
+See it running in your browser by ScalaFiddle (JavaScript, non JVM) or by Scastie (remote JVM).
+
+SETL
+program damm_algorithm;
+    tests := [5724, 5727, 112946, 112949];
+
+    loop for test in tests do
+        print(str test + ': ' + if damm test then 'Pass' else 'Fail' end);
+    end loop;
+
+    op damm(n);
+        dt := [[0,3,1,7,5,9,8,6,4,2],
+               [7,0,9,2,1,5,4,8,6,3],
+               [4,2,0,6,8,7,1,3,5,9],
+               [1,7,5,0,9,8,3,4,2,6],
+               [6,1,2,3,0,4,5,9,7,8],
+               [3,6,7,3,2,0,9,5,8,1],
+               [5,8,6,9,7,2,0,1,3,4],
+               [8,9,4,5,3,6,2,0,1,7],
+               [9,4,3,8,6,1,7,2,0,5],
+               [2,5,8,1,4,3,6,7,9,0]];
+
+        i := 0;
+        loop for d in str n do
+            i := dt(i+1)(val d+1);
+        end loop;
+        return i=0;
+    end op;
+end program;
+Output:
+5724: Pass
+5727: Fail
+112946: Pass
+112949: Fail
+Sidef
+func damm(digits) {
+    static tbl = [
+          [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+          [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+          [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+          [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+          [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+          [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+          [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+          [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+          [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+          [2, 5, 8, 1, 4, 3, 6, 7, 9, 0],
+    ]
+
+    !digits.flip.reduce({|row,col| tbl[row][col] }, 0)
+}
+
+for n in [5724, 5727, 112946] {
+    say "#{n}:\tChecksum digit #{ damm(n.digits) ? '' : 'in'}correct."
+}
+Output:
+5724:	Checksum digit correct.
+5727:	Checksum digit incorrect.
+112946:	Checksum digit correct.
+Tcl
+Translation of: Perl
+proc damm {number} {
+    set digits [split $number ""]
+    set tbl {
+        {0 3 1 7 5 9 8 6 4 2}
+        {7 0 9 2 1 5 4 8 6 3}
+        {4 2 0 6 8 7 1 3 5 9}
+        {1 7 5 0 9 8 3 4 2 6}
+        {6 1 2 3 0 4 5 9 7 8}
+        {3 6 7 4 2 0 9 5 8 1}
+        {5 8 6 9 7 2 0 1 3 4}
+        {8 9 4 5 3 6 2 0 1 7}
+        {9 4 3 8 6 1 7 2 0 5}
+        {2 5 8 1 4 3 6 7 9 0}
+    }
+
+    set row 0
+    foreach col $digits {
+        set row [lindex $tbl $row $col]
+    }
+    return [expr {$row == 0 ? 1 : 0}]
+}
+
+foreach number {5724 5727 112946} {
+    set correct [damm $number]
+    puts "$number:\tChecksum digit [expr {$correct ? "" : "in"}]correct."
+}
+Output:
+5724:	Checksum digit correct.
+5727:	Checksum digit incorrect.
+112946:	Checksum digit correct.
+V (Vlang)
+Translation of: Go
+const table = [
+    [u8(0), 3, 1, 7, 5, 9, 8, 6, 4, 2],
+    [u8(7), 0, 9, 2, 1, 5, 4, 8, 6, 3],
+    [u8(4), 2, 0, 6, 8, 7, 1, 3, 5, 9],
+    [u8(1), 7, 5, 0, 9, 8, 3, 4, 2, 6],
+    [u8(6), 1, 2, 3, 0, 4, 5, 9, 7, 8],
+    [u8(3), 6, 7, 4, 2, 0, 9, 5, 8, 1],
+    [u8(5), 8, 6, 9, 7, 2, 0, 1, 3, 4],
+    [u8(8), 9, 4, 5, 3, 6, 2, 0, 1, 7],
+    [u8(9), 4, 3, 8, 6, 1, 7, 2, 0, 5],
+    [u8(2), 5, 8, 1, 4, 3, 6, 7, 9, 0],
+]
+ 
+fn damm(input string) bool {
+    mut interim := u8(0)
+    for c in input.bytes() {
+        interim = table[interim][c-'0'[0]]
+    }
+    return interim == 0
+}
+ 
+fn main() {
+    for s in ["5724", "5727", "112946", "112949"] {
+        println("${s:6}  ${damm(s)}")
+    }
+}
+Output:
+  5724  true
+  5727  false
+112946  true
+112949  false
+Wren
+Translation of: Go
+Library: Wren-fmt
+import "./fmt" for Fmt
+
+var table = [
+    [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+    [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+    [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+    [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+    [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+    [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+    [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+    [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+    [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+    [2, 5, 8, 1, 4, 3, 6, 7, 9, 0]
+]
+
+var damm = Fn.new { |input|
+    var interim = 0
+    for (c in input.bytes) interim = table[interim][c-48]
+    return interim == 0
+}
+
+for (s in ["5724", "5727", "112946", "112949"]) {
+    Fmt.print("$6s  $s", s, damm.call(s))
+}
+Output:
+  5724  true
+  5727  false
+112946  true
+112949  false
+XPL0
+string  0;              \use zero-terminated strings
+
+func Damm(Input);       \Return 'true' if checksum is correct
+char Input;
+int  Interim, Table;
+[Table:= [
+    [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
+    [7, 0, 9, 2, 1, 5, 4, 8, 6, 3],
+    [4, 2, 0, 6, 8, 7, 1, 3, 5, 9],
+    [1, 7, 5, 0, 9, 8, 3, 4, 2, 6],
+    [6, 1, 2, 3, 0, 4, 5, 9, 7, 8],
+    [3, 6, 7, 4, 2, 0, 9, 5, 8, 1],
+    [5, 8, 6, 9, 7, 2, 0, 1, 3, 4],
+    [8, 9, 4, 5, 3, 6, 2, 0, 1, 7],
+    [9, 4, 3, 8, 6, 1, 7, 2, 0, 5],
+    [2, 5, 8, 1, 4, 3, 6, 7, 9, 0] ];
+Interim:= 0;
+while Input(0) do
+    [Interim:= Table(Interim, Input(0)-^0);
+    Input:= Input+1;
+    ];
+return Interim = 0;
+];
+
+int String, I;
+[String:= ["5724", "5727", "112946", "112949"];
+for I:= 0 to 4-1 do
+    [Text(0, String(I));  ChOut(0, 9\tab\);
+    Text(0, if Damm(String(I)) then "true" else "false");
+    CrLf(0);
+    ];
+]
+Output:
+5724    true
+5727    false
+112946  true
+112949  false
+zkl
+fcn damm(digits){  // digits is something that supports an iterator of integers 
+   var [const]  tbl=Data(0,Int,		// 10x10 byte bucket
+      0, 3, 1, 7, 5, 9, 8, 6, 4, 2,
+      7, 0, 9, 2, 1, 5, 4, 8, 6, 3,
+      4, 2, 0, 6, 8, 7, 1, 3, 5, 9,
+      1, 7, 5, 0, 9, 8, 3, 4, 2, 6,
+      6, 1, 2, 3, 0, 4, 5, 9, 7, 8,
+      3, 6, 7, 4, 2, 0, 9, 5, 8, 1,
+      5, 8, 6, 9, 7, 2, 0, 1, 3, 4,
+      8, 9, 4, 5, 3, 6, 2, 0, 1, 7,
+      9, 4, 3, 8, 6, 1, 7, 2, 0, 5,
+      2, 5, 8, 1, 4, 3, 6, 7, 9, 0);
+   0 == digits.reduce(fcn(interim,digit){ tbl[interim*10 + digit]  },0)
+}
+damm(List(5,7,2,4)).println();		// True
+damm(Data(0,Int,5,7,2,7).howza(0)).println();	// stream bytes, False
+damm((112946).split()).println();	// True
+Output:
+True
+False
+True
+Categories: Programming TasksSolutions by Programming Task11l8080 Assembly8086 AssemblyAction!AdaALGOL 68APLAppleScriptARM AssemblyArturoAutoHotkeyAWKBASICANSI BASICBASIC256FreeBASICGW-BASICLiberty BASICNascom BASICPureBasicUBasic/4tHVisual Basic .NETBCPLBQNCC sharpC++Caché ObjectScriptClojureCLUCowgolDDelphiDyalectDracoEasyLangExcelF SharpFactorForthFortranFōrmulæGoGroovyHaskellJJavaJavaScriptJqJuliaKotlinLuaM2000 InterpreterMACRO-11MADMathematicaWolfram LanguageMATLABModula-2Examples needing attentionModula-3NimObjeckPascalPerlPhixPHPPicoLispPL/MPowerShellPythonQuackeryRRacketRakuRefalREXXRPLRubyRustScalaSETLSidefTclV (Vlang)WrenWren-fmtXPL0Zkl
+Cookies help us deliver our services. By using our services, you agree to our use of cookies.
+This page was last edited on 30 April 2024, at 08:02.
+Content is available under GNU Free Document License 1.3 unless otherwise noted.
