@@ -15,7 +15,7 @@ use foundry_common::{
 use foundry_compilers::{
     artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
     info::ContractInfo,
-    Artifact, EvmVersion,
+    Artifact, EvmVersion, SolcSparseFileFilter,
 };
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use foundry_evm::{
@@ -372,10 +372,11 @@ impl VerifyBytecodeArgs {
 
         if let Some(skip) = &self.skip {
             if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(
+                let filter = SolcSparseFileFilter::new(SkipBuildFilters::new(
                     skip.to_owned(),
                     project.root().to_path_buf(),
-                )?));
+                )?);
+                compiler = compiler.filter(Box::new(filter));
             }
         }
         let output = compiler.compile(&project)?;

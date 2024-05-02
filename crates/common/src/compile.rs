@@ -6,11 +6,11 @@ use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
+    compilers::{solc::SolcVersionManager, Compiler, CompilerVersionManager},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, CompilerConfig, FileFilter, Project, ProjectCompileOutput,
-    ProjectPathsConfig, SolcConfig,
+    Artifact, ArtifactId, CompilerConfig, ConfigurableArtifacts, FileFilter, Project,
+    ProjectCompileOutput, ProjectPathsConfig, SolcConfig, SparseOutputFileFilter,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -31,7 +31,7 @@ use std::{
 /// This is merely a wrapper for [`Project::compile()`] which also prints to stdout depending on its
 /// settings.
 #[must_use = "ProjectCompiler does nothing unless you call a `compile*` method"]
-pub struct ProjectCompiler {
+pub struct ProjectCompiler<C: Compiler> {
     /// Whether we are going to verify the contracts after compilation.
     verify: Option<bool>,
 
@@ -48,20 +48,20 @@ pub struct ProjectCompiler {
     bail: Option<bool>,
 
     /// Files to exclude.
-    filter: Option<Box<dyn FileFilter>>,
+    filter: Option<Box<dyn SparseOutputFileFilter<C::ParsedSource>>>,
 
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
 }
 
-impl Default for ProjectCompiler {
+impl<C: Compiler> Default for ProjectCompiler<C> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ProjectCompiler {
+impl<C: Compiler> ProjectCompiler<C> {
     /// Create a new builder with the default settings.
     #[inline]
     pub fn new() -> Self {
@@ -123,7 +123,7 @@ impl ProjectCompiler {
 
     /// Sets the filter to use.
     #[inline]
-    pub fn filter(mut self, filter: Box<dyn FileFilter>) -> Self {
+    pub fn filter(mut self, filter: Box<dyn SparseOutputFileFilter<C::ParsedSource>>) -> Self {
         self.filter = Some(filter);
         self
     }
@@ -136,7 +136,10 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile(mut self, project: &Project) -> Result<ProjectCompileOutput> {
+    pub fn compile(
+        mut self,
+        project: &Project<ConfigurableArtifacts, C>,
+    ) -> Result<ProjectCompileOutput<C::CompilationError>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
             println!("Nothing to compile");
@@ -170,9 +173,9 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    fn compile_with<F>(self, f: F) -> Result<ProjectCompileOutput>
+    fn compile_with<F>(self, f: F) -> Result<ProjectCompileOutput<C::CompilationError>>
     where
-        F: FnOnce() -> Result<ProjectCompileOutput>,
+        F: FnOnce() -> Result<ProjectCompileOutput<C::CompilationError>>,
     {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
@@ -220,7 +223,7 @@ impl ProjectCompiler {
     }
 
     /// If configured, this will print sizes or names
-    fn handle_output(&self, output: &ProjectCompileOutput) {
+    fn handle_output(&self, output: &ProjectCompileOutput<C::CompilationError>) {
         let print_names = self.print_names.unwrap_or(false);
         let print_sizes = self.print_sizes.unwrap_or(false);
 
@@ -471,12 +474,12 @@ pub struct ContractInfo {
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target(
+pub fn compile_target<C: Compiler>(
     target_path: &Path,
-    project: &Project,
+    project: &Project<ConfigurableArtifacts, C>,
     quiet: bool,
-) -> Result<ProjectCompileOutput> {
-    ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
+) -> Result<ProjectCompileOutput<C::CompilationError>> {
+    ProjectCompiler::<C>::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
 /// Compiles an Etherscan source from metadata by creating a project.
