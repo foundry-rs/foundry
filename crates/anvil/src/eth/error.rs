@@ -215,8 +215,8 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
-    #[error("too many blobs in one transaction, have {0}, max {1}")]
-    TooManyBlobs(usize, usize),
+    #[error("too many blobs in one transaction")]
+    TooManyBlobs,
     /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
@@ -284,7 +284,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 InvalidTransactionError::BlobVersionedHashesNotSupported
             }
             InvalidTransaction::EmptyBlobs => InvalidTransactionError::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs => InvalidTransactionError::TooManyBlobs(7, 6),
+            InvalidTransaction::TooManyBlobs => InvalidTransactionError::TooManyBlobs,
             _ => todo!(),
         }
     }
