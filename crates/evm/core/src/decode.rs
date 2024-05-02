@@ -172,6 +172,7 @@ impl RevertDecoder {
 
         // UTF-8-encoded string.
         if let Ok(s) = std::str::from_utf8(err) {
+            println!("{:?}", s);
             return Some(s.to_string());
         }
 
