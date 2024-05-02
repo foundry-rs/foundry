@@ -242,16 +242,16 @@ impl CreateArgs {
             provider.get_transaction_count(deployer_address, BlockId::latest()).await
         }?);
 
+        // set tx value if specified
+        if let Some(value) = self.tx.value {
+            deployer.tx.set_value(value);
+        }
+
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
             provider.estimate_gas(&deployer.tx, BlockId::latest()).await
         }?);
-
-        // set tx value if specified
-        if let Some(value) = self.tx.value {
-            deployer.tx.set_value(value);
-        }
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {

@@ -32,6 +32,7 @@ use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use alloy_dyn_abi::TypedData;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
@@ -862,10 +863,8 @@ impl EthApi {
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        let signer = self.get_signer(from).ok_or(BlockchainError::NoSignerAvailable)?;
-        let signature =
-            alloy_primitives::hex::encode(signer.sign_transaction(request, &from)?.as_bytes());
-        Ok(format!("0x{signature}"))
+        let signed_transaction = self.sign_request(&from, request)?.encoded_2718();
+        Ok(alloy_primitives::hex::encode_prefixed(signed_transaction))
     }
 
     /// Sends a transaction
