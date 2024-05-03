@@ -1124,7 +1124,10 @@ impl Backend {
                     nonce,
                     access_list,
                     blob_versioned_hashes,
-                    ..
+                    sidecar: _,
+                    chain_id: _,
+                    transaction_type: _,
+                    .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             ..
         } = request;
