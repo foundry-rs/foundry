@@ -6,6 +6,7 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
+use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo};
 use alloy_rpc_types_trace::{
@@ -233,6 +234,8 @@ impl BlockchainStorage {
             gas_limit: env.block.gas_limit.to::<u128>(),
             beneficiary: env.block.coinbase,
             difficulty: env.block.difficulty,
+            blob_gas_used: Some(env.tx.blob_hashes.len() as u128 * DATA_GAS_PER_BLOB as u128),
+            excess_blob_gas: env.block.get_blob_excess_gas().map(|v| v as u128),
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
