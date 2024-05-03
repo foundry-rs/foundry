@@ -170,6 +170,7 @@ impl EthApi {
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
+            EthRequest::EthBlobBaseFee(_) => self.blob_base_fee().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
@@ -562,6 +563,13 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
         Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+    }
+
+    /// Returns the base fee per blob required to send a EIP-4844 tx.
+    ///
+    /// Handler for ETH RPC call: `eth_blobBaseFee`
+    pub fn blob_base_fee(&self) -> Result<U256> {
+        Ok(U256::from(self.backend.fees().base_fee_per_blob_gas()))
     }
 
     /// Returns the block gas limit
