@@ -64,7 +64,6 @@ use foundry_evm::{
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     revm::{
-        self,
         db::CacheDB,
         interpreter::InstructionResult,
         primitives::{
