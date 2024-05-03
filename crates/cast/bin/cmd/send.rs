@@ -14,7 +14,7 @@ use foundry_cli::{
 };
 use foundry_common::{cli_warn, ens::NameOrAddress};
 use foundry_config::{Chain, Config};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -59,6 +59,10 @@ pub struct SendTxArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// The path of blob data to be sent.
+    #[arg(long, value_name = "BLOB_DATA_PATH", requires = "blob")]
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -91,12 +95,18 @@ impl SendTxArgs {
             resend,
             command,
             unlocked,
+            path,
         } = self;
 
         if tx.legacy && tx.blob {
             eyre::bail!("Cannot send a legacy transaction with a blob");
         }
-        let blob_data = if tx.blob { Some("blob data".to_string()) } else { None };
+
+        if tx.blob && path.is_none() {
+            eyre::bail!("Must specify a path to blob data");
+        }
+
+        let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
         let code = if let Some(SendTxSubcommands::Create {
             code,
@@ -223,7 +233,7 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     cast_async: bool,
     confs: u64,
     to_json: bool,
-    blob_data: Option<String>,
+    blob_data: Option<Vec<u8>>,
 ) -> Result<()> {
     let (tx, _) =
         tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key, blob_data)

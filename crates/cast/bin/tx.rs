@@ -53,7 +53,7 @@ pub async fn build_tx<
     tx: TransactionOpts,
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
-    blob_data: Option<String>,
+    blob_data: Option<Vec<u8>>,
 ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
     let chain = chain.into();
 
@@ -64,7 +64,7 @@ pub async fn build_tx<
 
     let sidecar = blob_data
         .map(|data| {
-            SidecarBuilder::<SimpleCoder>::from_slice(data.as_bytes())
+            SidecarBuilder::<SimpleCoder>::from_slice(&data)
                 .build()
                 .map_err(|e| eyre::eyre!("Failed to parse blob data: {}", e))
         })
