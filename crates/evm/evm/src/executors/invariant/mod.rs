@@ -53,7 +53,7 @@ sol! {
         }
 
         #[derive(Default)]
-        struct FuzzAbiSelector {
+        struct FuzzArtifactSelector {
             string contract_abi;
             bytes4[] selectors;
         }
@@ -77,7 +77,7 @@ sol! {
         function targetArtifacts() public view returns (string[] memory targetedArtifacts);
 
         #[derive(Default)]
-        function targetArtifactSelectors() public view returns (FuzzAbiSelector[] memory targetedArtifactSelectors);
+        function targetArtifactSelectors() public view returns (FuzzArtifactSelector[] memory targetedArtifactSelectors);
 
         #[derive(Default)]
         function targetContracts() public view returns (address[] memory targetedContracts);
@@ -400,7 +400,7 @@ impl<'a> InvariantExecutor<'a> {
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
-        for IInvariantTest::FuzzAbiSelector { contract_abi, selectors } in
+        for IInvariantTest::FuzzArtifactSelector { contract_abi, selectors } in
             result.targetedArtifactSelectors
         {
             let identifier = self.validate_selected_contract(contract_abi, &selectors)?;
