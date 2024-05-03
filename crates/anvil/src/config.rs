@@ -1164,6 +1164,8 @@ latest block number: {latest_block}"
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
+            blob_gas_used: block.header.blob_gas_used,
+            blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
         };
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);
