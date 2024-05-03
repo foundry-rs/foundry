@@ -75,13 +75,6 @@ pub enum SendTxSubcommands {
         /// The arguments of the function to call.
         args: Vec<String>,
     },
-    Blob {
-        /// The blob data to post to ethereum.
-        data: Option<String>,
-        /// Path to the file containing the blob data.
-        #[arg(long, short, conflicts_with = "data")]
-        path: Option<String>, // TODO: Change type to PathBuf
-    },
 }
 
 impl SendTxArgs {
@@ -100,13 +93,10 @@ impl SendTxArgs {
             unlocked,
         } = self;
 
-        let blob_data = match &command {
-            Some(SendTxSubcommands::Blob { data: Some(data), .. }) => Some(data.clone()),
-            Some(SendTxSubcommands::Blob { path: Some(path), .. }) => {
-                Some(std::fs::read_to_string(path)?)
-            }
-            _ => None,
-        };
+        if tx.legacy && tx.blob {
+            eyre::bail!("Cannot send a legacy transaction with a blob");
+        }
+        let blob_data = if tx.blob { Some("blob data".to_string()) } else { None };
 
         let code = if let Some(SendTxSubcommands::Create {
             code,
@@ -240,8 +230,8 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
             .await?;
 
     let cast = Cast::new(provider);
-
     let pending_tx = cast.send(tx).await?;
+
     let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {

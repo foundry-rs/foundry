@@ -78,7 +78,12 @@ pub async fn build_tx<
 
     if let Some(sidecar) = sidecar {
         req.set_blob_sidecar(sidecar);
-        // TODO: req.set_max_fee_per_blob_gas()
+        req.populate_blob_hashes();
+        req.set_max_fee_per_blob_gas(tx.blob_gas_price.map_or(
+            provider.get_gas_price().await?, /* TODO: Replace with get_blob_base_fee after
+                                              * bumping alloy to d78e79e */
+            |g| g.to(),
+        ));
     }
 
     req.set_nonce(if let Some(nonce) = tx.nonce {
@@ -129,11 +134,14 @@ pub async fn build_tx<
 
     req.set_input::<Bytes>(data.into());
 
-    req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
-        gas_limit.to()
-    } else {
-        provider.estimate_gas(&req, BlockId::latest()).await?
-    });
+    // let gas_limit = if let Some(gas_limit) = tx.gas_limit {
+    //     gas_limit.to()
+    // } else {
+    //     provider.estimate_gas(&req, BlockId::latest()).await?
+    // };
+    req.set_gas_limit(
+        tx.gas_limit.map_or(provider.estimate_gas(&req, BlockId::latest()).await?, |g| g.to()),
+    );
 
     Ok((req, func))
 }
