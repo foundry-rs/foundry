@@ -69,9 +69,6 @@ pub enum EthRequest {
     )]
     EthMaxPriorityFeePerGas(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_blobBaseFee", with = "empty_params"))]
-    EthBlobBaseFee(()),
-
     #[cfg_attr(
         feature = "serde",
         serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")
