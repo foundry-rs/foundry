@@ -33,7 +33,6 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-    revm,
     revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
@@ -1165,6 +1164,8 @@ latest block number: {latest_block}"
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
+            blob_gas_used: block.header.blob_gas_used,
+            blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
         };
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);

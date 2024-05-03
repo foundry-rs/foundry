@@ -11,8 +11,8 @@ use revm::{
     db::WrapDatabaseRef,
     handler::register::EvmHandler,
     interpreter::{
-        return_ok, CallContext, CallInputs, CallScheme, CreateInputs, CreateOutcome, Gas,
-        InstructionResult, InterpreterResult, Transfer,
+        return_ok, CallContext, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        Gas, InstructionResult, InterpreterResult, Transfer,
     },
     primitives::{CreateScheme, EVMError, SpecId, TransactTo, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
@@ -151,35 +151,38 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
                 return old_handle(ctx, inputs);
             }
 
-            // Sanity check that CREATE2 deployer exists.
-            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
-            if code_hash == KECCAK_EMPTY {
-                return Ok(FrameOrResult::Result(FrameResult::Create(CreateOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Revert,
-                        output: "missing CREATE2 deployer".into(),
-                        gas: Gas::new(inputs.gas_limit),
-                    },
-                    address: None,
-                })))
-            }
+            let gas_limit = inputs.gas_limit;
 
             // Generate call inputs for CREATE2 factory.
             let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs);
 
             // Call inspector to change input or return outcome.
-            if let Some(outcome) = ctx.external.call(&mut ctx.evm, &mut call_inputs) {
-                create2_overrides_inner
-                    .borrow_mut()
-                    .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
-                return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
-            }
+            let outcome = ctx.external.call(&mut ctx.evm, &mut call_inputs);
 
             // Push data about current override to the stack.
             create2_overrides_inner
                 .borrow_mut()
                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
 
+            // Handle potential inspector override.
+            if let Some(outcome) = outcome {
+                return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
+            }
+
+            // Sanity check that CREATE2 deployer exists.
+            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
+            if code_hash == KECCAK_EMPTY {
+                return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "missing CREATE2 deployer".into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    memory_offset: 0..0,
+                })))
+            }
+
+            // Create CALL frame for CREATE2 factory invocation.
             let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
 
             if let Ok(FrameOrResult::Frame(frame)) = &mut frame_or_result {

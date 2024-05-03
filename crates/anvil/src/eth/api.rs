@@ -170,6 +170,7 @@ impl EthApi {
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
+            EthRequest::EthBlobBaseFee(_) => self.blob_base_fee().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
@@ -562,6 +563,13 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
         Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+    }
+
+    /// Returns the base fee per blob required to send a EIP-4844 tx.
+    ///
+    /// Handler for ETH RPC call: `eth_blobBaseFee`
+    pub fn blob_base_fee(&self) -> Result<U256> {
+        Ok(U256::from(self.backend.fees().base_fee_per_blob_gas()))
     }
 
     /// Returns the block gas limit
@@ -2184,8 +2192,14 @@ impl EthApi {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
         let to = request.to.as_ref().and_then(TxKind::to);
-        let likely_transfer = request.input.clone().into_input().is_none();
-        if likely_transfer {
+
+        // check certain fields to see if the request could be a simple transfer
+        let maybe_transfer = request.input.input().is_none() &&
+            request.access_list.is_none() &&
+            request.blob_versioned_hashes.is_none() &&
+            request.value.is_some();
+
+        if maybe_transfer {
             if let Some(to) = to {
                 if let Ok(target_code) = self.backend.get_code_with_state(&state, *to) {
                     if target_code.as_ref().is_empty() {

@@ -13,7 +13,6 @@ use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,
     revm::{
-        self,
         interpreter::InstructionResult,
         primitives::{EVMError, InvalidHeader},
     },
@@ -281,7 +280,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 InvalidTransactionError::BlobCreateTransaction
             }
             InvalidTransaction::BlobVersionNotSupported => {
-                InvalidTransactionError::BlobVersionedHashesNotSupported
+                InvalidTransactionError::BlobVersionNotSupported
             }
             InvalidTransaction::EmptyBlobs => InvalidTransactionError::EmptyBlobs,
             InvalidTransaction::TooManyBlobs => InvalidTransactionError::TooManyBlobs,

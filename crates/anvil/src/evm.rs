@@ -1,7 +1,6 @@
-use std::{fmt::Debug, sync::Arc};
-
 use alloy_primitives::Address;
-use foundry_evm::revm::{self, precompile::Precompile, ContextPrecompile, ContextPrecompiles};
+use foundry_evm::revm::{precompile::Precompile, ContextPrecompile, ContextPrecompiles};
+use std::{fmt::Debug, sync::Arc};
 
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
@@ -42,10 +41,7 @@ pub fn inject_precompiles<DB, I>(
 mod tests {
     use crate::{evm::inject_precompiles, PrecompileFactory};
     use alloy_primitives::Address;
-    use foundry_evm::revm::{
-        self,
-        primitives::{address, Bytes, Precompile, PrecompileResult, SpecId},
-    };
+    use foundry_evm::revm::primitives::{address, Bytes, Precompile, PrecompileResult, SpecId};
 
     #[test]
     fn build_evm_with_extra_precompiles() {
