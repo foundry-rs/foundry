@@ -64,9 +64,9 @@ pub async fn build_tx<
 
     let sidecar = blob_data
         .map(|data| {
-            SidecarBuilder::<SimpleCoder>::from_slice(&data)
-                .build()
-                .map_err(|e| eyre::eyre!("Failed to parse blob data: {}", e))
+            let mut coder = SidecarBuilder::<SimpleCoder>::default();
+            coder.ingest(&data);
+            coder.build()
         })
         .transpose()?;
 
