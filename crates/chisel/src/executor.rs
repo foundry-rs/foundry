@@ -1210,12 +1210,9 @@ impl Type {
     #[inline]
     fn is_dynamic(&self) -> bool {
         match self {
-            Self::Builtin(ty) => match ty {
-                // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
-                // not dynamic, nor are tuples of non-dynamic types.
-                DynSolType::Bytes | DynSolType::String | DynSolType::Array(_) => true,
-                _ => false,
-            },
+            // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
+            // not dynamic, nor are tuples of non-dynamic types.
+            Self::Builtin(DynSolType::Bytes | DynSolType::String | DynSolType::Array(_)) => true,
             Self::Array(_) => true,
             _ => false,
         }
