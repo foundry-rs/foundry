@@ -4,7 +4,7 @@ use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use anvil::{spawn, Hardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -189,4 +189,17 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     );
     assert_eq!(first_receipt.block_number.unwrap() + 1, second_receipt.block_number.unwrap()); // Mined in two
                                                                                                // different blocks
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_check_blob_fields_on_genesis() {
+    let node_config = NodeConfig::default().with_hardfork(Some(Hardfork::Cancun));
+    let (_api, handle) = spawn(node_config).await;
+
+    let provider = http_provider(&handle.http_endpoint());
+
+    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+
+    assert_eq!(block.header.blob_gas_used, Some(0));
+    assert_eq!(block.header.excess_blob_gas, Some(0));
 }
