@@ -416,6 +416,7 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-signer",
+ "alloy-sol-types",
  "async-trait",
  "coins-ledger",
  "futures-util",
