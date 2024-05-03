@@ -57,11 +57,31 @@ impl EvmFuzzState {
 
         // Decode logs with known events and collect samples from indexed fields and event body.
         for log in logs {
+            let mut log_decoded = false;
+
+            // Try to decode log with events from contract abi.
             for event in abi.events() {
                 if let Ok(decoded_event) = event.decode_log(log, false) {
                     samples.extend(decoded_event.indexed);
                     samples.extend(decoded_event.body);
+
+                    log_decoded = true;
                     break;
+                }
+            }
+
+            // If we weren't able to decode event then we insert raw data in fuzz dictionary.
+            if !log_decoded {
+                for topic in log.topics() {
+                    dict.insert_value(topic.0);
+                }
+                let chunks = log.data.data.chunks_exact(32);
+                let rem = chunks.remainder();
+                for chunk in chunks {
+                    dict.insert_value(chunk.try_into().unwrap());
+                }
+                if !rem.is_empty() {
+                    dict.insert_value(B256::right_padding_from(rem).0);
                 }
             }
         }
