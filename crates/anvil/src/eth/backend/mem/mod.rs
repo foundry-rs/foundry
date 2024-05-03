@@ -1114,7 +1114,21 @@ impl Backend {
         block_env: BlockEnv,
     ) -> EnvWithHandlerCfg {
         let WithOtherFields::<TransactionRequest> {
-            inner: TransactionRequest { from, to, gas, value, input, nonce, access_list, .. },
+            inner:
+                TransactionRequest {
+                    from,
+                    to,
+                    gas,
+                    value,
+                    input,
+                    nonce,
+                    access_list,
+                    blob_versioned_hashes,
+                    sidecar: _,
+                    chain_id: _,
+                    transaction_type: _,
+                    .. // Rest of the gas fees related fields are taken from `fee_details`
+                },
             ..
         } = request;
 
@@ -1154,8 +1168,8 @@ impl Backend {
             chain_id: None,
             nonce,
             access_list: access_list.unwrap_or_default().flattened(),
+            blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {
