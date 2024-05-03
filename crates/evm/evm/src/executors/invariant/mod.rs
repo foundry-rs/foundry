@@ -54,7 +54,7 @@ sol! {
 
         #[derive(Default)]
         struct FuzzArtifactSelector {
-            string contract_abi;
+            string artifact;
             bytes4[] selectors;
         }
 
@@ -400,10 +400,10 @@ impl<'a> InvariantExecutor<'a> {
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
-        for IInvariantTest::FuzzArtifactSelector { contract_abi, selectors } in
+        for IInvariantTest::FuzzArtifactSelector { artifact, selectors } in
             result.targetedArtifactSelectors
         {
-            let identifier = self.validate_selected_contract(contract_abi, &selectors)?;
+            let identifier = self.validate_selected_contract(artifact, &selectors)?;
             self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 

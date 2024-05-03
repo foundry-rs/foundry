@@ -4,7 +4,7 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 
 struct FuzzArtifactSelector {
-    string contract_abi;
+    string artifact;
     bytes4[] selectors;
 }
 
