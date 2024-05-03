@@ -15,11 +15,7 @@ name = "cast"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # lib
