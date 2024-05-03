@@ -2197,7 +2197,7 @@ impl EthApi {
         let maybe_transfer = request.input.clone().into_input().is_none() &&
             request.access_list.is_none() &&
             request.blob_versioned_hashes.is_none() &&
-            request.value.is_none();
+            request.value.is_some();
 
         if maybe_transfer {
             if let Some(to) = to {
