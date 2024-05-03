@@ -137,8 +137,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.6", default-features = false }
-foundry-compilers = { version = "0.3.18", default-features = false }
+foundry-block-explorers = { version = "0.2.7", default-features = false }
+foundry-compilers = { version = "0.4.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -225,7 +225,3 @@ hyper = "1.0"
 reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
-
-[patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "27befa3" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "3857f43" }
