@@ -19,6 +19,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use revm::primitives::BlobExcessGasAndPrice;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -582,6 +583,10 @@ pub struct ClientForkConfig {
     pub timestamp: u64,
     /// The basefee of the forked block
     pub base_fee: Option<u128>,
+    /// Blob gas used of the forked block
+    pub blob_gas_used: Option<u128>,
+    /// Blob excess gas and price of the forked block
+    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// request timeout
     pub timeout: Duration,
     /// request retries for spurious networks
