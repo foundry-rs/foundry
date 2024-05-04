@@ -1,7 +1,8 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
-    cache::SolFilesCache,
+    artifacts::Settings,
+    cache::CompilerCache,
     error::Result as SolcResult,
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
@@ -532,7 +533,9 @@ impl TestProject {
     #[track_caller]
     pub fn assert_create_dirs_exists(&self) {
         self.paths().create_all().unwrap_or_else(|_| panic!("Failed to create project paths"));
-        SolFilesCache::default().write(&self.paths().cache).expect("Failed to create cache");
+        CompilerCache::<Settings>::default()
+            .write(&self.paths().cache)
+            .expect("Failed to create cache");
         self.assert_all_paths_exist();
     }
 
@@ -1064,7 +1067,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
     let re = &[
         // solc version
         r" ?Solc(?: version)? \d+.\d+.\d+",
-        r" with \d+.\d+.\d+",
+        r" with(?: Solc)? \d+.\d+.\d+",
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
         // elapsed time

@@ -407,7 +407,7 @@ impl EtherscanVerificationProvider {
                 SolcReq::Version(version) => return Ok(version.to_owned()),
                 SolcReq::Local(solc) => {
                     if solc.is_file() {
-                        return Ok(Solc::new(solc).version()?)
+                        return Ok(Solc::new(solc).map(|solc| solc.version)?)
                     }
                 }
             }

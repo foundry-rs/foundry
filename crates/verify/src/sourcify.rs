@@ -112,7 +112,7 @@ impl SourcifyVerificationProvider {
         let cache = project.read_cache_file()?;
         let (path, entry) = get_cached_entry_by_name(&cache, &args.contract.name)?;
 
-        if entry.solc_config.settings.metadata.is_none() {
+        if entry.compiler_settings.metadata.is_none() {
             eyre::bail!(
                 r#"Contract {} was compiled without the solc `metadata` setting.
 Sourcify requires contract metadata for verification.

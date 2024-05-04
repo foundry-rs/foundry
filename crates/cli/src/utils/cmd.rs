@@ -3,8 +3,8 @@ use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_compilers::{
-    artifacts::{CompactBytecode, CompactDeployedBytecode},
-    cache::{CacheEntry, SolFilesCache},
+    artifacts::{CompactBytecode, CompactDeployedBytecode, Settings},
+    cache::{CacheEntry, CompilerCache},
     utils::read_json_file,
     Artifact, ProjectCompileOutput,
 };
@@ -74,7 +74,7 @@ pub fn remove_contract(
 // TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
 // contract name?
 pub fn get_cached_entry_by_name(
-    cache: &SolFilesCache,
+    cache: &CompilerCache<Settings>,
     name: &str,
 ) -> Result<(PathBuf, CacheEntry)> {
     let mut cached_entry = None;

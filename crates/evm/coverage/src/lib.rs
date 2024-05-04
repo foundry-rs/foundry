@@ -14,6 +14,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
+    path::PathBuf,
 };
 
 use eyre::{Context, Result};
@@ -31,9 +32,9 @@ pub use inspector::CoverageCollector;
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of source IDs to the source path
-    pub source_paths: HashMap<(Version, usize), String>,
+    pub source_paths: HashMap<(Version, usize), PathBuf>,
     /// A map of source paths to source IDs
-    pub source_paths_to_ids: HashMap<(Version, String), usize>,
+    pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
@@ -46,13 +47,13 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, version: Version, source_id: usize, path: String) {
+    pub fn add_source(&mut self, version: Version, source_id: usize, path: PathBuf) {
         self.source_paths.insert((version.clone(), source_id), path.clone());
         self.source_paths_to_ids.insert((version, path), source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, version: Version, path: String) -> Option<&usize> {
+    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<&usize> {
         self.source_paths_to_ids.get(&(version, path))
     }
 
@@ -78,21 +79,17 @@ impl CoverageReport {
     }
 
     /// Get coverage summaries by source file path
-    pub fn summary_by_file(&self) -> impl Iterator<Item = (String, CoverageSummary)> {
-        let mut summaries: BTreeMap<String, CoverageSummary> = BTreeMap::new();
+    pub fn summary_by_file(&self) -> impl Iterator<Item = (PathBuf, CoverageSummary)> {
+        let mut summaries = BTreeMap::new();
 
         for (version, items) in self.items.iter() {
             for item in items {
-                let mut summary = summaries
-                    .entry(
-                        self.source_paths
-                            .get(&(version.clone(), item.loc.source_id))
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                format!("Unknown (ID: {}, solc: {version})", item.loc.source_id)
-                            }),
-                    )
-                    .or_default();
+                let Some(path) =
+                    self.source_paths.get(&(version.clone(), item.loc.source_id)).cloned()
+                else {
+                    continue;
+                };
+                let mut summary = summaries.entry(path).or_default();
                 summary += item;
             }
         }
@@ -101,22 +98,17 @@ impl CoverageReport {
     }
 
     /// Get coverage items by source file path
-    pub fn items_by_source(&self) -> impl Iterator<Item = (String, Vec<CoverageItem>)> {
-        let mut items_by_source: BTreeMap<String, Vec<CoverageItem>> = BTreeMap::new();
+    pub fn items_by_source(&self) -> impl Iterator<Item = (PathBuf, Vec<CoverageItem>)> {
+        let mut items_by_source: BTreeMap<_, Vec<_>> = BTreeMap::new();
 
         for (version, items) in self.items.iter() {
             for item in items {
-                items_by_source
-                    .entry(
-                        self.source_paths
-                            .get(&(version.clone(), item.loc.source_id))
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                format!("Unknown (ID: {}, solc: {version})", item.loc.source_id)
-                            }),
-                    )
-                    .or_default()
-                    .push(item.clone());
+                let Some(path) =
+                    self.source_paths.get(&(version.clone(), item.loc.source_id)).cloned()
+                else {
+                    continue;
+                };
+                items_by_source.entry(path).or_default().push(item.clone());
             }
         }
 
