@@ -3,8 +3,8 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 
-struct FuzzAbiSelector {
-    string contract_abi;
+struct FuzzArtifactSelector {
+    string artifact;
     bytes4[] selectors;
 }
 
@@ -46,18 +46,20 @@ contract TargetArtifactSelectors2 is DSTest {
         parent = new Parent();
     }
 
-    function targetArtifactSelectors() public returns (FuzzAbiSelector[] memory) {
-        FuzzAbiSelector[] memory targets = new FuzzAbiSelector[](2);
+    function targetArtifactSelectors() public returns (FuzzArtifactSelector[] memory) {
+        FuzzArtifactSelector[] memory targets = new FuzzArtifactSelector[](2);
         bytes4[] memory selectors_child = new bytes4[](1);
 
         selectors_child[0] = Child.change_parent.selector;
-        targets[0] =
-            FuzzAbiSelector("default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Child", selectors_child);
+        targets[0] = FuzzArtifactSelector(
+            "default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Child", selectors_child
+        );
 
         bytes4[] memory selectors_parent = new bytes4[](1);
         selectors_parent[0] = Parent.create.selector;
-        targets[1] =
-            FuzzAbiSelector("default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Parent", selectors_parent);
+        targets[1] = FuzzArtifactSelector(
+            "default/fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Parent", selectors_parent
+        );
         return targets;
     }
 
