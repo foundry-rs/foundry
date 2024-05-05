@@ -1090,7 +1090,7 @@ impl OutputExt for Output {
     #[track_caller]
     fn stdout_matches_content(&self, expected: &str) {
         let out = lossy_string(&self.stdout);
-        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(expected));
+        similar_asserts::assert_eq!(normalize_output(&out), normalize_output(expected));
     }
 
     #[track_caller]
@@ -1103,7 +1103,7 @@ impl OutputExt for Output {
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
         let err = lossy_string(&self.stderr);
-        pretty_assertions::assert_eq!(normalize_output(&err), normalize_output(&expected));
+        similar_asserts::assert_eq!(normalize_output(&err), normalize_output(&expected));
     }
 }
 

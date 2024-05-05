@@ -17,21 +17,13 @@ foundry-linking.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = [
-    "serde",
-    "getrandom",
-    "arbitrary",
-    "rlp",
-] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-client.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
-alloy-transport-http = { workspace = true, features = [
-    "reqwest",
-    "reqwest-rustls-tls",
-] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls"] }
 alloy-transport-ws.workspace = true
 alloy-transport-ipc.workspace = true
 alloy-json-rpc.workspace = true
@@ -66,5 +58,5 @@ num-format.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true
-pretty_assertions.workspace = true
+similar-asserts.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

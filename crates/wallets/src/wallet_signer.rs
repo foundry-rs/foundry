@@ -36,7 +36,6 @@ impl WalletSigner {
     }
 
     pub async fn from_trezor_path(path: TrezorHDPath) -> Result<Self> {
-        // cached to ~/.ethers-rs/trezor/cache/trezor.session
         let trezor = TrezorSigner::new(path, None).await?;
         Ok(Self::Trezor(trezor))
     }

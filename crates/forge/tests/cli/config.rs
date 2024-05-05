@@ -17,7 +17,7 @@ use foundry_test_utils::{
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
-use pretty_assertions::assert_eq;
+use similar_asserts::assert_eq;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -135,7 +135,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     };
     prj.write_config(input.clone());
     let config = cmd.config();
-    pretty_assertions::assert_eq!(input, config);
+    similar_asserts::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out
@@ -441,7 +441,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     dbg!(&remappings);
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // global
@@ -459,7 +459,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
 
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // default
@@ -482,7 +482,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let another_config = cmd.config();
     let remappings =
         another_config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // local to the lib
@@ -500,7 +500,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // local to the lib
@@ -530,7 +530,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 
     let config = cmd.config();
     let remappings = config.get_all_remappings().collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             "dep1/=lib/dep1/src/".parse().unwrap(),

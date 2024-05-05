@@ -691,7 +691,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
         std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
     let _run_log = re.replace_all(&run_log, "");
 
-    // pretty_assertions::assert_eq!(fixtures_log, run_log);
+    // similar_asserts::assert_eq!(fixtures_log, run_log);
 
     // Uncomment to recreate the sensitive log
     // std::fs::copy(
@@ -719,7 +719,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let fixtures_log = re.replace_all(&fixtures_log, "\n");
     let run_log = re.replace_all(&run_log, "\n");
 
-    pretty_assertions::assert_eq!(fixtures_log, run_log);
+    similar_asserts::assert_eq!(fixtures_log, run_log);
 });
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {

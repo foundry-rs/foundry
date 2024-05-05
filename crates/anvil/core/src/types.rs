@@ -24,10 +24,7 @@ impl<'de> serde::Deserialize<'de> for Forking {
         #[serde(rename_all = "camelCase")]
         struct ForkOpts {
             pub json_rpc_url: Option<String>,
-            #[serde(
-                default,
-                deserialize_with = "crate::eth::serde_helpers::numeric::deserialize_stringified_u64_opt"
-            )]
+            #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
             pub block_number: Option<u64>,
         }
 
@@ -60,24 +57,14 @@ impl<'de> serde::Deserialize<'de> for Forking {
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EvmMineOptions {
     Options {
-        #[cfg_attr(
-            feature = "serde",
-            serde(
-                deserialize_with = "crate::eth::serde_helpers::numeric::deserialize_stringified_u64_opt"
-            )
-        )]
+        #[cfg_attr(feature = "serde", serde(with = "alloy_serde::num::u64_opt_via_ruint"))]
         timestamp: Option<u64>,
         // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
         // other blocks mined or reverted during it's operation
         blocks: Option<u64>,
     },
     /// The timestamp the block should be mined with
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            deserialize_with = "crate::eth::serde_helpers::numeric::deserialize_stringified_u64_opt"
-        )
-    )]
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::num::u64_opt_via_ruint"))]
     Timestamp(Option<u64>),
 }
 

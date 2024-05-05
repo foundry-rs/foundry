@@ -27,10 +27,7 @@ alloy-sol-types.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-signer.workspace = true
-alloy-signer-wallet = { workspace = true, features = [
-    "mnemonic-all-languages",
-    "keystore",
-] }
+alloy-signer-wallet = { workspace = true, features = ["mnemonic-all-languages", "keystore"] }
 parking_lot = "0.12"
 
 eyre.workspace = true
