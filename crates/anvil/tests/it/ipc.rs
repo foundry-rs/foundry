@@ -16,7 +16,7 @@ fn ipc_config() -> (Option<TempDir>, NodeConfig) {
         dir = Some(tmp);
     } else {
         dir = None;
-        path = format!("anvil_test_{}.ipc", rand::random::<u64>());
+        path = format!(r"\\.\pipe\anvil_test_{}.ipc", rand::random::<u64>());
     }
     let config = NodeConfig::test().with_ipc(Some(Some(path)));
     (dir, config)
