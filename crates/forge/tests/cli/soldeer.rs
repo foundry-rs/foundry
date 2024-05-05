@@ -43,7 +43,7 @@ libs = ["lib"]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [dependencies]
-forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip" }
+forge-std = { version = "v1.8.1" }
 "#;
 
     let actual_foundry_contents = read_file_to_string(&foundry_file);
@@ -56,7 +56,7 @@ forgesoldeer!(update_dependencies, |prj, cmd| {
     // We need to write this into the foundry.toml to make the update install the dependency
     let foundry_updates = r#"
 [dependencies]
-forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip" }
+forge-std = { version = "v1.8.1" }
 "#;
     let foundry_file = prj.root().join("foundry.toml");
 
@@ -97,7 +97,7 @@ libs = ["lib"]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [dependencies]
-forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip" }
+forge-std = { version = "v1.8.1" }
 "#;
 
     let actual_foundry_contents = read_file_to_string(&foundry_file);
