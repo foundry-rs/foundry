@@ -7,9 +7,17 @@ use anvil::{spawn, NodeConfig};
 use futures::StreamExt;
 use tempfile::TempDir;
 
-fn ipc_config() -> (TempDir, NodeConfig) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("anvil.ipc").to_string_lossy().into_owned();
+fn ipc_config() -> (Option<TempDir>, NodeConfig) {
+    let path;
+    let dir;
+    if cfg!(unix) {
+        let tmp = tempfile::tempdir().unwrap();
+        path = tmp.path().join("anvil.ipc").to_string_lossy().into_owned();
+        dir = Some(tmp);
+    } else {
+        dir = None;
+        path = format!("anvil_test_{}.ipc", rand::random::<u64>());
+    }
     let config = NodeConfig::test().with_ipc(Some(Some(path)));
     (dir, config)
 }

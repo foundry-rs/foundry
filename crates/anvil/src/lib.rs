@@ -222,11 +222,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
     let (signal, on_shutdown) = shutdown::signal();
     let task_manager = TaskManager::new(tokio_handle, on_shutdown);
 
-    let ipc_task = if let Some(path) = config.get_ipc_path() {
-        Some(try_spawn_ipc(api.clone(), path)?)
-    } else {
-        None
-    };
+    let ipc_task =
+        config.get_ipc_path().map(|path| try_spawn_ipc(api.clone(), path)).transpose()?;
 
     let handle = NodeHandle {
         config,

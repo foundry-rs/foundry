@@ -122,7 +122,7 @@ where
 
 struct JsonRpcCodec;
 
-// Adapted from <https://github.dev/paritytech/jsonrpc/blob/38af3c9439aa75481805edf6c05c6622a5ab1e70/server-utils/src/stream_codec.rs#L47-L105>
+// Adapted from <https://github.com/paritytech/jsonrpc/blob/38af3c9439aa75481805edf6c05c6622a5ab1e70/server-utils/src/stream_codec.rs#L47-L105>
 impl tokio_util::codec::Decoder for JsonRpcCodec {
     type Item = String;
     type Error = io::Error;
