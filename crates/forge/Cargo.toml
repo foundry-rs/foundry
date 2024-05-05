@@ -82,7 +82,10 @@ thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 toml = { version = "0.8", features = ["preserve_order"] }
 toml_edit = "0.22.4"
-watchexec = "2.3.2"
+watchexec = "4.1"
+watchexec-events = "3.0"
+watchexec-signals = "3.0"
+clearscreen = "3.0"
 evm-disassembler.workspace = true
 rustc-hash.workspace = true
 
@@ -90,7 +93,7 @@ rustc-hash.workspace = true
 axum = { workspace = true, features = ["ws"] }
 hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
-opener = "0.6"
+opener = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
