@@ -4,13 +4,14 @@ use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
 use anvil_rpc::request::Request;
 use bytes::BytesMut;
 use futures::{ready, Sink, Stream, StreamExt};
-use interprocess::local_socket::{self as ls, tokio::prelude::*, ListenerOptions};
+use interprocess::local_socket::tokio::LocalSocketListener;
 use std::{
     future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
 };
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 /// An IPC connection for anvil
 ///
@@ -36,8 +37,6 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
         let IpcEndpoint { handler, path } = self;
 
-        let name = to_name(path.as_str().as_ref())?;
-
         trace!(%path, "starting IPC server");
 
         if cfg!(unix) {
@@ -47,11 +46,11 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
             }
         }
 
-        let listener = ListenerOptions::new().name(name).create_tokio()?;
-        // There is no `Incoming` that owns the listener, and I don't really want to create one,
-        // so just leak a few bytes.
-        // https://github.com/kotauskas/interprocess/issues/64
-        let connections = Box::leak(Box::new(listener)).incoming();
+        let listener = LocalSocketListener::bind(path)?;
+        let connections = futures::stream::unfold(listener, |listener| async move {
+            let conn = listener.accept().await;
+            Some((conn.map(|c| c.compat()), listener))
+        });
 
         trace!("established connection listener");
 
@@ -174,13 +173,4 @@ impl tokio_util::codec::Encoder<String> for JsonRpcCodec {
         buf.extend_from_slice(msg.as_bytes());
         Ok(())
     }
-}
-
-fn to_name(mut path: &std::ffi::OsStr) -> io::Result<ls::Name<'_>> {
-    if cfg!(windows) {
-        if let Some(name) = path.as_encoded_bytes().strip_prefix(br"\\.\pipe\") {
-            path = unsafe { std::ffi::OsStr::from_encoded_bytes_unchecked(name) }
-        }
-    }
-    ls::ToFsName::to_fs_name::<ls::GenericFilePath>(path)
 }

@@ -27,7 +27,7 @@ futures = "0.3"
 # ipc
 interprocess = { version = "1", optional = true, features = ["tokio"] }
 bytes = { version = "1.4", optional = true }
-tokio-util = { version = "0.7", features = ["codec"], optional = true }
+tokio-util = { version = "0.7", features = ["codec", "compat"], optional = true }
 
 # misc
 serde_json.workspace = true
