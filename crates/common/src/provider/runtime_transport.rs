@@ -195,7 +195,7 @@ impl RuntimeTransport {
     async fn connect_ipc(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let path = url_to_file_path(&self.url)
             .map_err(|_| RuntimeTransportError::BadPath(self.url.to_string()))?;
-        let ipc_connector: IpcConnect<PathBuf> = path.clone().into();
+        let ipc_connector = IpcConnect::new(path.clone());
         let ipc = ipc_connector.into_service().await.map_err(|e| {
             RuntimeTransportError::TransportError(e, path.clone().display().to_string())
         })?;
