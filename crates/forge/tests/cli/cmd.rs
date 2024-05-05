@@ -842,37 +842,6 @@ contract A {
     assert!(!out.contains("Compiler run successful with warnings:"));
 });
 
-// test against a local checkout, useful to debug with local ethers-rs patch
-forgetest!(
-    #[ignore]
-    can_compile_local_spells,
-    |_prj, cmd| {
-        let current_dir = std::env::current_dir().unwrap();
-        let root = current_dir
-            .join("../../foundry-integration-tests/testdata/spells-mainnet")
-            .to_string_lossy()
-            .to_string();
-        println!("project root: \"{root}\"");
-
-        let eth_rpc_url = foundry_test_utils::rpc::next_http_archive_rpc_endpoint();
-        let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
-
-        cmd.args([
-            "test",
-            "--root",
-            root.as_str(),
-            "--fork-url",
-            eth_rpc_url.as_str(),
-            "--fork-block-number",
-            "14435000",
-            "--libraries",
-            dss_exec_lib,
-            "-vvvvv",
-        ]);
-        cmd.assert_non_empty_stdout();
-    }
-);
-
 // test that a failing `forge build` does not impact followup builds
 forgetest!(can_build_after_failure, |prj, cmd| {
     prj.insert_ds_test();

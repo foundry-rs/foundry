@@ -752,7 +752,7 @@ impl Config {
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
-    /// cache, caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
+    /// cache.
     pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
         self.create_project(false, true)
     }
@@ -2708,7 +2708,7 @@ mod tests {
     };
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
-    use pretty_assertions::assert_eq;
+    use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
@@ -4170,7 +4170,7 @@ mod tests {
 
             let libs = config.parsed_libraries().unwrap().libs;
 
-            pretty_assertions::assert_eq!(
+            similar_asserts::assert_eq!(
                 libs,
                 BTreeMap::from([
                     (

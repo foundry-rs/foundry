@@ -140,7 +140,7 @@ impl QuotedStringExt for str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
+    use similar_asserts::assert_eq;
 
     #[test]
     fn quote_state_char_indices() {

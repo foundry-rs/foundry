@@ -1,5 +1,7 @@
 use clap::{Parser, ValueHint};
-use ethers_contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
+use ethers_contract_abigen::{
+    Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts,
+};
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};

@@ -1,7 +1,3 @@
-# Temporarily exclude rusoto and ethers-providers from bans since we've yet to transition to the 
-# Rust AWS SDK.
-exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite", "shlex"]
-
 # This section is considered when running `cargo deny check advisories`
 # More documentation for the advisories section can be found here:
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
@@ -57,14 +53,10 @@ exceptions = [
     # CC0 is a permissive license but somewhat unclear status for source code
     # so we prefer to not have dependencies using it
     # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
-    { allow = ["CC0-1.0"], name = "secp256k1" },
-    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
     { allow = ["CC0-1.0"], name = "tiny-keccak" },
     { allow = ["CC0-1.0"], name = "to_method" },
-    { allow = ["CC0-1.0"], name = "more-asserts" },
     { allow = ["CC0-1.0"], name = "trezor-client" },
     { allow = ["CC0-1.0"], name = "notify" },
-    { allow = ["CC0-1.0"], name = "constant_time_eq" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
 ]
@@ -76,6 +68,7 @@ name = "unicode-ident"
 version = "*"
 expression = "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
 license-files = [{ path = "LICENSE-UNICODE", hash = 0x3fb01745 }]
+
 [[licenses.clarify]]
 name = "ring"
 version = "*"

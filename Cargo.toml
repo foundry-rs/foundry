@@ -149,12 +149,7 @@ revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors", rev =
 ] }
 
 ## ethers
-ethers = { version = "2.0.14", default-features = false }
-ethers-core = { version = "2.0.14", default-features = false }
-ethers-contract = { version = "2.0.14", default-features = false }
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
-ethers-providers = { version = "2.0.14", default-features = false }
-ethers-signers = { version = "2.0.14", default-features = false }
 
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
@@ -170,6 +165,7 @@ alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21",
 alloy-rpc-types-engine = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
+alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-signer-wallet = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
 alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "8808d21", default-features = false }
@@ -192,10 +188,7 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "std",
-] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"
@@ -204,7 +197,7 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.12"
 jsonpath_lib = "0.3"
 k256 = "0.13"
-pretty_assertions = "1.4"
+similar-asserts = "1.5"
 rand = "0.8"
 rustc-hash = "1.1"
 serde = { version = "1.0", features = ["derive"] }
