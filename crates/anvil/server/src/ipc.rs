@@ -4,7 +4,7 @@ use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
 use anvil_rpc::request::Request;
 use bytes::BytesMut;
 use futures::{ready, Sink, Stream, StreamExt};
-use parity_tokio_ipc::Endpoint;
+use interprocess::local_socket::{tokio::prelude::*, GenericFilePath, ListenerOptions, ToFsName};
 use std::{
     future::Future,
     io,
@@ -18,14 +18,14 @@ use std::{
 pub struct IpcEndpoint<Handler> {
     /// the handler for the websocket connection
     handler: Handler,
-    /// The endpoint we listen for incoming transactions
-    endpoint: Endpoint,
+    /// The path to the socket
+    path: String,
 }
 
 impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// Creates a new endpoint with the given handler
-    pub fn new(handler: Handler, endpoint: String) -> Self {
-        Self { handler, endpoint: Endpoint::new(endpoint) }
+    pub fn new(handler: Handler, path: String) -> Self {
+        Self { handler, path }
     }
 
     /// Returns a stream of incoming connection handlers
@@ -34,29 +34,30 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// connections, See [`PubSubConnection`] that should be spawned
     #[instrument(target = "ipc", skip_all)]
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
-        let IpcEndpoint { handler, endpoint } = self;
-        trace!(endpoint=?endpoint.path(), "starting IPC server" );
+        let IpcEndpoint { handler, path } = self;
+
+        let name = path.as_str().to_fs_name::<GenericFilePath>()?;
+
+        trace!(%path, "starting IPC server");
 
         if cfg!(unix) {
             // ensure the file does not exist
-            if std::fs::remove_file(endpoint.path()).is_ok() {
-                warn!(endpoint=?endpoint.path(), "removed existing file");
+            if std::fs::remove_file(&path).is_ok() {
+                warn!(%path, "removed existing file");
             }
         }
 
-        let connections = match endpoint.incoming() {
-            Ok(connections) => connections,
-            Err(err) => {
-                error!(%err, "Failed to create IPC listener");
-                return Err(err)
-            }
-        };
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        // There is no `Incoming` that owns the listener, and I don't really want to create one,
+        // so just leak a few bytes.
+        // https://github.com/kotauskas/interprocess/issues/64
+        let connections = Box::leak(Box::new(listener)).incoming();
 
         trace!("established connection listener");
 
-        let connections = connections.filter_map(move |stream| {
+        Ok(connections.filter_map(move |stream| {
             let handler = handler.clone();
-            Box::pin(async move {
+            async move {
                 if let Ok(stream) = stream {
                     trace!("successful incoming IPC connection");
                     let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
@@ -64,9 +65,8 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
                 } else {
                     None
                 }
-            })
-        });
-        Ok(connections)
+            }
+        }))
     }
 }
 
