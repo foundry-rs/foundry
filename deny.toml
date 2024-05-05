@@ -2,11 +2,8 @@
 # More documentation for the advisories section can be found here:
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+version = 2
 yanked = "warn"
-notice = "warn"
-ignore = []
 
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
@@ -28,7 +25,9 @@ skip = []
 skip-tree = []
 
 [licenses]
-unlicensed = "deny"
+version = 2
+confidence-threshold = 0.8
+
 # List of explicitly allowed licenses
 # See https://spdx.org/licenses/ for list of possible licenses
 # [possible values: any SPDX 3.7 short identifier (+ optional exception)].
@@ -45,6 +44,7 @@ allow = [
     "WTFPL",
     "BSL-1.0",
     "0BSD",
+    "MPL-2.0",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
@@ -84,4 +84,5 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 unknown-registry = "warn"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
-unknown-git = "allow"
+unknown-git = "deny"
+allow-git = ["https://github.com/alloy-rs/alloy", "https://github.com/paradigmxyz/evm-inspectors"]
