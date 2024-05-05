@@ -4,14 +4,13 @@ use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
 use anvil_rpc::request::Request;
 use bytes::BytesMut;
 use futures::{ready, Sink, Stream, StreamExt};
-use interprocess::local_socket::tokio::LocalSocketListener;
+use interprocess::local_socket::{self as ls, tokio::prelude::*};
 use std::{
     future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 /// An IPC connection for anvil
 ///
@@ -46,10 +45,12 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
             }
         }
 
-        let listener = LocalSocketListener::bind(path)?;
+        let name = to_name(path.as_ref())?;
+        let listener = ls::ListenerOptions::new().name(name).create_tokio()?;
+        // TODO: https://github.com/kotauskas/interprocess/issues/64
         let connections = futures::stream::unfold(listener, |listener| async move {
             let conn = listener.accept().await;
-            Some((conn.map(|c| c.compat()), listener))
+            Some((conn, listener))
         });
 
         trace!("established connection listener");
@@ -172,5 +173,13 @@ impl tokio_util::codec::Encoder<String> for JsonRpcCodec {
     fn encode(&mut self, msg: String, buf: &mut BytesMut) -> io::Result<()> {
         buf.extend_from_slice(msg.as_bytes());
         Ok(())
+    }
+}
+
+fn to_name(path: &std::ffi::OsStr) -> io::Result<ls::Name<'_>> {
+    if cfg!(windows) && !path.as_encoded_bytes().starts_with(br"\\.\pipe\") {
+        ls::ToNsName::to_ns_name::<ls::GenericNamespaced>(path)
+    } else {
+        ls::ToFsName::to_fs_name::<ls::GenericFilePath>(path)
     }
 }
