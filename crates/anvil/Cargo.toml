@@ -85,7 +85,6 @@ auto_impl = "1"
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
-ethereum-forkid = "0.12"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
@@ -101,7 +100,6 @@ alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 similar-asserts.workspace = true
 tokio = { version = "1", features = ["full"] }
-crc = "3.0.1"
 
 [features]
 default = ["cli"]
