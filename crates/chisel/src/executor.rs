@@ -189,7 +189,7 @@ impl SessionSource {
 
         let Some((stack, memory, _)) = &res.state else {
             // Show traces and logs, if there are any, and return an error
-            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res) {
+            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
                 ChiselDispatcher::show_traces(&decoder, &mut res).await?;
             }
             let decoded_logs = decode_console_logs(&res.logs);

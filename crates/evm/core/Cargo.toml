@@ -13,7 +13,6 @@ repository.workspace = true
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
-foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-macros.workspace = true
 
@@ -52,7 +51,7 @@ rustc-hash.workspace = true
 serde = "1"
 serde_json = "1"
 thiserror = "1"
-tokio = { version = "1", features = ["time", "macros"] }
+tokio = { workspace = true, features = ["time", "macros"] }
 tracing = "0.1"
 url = "2"
 

@@ -689,7 +689,7 @@ impl ChiselDispatcher {
                         let failed = !res.success;
                         if new_session_source.config.traces || failed {
                             if let Ok(decoder) =
-                                Self::decode_traces(&new_session_source.config, &mut res)
+                                Self::decode_traces(&new_session_source.config, &mut res).await
                             {
                                 if let Err(e) = Self::show_traces(&decoder, &mut res).await {
                                     return DispatchResult::CommandFailed(e.to_string())
@@ -834,7 +834,8 @@ impl ChiselDispatcher {
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
                     if new_source.config.traces || failed {
-                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res) {
+                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
+                        {
                             if let Err(e) = Self::show_traces(&decoder, &mut res).await {
                                 return DispatchResult::CommandFailed(e.to_string())
                             };
@@ -888,7 +889,7 @@ impl ChiselDispatcher {
     /// ### Returns
     ///
     /// Optionally, a [CallTraceDecoder]
-    pub fn decode_traces(
+    pub async fn decode_traces(
         session_config: &SessionSourceConfig,
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
@@ -903,7 +904,7 @@ impl ChiselDispatcher {
 
         let mut identifier = TraceIdentifiers::new().with_etherscan(
             &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id(),
+            session_config.evm_opts.get_remote_chain_id().await,
         )?;
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {
