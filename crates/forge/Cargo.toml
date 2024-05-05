@@ -93,7 +93,7 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
 
 # soldeer
-soldeer = "0.2.10"
+soldeer = "0.2.11"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
