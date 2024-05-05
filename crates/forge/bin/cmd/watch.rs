@@ -3,17 +3,26 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
-use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    convert::Infallible,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use watchexec::{
-    action::{Action, Outcome, PreSpawn},
-    command::Command,
-    config::{InitConfig, RuntimeConfig},
-    event::{Event, Priority, ProcessEnd},
-    handler::SyncFnHandler,
+    action::ActionHandler,
+    command::{Command, Program},
+    job::{CommandState, Job},
     paths::summarise_events_to_env,
-    signal::source::MainSignal,
     Watchexec,
 };
+use watchexec_events::{Event, Priority, ProcessEnd};
+use watchexec_signals::Signal;
+use yansi::{Color, Paint};
 
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Watch options")]
@@ -21,12 +30,7 @@ pub struct WatchArgs {
     /// Watch the given files or directories for changes.
     ///
     /// If no paths are provided, the source and test directories of the project are watched.
-    #[arg(
-        long,
-        short,
-        num_args(0..),
-        value_name = "PATH",
-    )]
+    #[arg(long, short, value_name = "PATH")]
     pub watch: Option<Vec<PathBuf>>,
 
     /// Do not restart the command while it's still running.
@@ -57,84 +61,217 @@ pub struct WatchArgs {
 }
 
 impl WatchArgs {
-    /// Returns new [InitConfig] and [RuntimeConfig] based on the [WatchArgs]
+    /// Creates a new [`watchexec::Config`].
     ///
     /// If paths were provided as arguments the these will be used as the watcher's pathset,
-    /// otherwise the path the closure returns will be used
-    pub fn watchexec_config(
+    /// otherwise the path the closure returns will be used.
+    pub fn watchexec_config<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
-        f: impl FnOnce() -> Vec<PathBuf>,
-    ) -> Result<(InitConfig, RuntimeConfig)> {
-        let init = init()?;
-        let mut runtime = runtime(self)?;
-
-        // contains all the arguments `--watch p1, p2, p3`
-        let has_paths = self.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
-
-        if !has_paths {
-            // use alternative pathset, but only those that exists
-            runtime.pathset(f().into_iter().filter(|p| p.exists()));
-        }
-        Ok((init, runtime))
+        default_paths: impl FnOnce() -> PS,
+    ) -> Result<watchexec::Config> {
+        self.watchexec_config__(default_paths, None)
     }
+
+    /// Creates a new [`watchexec::Config`].
+    ///
+    /// If paths were provided as arguments the these will be used as the watcher's pathset,
+    /// otherwise the path the closure returns will be used.
+    pub fn watchexec_config_with_override<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
+        &self,
+        default_paths: impl FnOnce() -> PS,
+        override_command: impl Fn(&ActionHandler, &mut Vec<String>) + Send + Sync + 'static,
+    ) -> Result<watchexec::Config> {
+        self.watchexec_config__(default_paths, Some(Arc::new(override_command)))
+    }
+
+    fn watchexec_config__<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
+        &self,
+        default_paths: impl FnOnce() -> PS,
+        override_command: Option<
+            Arc<dyn Fn(&ActionHandler, &mut Vec<String>) + Send + Sync + 'static>,
+        >,
+    ) -> Result<watchexec::Config> {
+        let mut paths = self.watch.as_deref().unwrap_or_default();
+        let storage: Vec<_>;
+        if paths.is_empty() {
+            storage = default_paths().into_iter().map(Into::into).filter(|p| p.exists()).collect();
+            paths = &storage;
+        }
+        self.watchexec_config_(paths, override_command)
+    }
+
+    fn watchexec_config_(
+        &self,
+        paths: &[PathBuf],
+        override_command: Option<
+            Arc<dyn Fn(&ActionHandler, &mut Vec<String>) + Send + Sync + 'static>,
+        >,
+    ) -> Result<watchexec::Config> {
+        let config = watchexec::Config::default();
+
+        config.on_error(|err| eprintln!("[[{err:?}]]"));
+
+        if let Some(delay) = &self.watch_delay {
+            config.throttle(utils::parse_delay(delay)?);
+        }
+
+        config.pathset(paths.iter().map(|p| p.as_path()));
+
+        let n_path_args = self.watch.as_deref().unwrap_or_default().len();
+        let base_command = Arc::new(watch_command(cmd_args(n_path_args)));
+
+        let id = watchexec::Id::default();
+        let quit_again = Arc::new(AtomicU8::new(0));
+        let stop_timeout = Duration::from_secs(5);
+        let no_restart = self.no_restart;
+        let stop_signal = Signal::Terminate;
+        config.on_action(move |mut action| {
+            let base_command = base_command.clone();
+            // TODO: This will only work once
+            let job = action.get_or_create_job(id, move || {
+                // if let Some(override_command) = &override_command {
+                //     let mut cmd = base_command.clone();
+                //     let mut args =
+                //     cmd
+                // } else {
+                base_command.clone()
+                // }
+            });
+
+            let events = action.events.clone();
+            job.set_spawn_hook(move |command, _| {
+                // https://github.com/watchexec/watchexec/blob/72f069a8477c679e45f845219276b0bfe22fed79/crates/cli/src/emits.rs#L9
+                let env = summarise_events_to_env(events.iter());
+                for (k, v) in env {
+                    command.command_mut().env(format!("WATCHEXEC_{k}_PATH"), v);
+                }
+            });
+
+            let clear_screen = || {
+                let _ = clearscreen::clear();
+            };
+
+            let quit = |mut action: ActionHandler| {
+                match quit_again.fetch_add(1, Ordering::Relaxed) {
+                    0 => {
+                        eprintln!(
+                            "[Waiting {stop_timeout:?} for processes to exit before stopping... \
+                             Ctrl-C again to exit faster]"
+                        );
+                        action.quit_gracefully(stop_signal, stop_timeout);
+                    }
+                    1 => action.quit_gracefully(Signal::ForceStop, Duration::ZERO),
+                    _ => action.quit(),
+                }
+
+                action
+            };
+
+            let signals = action.signals().collect::<Vec<_>>();
+
+            if signals.contains(&Signal::Terminate) || signals.contains(&Signal::Interrupt) {
+                return quit(action);
+            }
+
+            // Only filesystem events below here (or empty synthetic events).
+            if action.paths().next().is_none() && !action.events.iter().any(|e| e.is_empty()) {
+                debug!("no filesystem or synthetic events, skip without doing more");
+                return action;
+            }
+
+            job.run({
+                let job = job.clone();
+                move |context| {
+                    if context.current.is_running() && no_restart {
+                        return;
+                    }
+                    job.restart_with_signal(stop_signal, stop_timeout);
+                    job.run({
+                        let job = job.clone();
+                        move |context| {
+                            clear_screen();
+                            setup_process(job, &context.command)
+                        }
+                    });
+                }
+            });
+
+            action
+        });
+
+        Ok(config)
+    }
+}
+
+fn setup_process(job: Job, _command: &Command) {
+    tokio::spawn(async move {
+        job.to_wait().await;
+        job.run(move |context| end_of_process(context.current));
+    });
+}
+
+fn end_of_process(state: &CommandState) {
+    let CommandState::Finished { status, started, finished } = state else {
+        return;
+    };
+
+    let duration = *finished - *started;
+    let timings = true;
+    let timing = if timings { format!(", lasted {duration:?}") } else { String::new() };
+    let (msg, fg) = match status {
+        ProcessEnd::ExitError(code) => (format!("Command exited with {code}{timing}"), Color::Red),
+        ProcessEnd::ExitSignal(sig) => {
+            (format!("Command killed by {sig:?}{timing}"), Color::Magenta)
+        }
+        ProcessEnd::ExitStop(sig) => (format!("Command stopped by {sig:?}{timing}"), Color::Blue),
+        ProcessEnd::Continued => (format!("Command continued{timing}"), Color::Cyan),
+        ProcessEnd::Exception(ex) => {
+            (format!("Command ended by exception {ex:#x}{timing}"), Color::Yellow)
+        }
+        ProcessEnd::Success => (format!("Command was successful{timing}"), Color::Green),
+    };
+
+    let quiet = false;
+    if !quiet {
+        eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
+    }
+}
+
+/// Runs the given [`watchexec::Config`].
+pub async fn run(config: watchexec::Config) -> Result<()> {
+    let wx = Watchexec::with_config(config)?;
+    wx.send_event(Event::default(), Priority::Urgent);
+    wx.main().await??;
+    Ok(())
 }
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
 pub async fn watch_build(args: BuildArgs) -> Result<()> {
-    let (init, mut runtime) = args.watchexec_config()?;
-    let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
-
-    trace!("watch build cmd={:?}", cmd);
-    runtime.command(watch_command(cmd.clone()));
-
-    let wx = Watchexec::new(init, runtime.clone())?;
-    on_action(args.watch, runtime, Arc::clone(&wx), cmd, (), |_| {});
-
-    // start executing the command immediately
-    wx.send_event(Event::default(), Priority::default()).await?;
-    wx.main().await??;
-
-    Ok(())
+    let config = args.watchexec_config()?;
+    run(config).await
 }
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// snapshot`
 pub async fn watch_snapshot(args: SnapshotArgs) -> Result<()> {
-    let (init, mut runtime) = args.watchexec_config()?;
-    let cmd = cmd_args(args.test.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
-
-    trace!("watch snapshot cmd={:?}", cmd);
-    runtime.command(watch_command(cmd.clone()));
-    let wx = Watchexec::new(init, runtime.clone())?;
-
-    on_action(args.test.watch.clone(), runtime, Arc::clone(&wx), cmd, (), |_| {});
-
-    // start executing the command immediately
-    wx.send_event(Event::default(), Priority::default()).await?;
-    wx.main().await??;
-
-    Ok(())
+    let config = args.watchexec_config()?;
+    run(config).await
 }
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// test`
 pub async fn watch_test(args: TestArgs) -> Result<()> {
-    let (init, mut runtime) = args.watchexec_config()?;
-    let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
-    trace!("watch test cmd={:?}", cmd);
-    runtime.command(watch_command(cmd.clone()));
-    let wx = Watchexec::new(init, runtime.clone())?;
-
     let config: Config = args.build_args().into();
-
     let filter = args.filter(&config);
-
-    // marker to check whether to override the command
+    // Marker to check whether to override the command.
     let no_reconfigure = filter.args().test_pattern.is_some() ||
         filter.args().path_pattern.is_some() ||
         filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
+
+    let watchexec_config = args.watchexec_config()?;
+    let wx = Watchexec::with_config(watchexec_config)?;
 
     let state = WatchTestState {
         project_root: config.root.0,
@@ -183,9 +320,8 @@ fn on_test(action: OnActionState<'_, WatchTestState>) {
         .map(str::to_string)
         .collect();
 
-    // replace `--match-path` | `-mp` argument
-    if let Some(pos) = cmd.iter().position(|arg| arg == "--match-path" || arg == "-mp") {
-        // --match-path requires 1 argument
+    // Replace `--match-path` | `--mp` arguments.
+    while let Some(pos) = cmd.iter().position(|arg| arg == "--match-path" || arg == "--mp") {
         cmd.drain(pos..=(pos + 1));
     }
 
@@ -257,7 +393,7 @@ fn on_test(action: OnActionState<'_, WatchTestState>) {
 fn watch_command(mut args: Vec<String>) -> Command {
     debug_assert!(!args.is_empty());
     let prog = args.remove(0);
-    Command::Exec { prog, args }
+    Command { program: Program::Exec { prog: prog.into(), args }, options: Default::default() }
 }
 
 /// Returns the env args without the `--watch` flag from the args for the Watchexec command
@@ -299,17 +435,6 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
     cmd_args
 }
 
-/// Returns the Initialisation configuration for [`Watchexec`].
-pub fn init() -> Result<InitConfig> {
-    let mut config = InitConfig::default();
-    config.on_error(SyncFnHandler::from(|data| {
-        trace!("[[{:?}]]", data);
-        Ok::<_, Infallible>(())
-    }));
-
-    Ok(config)
-}
-
 /// Contains all necessary context to reconfigure a [`Watchexec`] on the fly
 struct OnActionState<'a, T: Clone> {
     args: &'a WatchArgs,
@@ -328,7 +453,7 @@ struct OnActionState<'a, T: Clone> {
 /// [`Watchexec::reconfigure`]
 fn on_action<F, T>(
     args: WatchArgs,
-    mut config: RuntimeConfig,
+    mut config: Watchexec,
     wx: Arc<Watchexec>,
     cmd: Vec<String>,
     other: T,
@@ -415,30 +540,6 @@ fn on_action<F, T>(
     });
 
     let _ = wx.reconfigure(config);
-}
-
-/// Returns the Runtime configuration for [`Watchexec`].
-pub fn runtime(args: &WatchArgs) -> Result<RuntimeConfig> {
-    let mut config = RuntimeConfig::default();
-
-    config.pathset(args.watch.clone().unwrap_or_default());
-
-    if let Some(delay) = &args.watch_delay {
-        config.action_throttle(utils::parse_delay(delay)?);
-    }
-
-    config.on_pre_spawn(move |prespawn: PreSpawn| async move {
-        let envs = summarise_events_to_env(prespawn.events.iter());
-        if let Some(mut command) = prespawn.command().await {
-            for (k, v) in envs {
-                command.env(format!("CARGO_WATCH_{k}_PATH"), v);
-            }
-        }
-
-        Ok::<(), Infallible>(())
-    });
-
-    Ok(config)
 }
 
 #[cfg(test)]

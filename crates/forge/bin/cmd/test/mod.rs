@@ -44,7 +44,6 @@ use std::{
     sync::{mpsc::channel, Arc},
     time::Instant,
 };
-use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
 mod filter;
@@ -596,10 +595,10 @@ impl TestArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            vec![config.src, config.test]
+            [config.src, config.test]
         })
     }
 }
