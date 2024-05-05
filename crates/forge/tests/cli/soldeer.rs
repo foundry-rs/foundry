@@ -48,13 +48,6 @@ forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.
 
     let actual_foundry_contents = read_file_to_string(&foundry_file);
     assert_eq!(foundry_contents, actual_foundry_contents);
-    // println!("foundry contents {:?}", foundry_contents);
-
-    // let paths = fs::read_dir(prj.root()).unwrap();
-
-    // for path in paths {
-    //     println!("Name: {}", path.unwrap().path().display())
-    // }
 });
 
 forgesoldeer!(update_dependencies, |prj, cmd| {
@@ -114,7 +107,7 @@ forge-std = { version = "v1.8.1", url = "https://soldeer-revisions.s3.amazonaws.
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
-    cmd.arg("soldeer").arg(command);
+    cmd.arg("soldeer").arg(command); 
     let output = cmd.unchecked_output();
 
     // On login, we can only check if the prompt is displayed in the stdout
