@@ -12,6 +12,7 @@ use crate::{
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
+    server::error::{NodeError, NodeResult},
     service::NodeService,
     shutdown::Signal,
     tasks::TaskManager,
@@ -23,6 +24,7 @@ use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
+use server::try_spawn_ipc;
 use std::{
     future::Future,
     io,
@@ -41,11 +43,8 @@ mod service;
 
 mod config;
 pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+
 mod hardfork;
-use crate::server::{
-    error::{NodeError, NodeResult},
-    spawn_ipc,
-};
 pub use hardfork::Hardfork;
 
 /// ethereum related implementations
@@ -223,7 +222,11 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
     let (signal, on_shutdown) = shutdown::signal();
     let task_manager = TaskManager::new(tokio_handle, on_shutdown);
 
-    let ipc_task = config.get_ipc_path().map(|path| spawn_ipc(api.clone(), path));
+    let ipc_task = if let Some(path) = config.get_ipc_path() {
+        Some(try_spawn_ipc(api.clone(), path)?)
+    } else {
+        None
+    };
 
     let handle = NodeHandle {
         config,
@@ -310,8 +313,10 @@ impl NodeHandle {
 
     /// Constructs a [`RetryProvider`] for this handle's HTTP endpoint.
     pub fn http_provider(&self) -> RetryProvider {
-        ProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build HTTP provider")
-        // .interval(Duration::from_millis(500))
+        ProviderBuilder::new(&self.http_endpoint())
+            .aggressive()
+            .build()
+            .expect("failed to build HTTP provider")
     }
 
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.

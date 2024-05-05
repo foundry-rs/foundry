@@ -559,7 +559,7 @@ dependencies = [
  "alloy-transport",
  "bytes",
  "futures",
- "interprocess 1.2.1",
+ "interprocess",
  "pin-project",
  "serde",
  "serde_json",
@@ -800,7 +800,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
- "interprocess 2.0.1",
+ "interprocess",
  "parking_lot",
  "pin-project",
  "serde",
@@ -4845,20 +4845,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "interprocess"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c7fb8583fab9503654385e2bafda123376445a77027a1b106dd7e44cf51122f"
-dependencies = [
- "futures-core",
- "libc",
- "recvmsg",
- "tokio",
- "widestring",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "intmap"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6438,12 +6424,6 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
-
-[[package]]
-name = "recvmsg"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_syscall"
@@ -8632,12 +8612,6 @@ dependencies = [
  "once_cell",
  "rustix",
 ]
-
-[[package]]
-name = "widestring"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
 
 [[package]]
 name = "winapi"
