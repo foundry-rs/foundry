@@ -729,7 +729,6 @@ dependencies = [
  "flate2",
  "foundry-cli",
  "foundry-common",
- "foundry-compilers",
  "foundry-config",
  "foundry-evm",
  "foundry-test-utils",

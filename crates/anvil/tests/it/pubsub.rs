@@ -246,8 +246,6 @@ async fn test_subscriptions() {
     assert_eq!(blocks, vec![1, 2, 3])
 }
 
-// TODO: Fix this, num > 17 breaks the test due to poller channel_size defaults to 16. Recv channel
-// lags behind.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;

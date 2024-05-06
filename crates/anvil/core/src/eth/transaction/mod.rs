@@ -9,8 +9,8 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    request::TransactionRequest, AccessList, AnyTransactionReceipt, Signature as RpcSignature,
-    Transaction as RpcTransaction, TransactionReceipt, WithOtherFields,
+    other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
+    Signature as RpcSignature, Transaction as RpcTransaction, TransactionReceipt, WithOtherFields,
 };
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
@@ -58,7 +58,7 @@ pub fn transaction_request_to_typed(
     } = tx;
 
     // Special case: OP-stack deposit tx
-    if transaction_type == Some(126) {
+    if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
         return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
@@ -151,6 +151,12 @@ pub fn transaction_request_to_typed(
         }
         _ => None,
     }
+}
+
+fn has_optimism_fields(other: &OtherFields) -> bool {
+    other.contains_key("sourceHash") &&
+        other.contains_key("mint") &&
+        other.contains_key("isSystemTx")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -66,7 +66,6 @@ async fn test_parity_suicide_trace() {
     let owner = wallets[0].address();
     let destructor = wallets[1].address();
 
-    // deploy successfully
     let contract_addr =
         SuicideContract::deploy_builder(provider.clone()).from(owner).deploy().await.unwrap();
     let contract = SuicideContract::new(contract_addr, provider.clone());
