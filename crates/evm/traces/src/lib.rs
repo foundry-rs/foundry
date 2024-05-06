@@ -192,6 +192,7 @@ pub async fn render_trace(
             CallKind::CallCode => " [callcode]",
             CallKind::DelegateCall => " [delegatecall]",
             CallKind::Create | CallKind::Create2 => unreachable!(),
+            CallKind::AuthCall => todo!(),
         };
 
         let color = trace_color(trace);

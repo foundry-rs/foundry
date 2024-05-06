@@ -120,7 +120,7 @@ where
         func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let res = self.provider.call(req, block.unwrap_or_default()).await?;
+        let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
         let mut decoded = vec![];
 
