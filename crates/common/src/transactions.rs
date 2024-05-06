@@ -48,10 +48,8 @@ impl TransactionReceiptWithRevertReason {
 
         if let Some(block_hash) = self.receipt.block_hash {
             match provider
-                .call(
-                    &WithOtherFields::new(transaction.inner.into()),
-                    BlockId::Hash(block_hash.into()),
-                )
+                .call(&WithOtherFields::new(transaction.inner.into()))
+                .block(BlockId::Hash(block_hash.into()))
                 .await
             {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),

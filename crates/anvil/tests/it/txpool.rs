@@ -2,7 +2,7 @@
 
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
-use alloy_provider::{txpool::TxPoolApi, Provider};
+use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use anvil::{spawn, NodeConfig};
 

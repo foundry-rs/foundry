@@ -1595,6 +1595,7 @@ impl Backend {
             gas_limit,
             gas_used,
             timestamp,
+            requests_root,
             extra_data,
             mix_hash,
             nonce,
@@ -1629,6 +1630,7 @@ impl Backend {
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
+                requests_root,
             },
             size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
