@@ -36,7 +36,7 @@ regex = { version = "1", default-features = false }
 serde.workspace = true
 strsim = "0.10"
 strum = { workspace = true, features = ["derive"] }
-tokio = { version = "1", features = ["macros"] }
+tokio = { workspace = true, features = ["macros"] }
 tracing-error = "0.2"
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter", "fmt"] }
 tracing.workspace = true
