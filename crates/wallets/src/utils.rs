@@ -26,7 +26,9 @@ pub fn create_private_key_signer(private_key: &str) -> Result<WalletSigner> {
         eyre::bail!("Failed to decode private key")
     };
 
-    match LocalWallet::from_bytes(&B256::from_slice(&private_key)) {
+    match LocalWallet::from_bytes(
+        &B256::try_from(private_key.as_slice()).wrap_err("Failed to decode private key")?,
+    ) {
         Ok(pk) => Ok(WalletSigner::Local(pk)),
         Err(err) => {
             ensure_pk_not_env(privk)?;
