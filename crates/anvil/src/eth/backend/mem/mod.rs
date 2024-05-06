@@ -2359,8 +2359,13 @@ impl TransactionValidator for Backend {
         }
 
         if (env.handler_cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.to() && !is_deposit_tx {
-                warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
+            let gas_price = if tx.is_eip4844() {
+                tx.essentials().max_fee_per_gas.ok_or(InvalidTransactionError::FeeCapTooLow)?.to()
+            } else {
+                tx.gas_price()
+            };
+            if gas_price < env.block.basefee.to() && !is_deposit_tx {
+                warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",gas_price,  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
             }
 
