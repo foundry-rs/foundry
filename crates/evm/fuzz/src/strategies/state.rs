@@ -21,10 +21,14 @@ pub struct EvmFuzzState {
 }
 
 impl EvmFuzzState {
-    pub fn new(config: FuzzDictionaryConfig, db_state: Vec<(&Address, &DbAccount)>) -> Self {
+    pub fn new<DB: DatabaseRef>(db: &CacheDB<DB>, config: FuzzDictionaryConfig) -> EvmFuzzState {
+        // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
+        let mut accs = db.accounts.iter().collect::<Vec<_>>();
+        accs.sort_by_key(|(address, _)| *address);
+
         // Create fuzz dictionary and insert values from db state.
         let mut dictionary = FuzzDictionary::new(config);
-        dictionary.insert_db_values(db_state);
+        dictionary.insert_db_values(accs);
         Self { inner: Arc::new(RwLock::new(dictionary)) }
     }
 
@@ -223,19 +227,6 @@ impl FuzzDictionary {
         self.new_values.clear();
         self.new_addreses.clear();
     }
-}
-
-/// Builds the initial [EvmFuzzState] from a database.
-pub fn build_initial_state<DB: DatabaseRef>(
-    db: &CacheDB<DB>,
-    config: FuzzDictionaryConfig,
-) -> EvmFuzzState {
-    // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
-    let mut accs = db.accounts.iter().collect::<Vec<_>>();
-    accs.sort_by_key(|(address, _)| *address);
-
-    // Create fuzz state with configured options and values from db.
-    EvmFuzzState::new(config, accs)
 }
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).

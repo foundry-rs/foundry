@@ -212,7 +212,7 @@ pub fn fuzz_param_from_state(
 #[cfg(test)]
 mod tests {
     use crate::{
-        strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
+        strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
         FuzzFixtures,
     };
     use foundry_common::abi::get_func;
@@ -224,7 +224,7 @@ mod tests {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let state = build_initial_state(&db, FuzzDictionaryConfig::default());
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default());
         let strat = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),
