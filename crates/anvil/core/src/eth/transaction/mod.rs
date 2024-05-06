@@ -2,9 +2,8 @@
 
 use crate::eth::transaction::optimism::{DepositTransaction, DepositTransactionRequest};
 use alloy_consensus::{
-    AnyReceiptEnvelope, BlobTransactionSidecar, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed,
-    TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy,
-    TxReceipt,
+    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930,
+    TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
@@ -146,25 +145,8 @@ pub fn transaction_request_to_typed(
                 access_list: access_list.unwrap_or_default(),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
             };
-            let blob_sidecar = BlobTransactionSidecar {
-                blobs: sidecar
-                    .blobs
-                    .into_iter()
-                    .map(|b| c_kzg::Blob::from_bytes(b.as_slice()).unwrap())
-                    .collect(),
-                commitments: sidecar
-                    .commitments
-                    .into_iter()
-                    .map(|c| c_kzg::Bytes48::from_bytes(c.as_slice()).unwrap())
-                    .collect(),
-                proofs: sidecar
-                    .proofs
-                    .into_iter()
-                    .map(|p| c_kzg::Bytes48::from_bytes(p.as_slice()).unwrap())
-                    .collect(),
-            };
             Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
-                TxEip4844WithSidecar::from_tx_and_sidecar(tx, blob_sidecar),
+                TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
             )))
         }
         _ => None,

@@ -2,7 +2,7 @@
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
-use alloy_provider::{debug::DebugApi, Provider};
+use alloy_provider::{ext::DebugApi, Provider};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
     BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
@@ -173,7 +173,7 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().call(request, block.into()).await?;
+        let res = self.provider().call(request).block(block.into()).await?;
 
         Ok(res)
     }

@@ -72,6 +72,7 @@ impl Block {
                 parent_beacon_block_root: partial_header.parent_beacon_block_root,
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
+                requests_root: None,
             },
             transactions,
             ommers,
