@@ -691,7 +691,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
         std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
     let _run_log = re.replace_all(&run_log, "");
 
-    // pretty_assertions::assert_eq!(fixtures_log, run_log);
+    // similar_asserts::assert_eq!(fixtures_log, run_log);
 
     // Uncomment to recreate the sensitive log
     // std::fs::copy(
@@ -719,7 +719,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let fixtures_log = re.replace_all(&fixtures_log, "\n");
     let run_log = re.replace_all(&run_log, "\n");
 
-    pretty_assertions::assert_eq!(fixtures_log, run_log);
+    similar_asserts::assert_eq!(fixtures_log, run_log);
 });
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {
@@ -1320,4 +1320,40 @@ contract SimpleScript is Script {
 
     let output = cmd.stdout_lossy();
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});
+
+// https://github.com/foundry-rs/foundry/issues/7833
+forgetest_async!(error_no_create2, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleContract {}
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        new SimpleContract{salt: bytes32(0)}();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("missing CREATE2 deployer"));
 });

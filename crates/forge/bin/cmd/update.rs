@@ -44,7 +44,7 @@ impl UpdateArgs {
             git.submodule_update(self.force, true, false, false, paths)?;
             // initialize submodules of each submodule recursively (otherwise direct submodule
             // dependencies will revert to last commit)
-            git.submodule_foreach(false, "git submodule update --init --progress --recursive ")
+            git.submodule_foreach(false, "git submodule update --init --progress --recursive")
         }
     }
 }

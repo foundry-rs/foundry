@@ -78,7 +78,14 @@ async fn test_ganache_emit_logs() {
     let val = _0;
     assert_eq!(val, first_msg);
 
-    emit_logs_contract.setValue(next_msg.clone()).send().await.unwrap();
+    emit_logs_contract
+        .setValue(next_msg.clone())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let EmitLogs::getValueReturn { _0 } = emit_logs_contract.getValue().call().await.unwrap();
     let val = _0;

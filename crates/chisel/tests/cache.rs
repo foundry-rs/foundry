@@ -1,6 +1,7 @@
 use chisel::session::ChiselSession;
 use foundry_compilers::EvmVersion;
 use foundry_config::{Config, SolcReq};
+use semver::Version;
 use serial_test::serial;
 use std::path::Path;
 
@@ -231,7 +232,7 @@ fn test_solc_evm_configuration_mismatch() {
     // Force the solc version to be 0.8.13 which does not support Paris
     let foundry_config = Config {
         evm_version: EvmVersion::Paris,
-        solc: Some(SolcReq::Version("0.8.13".parse().expect("invalid semver"))),
+        solc: Some(SolcReq::Version(Version::new(0, 8, 13))),
         ..Default::default()
     };
 

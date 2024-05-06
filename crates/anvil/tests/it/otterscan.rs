@@ -466,6 +466,26 @@ contract Contract {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ots_get_transaction_error_no_error() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let signer: EthereumSigner = wallets[0].clone().into();
+    let sender = wallets[0].address();
+
+    let provider = ws_provider_with_signer(&handle.ws_endpoint(), signer);
+
+    // Send a successful transaction
+    let tx =
+        TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let res = api.ots_get_transaction_error(receipt.transaction_hash).await;
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap().to_string(), "0x");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_block_details() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -586,17 +606,18 @@ async fn can_call_ots_search_transactions_before() {
 
     let page_size = 2;
     let mut block = 0;
-    for _ in 0..4 {
+    for i in 0..4 {
         let result = api.ots_search_transactions_before(sender, block, page_size).await.unwrap();
 
-        assert!(result.txs.len() <= page_size);
+        assert_eq!(result.first_page, i == 0);
+        assert_eq!(result.last_page, i == 3);
 
         // check each individual hash
         result.txs.iter().for_each(|tx| {
             assert_eq!(hashes.pop(), Some(tx.hash));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap() - 1;
+        block = result.txs.last().unwrap().block_number.unwrap();
     }
 
     assert!(hashes.is_empty());
@@ -626,17 +647,18 @@ async fn can_call_ots_search_transactions_after() {
 
     let page_size = 2;
     let mut block = 0;
-    for _ in 0..4 {
+    for i in 0..4 {
         let result = api.ots_search_transactions_after(sender, block, page_size).await.unwrap();
 
-        assert!(result.txs.len() <= page_size);
+        assert_eq!(result.first_page, i == 3);
+        assert_eq!(result.last_page, i == 0);
 
         // check each individual hash
-        result.txs.iter().for_each(|tx| {
+        result.txs.iter().rev().for_each(|tx| {
             assert_eq!(hashes.pop_back(), Some(tx.hash));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap() + 1;
+        block = result.txs.first().unwrap().block_number.unwrap();
     }
 
     assert!(hashes.is_empty());

@@ -488,7 +488,7 @@ where
 /// that is used by the `BackendHandler` to send the result of an executed `BackendRequest` back to
 /// `SharedBackend`.
 ///
-/// The `BackendHandler` holds an ethers `Provider` to look up missing accounts or storage slots
+/// The `BackendHandler` holds a `Provider` to look up missing accounts or storage slots
 /// from remote (e.g. infura). It detects duplicate requests from multiple `SharedBackend`s and
 /// bundles them together, so that always only one provider request is executed. For example, there
 /// are two `SharedBackend`s, `A` and `B`, both request the basic account info of account

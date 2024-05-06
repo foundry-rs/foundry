@@ -198,7 +198,7 @@ async fn can_call_on_pending_block() {
         api.evm_set_block_gas_limit(U256::from(30_000_000 + i)).unwrap();
 
         api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     // Ensure that the right header values are set when calling a past block

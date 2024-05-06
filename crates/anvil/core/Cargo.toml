@@ -16,11 +16,13 @@ revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
+    "c-kzg",
 ] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-rpc-types = { workspace = true }
+alloy-rpc-types.workspace = true
 alloy-rpc-types-trace.workspace = true
+alloy-serde.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-network = { workspace = true, features = ["k256"] }

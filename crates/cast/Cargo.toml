@@ -15,11 +15,7 @@ name = "cast"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
+vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
 
 [dependencies]
 # lib
@@ -46,8 +42,7 @@ alloy-network.workspace = true
 alloy-sol-types.workspace = true
 alloy-chains.workspace = true
 
-ethers-core.workspace = true
-ethers-contract = { workspace = true, features = ["abigen"] }
+ethers-contract-abigen.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true

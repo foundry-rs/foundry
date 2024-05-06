@@ -310,7 +310,8 @@ impl CallTraceDecoder {
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
             return DecodedCallTrace {
                 label,
-                return_data: None,
+                return_data: (!trace.status.is_ok())
+                    .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
                 contract,
                 func: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
             };

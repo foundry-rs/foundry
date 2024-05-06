@@ -12,7 +12,7 @@ use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{output_selection::ContractOutputSelection, Settings, StorageLayout},
     remappings::{RelativeRemapping, Remapping},
-    ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig,
+    ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig, Solc,
 };
 use foundry_config::{Chain, Config};
 use std::{
@@ -417,7 +417,7 @@ fn update_config_by_metadata(
 /// A list of remappings is returned
 fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<RelativeRemapping>> {
     // get config
-    let path_config = ProjectPathsConfig::builder().build_with_root(root);
+    let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>(root);
     // we will canonicalize the sources directory later
     let src_dir = &path_config.sources;
     let lib_dir = &path_config.libraries[0];

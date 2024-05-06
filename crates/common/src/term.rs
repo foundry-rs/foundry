@@ -1,8 +1,7 @@
 //! terminal utils
 use foundry_compilers::{
     remappings::Remapping,
-    report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
-    CompilerInput, CompilerOutput, Solc,
+    report::{self, BasicStdoutReporter, Reporter},
 };
 use once_cell::sync::Lazy;
 use semver::Version;
@@ -90,9 +89,6 @@ impl Spinner {
 pub struct SpinnerReporter {
     /// The sender to the spinner thread.
     sender: mpsc::Sender<SpinnerMsg>,
-    /// Reporter that logs Solc compiler input and output to separate files if configured via env
-    /// var.
-    solc_io_report: SolcCompilerIoReporter,
 }
 
 impl SpinnerReporter {
@@ -129,7 +125,7 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        SpinnerReporter { sender, solc_io_report: SolcCompilerIoReporter::from_default_env() }
+        SpinnerReporter { sender }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -152,34 +148,21 @@ impl Drop for SpinnerReporter {
 }
 
 impl Reporter for SpinnerReporter {
-    fn on_solc_spawn(
-        &self,
-        _solc: &Solc,
-        version: &Version,
-        input: &CompilerInput,
-        dirty_files: &[PathBuf],
-    ) {
+    fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
         self.send_msg(format!(
-            "Compiling {} files with {}.{}.{}",
+            "Compiling {} files with {} {}.{}.{}",
             dirty_files.len(),
+            compiler_name,
             version.major,
             version.minor,
             version.patch
         ));
-        self.solc_io_report.log_compiler_input(input, version);
     }
 
-    fn on_solc_success(
-        &self,
-        _solc: &Solc,
-        version: &Version,
-        output: &CompilerOutput,
-        duration: &Duration,
-    ) {
-        self.solc_io_report.log_compiler_output(output, version);
+    fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
         self.send_msg(format!(
-            "Solc {}.{}.{} finished in {duration:.2?}",
-            version.major, version.minor, version.patch
+            "{} {}.{}.{} finished in {duration:.2?}",
+            compiler_name, version.major, version.minor, version.patch
         ));
     }
 

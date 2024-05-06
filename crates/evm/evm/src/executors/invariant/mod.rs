@@ -16,10 +16,7 @@ use foundry_evm_fuzz::{
         ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
         RandomCallGenerator, SenderFilters, TargetedContracts,
     },
-    strategies::{
-        build_initial_state, collect_created_contracts, invariant_strat, override_call_strat,
-        EvmFuzzState,
-    },
+    strategies::{collect_created_contracts, invariant_strat, override_call_strat, EvmFuzzState},
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
@@ -53,8 +50,8 @@ sol! {
         }
 
         #[derive(Default)]
-        struct FuzzAbiSelector {
-            string contract_abi;
+        struct FuzzArtifactSelector {
+            string artifact;
             bytes4[] selectors;
         }
 
@@ -77,7 +74,7 @@ sol! {
         function targetArtifacts() public view returns (string[] memory targetedArtifacts);
 
         #[derive(Default)]
-        function targetArtifactSelectors() public view returns (FuzzAbiSelector[] memory targetedArtifactSelectors);
+        function targetArtifactSelectors() public view returns (FuzzArtifactSelector[] memory targetedArtifactSelectors);
 
         #[derive(Default)]
         function targetContracts() public view returns (address[] memory targetedContracts);
@@ -365,8 +362,7 @@ impl<'a> InvariantExecutor<'a> {
             self.select_contracts_and_senders(invariant_contract.address)?;
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let fuzz_state: EvmFuzzState =
-            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary);
+        let fuzz_state = EvmFuzzState::new(self.executor.backend.mem_db(), self.config.dictionary);
 
         // Creates the invariant strategy.
         let strat = invariant_strat(
@@ -418,10 +414,10 @@ impl<'a> InvariantExecutor<'a> {
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
-        for IInvariantTest::FuzzAbiSelector { contract_abi, selectors } in
+        for IInvariantTest::FuzzArtifactSelector { artifact, selectors } in
             result.targetedArtifactSelectors
         {
-            let identifier = self.validate_selected_contract(contract_abi, &selectors)?;
+            let identifier = self.validate_selected_contract(artifact, &selectors)?;
             self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 

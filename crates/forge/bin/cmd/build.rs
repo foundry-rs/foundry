@@ -3,7 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
-use foundry_compilers::{Project, ProjectCompileOutput};
+use foundry_compilers::{Project, ProjectCompileOutput, SolcSparseFileFilter};
 use foundry_config::{
     figment::{
         self,
@@ -94,8 +94,11 @@ impl BuildArgs {
             .bail(!self.format_json);
         if let Some(skip) = self.skip {
             if !skip.is_empty() {
-                compiler = compiler
-                    .filter(Box::new(SkipBuildFilters::new(skip, project.root().to_path_buf())?));
+                let filter = SolcSparseFileFilter::new(SkipBuildFilters::new(
+                    skip.clone(),
+                    project.root().to_path_buf(),
+                )?);
+                compiler = compiler.filter(Box::new(filter));
             }
         }
         let output = compiler.compile(&project)?;

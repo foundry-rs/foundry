@@ -233,6 +233,8 @@ impl BlockchainStorage {
             gas_limit: env.block.gas_limit.to::<u128>(),
             beneficiary: env.block.coinbase,
             difficulty: env.block.difficulty,
+            blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas: env.block.get_blob_excess_gas().map(|v| v as u128),
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);

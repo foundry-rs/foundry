@@ -19,7 +19,7 @@ use foundry_compilers::{
     artifacts::{BytecodeObject, Libraries},
     info::ContractInfo,
     utils::source_files_iter,
-    ArtifactId, ProjectCompileOutput,
+    ArtifactId, ProjectCompileOutput, SOLC_EXTENSIONS,
 };
 use foundry_linking::{LinkOutput, Linker};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
@@ -151,7 +151,8 @@ impl PreprocessedState {
         };
 
         let sources_to_compile =
-            source_files_iter(project.paths.sources.as_path()).chain([target_path.to_path_buf()]);
+            source_files_iter(project.paths.sources.as_path(), SOLC_EXTENSIONS)
+                .chain([target_path.to_path_buf()]);
 
         let output = ProjectCompiler::new()
             .quiet_if(args.opts.silent)

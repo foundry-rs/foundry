@@ -33,12 +33,12 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-    revm,
     revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
 use rand::thread_rng;
+use revm::primitives::BlobExcessGasAndPrice;
 use serde_json::{json, to_writer, Value};
 use std::{
     collections::HashMap,
@@ -59,12 +59,8 @@ pub const CHAIN_ID: u64 = 31337;
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
 /// The default IPC endpoint
-#[cfg(windows)]
-pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\anvil.ipc";
-
-/// The default IPC endpoint
-#[cfg(not(windows))]
-pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/anvil.ipc";
+pub const DEFAULT_IPC_ENDPOINT: &str =
+    if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
 
 /// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
 pub const VERSION_MESSAGE: &str = concat!(
@@ -98,6 +94,8 @@ pub struct NodeConfig {
     pub gas_price: Option<u128>,
     /// Default base fee
     pub base_fee: Option<u128>,
+    /// Default blob excess gas and price
+    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
     pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
@@ -398,6 +396,7 @@ impl Default for NodeConfig {
             fork_block_number: None,
             account_generator: None,
             base_fee: None,
+            blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
             enable_auto_impersonate: false,
@@ -445,6 +444,17 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_gas_price(&self) -> u128 {
         self.gas_price.unwrap_or(INITIAL_GAS_PRICE)
+    }
+
+    pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
+        if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
+            blob_excess_gas_and_price.clone()
+        } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
+        {
+            BlobExcessGasAndPrice::new(excess_blob_gas as u64)
+        } else {
+            BlobExcessGasAndPrice { blob_gasprice: 0, excess_blob_gas: 0 }
+        }
     }
 
     /// Returns the base fee to use
@@ -787,7 +797,7 @@ impl NodeConfig {
 
     /// Returns the ipc path for the ipc endpoint if any
     pub fn get_ipc_path(&self) -> Option<String> {
-        match self.ipc_path.as_ref() {
+        match &self.ipc_path {
             Some(path) => path.clone().or_else(|| Some(DEFAULT_IPC_ENDPOINT.to_string())),
             None => None,
         }
@@ -876,8 +886,12 @@ impl NodeConfig {
         };
         let mut env = EnvWithHandlerCfg::new(Box::new(env), cfg.handler_cfg);
 
-        let fees =
-            FeeManager::new(cfg.handler_cfg.spec_id, self.get_base_fee(), self.get_gas_price());
+        let fees = FeeManager::new(
+            cfg.handler_cfg.spec_id,
+            self.get_base_fee(),
+            self.get_gas_price(),
+            self.get_blob_excess_gas_and_price(),
+        );
 
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
@@ -1075,6 +1089,17 @@ latest block number: {latest_block}"
                 // update next base fee
                 fees.set_base_fee(next_block_base_fee);
             }
+            if let (Some(blob_excess_gas), Some(blob_gas_used)) =
+                (block.header.excess_blob_gas, block.header.blob_gas_used)
+            {
+                env.block.blob_excess_gas_and_price =
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas as u64));
+                let next_block_blob_excess_gas =
+                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
+                fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                    next_block_blob_excess_gas,
+                ));
+            }
         }
 
         // use remote gas price
@@ -1135,6 +1160,8 @@ latest block number: {latest_block}"
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
+            blob_gas_used: block.header.blob_gas_used,
+            blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
         };
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);

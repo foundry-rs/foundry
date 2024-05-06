@@ -392,7 +392,14 @@ async fn can_call_greeter_historic() {
 
     let block_number = provider.get_block_number().await.unwrap();
 
-    let _ = greeter_contract.setGreeting("Another Message".to_string()).send().await.unwrap();
+    let _receipt = greeter_contract
+        .setGreeting("Another Message".to_string())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Another Message", greeting._0);
@@ -511,7 +518,7 @@ async fn call_past_state() {
     let gas_price = api.gas_price().unwrap().to::<u128>();
     let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
 
-    let _set_tx = set_tx.send().await.unwrap().get_receipt().await.unwrap();
+    let _receipt = set_tx.send().await.unwrap().get_receipt().await.unwrap();
 
     // assert new value
     let value = contract.getValue().call().await.unwrap();
