@@ -19,7 +19,9 @@ use foundry_common::{
     evm::EvmArgs,
     shell,
 };
-use foundry_compilers::{artifacts::output_selection::OutputSelection, utils::source_files_iter};
+use foundry_compilers::{
+    artifacts::output_selection::OutputSelection, utils::source_files_iter, SOLC_EXTENSIONS,
+};
 use foundry_config::{
     figment,
     figment::{
@@ -149,7 +151,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.solc_config.settings.output_selection =
+        project.settings.output_selection =
             OutputSelection::common_output_selection(["abi".to_string()]);
         let output = project.compile()?;
 
@@ -201,7 +203,7 @@ impl TestArgs {
         }
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(project.paths.sources));
+        test_sources.extend(source_files_iter(project.paths.sources, SOLC_EXTENSIONS));
 
         Ok(test_sources)
     }

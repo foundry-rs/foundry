@@ -308,7 +308,7 @@ impl SessionSource {
                         self.config.evm_opts.clone(),
                         None,
                         None,
-                        self.solc.version().ok(),
+                        Some(self.solc.version.clone()),
                     )
                     .into(),
                 )
@@ -1401,7 +1401,12 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{error::SolcError, Solc};
+    use foundry_compilers::{
+        compilers::{solc::SolcVersionManager, CompilerVersionManager},
+        error::SolcError,
+        Solc,
+    };
+    use semver::Version;
     use std::sync::Mutex;
 
     #[test]
@@ -1685,10 +1690,11 @@ mod tests {
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
-                let solc = Solc::find_or_install_svm_version(version)
-                    .and_then(|solc| solc.version().map(|v| (solc, v)));
+                let solc = SolcVersionManager::default()
+                    .get_or_install(&version.parse().unwrap())
+                    .map(|solc| (solc.version.clone(), solc));
                 match solc {
-                    Ok((solc, v)) => {
+                    Ok((v, solc)) => {
                         // successfully installed
                         eprintln!("found installed Solc v{v} @ {}", solc.solc.display());
                         break
@@ -1697,7 +1703,7 @@ mod tests {
                         // try reinstalling
                         eprintln!("error while trying to re-install Solc v{version}: {e}");
                         let solc = Solc::blocking_install(&version.parse().unwrap());
-                        if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
+                        if solc.map_err(SolcError::from).is_ok() {
                             *is_preinstalled = true;
                             break
                         }
@@ -1706,7 +1712,9 @@ mod tests {
             }
         }
 
-        let solc = Solc::find_or_install_svm_version("0.8.19").expect("could not install solc");
+        let solc = SolcVersionManager::default()
+            .get_or_install(&Version::new(0, 8, 19))
+            .expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
 

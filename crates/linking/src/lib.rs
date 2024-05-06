@@ -232,8 +232,12 @@ mod tests {
                 .build()
                 .unwrap();
 
-            let project =
-                Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
+            let project = Project::builder()
+                .paths(paths)
+                .ephemeral()
+                .no_artifacts()
+                .build(Default::default())
+                .unwrap();
 
             let mut output = project.compile().unwrap();
 

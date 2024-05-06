@@ -797,7 +797,7 @@ async fn test_fork_call() {
     let provider = http_provider(rpc::next_http_archive_rpc_endpoint().as_str());
     let tx = TransactionRequest::default().to(to).with_input(input.clone());
     let tx = WithOtherFields::new(tx);
-    let res0 = provider.call(&tx, BlockId::Number(block_number.into())).await.unwrap();
+    let res0 = provider.call(&tx).block(BlockId::Number(block_number.into())).await.unwrap();
 
     let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 

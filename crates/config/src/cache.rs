@@ -230,7 +230,7 @@ pub struct ChainCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_str_eq;
+    use similar_asserts::assert_eq;
 
     #[test]
     fn can_parse_storage_config() {
@@ -307,6 +307,6 @@ mod tests {
                 - Block Explorer (0.0 B)\n\n\t\
                 - Block 1 (1.0 B)\n\t\
                 - Block 2 (2.0 B)\n";
-        assert_str_eq!(format!("{cache}"), expected);
+        assert_eq!(format!("{cache}"), expected);
     }
 }

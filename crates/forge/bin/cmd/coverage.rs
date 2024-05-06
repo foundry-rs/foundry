@@ -125,13 +125,12 @@ impl CoverageArgs {
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.solc_config.settings =
-                project.solc_config.settings.with_via_ir_minimum_optimization()
+            project.settings = project.settings.with_via_ir_minimum_optimization()
         } else {
-            project.solc_config.settings.optimizer.disable();
-            project.solc_config.settings.optimizer.runs = None;
-            project.solc_config.settings.optimizer.details = None;
-            project.solc_config.settings.via_ir = None;
+            project.settings.optimizer.disable();
+            project.settings.optimizer.runs = None;
+            project.settings.optimizer.details = None;
+            project.settings.via_ir = None;
         }
 
         let output = ProjectCompiler::default()
@@ -186,8 +185,7 @@ impl CoverageArgs {
             .filter_map(|(id, artifact)| {
                 let contract_id = ContractId {
                     version: id.version.clone(),
-                    source_id: *report
-                        .get_source_id(id.version, id.source.to_string_lossy().to_string())?,
+                    source_id: *report.get_source_id(id.version, id.source)?,
                     contract_name: id.name,
                 };
                 let source_maps = (
@@ -348,10 +346,9 @@ impl CoverageArgs {
         });
 
         for (artifact_id, hits, is_deployed_code) in data {
-            if let Some(source_id) = report.get_source_id(
-                artifact_id.version.clone(),
-                artifact_id.source.to_string_lossy().to_string(),
-            ) {
+            if let Some(source_id) =
+                report.get_source_id(artifact_id.version.clone(), artifact_id.source)
+            {
                 let source_id = *source_id;
                 report.add_hit_map(
                     &ContractId {

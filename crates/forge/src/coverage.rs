@@ -7,7 +7,7 @@ pub use foundry_evm::coverage::*;
 use std::{
     collections::{hash_map, HashMap},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 /// A coverage reporter.
@@ -49,7 +49,7 @@ impl CoverageReporter for SummaryReporter {
     fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total += &summary;
-            self.add_row(path, summary);
+            self.add_row(path.display(), summary);
         }
 
         self.add_row("Total", self.total.clone());
@@ -95,7 +95,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
             });
 
             writeln!(self.destination, "TN:")?;
-            writeln!(self.destination, "SF:{file}")?;
+            writeln!(self.destination, "SF:{}", file.display())?;
 
             for item in items {
                 let line = item.loc.line;
@@ -150,7 +150,7 @@ pub struct DebugReporter;
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_source() {
-            println!("Uncovered for {path}:");
+            println!("Uncovered for {}:", path.display());
             items.iter().for_each(|item| {
                 if item.hits == 0 {
                     println!("- {item}");
@@ -235,7 +235,15 @@ impl CoverageReporter for BytecodeReporter {
                     writeln!(
                         formatted,
                         "{} {:40} // {}: {}:{}-{}:{} ({}-{})",
-                        hits, code, source_path, sline, spos, eline, epos, start, end
+                        hits,
+                        code,
+                        source_path.display(),
+                        sline,
+                        spos,
+                        eline,
+                        epos,
+                        start,
+                        end
                     )?;
                 } else if let Some(source_id) = source_id {
                     writeln!(
@@ -260,7 +268,7 @@ impl CoverageReporter for BytecodeReporter {
 /// Cache line number offsets for source files
 struct LineNumberCache {
     root: PathBuf,
-    line_offsets: HashMap<String, Vec<usize>>,
+    line_offsets: HashMap<PathBuf, Vec<usize>>,
 }
 
 impl LineNumberCache {
@@ -268,8 +276,8 @@ impl LineNumberCache {
         LineNumberCache { root, line_offsets: HashMap::new() }
     }
 
-    pub fn get_position(&mut self, path: &str, offset: usize) -> eyre::Result<(usize, usize)> {
-        let line_offsets = match self.line_offsets.entry(path.to_owned()) {
+    pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {
+        let line_offsets = match self.line_offsets.entry(path.to_path_buf()) {
             hash_map::Entry::Occupied(o) => o.into_mut(),
             hash_map::Entry::Vacant(v) => {
                 let text = fs::read_to_string(self.root.join(path))?;

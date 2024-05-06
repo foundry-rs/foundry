@@ -20,9 +20,11 @@ use foundry_compilers::{
         RevertStrings, Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
+    compilers::{solc::SolcVersionManager, CompilerVersionManager},
     error::{SolcError, SolcIoError},
     remappings::{RelativeRemapping, Remapping},
-    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
+    CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
+    SolcConfig,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -35,6 +37,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 // Macros useful for creating a figment.
@@ -683,7 +686,7 @@ impl Config {
     /// Otherwise it returns the configured [EvmVersion].
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
         if let Some(version) = self.solc.as_ref().and_then(|solc| solc.try_version().ok()) {
-            if let Some(evm_version) = self.evm_version.normalize_version(&version) {
+            if let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
                 return evm_version;
             }
         }
@@ -749,21 +752,17 @@ impl Config {
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
-    /// cache, caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
+    /// cache.
     pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
         self.create_project(false, true)
     }
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let mut project = Project::builder()
+        let project = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
-            .allowed_path(&self.__root.0)
-            .allowed_paths(&self.libs)
-            .allowed_paths(&self.allow_paths)
-            .include_paths(&self.include_paths)
-            .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
+            .settings(SolcConfig::builder().settings(self.solc_settings()?).build().settings)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -771,19 +770,14 @@ impl Config {
             } else {
                 Severity::Error
             })
-            .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts)
-            .build()?;
+            .build(self.compiler_config()?)?;
 
         if self.force {
             self.cleanup(&project)?;
-        }
-
-        if let Some(solc) = self.ensure_solc()? {
-            project.solc = solc;
         }
 
         Ok(project)
@@ -812,20 +806,19 @@ impl Config {
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(ref solc) = self.solc {
+            let version_manager = SolcVersionManager::default();
             let solc = match solc {
                 SolcReq::Version(version) => {
-                    let v = version.to_string();
-                    let mut solc = Solc::find_svm_installed_version(&v)?;
-                    if solc.is_none() {
+                    if let Ok(solc) = version_manager.get_installed(version) {
+                        solc
+                    } else {
                         if self.offline {
                             return Err(SolcError::msg(format!(
                                 "can't install missing solc {version} in offline mode"
                             )))
                         }
-                        Solc::blocking_install(version)?;
-                        solc = Solc::find_svm_installed_version(&v)?;
+                        version_manager.install(version)?
                     }
-                    solc
                 }
                 SolcReq::Local(solc) => {
                     if !solc.is_file() {
@@ -834,10 +827,10 @@ impl Config {
                             solc.display()
                         )))
                     }
-                    Some(Solc::new(solc))
+                    Solc::new(solc)?
                 }
             };
-            return Ok(solc)
+            return Ok(Some(solc))
         }
 
         Ok(None)
@@ -890,13 +883,26 @@ impl Config {
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.iter())
-            .remappings(self.get_all_remappings());
+            .remappings(self.get_all_remappings())
+            .allowed_path(&self.__root.0)
+            .allowed_paths(&self.libs)
+            .allowed_paths(&self.allow_paths)
+            .include_paths(&self.include_paths);
 
         if let Some(build_info_path) = &self.build_info_path {
             builder = builder.build_infos(build_info_path);
         }
 
         builder.build_with_root(&self.__root.0)
+    }
+
+    /// Returns configuration for a compiler to use when setting up a [Project].
+    pub fn compiler_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
+        if let Some(solc) = self.ensure_solc()? {
+            Ok(CompilerConfig::Specific(solc))
+        } else {
+            Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
+        }
     }
 
     /// Returns all configured [`Remappings`]
@@ -1271,7 +1277,7 @@ impl Config {
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         // autodetect paths
         let root = root.into();
-        let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),
@@ -1733,7 +1739,7 @@ impl Config {
                 if let Some(version) = solc
                     .try_version()
                     .ok()
-                    .and_then(|version| self.evm_version.normalize_version(&version))
+                    .and_then(|version| self.evm_version.normalize_version_solc(&version))
                 {
                     // normalize evm_version based on the provided solc version
                     self.evm_version = version;
@@ -2098,10 +2104,7 @@ impl SolcReq {
     fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             SolcReq::Version(version) => Ok(version.clone()),
-            SolcReq::Local(path) => Solc::new(path).version().map_err(|err| {
-                warn!("failed to get solc version from {}: {}", path.display(), err);
-                err
-            }),
+            SolcReq::Local(path) => Solc::new(path).map(|solc| solc.version),
         }
     }
 }
@@ -2705,7 +2708,7 @@ mod tests {
     };
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
-    use pretty_assertions::assert_eq;
+    use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
@@ -3754,7 +3757,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
                 "foundry.toml",
@@ -3765,7 +3768,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
                 "foundry.toml",
@@ -3780,7 +3783,7 @@ mod tests {
 
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
             Ok(())
         });
     }
@@ -3799,7 +3802,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             Ok(())
         });
@@ -3814,7 +3817,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.20".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
 
             Ok(())
         });
@@ -4167,7 +4170,7 @@ mod tests {
 
             let libs = config.parsed_libraries().unwrap().libs;
 
-            pretty_assertions::assert_eq!(
+            similar_asserts::assert_eq!(
                 libs,
                 BTreeMap::from([
                     (
