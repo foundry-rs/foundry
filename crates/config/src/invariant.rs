@@ -24,9 +24,6 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// Attempt to shrink the failure case to its smallest sequence of calls
-    /// TODO: remove this setting as it is now redundant with shrink_run_limit = 0
-    pub shrink_sequence: bool,
     /// The maximum number of attempts to shrink the sequence
     pub shrink_run_limit: usize,
     /// If set to true then VM state is committed and available for next call
@@ -48,7 +45,6 @@ impl Default for InvariantConfig {
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
-            shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18_u32),
             preserve_state: false,
             max_assume_rejects: 65536,
@@ -80,7 +76,6 @@ impl InlineConfigParser for InvariantConfig {
                 "depth" => conf_clone.depth = parse_config_u32(key, value)?,
                 "fail-on-revert" => conf_clone.fail_on_revert = parse_config_bool(key, value)?,
                 "call-override" => conf_clone.call_override = parse_config_bool(key, value)?,
-                "shrink-sequence" => conf_clone.shrink_sequence = parse_config_bool(key, value)?,
                 "preserve-state" => conf_clone.preserve_state = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
