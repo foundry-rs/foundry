@@ -6,9 +6,9 @@ use foundry_evm_core::utils::StateChangeset;
 use indexmap::IndexSet;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
-    db::{CacheDB, DatabaseRef},
+    db::{CacheDB, DatabaseRef, DbAccount},
     interpreter::opcode::{self, spec_opcode_gas},
-    primitives::SpecId,
+    primitives::{AccountInfo, SpecId},
 };
 use std::{fmt, sync::Arc};
 
@@ -21,14 +21,17 @@ pub struct EvmFuzzState {
 }
 
 impl EvmFuzzState {
-    pub fn new(dictionary: FuzzDictionary) -> Self {
+    pub fn new(config: FuzzDictionaryConfig, db_state: Vec<(&Address, &DbAccount)>) -> Self {
+        // Create fuzz dictionary and insert values from db state.
+        let mut dictionary = FuzzDictionary::new(config);
+        dictionary.insert_db_values(db_state);
         Self { inner: Arc::new(RwLock::new(dictionary)) }
     }
 
     pub fn collect_values(&self, values: impl IntoIterator<Item = [u8; 32]>) {
         let mut dict = self.inner.write();
         for value in values {
-            dict.insert_value(value);
+            dict.insert_value(value, true);
         }
     }
 
@@ -36,54 +39,8 @@ impl EvmFuzzState {
     /// the given [FuzzDictionaryConfig].
     pub fn collect_state_from_call(&self, logs: &[Log], state_changeset: &StateChangeset) {
         let mut dict = self.inner.write();
-
-        // Insert log topics and data.
-        for log in logs {
-            for topic in log.topics() {
-                dict.insert_value(topic.0);
-            }
-            let chunks = log.data.data.chunks_exact(32);
-            let rem = chunks.remainder();
-            for chunk in chunks {
-                dict.insert_value(chunk.try_into().unwrap());
-            }
-            if !rem.is_empty() {
-                dict.insert_value(B256::right_padding_from(rem).0);
-            }
-        }
-
-        for (address, account) in state_changeset {
-            // Insert basic account information
-            dict.insert_value(address.into_word().into());
-
-            if dict.config.include_push_bytes {
-                // Insert push bytes
-                if let Some(code) = &account.info.code {
-                    dict.insert_address(*address);
-                    for push_byte in collect_push_bytes(code.bytes()) {
-                        dict.insert_value(push_byte);
-                    }
-                }
-            }
-
-            if dict.config.include_storage {
-                // Insert storage
-                for (slot, value) in &account.storage {
-                    let value = value.present_value;
-                    dict.insert_value(B256::from(*slot).0);
-                    dict.insert_value(B256::from(value).0);
-                    // also add the value below and above the storage value to the dictionary.
-                    if value != U256::ZERO {
-                        let below_value = value - U256::from(1);
-                        dict.insert_value(B256::from(below_value).0);
-                    }
-                    if value != U256::MAX {
-                        let above_value = value + U256::from(1);
-                        dict.insert_value(B256::from(above_value).0);
-                    }
-                }
-            }
-        }
+        dict.insert_logs_values(logs);
+        dict.insert_state_values(state_changeset);
     }
 
     /// Removes all newly added entries from the dictionary.
@@ -101,6 +58,7 @@ impl EvmFuzzState {
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
+#[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: IndexSet<[u8; 32]>,
@@ -124,33 +82,123 @@ impl fmt::Debug for FuzzDictionary {
 }
 
 impl FuzzDictionary {
-    pub fn new(
-        initial_values: IndexSet<[u8; 32]>,
-        initial_addresses: IndexSet<Address>,
-        config: FuzzDictionaryConfig,
-    ) -> Self {
-        Self {
-            state_values: initial_values,
-            addresses: initial_addresses,
-            config,
-            new_values: IndexSet::new(),
-            new_addreses: IndexSet::new(),
+    pub fn new(config: FuzzDictionaryConfig) -> Self {
+        Self { config, ..Default::default() }
+    }
+
+    /// Insert values from initial db state into fuzz dictionary.
+    /// These values are persisted across invariant runs.
+    fn insert_db_values(&mut self, db_state: Vec<(&Address, &DbAccount)>) {
+        for (address, account) in db_state {
+            // Insert basic account information
+            self.insert_value(address.into_word().into(), false);
+            // Insert push bytes
+            self.insert_push_bytes_values(address, &account.info, false);
+            // Insert storage values.
+            if self.config.include_storage {
+                for (slot, value) in &account.storage {
+                    self.insert_storage_value(slot, value, false);
+                }
+            }
+        }
+
+        // need at least some state data if db is empty otherwise we can't select random data for
+        // state fuzzing
+        if self.values().is_empty() {
+            // prefill with a random addresses
+            self.insert_value(Address::random().into_word().into(), false);
         }
     }
 
-    pub fn insert_value(&mut self, value: [u8; 32]) {
-        if self.state_values.len() < self.config.max_fuzz_dictionary_values &&
-            self.state_values.insert(value)
-        {
-            self.new_values.insert(value);
+    /// Insert values from call state changeset into fuzz dictionary.
+    /// These values are removed at the end of current run.
+    fn insert_state_values(&mut self, state_changeset: &StateChangeset) {
+        for (address, account) in state_changeset {
+            // Insert basic account information.
+            self.insert_value(address.into_word().into(), true);
+            // Insert push bytes.
+            self.insert_push_bytes_values(address, &account.info, true);
+            // Insert storage values.
+            if self.config.include_storage {
+                for (slot, value) in &account.storage {
+                    self.insert_storage_value(slot, &value.present_value, true);
+                }
+            }
         }
     }
 
-    pub fn insert_address(&mut self, address: Address) {
+    /// Insert values from call log topics and data into fuzz dictionary.
+    /// These values are removed at the end of current run.
+    fn insert_logs_values(&mut self, logs: &[Log]) {
+        for log in logs {
+            for topic in log.topics() {
+                self.insert_value(topic.0, true);
+            }
+            let chunks = log.data.data.chunks_exact(32);
+            let rem = chunks.remainder();
+            for chunk in chunks {
+                self.insert_value(chunk.try_into().unwrap(), true);
+            }
+            if !rem.is_empty() {
+                self.insert_value(B256::right_padding_from(rem).0, true);
+            }
+        }
+    }
+
+    /// Insert values from push bytes into fuzz dictionary.
+    /// If values are newly collected then they are removed at the end of current run.
+    fn insert_push_bytes_values(
+        &mut self,
+        address: &Address,
+        account_info: &AccountInfo,
+        collected: bool,
+    ) {
+        if self.config.include_push_bytes {
+            // Insert push bytes
+            if let Some(code) = account_info.code.clone() {
+                self.insert_address(*address, collected);
+                for push_byte in collect_push_bytes(code.bytes()) {
+                    self.insert_value(push_byte, collected);
+                }
+            }
+        }
+    }
+
+    /// Insert values from single storage slot and storage value into fuzz dictionary.
+    /// If storage values are newly collected then they are removed at the end of current run.
+    fn insert_storage_value(&mut self, storage_slot: &U256, storage_value: &U256, collected: bool) {
+        self.insert_value(B256::from(*storage_slot).0, collected);
+        self.insert_value(B256::from(*storage_value).0, collected);
+        // also add the value below and above the storage value to the dictionary.
+        if *storage_value != U256::ZERO {
+            let below_value = storage_value - U256::from(1);
+            self.insert_value(B256::from(below_value).0, collected);
+        }
+        if *storage_value != U256::MAX {
+            let above_value = storage_value + U256::from(1);
+            self.insert_value(B256::from(above_value).0, collected);
+        }
+    }
+
+    /// Insert address into fuzz dictionary.
+    /// If address is newly collected then it is removed at the end of current run.
+    fn insert_address(&mut self, address: Address, collected: bool) {
         if self.addresses.len() < self.config.max_fuzz_dictionary_addresses &&
-            self.addresses.insert(address)
+            self.addresses.insert(address) &&
+            collected
         {
             self.new_addreses.insert(address);
+        }
+    }
+
+    /// Insert raw value into fuzz dictionary.
+    /// If value is newly collected then it is removed at the end of current run.
+    fn insert_value(&mut self, value: [u8; 32], collected: bool) {
+        if self.state_values.len() < self.config.max_fuzz_dictionary_values &&
+            self.state_values.insert(value) &&
+            collected
+        {
+            self.new_values.insert(value);
         }
     }
 
@@ -182,54 +230,12 @@ pub fn build_initial_state<DB: DatabaseRef>(
     db: &CacheDB<DB>,
     config: FuzzDictionaryConfig,
 ) -> EvmFuzzState {
-    let mut values = IndexSet::new();
-    let mut addresses = IndexSet::new();
-
     // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
     let mut accs = db.accounts.iter().collect::<Vec<_>>();
     accs.sort_by_key(|(address, _)| *address);
 
-    for (address, account) in accs {
-        let address: Address = *address;
-        // Insert basic account information
-        values.insert(address.into_word().into());
-
-        // Insert push bytes
-        if config.include_push_bytes {
-            if let Some(code) = &account.info.code {
-                addresses.insert(address);
-                for push_byte in collect_push_bytes(code.bytes()) {
-                    values.insert(push_byte);
-                }
-            }
-        }
-
-        if config.include_storage {
-            // Insert storage
-            for (slot, value) in &account.storage {
-                values.insert(B256::from(*slot).0);
-                values.insert(B256::from(*value).0);
-                // also add the value below and above the storage value to the dictionary.
-                if *value != U256::ZERO {
-                    let below_value = value - U256::from(1);
-                    values.insert(B256::from(below_value).0);
-                }
-                if *value != U256::MAX {
-                    let above_value = value + U256::from(1);
-                    values.insert(B256::from(above_value).0);
-                }
-            }
-        }
-    }
-
-    // need at least some state data if db is empty otherwise we can't select random data for state
-    // fuzzing
-    if values.is_empty() {
-        // prefill with a random addresses
-        values.insert(Address::random().into_word().into());
-    }
-
-    EvmFuzzState::new(FuzzDictionary::new(values, addresses, config))
+    // Create fuzz state with configured options and values from db.
+    EvmFuzzState::new(config, accs)
 }
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
