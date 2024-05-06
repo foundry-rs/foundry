@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
-use alloy_provider::{txpool::TxPoolApi, Provider};
+use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, WithOtherFields};
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
