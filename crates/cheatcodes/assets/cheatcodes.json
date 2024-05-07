@@ -3673,6 +3673,26 @@
     },
     {
       "func": {
+        "id": "ensNamehash",
+        "description": "Returns ENS namehash for provided string.",
+        "declaration": "function ensNamehash(string calldata name) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ensNamehash(string)",
+        "selector": "0x8c374c65",
+        "selectorBytes": [
+          140,
+          55,
+          76,
+          101
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "envAddress_0",
         "description": "Gets the environment variable `name` and parses it as `address`.\nReverts if the variable was not found or could not be parsed.",
         "declaration": "function envAddress(string calldata name) external view returns (address value);",
@@ -5370,26 +5390,6 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "namehash",
-        "description": "Returns ENS namehash for provided string.",
-        "declaration": "function namehash(string calldata name) external pure returns (bytes32);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "namehash(string)",
-        "selector": "0x09879962",
-        "selectorBytes": [
-          9,
-          135,
-          153,
-          98
-        ]
-      },
-      "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
     },
     {
       "func": {
