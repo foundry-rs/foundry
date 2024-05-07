@@ -2135,6 +2135,10 @@ interface Vm {
     /// Encodes a `string` value to a base64url string.
     #[cheatcode(group = Utilities)]
     function toBase64URL(string calldata data) external pure returns (string memory);
+
+    /// Returns ENS namehash for provided string.
+    #[cheatcode(group = Utilities)]
+    function namehash(string calldata name) external pure returns (bytes32);
 }
 }
 
