@@ -1753,7 +1753,6 @@ dependencies = [
  "const-hex",
  "criterion",
  "dunce",
- "ethers-contract-abigen",
  "evm-disassembler",
  "evmole",
  "eyre",
