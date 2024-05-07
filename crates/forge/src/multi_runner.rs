@@ -147,6 +147,7 @@ impl MultiContractRunner {
     ///
     /// Each Executor gets its own instance of the `Backend`.
     pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
+        let handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
         // The DB backend that serves all the data.
@@ -163,7 +164,8 @@ impl MultiContractRunner {
         );
 
         contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
-            let result = self.run_tests(id, contract, db.clone(), filter);
+            let _guard = handle.enter();
+            let result = self.run_tests(id, contract, db.clone(), filter, &handle);
             let _ = tx.send((id.identifier(), result));
         })
     }
@@ -174,6 +176,7 @@ impl MultiContractRunner {
         contract: &TestContract,
         db: Backend,
         filter: &dyn TestFilter,
+        handle: &tokio::runtime::Handle,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -220,7 +223,7 @@ impl MultiContractRunner {
             &self.revert_decoder,
             self.debug,
         );
-        let r = runner.run_tests(filter, &self.test_options, known_contracts);
+        let r = runner.run_tests(filter, &self.test_options, known_contracts, handle);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 

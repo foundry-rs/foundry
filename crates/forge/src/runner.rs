@@ -254,6 +254,7 @@ impl<'a> ContractRunner<'a> {
         filter: &dyn TestFilter,
         test_options: &TestOptions,
         known_contracts: Arc<ContractsByArtifact>,
+        handle: &tokio::runtime::Handle,
     ) -> SuiteResult {
         info!("starting tests");
         let start = Instant::now();
@@ -346,6 +347,8 @@ impl<'a> ContractRunner<'a> {
         let test_results = functions
             .par_iter()
             .map(|&func| {
+                let _guard = handle.enter();
+
                 let sig = func.signature();
 
                 let setup = setup.clone();

@@ -60,7 +60,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 # async
-tokio = { version = "1", features = ["time"] }
+tokio = { workspace = true, features = ["time"] }
 parking_lot = "0.12"
 futures = "0.3"
 async-trait = "0.1"
@@ -99,7 +99,7 @@ alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 similar-asserts.workspace = true
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = ["cli"]

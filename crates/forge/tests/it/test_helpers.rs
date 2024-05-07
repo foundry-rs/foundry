@@ -105,7 +105,6 @@ impl ForgeTestProfile {
                     max_fuzz_dictionary_values: 10_000,
                 },
                 shrink_run_limit: 2usize.pow(18u32),
-                preserve_state: false,
                 max_assume_rejects: 65536,
                 gas_report_samples: 256,
             })

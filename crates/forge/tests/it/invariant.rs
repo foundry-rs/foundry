@@ -418,20 +418,7 @@ async fn test_shrink_fail_on_revert() {
 async fn test_invariant_preserve_state() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    // Should not fail with default options.
     runner.test_options.invariant.fail_on_revert = true;
-    let results = runner.test_collect(&filter);
-    assert_multiple(
-        &results,
-        BTreeMap::from([(
-            "default/fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
-            vec![("invariant_preserve_state()", true, None, None, None)],
-        )]),
-    );
-
-    // same test should revert when preserve state enabled
-    runner.test_options.invariant.fail_on_revert = true;
-    runner.test_options.invariant.preserve_state = true;
     let results = runner.test_collect(&filter);
     assert_multiple(
         &results,

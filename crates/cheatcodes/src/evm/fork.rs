@@ -3,9 +3,7 @@ use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
-use eyre::WrapErr;
 use foundry_common::provider::ProviderBuilder;
-use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
 
 impl Cheatcode for activeForkCall {
@@ -227,11 +225,10 @@ impl Cheatcode for rpcCall {
         let url =
             ccx.ecx.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
-        let method: &'static str = Box::new(method.clone()).leak();
         let params_json: serde_json::Value = serde_json::from_str(params)?;
-        let result = RuntimeOrHandle::new()
-            .block_on(provider.raw_request(method.into(), params_json))
-            .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+        let result =
+            foundry_common::block_on(provider.raw_request(method.clone().into(), params_json))
+                .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
         let result_as_tokens = crate::json::json_value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
@@ -256,24 +253,12 @@ impl Cheatcode for eth_getLogsCall {
             ccx.ecx.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
-        for (i, topic) in topics.iter().enumerate() {
-            // todo: needed because rust wants to convert FixedBytes<32> to U256 to convert it back
-            // to FixedBytes<32> and then to Topic for some reason removing the
-            // From<U256> impl in alloy does not fix the situation, and it is not possible to impl
-            // From<FixedBytes<32>> either because of a conflicting impl
-            match i {
-                0 => filter = filter.event_signature(*topic),
-                1 => filter = filter.topic1(*topic),
-                2 => filter = filter.topic2(*topic),
-                3 => filter = filter.topic3(*topic),
-                _ => unreachable!(),
-            };
+        for (i, &topic) in topics.iter().enumerate() {
+            filter.topics[i] = topic.into();
         }
 
-        // todo: handle the errors somehow
-        let logs = RuntimeOrHandle::new()
-            .block_on(provider.get_logs(&filter))
-            .wrap_err("failed to get logs")?;
+        let logs = foundry_common::block_on(provider.get_logs(&filter))
+            .map_err(|e| fmt_err!("failed to get logs: {e}"))?;
 
         let eth_logs = logs
             .into_iter()

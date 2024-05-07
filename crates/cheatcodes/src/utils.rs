@@ -11,7 +11,7 @@ use alloy_signer_wallet::{
     LocalWallet, MnemonicBuilder,
 };
 use alloy_sol_types::SolValue;
-use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, utils::RuntimeOrHandle};
+use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, Curve},
@@ -202,9 +202,8 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
         .get(&signer)
         .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
 
-    let sig = RuntimeOrHandle::new()
-        .block_on(wallet.sign_hash(digest))
-        .map_err(|err| fmt_err!("{err}"))?;
+    let sig =
+        foundry_common::block_on(wallet.sign_hash(digest)).map_err(|err| fmt_err!("{err}"))?;
 
     let recovered = sig.recover_address_from_prehash(digest).map_err(|err| fmt_err!("{err}"))?;
     assert_eq!(recovered, signer);
