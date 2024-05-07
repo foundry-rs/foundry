@@ -5373,6 +5373,26 @@
     },
     {
       "func": {
+        "id": "namehash",
+        "description": "Returns ENS namehash for provided string.",
+        "declaration": "function namehash(string calldata name) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "namehash(string)",
+        "selector": "0x09879962",
+        "selectorBytes": [
+          9,
+          135,
+          153,
+          98
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseAddress",
         "description": "Parses the given `string` into an `address`.",
         "declaration": "function parseAddress(string calldata stringifiedValue) external pure returns (address parsedValue);",
