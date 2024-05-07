@@ -47,7 +47,7 @@ pub struct TransactionOpts {
     pub legacy: bool,
 
     /// Send a EIP-4844 blob transaction.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "legacy")]
     pub blob: bool,
 
     /// Gas price for EIP-4844 blob transaction.
