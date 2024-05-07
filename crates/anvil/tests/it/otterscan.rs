@@ -9,7 +9,7 @@ use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
     },
-    spawn, NodeConfig,
+    spawn, Hardfork, NodeConfig,
 };
 use std::collections::VecDeque;
 
@@ -123,31 +123,53 @@ async fn ots_get_internal_operations_contract_create2() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ots_get_internal_operations_contract_selfdestruct() {
+async fn ots_get_internal_operations_contract_selfdestruct_london() {
+    ots_get_internal_operations_contract_selfdestruct(Hardfork::London).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ots_get_internal_operations_contract_selfdestruct_cancun() {
+    ots_get_internal_operations_contract_selfdestruct(Hardfork::Cancun).await;
+}
+
+async fn ots_get_internal_operations_contract_selfdestruct(hardfork: Hardfork) {
     sol!(
-        #[sol(rpc, bytecode = "60808060405234601357607c908160188239f35b5f80fdfe6004361015600b575f80fd5b5f3560e01c6375fc8e3c14601d575f80fd5b346042575f36600319011260425773dcdd539da22bffaa499dbea4d37d086dde196e75ff5b5f80fdfea26469706673582212201778e88721238015f480b3a901848b460799e91836caf557a8dcfdb2a1a2469e64736f6c63430008190033")]
+        #[sol(rpc, bytecode = "608080604052607f908160108239f3fe6004361015600c57600080fd5b6000803560e01c6375fc8e3c14602157600080fd5b346046578060031936011260465773dcdd539da22bffaa499dbea4d37d086dde196e75ff5b80fdfea264697066735822122080a9ad005cc408b2d4e30ca11216d8e310700fbcdf58a629d6edbb91531f9c6164736f6c63430008190033")]
         contract Contract {
+            constructor() payable {}
             function goodbye() public {
                 selfdestruct(payable(0xDcDD539DA22bfFAa499dBEa4d37d086Dde196E75));
             }
         }
     );
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork))).await;
     let provider = handle.http_provider();
 
-    let contract = Contract::deploy(&provider).await.unwrap();
+    let sender = handle.dev_accounts().next().unwrap();
+    let value = U256::from(69);
+
+    let contract_address =
+        Contract::deploy_builder(&provider).from(sender).value(value).deploy().await.unwrap();
+    let contract = Contract::new(contract_address, &provider);
 
     let receipt = contract.goodbye().send().await.unwrap().get_receipt().await.unwrap();
+
+    // TODO: This is currently not supported by revm-inspectors
+    let (expected_to, expected_value) = if hardfork < Hardfork::Cancun {
+        (address!("DcDD539DA22bfFAa499dBEa4d37d086Dde196E75"), value)
+    } else {
+        (Address::ZERO, U256::ZERO)
+    };
 
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
         res,
         [OtsInternalOperation {
             r#type: OtsInternalOperationType::SelfDestruct,
-            from: *contract.address(),
-            to: Address::ZERO,
-            value: U256::from(0),
+            from: contract_address,
+            to: expected_to,
+            value: expected_value,
         }],
     );
 }
@@ -227,6 +249,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::from(1337),
             input: Contract::runCall::SELECTOR.into(),
+            output: None,
         },
         OtsTrace {
             r#type: OtsTraceType::StaticCall,
@@ -235,6 +258,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_staticcallCall::SELECTOR.into(),
+            output: None,
         },
         OtsTrace {
             r#type: OtsTraceType::Call,
@@ -243,6 +267,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_callCall::SELECTOR.into(),
+            output: None,
         },
         OtsTrace {
             r#type: OtsTraceType::Call,
@@ -251,6 +276,7 @@ async fn test_call_ots_trace_transaction() {
             to: sender,
             value: U256::from(1337),
             input: Bytes::new(),
+            output: None,
         },
         OtsTrace {
             r#type: OtsTraceType::DelegateCall,
@@ -259,6 +285,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_delegatecallCall::SELECTOR.into(),
+            output: None,
         },
     ];
     assert_eq!(res, expected);
