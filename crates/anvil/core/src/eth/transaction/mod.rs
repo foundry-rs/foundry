@@ -611,7 +611,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.tx().gas_price,
             TypedTransaction::EIP2930(tx) => tx.tx().gas_price,
             TypedTransaction::EIP1559(tx) => tx.tx().max_fee_per_gas,
-            TypedTransaction::EIP4844(tx) => tx.tx().tx().max_fee_per_blob_gas,
+            TypedTransaction::EIP4844(tx) => tx.tx().tx().max_fee_per_gas,
             TypedTransaction::Deposit(_) => 0,
         }
     }
