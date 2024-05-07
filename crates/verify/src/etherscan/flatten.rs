@@ -77,7 +77,7 @@ impl EtherscanFlattenedSource {
             settings: Default::default(),
         };
 
-        let (_, out) = Compiler::compile(&solc, input)?;
+        let out = Compiler::compile(&solc, &input)?;
         if out.errors.iter().any(|e| e.is_error()) {
             let mut o = AggregatedCompilerOutput::default();
             o.extend(version, out);

@@ -19,7 +19,6 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::DatabaseError,
-    inspectors::{TracingInspector, TracingInspectorConfig},
     revm::{
         interpreter::InstructionResult,
         primitives::{
@@ -191,11 +190,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 contract_address,
                 traces,
                 exit,
-                out: match out {
-                    Some(Output::Call(b)) => Some(alloy_primitives::Bytes(b.0)),
-                    Some(Output::Create(b, _)) => Some(alloy_primitives::Bytes(b.0)),
-                    _ => None,
-                },
+                out: out.map(Output::into_data),
                 nonce: tx.nonce,
                 gas_used: tx.gas_used,
             };
@@ -308,7 +303,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let exec_result = {
             let mut evm =
                 foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
-            if let Some(ref factory) = self.precompile_factory {
+            if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
 
@@ -333,9 +328,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
                         }
                         // This will correspond to prevrandao not set, and it should never happen.
                         // If it does, it's a bug.
-                        e => {
-                            panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
-                        }
+                        e => panic!("failed to execute transaction: {e}"),
                     }
                 }
             }
@@ -375,12 +368,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             out,
             gas_used: gas_used as u128,
             logs: logs.unwrap_or_default(),
-            traces: inspector
-                .tracer
-                .unwrap_or(TracingInspector::new(TracingInspectorConfig::all()))
-                .get_traces()
-                .clone()
-                .into_nodes(),
+            traces: inspector.tracer.map(|t| t.into_traces().into_nodes()).unwrap_or_default(),
             nonce,
         };
 

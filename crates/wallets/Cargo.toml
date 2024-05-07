@@ -39,7 +39,7 @@ thiserror = "1"
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros"] }
+tokio = { workspace = true, features = ["macros"] }
 
 [features]
 default = ["rustls"]

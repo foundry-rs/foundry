@@ -6,7 +6,6 @@ use foundry_block_explorers::{
 };
 use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
-use foundry_evm_core::utils::RuntimeOrHandle;
 use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
@@ -129,7 +128,7 @@ impl TraceIdentifier for EtherscanIdentifier {
             }
         }
 
-        let fetched_identities = RuntimeOrHandle::new().block_on(
+        let fetched_identities = foundry_common::block_on(
             fetcher
                 .map(|(address, metadata)| {
                     let label = metadata.contract_name.clone();

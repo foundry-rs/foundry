@@ -71,7 +71,7 @@ regex = { version = "1", default-features = false }
 rpassword = "7"
 semver = "1"
 tempfile.workspace = true
-tokio = { version = "1", features = ["macros", "signal"] }
+tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole = "0.3.1"

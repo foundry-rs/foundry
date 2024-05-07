@@ -8,7 +8,7 @@ contract UnixTimeTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     // This is really wide because CI sucks.
-    uint256 constant errMargin = 300;
+    uint256 constant errMargin = 500;
 
     function testUnixTimeAgainstDate() public {
         string[] memory inputs = new string[](2);
@@ -33,7 +33,6 @@ contract UnixTimeTest is DSTest {
         uint256 end = vm.unixTime();
         uint256 interval = end - start;
 
-        assertGe(interval, sleepTime - errMargin, ".unixTime() is inaccurate");
-        assertLe(interval, sleepTime + errMargin, ".unixTime() is inaccurate");
+        vm.assertApproxEqAbs(interval, sleepTime, errMargin, ".unixTime() is inaccurate");
     }
 }

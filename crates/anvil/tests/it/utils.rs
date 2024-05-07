@@ -25,6 +25,7 @@ pub fn ws_provider_with_signer(
         .expect("failed to build Alloy WS provider with signer")
 }
 
+/// Currently required to get around <https://github.com/alloy-rs/alloy/issues/296>
 pub async fn connect_pubsub(conn_str: &str) -> RootProvider<BoxTransport> {
     alloy_provider::ProviderBuilder::new().on_builtin(conn_str).await.unwrap()
 }
