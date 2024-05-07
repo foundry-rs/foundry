@@ -2138,7 +2138,7 @@ interface Vm {
 
     /// Returns ENS namehash for provided string.
     #[cheatcode(group = Utilities)]
-    function namehash(string calldata name) external pure returns (bytes32);
+    function ensNamehash(string calldata name) external pure returns (bytes32);
 }
 }
 

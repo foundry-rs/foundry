@@ -138,7 +138,7 @@ impl Cheatcode for computeCreate2Address_1Call {
     }
 }
 
-impl Cheatcode for namehashCall {
+impl Cheatcode for ensNamehashCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         Ok(namehash(name).abi_encode())
