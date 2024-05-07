@@ -144,10 +144,6 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!("Invariant test function should have no inputs"))
         }
 
-        if !self.config.shrink_sequence {
-            error!(target: "forge::test", "shrink_sequence config is deprecated and will be removed, use shrink_run_limit = 0")
-        }
-
         let (fuzz_state, targeted_contracts, strat) =
             self.prepare_fuzzing(&invariant_contract, fuzz_fixtures)?;
 

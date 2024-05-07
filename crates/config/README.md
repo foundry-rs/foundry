@@ -195,7 +195,6 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
-shrink_sequence = true
 
 [fmt]
 line_length = 100
