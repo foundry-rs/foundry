@@ -61,7 +61,7 @@ pub struct SendTxArgs {
     eth: EthereumOpts,
 
     /// The path of blob data to be sent.
-    #[arg(long, value_name = "BLOB_DATA_PATH", requires = "blob")]
+    #[arg(long, value_name = "BLOB_DATA_PATH", conflicts_with = "legacy", requires = "blob")]
     path: Option<PathBuf>,
 }
 
@@ -97,14 +97,6 @@ impl SendTxArgs {
             unlocked,
             path,
         } = self;
-
-        if tx.legacy && tx.blob {
-            eyre::bail!("Cannot send a legacy transaction with a blob");
-        }
-
-        if tx.blob && path.is_none() {
-            eyre::bail!("Must specify a path to blob data");
-        }
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
