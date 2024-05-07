@@ -11,6 +11,7 @@ use alloy_signer_wallet::{
     LocalWallet, MnemonicBuilder,
 };
 use alloy_sol_types::SolValue;
+use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use k256::{
     ecdsa::SigningKey,
@@ -134,6 +135,13 @@ impl Cheatcode for computeCreate2Address_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { salt, initCodeHash } = self;
         Ok(DEFAULT_CREATE2_DEPLOYER.create2(salt, initCodeHash).abi_encode())
+    }
+}
+
+impl Cheatcode for ensNamehashCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { name } = self;
+        Ok(namehash(name).abi_encode())
     }
 }
 
