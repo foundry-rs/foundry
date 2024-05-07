@@ -526,13 +526,13 @@ fn prompt(
 ) -> Result<String> {
     let text_clone = prompt_text.to_string();
     let timeout = state.config.prompt_timeout;
-    let (send, recv) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
-        send.send(input(&text_clone)).unwrap();
+        let _ = tx.send(input(&text_clone));
     });
 
-    match recv.recv_timeout(timeout) {
+    match rx.recv_timeout(timeout) {
         Ok(res) => res.map_err(|err| {
             println!();
             err.to_string().into()
