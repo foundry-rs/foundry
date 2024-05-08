@@ -133,9 +133,11 @@ pub async fn build_tx<
 
     req.set_input::<Bytes>(data.into());
 
-    req.set_gas_limit(
-        tx.gas_limit.map_or(provider.estimate_gas(&req, BlockId::latest()).await?, |g| g.to()),
-    );
+    req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
+        gas_limit.to()
+    } else {
+        provider.estimate_gas(&req, BlockId::latest()).await?
+    });
 
     Ok((req, func))
 }
