@@ -787,13 +787,20 @@ impl Config {
     pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
         project.cleanup()?;
 
-        // Remove fuzz cache directory.
-        if let Some(fuzz_cache) = &self.fuzz.failure_persist_dir {
-            let path = project.root().join(fuzz_cache);
-            if path.exists() {
-                std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
-            }
+        macro_rules! remove_test_cache {
+            ($cache_dir:expr) => {
+                if let Some(test_cache) = $cache_dir {
+                    let path = project.root().join(test_cache);
+                    if path.exists() {
+                        std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
+                    }
+                }
+            };
         }
+        // Remove fuzz cache directory.
+        remove_test_cache!(&self.fuzz.failure_persist_dir);
+        // Remove invariant cache directory.
+        remove_test_cache!(&self.invariant.failure_persist_dir);
 
         Ok(())
     }
@@ -1952,7 +1959,7 @@ impl Default for Config {
             path_pattern: None,
             path_pattern_inverse: None,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
-            invariant: Default::default(),
+            invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
             prompt_timeout: 120,

@@ -175,15 +175,10 @@ impl FuzzedExecutor {
                 } else {
                     vec![]
                 };
-                result.counterexample = Some(CounterExample::Single(BaseCounterExample {
-                    sender: None,
-                    addr: None,
-                    signature: None,
-                    contract_name: None,
-                    traces: call.traces,
-                    calldata,
-                    args,
-                }));
+
+                result.counterexample = Some(CounterExample::Single(
+                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                ));
             }
             _ => {}
         }

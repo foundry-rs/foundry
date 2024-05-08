@@ -8,9 +8,10 @@ use crate::{
     },
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Contains for invariant testing
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
@@ -31,6 +32,8 @@ pub struct InvariantConfig {
     pub max_assume_rejects: u32,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// Path where invariant failures are recorded and replayed.
+    pub failure_persist_dir: Option<PathBuf>,
 }
 
 impl Default for InvariantConfig {
@@ -44,7 +47,40 @@ impl Default for InvariantConfig {
             shrink_run_limit: 2usize.pow(18_u32),
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            failure_persist_dir: None,
         }
+    }
+}
+
+impl InvariantConfig {
+    /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
+    pub fn new(cache_dir: PathBuf) -> Self {
+        InvariantConfig {
+            runs: 256,
+            depth: 15,
+            fail_on_revert: false,
+            call_override: false,
+            dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
+            shrink_run_limit: 2usize.pow(18_u32),
+            max_assume_rejects: 65536,
+            gas_report_samples: 256,
+            failure_persist_dir: Some(cache_dir),
+        }
+    }
+
+    /// Returns path to failure dir of given invariant test contract.
+    pub fn failure_dir(self, contract_name: &str) -> PathBuf {
+        self.failure_persist_dir
+            .unwrap()
+            .join("failures")
+            .join(contract_name.split(':').last().unwrap())
+    }
+
+    /// Returns path to persisted failure of current invariant test (if any).
+    /// The path to failure file is `{failure_dir}/{test_contract_name}/{invariant_name}`,
+    /// for example: `cache/invariant/failures/InvariantTest/invariant_check`
+    pub fn failure_file(self, contract_name: &str, test_name: String) -> PathBuf {
+        self.failure_dir(contract_name).join(test_name)
     }
 }
 
@@ -60,8 +96,7 @@ impl InlineConfigParser for InvariantConfig {
             return Ok(None)
         }
 
-        // self is Copy. We clone it with dereference.
-        let mut conf_clone = *self;
+        let mut conf_clone = self.clone();
 
         for pair in overrides {
             let key = pair.0;
@@ -71,6 +106,9 @@ impl InlineConfigParser for InvariantConfig {
                 "depth" => conf_clone.depth = parse_config_u32(key, value)?,
                 "fail-on-revert" => conf_clone.fail_on_revert = parse_config_bool(key, value)?,
                 "call-override" => conf_clone.call_override = parse_config_bool(key, value)?,
+                "failure-persist-dir" => {
+                    conf_clone.failure_persist_dir = Some(PathBuf::from(value))
+                }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

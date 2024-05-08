@@ -72,7 +72,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()
         },
-        invariant: InvariantConfig { runs: 256, ..Default::default() },
+        invariant: InvariantConfig {
+            runs: 256,
+            failure_persist_dir: Some("test-cache/fuzz".into()),
+            ..Default::default()
+        },
         ffi: true,
         always_use_create_2_factory: false,
         prompt_timeout: 0,

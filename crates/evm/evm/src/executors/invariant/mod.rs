@@ -40,6 +40,7 @@ mod result;
 pub use result::InvariantFuzzTestResult;
 
 mod shrink;
+pub use shrink::check_sequence;
 
 sol! {
     interface IInvariantTest {
