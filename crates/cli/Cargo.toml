@@ -33,7 +33,8 @@ eyre.workspace = true
 indicatif = "0.17"
 once_cell = "1"
 regex = { version = "1", default-features = false }
-serde.workspace = true
+serde.workspace=true
+serde_json.workspace=true
 strsim = "0.10"
 strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
