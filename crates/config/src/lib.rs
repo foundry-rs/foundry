@@ -4461,7 +4461,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.invariant,
-                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
+                InvariantConfig {
+                    runs: 512,
+                    depth: 10,
+                    failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    ..Default::default()
+                }
             );
 
             Ok(())
