@@ -695,9 +695,9 @@ async fn can_get_pending_transaction() {
     assert!(pending.is_ok());
 
     api.mine_one().await;
-    let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap();
+    let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap().unwrap();
 
-    assert_eq!(mined.hash, pending.unwrap().hash);
+    assert_eq!(mined.hash, pending.unwrap().unwrap().hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -184,7 +184,10 @@ impl VerifyBytecodeArgs {
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .ok_or_else(|| {
+                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            })?;
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
@@ -262,7 +265,9 @@ impl VerifyBytecodeArgs {
                 let provider = utils::get_provider(&config)?;
                 provider
                     .get_transaction_by_hash(creation_data.transaction_hash)
-                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
+                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+                    })?
                     .block_number.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
                     })?

@@ -245,7 +245,10 @@ where
             let block = provider
                 .get_transaction_by_hash(tx)
                 .await
-                .wrap_err("could not get transaction {tx}");
+                .wrap_err_with(|| format!("could not get transaction {tx}"))
+                .and_then(|maybe| {
+                    maybe.ok_or_else(|| eyre::eyre!("could not get transaction {tx}"))
+                });
             (sender, block, tx)
         });
 
