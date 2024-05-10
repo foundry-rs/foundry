@@ -635,7 +635,11 @@ where
         to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        let tx = self.provider.get_transaction_by_hash(tx_hash).await?;
+        let tx = self
+            .provider
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         Ok(if raw {
             format!("0x{}", hex::encode(TxEnvelope::try_from(tx.inner)?.encoded_2718()))
