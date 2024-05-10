@@ -12,6 +12,7 @@ use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fmt::Write;
 use yansi::{Color, Paint};
 
@@ -33,13 +34,13 @@ pub use revm_inspectors::tracing::{
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
-#[derive(Default, Debug, Eq, PartialEq)]
+#[derive(Default, Debug, Eq, PartialEq, Serialize)]
 pub struct DecodedCallData {
     pub signature: String,
     pub args: Vec<String>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize)]
 pub struct DecodedCallTrace {
     pub label: Option<String>,
     pub return_data: Option<String>,
@@ -47,7 +48,7 @@ pub struct DecodedCallTrace {
     pub contract: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum DecodedCallLog<'a> {
     /// A raw log.
     Raw(&'a LogData),
@@ -148,6 +149,81 @@ pub async fn render_trace_arena(
     Ok(s)
 }
 
+pub async fn render_trace_arena_as_json(
+    arena: &CallTraceArena,
+    decoder: &CallTraceDecoder,
+) -> Result<Vec<String>, std::fmt::Error> {
+    decoder.prefetch_signatures(arena.nodes()).await;
+
+    fn inner<'a>(
+        arena: &'a [CallTraceNode],
+        decoder: &'a CallTraceDecoder,
+        s: &'a mut Vec<String>,
+        idx: usize,
+    ) -> BoxFuture<'a, Result<(), std::fmt::Error>> {
+        async move {
+            let node = &arena[idx];
+
+            // Display trace header
+            let trace = &node.trace;
+            let decoded = decoder.decode_function(trace).await;
+
+            let trace_json = json!(
+                {
+                    "from": trace.caller,
+                    "to": trace.address,
+                    "depth": trace.depth,
+                    "kind": trace.kind,
+                    "success": trace.success,
+                    "gas_used": trace.gas_used,
+                    "value": trace.value,
+                    "data": hex::encode(&trace.data),
+                    "output": hex::encode(&trace.output),
+                    "status": trace.status,
+                    "decoded": decoded
+                }
+            );
+
+            s.push(serde_json::to_string(&trace_json).unwrap());
+
+            // Display logs and subcalls
+            for child in &node.ordering {
+                match child {
+                    LogCallOrder::Log(index) => {
+                        let event = &node.logs[*index];
+                        let decoded_log = match decoder.decode_event(event).await {
+                            DecodedCallLog::Decoded(name, params) => Some(json!({
+                                "name": name,
+                                "params": params,
+                            })),
+                            _ => None,
+                        };
+                        let event_json = json!(
+                            {
+                                "from": node.trace.caller,
+                                "kind": "event",
+                                "decoded": decoded_log,
+                                "raw": event,
+                            }
+                        );
+                        s.push(serde_json::to_string(&event_json).unwrap());
+                    }
+                    LogCallOrder::Call(index) => {
+                        inner(arena, decoder, s, node.children[*index]).await?;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+        .boxed()
+    }
+
+    let mut s = Vec::new();
+    inner(arena.nodes(), decoder, &mut s, 0).await?;
+    Ok(s)
+}
+
 /// Render a call trace.
 ///
 /// The trace will be decoded using the given decoder, if possible.
@@ -160,6 +236,25 @@ pub async fn render_trace(
     let address = trace.address.to_checksum(None);
 
     let decoded = decoder.decode_function(trace).await;
+
+    let trace_json = json!(
+        {
+            "from": trace.caller,
+            "to": trace.address,
+            "depth": trace.depth,
+            "kind": trace.kind,
+            "success": trace.success,
+            "gas_used": trace.gas_used,
+            "value": trace.value,
+            "data": hex::encode(&trace.data),
+            "output": hex::encode(&trace.output),
+            "status": trace.status,
+            "decoded": decoded
+        }
+    );
+
+    println!("TRACE: {}", serde_json::to_string(&trace_json).unwrap());
+
     if trace.kind.is_any_create() {
         write!(
             &mut s,
@@ -220,6 +315,8 @@ async fn render_trace_log(
 ) -> Result<String, std::fmt::Error> {
     let mut s = String::new();
     let decoded = decoder.decode_event(log).await;
+
+    println!("event: {}", serde_json::to_string(&decoded).unwrap());
 
     match decoded {
         DecodedCallLog::Raw(log) => {

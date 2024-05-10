@@ -3636,6 +3636,7 @@ dependencies = [
  "once_cell",
  "revm-inspectors",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

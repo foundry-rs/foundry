@@ -438,7 +438,7 @@ impl CallTraceDecoder {
             "parseJsonBytes32Array" |
             "writeJson" |
             // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-            "keyExists" | 
+            "keyExists" |
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
@@ -454,7 +454,7 @@ impl CallTraceDecoder {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                     let token = if func.name.as_str() == "parseJson" ||
                         // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExists" ||
                         func.name.as_str() == "keyExistsJson"
                     {
                         "<JSON file>"
@@ -556,8 +556,46 @@ impl CallTraceDecoder {
                         .zip(event.inputs.iter())
                         .map(|(param, input)| {
                             // undo patched names
-                            let name = input.name.clone();
+                            let name = input.ty.clone();
                             (name, self.apply_label(&param))
+                        })
+                        .collect(),
+                );
+            }
+        }
+
+        DecodedCallLog::Raw(log)
+    }
+
+    /// Decodes an event.
+    pub async fn decode_event_simple<'a>(&self, log: &'a LogData) -> DecodedCallLog<'a> {
+        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
+
+        let mut events = Vec::new();
+        let events = match self.events.get(&(t0, log.topics().len() - 1)) {
+            Some(es) => es,
+            None => {
+                if let Some(identifier) = &self.signature_identifier {
+                    if let Some(event) = identifier.write().await.identify_event(&t0[..]).await {
+                        events.push(get_indexed_event(event, log));
+                    }
+                }
+                &events
+            }
+        };
+        for event in events {
+            if let Ok(decoded) = event.decode_log(log, false) {
+                let params = reconstruct_params(event, &decoded);
+                return DecodedCallLog::Decoded(
+                    event.name.clone(),
+                    params
+                        .into_iter()
+                        .zip(event.inputs.iter())
+                        .map(|(param, input)| {
+                            let ty = input.ty.clone();
+                            // undo patched names
+                            // let name = input.name.clone();
+                            (ty, self.apply_label(&param))
                         })
                         .collect(),
                 );

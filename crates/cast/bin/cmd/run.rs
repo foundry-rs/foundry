@@ -8,7 +8,7 @@ use foundry_cli::{
     init_progress,
     opts::RpcOpts,
     update_progress,
-    utils::{handle_traces, TraceResult},
+    utils::{handle_traces_helper, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::EvmVersion;
@@ -73,6 +73,10 @@ pub struct RunArgs {
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
+
+    /// Output file for the trace as json.
+    #[arg(short, long)]
+    pub output: Option<String>,
 }
 
 impl RunArgs {
@@ -156,15 +160,15 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.into_iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
-                    if is_known_system_sender(tx.from) ||
-                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                    if is_known_system_sender(tx.from)
+                        || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         update_progress!(pb, index);
                         continue;
@@ -224,7 +228,7 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug).await?;
+        handle_traces_helper(result, &config, chain, self.label, self.debug, self.output).await?;
 
         Ok(())
     }

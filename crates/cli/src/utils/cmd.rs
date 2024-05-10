@@ -16,11 +16,14 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena, render_trace_arena_as_json, CallTraceDecoder, CallTraceDecoderBuilder,
+        TraceKind, Traces,
     },
 };
+
 use std::{
     fmt::Write,
+    fs::File,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -171,14 +174,14 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return matches!(
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia |
-                NamedChain::Moonbeam |
-                NamedChain::Moonriver |
-                NamedChain::Moonbase |
-                NamedChain::MoonbeamDev
+            NamedChain::Arbitrum
+                | NamedChain::ArbitrumTestnet
+                | NamedChain::ArbitrumGoerli
+                | NamedChain::ArbitrumSepolia
+                | NamedChain::Moonbeam
+                | NamedChain::Moonriver
+                | NamedChain::Moonbase
+                | NamedChain::MoonbeamDev
         );
     }
     false
@@ -189,10 +192,10 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
+            NamedChain::Arbitrum
+                | NamedChain::ArbitrumTestnet
+                | NamedChain::ArbitrumGoerli
+                | NamedChain::ArbitrumSepolia
         );
     }
     true
@@ -373,12 +376,13 @@ impl TryFrom<EvmError> for TraceResult {
 }
 
 /// labels the traces, conditionally prints them or opens the debugger
-pub async fn handle_traces(
+pub async fn handle_traces_helper(
     mut result: TraceResult,
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
     debug: bool,
+    output: Option<String>,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -418,11 +422,23 @@ pub async fn handle_traces(
             .sources(sources)
             .build();
         debugger.try_run()?;
+    } else if let Some(output) = output {
+        print_traces_as_json(&mut result, &decoder, &output).await?;
     } else {
         print_traces(&mut result, &decoder).await?;
     }
 
     Ok(())
+}
+
+pub async fn handle_traces(
+    result: TraceResult,
+    config: &Config,
+    chain: Option<Chain>,
+    labels: Vec<String>,
+    debug: bool,
+) -> Result<()> {
+    handle_traces_helper(result, config, chain, labels, debug, None).await
 }
 
 pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
@@ -445,5 +461,26 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     }
 
     println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+pub async fn print_traces_as_json(
+    result: &mut TraceResult,
+    decoder: &CallTraceDecoder,
+    output: &str,
+) -> Result<()> {
+    if result.traces.is_empty() {
+        panic!("No traces found")
+    }
+
+    let mut jsonl = Vec::new();
+    for (_, arena) in &result.traces {
+        jsonl.append(&mut render_trace_arena_as_json(arena, decoder).await?);
+    }
+
+    // write jsonl to file
+    let mut file = File::create(output)?;
+    std::io::Write::write_all(&mut file, format!("[{}]", &jsonl.join(",")).as_bytes())?;
+
     Ok(())
 }
