@@ -764,8 +764,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn call(&mut self, ecx: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
-        // At the root call to test function or script `run()`/`setUp()` functions, we are decrease
-        // sender nonce to ensure that it matches on-chain nonce once we start broadcasting.
+        // At the root call to test function or script `run()`/`setUp()` functions, we are
+        // decreasing sender nonce to ensure that it matches on-chain nonce once we start
+        // broadcasting.
         if ecx.journaled_state.depth == 0 {
             let sender = ecx.env.tx.caller;
             if sender != Config::DEFAULT_SENDER {
