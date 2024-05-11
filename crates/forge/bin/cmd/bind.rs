@@ -3,6 +3,7 @@ use ethers_contract_abigen::{
     Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts,
 };
 use eyre::{Result, WrapErr};
+use forge::sol_macro_gen::MultiSolMacroGen;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
@@ -84,7 +85,7 @@ pub struct BindArgs {
     skip_extra_derives: bool,
 
     /// Generate bindings for the `alloy` library, instead of `ethers`.
-    #[arg(skip)]
+    #[arg(long)]
     alloy: bool,
 
     /// Generate bindings for the `ethers` library, instead of `alloy` (default, deprecated).
@@ -210,7 +211,8 @@ impl BindArgs {
             return self.check_ethers(artifacts, bindings_root);
         }
 
-        todo!("alloy")
+        // TODO(yash): check alloy bindings
+        Ok(())
     }
 
     fn check_ethers(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
@@ -245,7 +247,7 @@ impl BindArgs {
             return self.generate_ethers(artifacts, bindings_root);
         }
 
-        todo!("alloy")
+        self.generate_alloy(artifacts, bindings_root)
     }
 
     fn generate_ethers(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
@@ -266,5 +268,27 @@ impl BindArgs {
             trace!(single_file = self.single_file, "generating module");
             bindings.write_to_module(bindings_root, self.single_file)
         }
+    }
+
+    fn generate_alloy(&self, artifacts: &Path, _bindings_root: &Path) -> Result<()> {
+        let solmacrogen = self.get_solmacrogen(artifacts)?;
+        println!("Generating bindings for {} contracts", solmacrogen.instances.len());
+
+        // TODO (yash): complete this
+
+        if !self.module {
+            tracing::info!(target: "forge::bind", "Generating crate with alloy bindings");
+            // TODO (yash): generate crate
+            solmacrogen.write_to_crate();
+        } else {
+            // TODO (yash): generate module
+            tracing::info!(target: "forge::bind", "Generating module with alloy bindings");
+        }
+
+        Ok(())
+    }
+
+    fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
+        Ok(MultiSolMacroGen::new(artifacts))
     }
 }

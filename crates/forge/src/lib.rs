@@ -23,6 +23,8 @@ pub use runner::ContractRunner;
 
 pub mod result;
 
+pub mod sol_macro_gen;
+
 // TODO: remove
 pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
