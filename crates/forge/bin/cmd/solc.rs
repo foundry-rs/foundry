@@ -19,9 +19,7 @@ pub enum SolcSubcommands {
 impl SolcSubcommands {
     pub async fn run(self) -> Result<()> {
         match &self {
-            SolcSubcommands::VersionResolving { root } => {
-                self.handle_version_resolving(&root).await
-            }
+            SolcSubcommands::VersionResolving { root } => self.handle_version_resolving(root).await,
         }
     }
 
@@ -37,7 +35,7 @@ impl SolcSubcommands {
         let sources_by_version = versions.get(&version_manager)?;
 
         for (_, version, sources) in sources_by_version {
-            println!("{}", version);
+            println!("{}:", version);
             for (path_file, _) in sources.iter() {
                 println!(
                     "├── {}",
@@ -48,7 +46,6 @@ impl SolcSubcommands {
                         .display()
                 );
             }
-            println!("");
         }
         Ok(())
     }
