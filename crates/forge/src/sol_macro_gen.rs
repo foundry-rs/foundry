@@ -4,6 +4,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::TokenStreamExt;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use alloy_sol_macro_input::SolInput;
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
@@ -81,7 +82,9 @@ impl MultiSolMacroGen {
 
             let ident_name: Ident = Ident::new(&instance.name, Span::call_site());
 
-            let _tokens = tokens_for_sol(&ident_name, &sol_str);
+            let tokens = tokens_for_sol(&ident_name, &sol_str);
+
+            let _input: Result<SolInput, syn::Error> = syn::parse2(tokens);
 
             // TOOD: Expand TokenStream.
         }

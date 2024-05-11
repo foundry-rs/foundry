@@ -3073,6 +3073,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-wallet",
+ "alloy-sol-macro-input",
  "alloy-transport",
  "anvil",
  "async-trait",

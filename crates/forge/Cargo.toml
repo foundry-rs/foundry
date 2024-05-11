@@ -60,6 +60,7 @@ alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-network.workspace = true
 alloy-transport.workspace = true
 alloy-signer.workspace = true
+alloy-sol-macro-input.workspace = true
 alloy-consensus.workspace = true
 alloy-chains.workspace = true
 

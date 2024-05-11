@@ -179,6 +179,7 @@ alloy-primitives = { version = "0.7.1", features = ["getrandom"] }
 alloy-dyn-abi = "0.7.1"
 alloy-json-abi = "0.7.1"
 alloy-sol-types = "0.7.1"
+alloy-sol-macro-input = "0.7.1"
 syn-solidity = "0.7.1"
 alloy-chains = "0.1"
 alloy-trie = "0.3.1"
