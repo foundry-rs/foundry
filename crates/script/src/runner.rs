@@ -101,8 +101,6 @@ impl ScriptRunner {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
-                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
-
                     (
                         !reverted,
                         gas_used,
@@ -124,8 +122,6 @@ impl ScriptRunner {
                     } = err.raw;
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
-
-                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
 
                     (
                         !reverted,
@@ -154,24 +150,6 @@ impl ScriptRunner {
                 ..Default::default()
             },
         ))
-    }
-
-    /// We call the `setUp()` function with self.sender, and if there haven't been
-    /// any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
-    /// So we have to.
-    fn maybe_correct_nonce(
-        &mut self,
-        sender_initial_nonce: u64,
-        libraries_len: usize,
-    ) -> Result<()> {
-        if let Some(cheatcodes) = &self.executor.inspector.cheatcodes {
-            if !cheatcodes.corrected_nonce {
-                self.executor
-                    .set_nonce(self.sender, sender_initial_nonce + libraries_len as u64)?;
-            }
-            self.executor.inspector.cheatcodes.as_mut().unwrap().corrected_nonce = false;
-        }
-        Ok(())
     }
 
     /// Executes the method that will collect all broadcastable transactions.

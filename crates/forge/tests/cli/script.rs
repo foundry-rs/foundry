@@ -1355,3 +1355,43 @@ contract SimpleScript is Script {
     let output = cmd.stderr_lossy();
     assert!(output.contains("missing CREATE2 deployer"));
 });
+
+forgetest_async!(can_switch_forks_in_setup, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    let url = handle.http_endpoint();
+
+    prj.add_script(
+        "Foo",
+        &r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function setUp() external {
+        uint256 initialFork = vm.activeFork();
+        vm.createSelectFork("<url>");
+        vm.selectFork(initialFork);
+    }
+
+    function run() external {
+        assert(vm.getNonce(msg.sender) == 0);
+    }
+}
+   "#
+        .replace("<url>", &url),
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &url,
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    ]);
+
+    cmd.stdout_lossy();
+});

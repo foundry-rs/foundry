@@ -553,7 +553,6 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
-    super::script::correct_sender_nonce(ccx)?;
     let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
 }
