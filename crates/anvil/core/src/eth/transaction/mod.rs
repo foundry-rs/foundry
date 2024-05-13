@@ -286,7 +286,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: None,
             }),
             access_list: None,
@@ -313,7 +313,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().access_list.clone()),
@@ -340,7 +340,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().access_list.clone()),
@@ -367,7 +367,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().tx().access_list.clone()),
