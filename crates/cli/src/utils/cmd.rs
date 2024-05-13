@@ -166,18 +166,19 @@ macro_rules! update_progress {
     };
 }
 
-/// Creates progress bar with counter.
+/// Creates progress object and progress bar.
 #[macro_export]
-macro_rules! init_tests_progress_bar {
-    ($overall_progress:expr, $tests:expr) => {{
-        let pb = $overall_progress.add(indicatif::ProgressBar::new($tests.len() as u64));
+macro_rules! init_tests_progress {
+    ($tests:expr) => {{
+        let progress = MultiProgress::new();
+        let pb = progress.add(indicatif::ProgressBar::new($tests.len() as u64));
         pb.set_style(
             indicatif::ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
                 .unwrap()
                 .progress_chars("##-"),
         );
         pb.set_message("completed");
-        pb
+        (progress, pb)
     }};
 }
 

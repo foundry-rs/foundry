@@ -4,7 +4,7 @@ use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_cli::{init_test_suite_progress, init_tests_progress_bar};
+use foundry_cli::{init_test_suite_progress, init_tests_progress};
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_config::Config;
@@ -139,7 +139,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, None);
+        self.test(filter, tx, false);
         rx.into_iter()
     }
 
@@ -153,7 +153,7 @@ impl MultiContractRunner {
         &mut self,
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
-        progress: Option<MultiProgress>,
+        show_progress: bool,
     ) {
         let handle = tokio::runtime::Handle::current();
         trace!("running all tests");
@@ -171,49 +171,48 @@ impl MultiContractRunner {
             find_time,
         );
 
-        match progress {
-            Some(tests_progress) => {
-                let progress_bar = init_tests_progress_bar!(tests_progress, contracts);
-                // We collect test suite results to stream of the end of test run.
-                let results = Arc::new(Mutex::new(Vec::new()));
-
-                contracts.par_iter().for_each(|&(id, contract)| {
-                    let _guard = handle.enter();
-
-                    // Display test suite progress.
-                    let suite_progress = init_test_suite_progress!(tests_progress, id.name);
-                    // Run tests, pass overall progress and current test suite progress in order
-                    // to add specific run detail.
-                    let result = self.run_tests(
-                        id,
-                        contract,
-                        db.clone(),
-                        filter,
-                        &handle,
-                        Some((&tests_progress, &suite_progress)),
-                    );
-                    // Remove test progress from overall progress and print summary.
-                    suite_progress.finish_and_clear();
-                    tests_progress.suspend(|| {
-                        println!("{}\n  ↪ {}", id.name.clone(), result.summary());
-                    });
-                    // Increment test progress bar to reflect completed test suite.
-                    progress_bar.inc(1);
-                    // Record test suite result in order to stream it when run completed.
-                    results.lock().push((id.identifier(), result));
+        if show_progress {
+            // Create overall tests progress and progress bar.
+            // Tests progress is passed to test runners for adding individual test suite progress.
+            // Progress bar is updated each time a test suite ends.
+            let (tests_progress, progress_bar) = init_tests_progress!(contracts);
+            // We collect test suite results to stream of the end of test run.
+            let results = Arc::new(Mutex::new(Vec::new()));
+            contracts.par_iter().for_each(|&(id, contract)| {
+                let _guard = handle.enter();
+                // Add test suite progress to tests result.
+                let suite_progress = init_test_suite_progress!(tests_progress, id.name);
+                // Run tests, pass tests progress and current test suite progress in order
+                // to add specific run details.
+                let result = self.run_tests(
+                    id,
+                    contract,
+                    db.clone(),
+                    filter,
+                    &handle,
+                    Some((&tests_progress, &suite_progress)),
+                );
+                // Remove test progress from overall progress and print summary.
+                suite_progress.finish_and_clear();
+                tests_progress.suspend(|| {
+                    println!("{}\n  ↪ {}", id.name.clone(), result.summary());
                 });
-
-                // Tests completed, remove progress and stream results.
-                tests_progress.clear().unwrap();
-                results.lock().iter().for_each(|result| {
-                    let _ = tx.send(result.to_owned());
-                });
-            }
-            None => contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
+                // Increment test progress bar to reflect completed test suite.
+                progress_bar.inc(1);
+                // Record test suite result in order to stream it when run completed.
+                results.lock().push((id.identifier(), result));
+            });
+            // Tests completed, remove progress and stream results.
+            tests_progress.clear().unwrap();
+            results.lock().iter().for_each(|result| {
+                let _ = tx.send(result.to_owned());
+            });
+        } else {
+            contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
                 let _guard = handle.enter();
                 let result = self.run_tests(id, contract, db.clone(), filter, &handle, None);
                 let _ = tx.send((id.identifier(), result));
-            }),
+            })
         }
     }
 
