@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::ToUtf8 { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
-            println!("{}", SimpleCast::to_utf8(&value));
+            println!("{}", SimpleCast::to_utf8(&value)?);
         }
         CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
