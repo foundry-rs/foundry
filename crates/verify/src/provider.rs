@@ -85,9 +85,6 @@ impl VerificationProviderType {
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
             VerificationProviderType::Oklink => {
-                if key.as_ref().map_or(true, |key| key.is_empty()) {
-                    eyre::bail!("OKLINK_API_KEY must be set")
-                }
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
         }
