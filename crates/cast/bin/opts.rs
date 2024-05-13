@@ -126,6 +126,13 @@ pub enum CastSubcommand {
         hexdata: Option<String>,
     },
 
+    /// Convert hex data to a utf-8 string.
+    #[command(visible_aliases = &["--to-utf8", "tu8", "2u8"])]
+    ToUtf8 {
+        /// The hex data to convert.
+        hexdata: Option<String>,
+    },
+
     /// Convert a fixed point number into an integer.
     #[command(visible_aliases = &["--from-fix", "ff"])]
     FromFixedPoint {
