@@ -33,6 +33,7 @@ impl FromStr for VerificationProviderType {
             "e" | "etherscan" => Ok(VerificationProviderType::Etherscan),
             "s" | "sourcify" => Ok(VerificationProviderType::Sourcify),
             "b" | "blockscout" => Ok(VerificationProviderType::Blockscout),
+            "o" | "oklink" => Ok(VerificationProviderType::Oklink),
             _ => Err(format!("Unknown provider: {s}")),
         }
     }
@@ -50,6 +51,9 @@ impl fmt::Display for VerificationProviderType {
             VerificationProviderType::Blockscout => {
                 write!(f, "blockscout")?;
             }
+            VerificationProviderType::Oklink => {
+                write!(f, "oklink")?;
+            }
         };
         Ok(())
     }
@@ -61,6 +65,7 @@ pub enum VerificationProviderType {
     Etherscan,
     Sourcify,
     Blockscout,
+    Oklink,
 }
 
 impl VerificationProviderType {
@@ -77,6 +82,12 @@ impl VerificationProviderType {
                 Ok(Box::<SourcifyVerificationProvider>::default())
             }
             VerificationProviderType::Blockscout => {
+                Ok(Box::<EtherscanVerificationProvider>::default())
+            }
+            VerificationProviderType::Oklink => {
+                if key.as_ref().map_or(true, |key| key.is_empty()) {
+                    eyre::bail!("OKLINK_API_KEY must be set")
+                }
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
         }
