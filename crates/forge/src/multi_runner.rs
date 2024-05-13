@@ -4,6 +4,7 @@ use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
+use foundry_cli::{init_test_suite_progress, init_tests_progress_bar};
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_config::Config;
@@ -12,6 +13,8 @@ use foundry_evm::{
     inspectors::CheatsConfig, opts::EvmOpts, revm,
 };
 use foundry_linking::{LinkOutput, Linker};
+use indicatif::{MultiProgress, ProgressBar};
+use parking_lot::Mutex;
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -20,7 +23,7 @@ use std::{
     fmt::Debug,
     path::Path,
     sync::{mpsc, Arc},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, Clone)]
@@ -136,7 +139,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx);
+        self.test(filter, tx, None);
         rx.into_iter()
     }
 
@@ -146,7 +149,12 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
+    pub fn test(
+        &mut self,
+        filter: &dyn TestFilter,
+        tx: mpsc::Sender<(String, SuiteResult)>,
+        progress: Option<MultiProgress>,
+    ) {
         let handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
@@ -163,11 +171,50 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
-            let _guard = handle.enter();
-            let result = self.run_tests(id, contract, db.clone(), filter, &handle);
-            let _ = tx.send((id.identifier(), result));
-        })
+        match progress {
+            Some(tests_progress) => {
+                let progress_bar = init_tests_progress_bar!(tests_progress, contracts);
+                // We collect test suite results to stream of the end of test run.
+                let results = Arc::new(Mutex::new(Vec::new()));
+
+                contracts.par_iter().for_each(|&(id, contract)| {
+                    let _guard = handle.enter();
+
+                    // Display test suite progress.
+                    let suite_progress = init_test_suite_progress!(tests_progress, id.name);
+                    // Run tests, pass overall progress and current test suite progress in order
+                    // to add specific run detail.
+                    let result = self.run_tests(
+                        id,
+                        contract,
+                        db.clone(),
+                        filter,
+                        &handle,
+                        Some((&tests_progress, &suite_progress)),
+                    );
+                    // Remove test progress from overall progress and print summary.
+                    suite_progress.finish_and_clear();
+                    tests_progress.suspend(|| {
+                        println!("{}\n  ↪ {}", id.name.clone(), result.summary());
+                    });
+                    // Increment test progress bar to reflect completed test suite.
+                    progress_bar.inc(1);
+                    // Record test suite result in order to stream it when run completed.
+                    results.lock().push((id.identifier(), result));
+                });
+
+                // Tests completed, remove progress and stream results.
+                tests_progress.clear().unwrap();
+                results.lock().iter().for_each(|result| {
+                    let _ = tx.send(result.to_owned());
+                });
+            }
+            None => contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
+                let _guard = handle.enter();
+                let result = self.run_tests(id, contract, db.clone(), filter, &handle, None);
+                let _ = tx.send((id.identifier(), result));
+            }),
+        }
     }
 
     fn run_tests(
@@ -177,6 +224,7 @@ impl MultiContractRunner {
         db: Backend,
         filter: &dyn TestFilter,
         handle: &tokio::runtime::Handle,
+        progress: Option<(&MultiProgress, &ProgressBar)>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -223,7 +271,7 @@ impl MultiContractRunner {
             &self.revert_decoder,
             self.debug,
         );
-        let r = runner.run_tests(filter, &self.test_options, known_contracts, handle);
+        let r = runner.run_tests(filter, &self.test_options, known_contracts, handle, progress);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 

@@ -166,6 +166,57 @@ macro_rules! update_progress {
     };
 }
 
+/// Creates progress bar with counter.
+#[macro_export]
+macro_rules! init_tests_progress_bar {
+    ($overall_progress:expr, $tests:expr) => {{
+        let pb = $overall_progress.add(indicatif::ProgressBar::new($tests.len() as u64));
+        pb.set_style(
+            indicatif::ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+                .unwrap()
+                .progress_chars("##-"),
+        );
+        pb.set_message("completed");
+        pb
+    }};
+}
+
+/// Creates progress entry for test suite, having `[spinner] Test suite name` format.
+#[macro_export]
+macro_rules! init_test_suite_progress {
+    ($overall_progress:expr, $suite_name:expr) => {{
+        let pb = $overall_progress.add(indicatif::ProgressBar::new_spinner());
+        pb.set_style(
+            indicatif::ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb.set_message(format!("{} ", $suite_name));
+        pb.enable_steady_tick(Duration::from_millis(100));
+        pb
+    }};
+}
+
+/// Creates progress entry for long-running tests.
+/// Set only the prefix, leaving message to be updated during execution with current phase.
+/// Test progress is placed under test suite progress entry so all tests within suite are grouped.
+#[macro_export]
+macro_rules! init_long_running_test_progress {
+    ($overall_progress:expr, $suite_progress:expr, $test_name:expr) => {{
+        let pb =
+            $overall_progress.insert_after($suite_progress, indicatif::ProgressBar::new_spinner());
+        pb.set_style(
+            indicatif::ProgressStyle::with_template(
+                "    ↪ {prefix:.bold.dim}: {wide_msg:.bold.dim}",
+            )
+            .unwrap()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb.set_prefix(format!("{}", $test_name));
+        pb
+    }};
+}
+
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {

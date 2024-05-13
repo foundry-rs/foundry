@@ -32,6 +32,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
+use indicatif::MultiProgress;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -128,6 +129,10 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
+
+    /// Show test execution progress.
+    #[arg(long)]
+    pub show_progress: bool,
 }
 
 impl TestArgs {
@@ -363,12 +368,16 @@ impl TestArgs {
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
 
+        // Create overall progress if show progress enabled.
+        // This object is passed to test runners for adding individual test suite progress.
+        let progress = if self.show_progress { Some(MultiProgress::new()) } else { None };
+
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            move || runner.test(&filter, tx)
+            move || runner.test(&filter, tx, progress)
         });
 
         let mut gas_report = self

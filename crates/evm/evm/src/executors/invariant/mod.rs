@@ -20,6 +20,7 @@ use foundry_evm_fuzz::{
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
+use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
     strategy::{BoxedStrategy, Strategy},
@@ -28,7 +29,11 @@ use proptest::{
 use result::{assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    sync::Arc,
+};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -138,6 +143,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
+        progress: Option<&ProgressBar>,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -175,6 +181,9 @@ impl<'a> InvariantExecutor<'a> {
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
         }
+
+        // Record current run to display in progress bar.
+        let invariant_run = Cell::new(0);
 
         // The strategy only comes with the first `input`. We fill the rest of the `inputs`
         // until the desired `depth` so we can use the evolving fuzz dictionary
@@ -299,6 +308,16 @@ impl<'a> InvariantExecutor<'a> {
 
             // Revert state to not persist values between runs.
             fuzz_state.revert();
+
+            // If running with progress then update test status with current run.
+            if progress.is_some() {
+                let mut completed_run = invariant_run.get();
+                completed_run += 1;
+                progress
+                    .unwrap()
+                    .set_message(format!("[{}/{}] Runs", completed_run, self.config.runs));
+                invariant_run.set(completed_run);
+            }
 
             Ok(())
         });

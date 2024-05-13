@@ -3530,6 +3530,7 @@ dependencies = [
  "foundry-evm-coverage",
  "foundry-evm-fuzz",
  "foundry-evm-traces",
+ "indicatif",
  "parking_lot",
  "proptest",
  "revm",

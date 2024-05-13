@@ -9,6 +9,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256};
 use eyre::Result;
+use foundry_cli::init_long_running_test_progress;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
@@ -29,6 +30,7 @@ use foundry_evm::{
     fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
     traces::{load_contracts, TraceKind},
 };
+use indicatif::{MultiProgress, ProgressBar};
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
@@ -255,6 +257,7 @@ impl<'a> ContractRunner<'a> {
         test_options: &TestOptions,
         known_contracts: Arc<ContractsByArtifact>,
         handle: &tokio::runtime::Handle,
+        progress: Option<(&MultiProgress, &ProgressBar)>,
     ) -> SuiteResult {
         info!("starting tests");
         let start = Instant::now();
@@ -356,6 +359,15 @@ impl<'a> ContractRunner<'a> {
                 let res = if func.is_invariant_test() {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
+
+                    let test_progress = progress.map(|(overall_progress, suite_progress)| {
+                        init_long_running_test_progress!(
+                            overall_progress,
+                            suite_progress,
+                            func.name
+                        )
+                    });
+
                     self.run_invariant_test(
                         runner,
                         setup,
@@ -363,6 +375,7 @@ impl<'a> ContractRunner<'a> {
                         func,
                         &known_contracts,
                         identified_contracts.as_ref().unwrap(),
+                        test_progress,
                     )
                 } else if func.is_fuzz_test() {
                     debug_assert!(func.is_test());
@@ -509,6 +522,7 @@ impl<'a> ContractRunner<'a> {
     }
 
     #[instrument(name = "invariant_test", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     pub fn run_invariant_test(
         &self,
         runner: TestRunner,
@@ -517,6 +531,7 @@ impl<'a> ContractRunner<'a> {
         func: &Function,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
+        progress: Option<ProgressBar>,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
@@ -557,7 +572,8 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_function: func, abi: &self.contract.abi };
 
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
-            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures) {
+            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures, progress.as_ref())
+            {
                 Ok(x) => x,
                 Err(e) => {
                     return TestResult {
@@ -597,6 +613,7 @@ impl<'a> ContractRunner<'a> {
                         &mut logs,
                         &mut traces,
                         &mut coverage,
+                        progress.as_ref(),
                     ) {
                         Ok(c) => counterexample = c,
                         Err(err) => {

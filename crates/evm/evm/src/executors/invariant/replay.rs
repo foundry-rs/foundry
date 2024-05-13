@@ -11,6 +11,7 @@ use foundry_evm_fuzz::{
     BaseCounterExample, CounterExample,
 };
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
+use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::test_runner::TestError;
 use revm::primitives::U256;
@@ -94,11 +95,20 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
+    progress: Option<&ProgressBar>,
 ) -> Result<Option<CounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
         TestError::Abort(_) => Ok(None),
         TestError::Fail(_, ref calls) => {
+            // Display shrinking progress.
+            if progress.is_some() {
+                progress
+                    .as_ref()
+                    .unwrap()
+                    .set_message(format!("Shrinking [{}] calls", calls.len()));
+            }
+
             // Shrink sequence of failed calls.
             let calls = shrink_sequence(failed_case, calls, &executor)?;
 
