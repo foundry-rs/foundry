@@ -115,6 +115,13 @@ impl ScriptRunner {
                         },
                     });
                 }
+
+                // Sender nonce is not incremented when performing CALLs. We need to manually
+                // increase it.
+                self.executor.set_nonce(
+                    self.evm_opts.sender,
+                    sender_nonce + library_transactions.len() as u64,
+                )?;
             }
         };
 
