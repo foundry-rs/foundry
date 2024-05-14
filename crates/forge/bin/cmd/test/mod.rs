@@ -361,7 +361,7 @@ impl TestArgs {
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();

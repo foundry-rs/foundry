@@ -94,9 +94,14 @@ impl EstimateArgs {
         };
 
         let mut req = WithOtherFields::<TransactionRequest>::default()
-            .with_to(to.unwrap_or_default())
             .with_from(from)
             .with_value(value.unwrap_or_default());
+
+        if let Some(to) = to {
+            req.set_to(to);
+        } else {
+            req.set_kind(alloy_primitives::TxKind::Create);
+        }
 
         let data = match command {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {

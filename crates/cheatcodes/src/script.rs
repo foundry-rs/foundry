@@ -3,7 +3,6 @@
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_signer_wallet::LocalWallet;
-use foundry_config::Config;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -130,8 +129,6 @@ fn broadcast<DB: DatabaseExt>(
     );
     ensure!(ccx.state.broadcast.is_none(), "a broadcast is active already");
 
-    correct_sender_nonce(ccx)?;
-
     let mut new_origin = new_origin.cloned();
 
     if new_origin.is_none() {
@@ -180,19 +177,4 @@ fn broadcast_key<DB: DatabaseExt>(
         }
     }
     result
-}
-
-/// When using `forge script`, the script method is called using the address from `--sender`.
-/// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
-/// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
-pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
-    let sender = ccx.ecx.env.tx.caller;
-    if !ccx.state.corrected_nonce && sender != Config::DEFAULT_SENDER {
-        let account = super::evm::journaled_account(ccx.ecx, sender)?;
-        let prev = account.info.nonce;
-        account.info.nonce = prev.saturating_sub(1);
-        debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
-        ccx.state.corrected_nonce = true;
-    }
-    Ok(())
 }

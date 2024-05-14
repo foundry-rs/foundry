@@ -4,9 +4,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_rpc_types::{Block, Transaction};
 use eyre::ContextCompat;
-pub use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::NamedChain;
-pub use revm::primitives::State as StateChangeset;
 use revm::{
     db::WrapDatabaseRef,
     handler::register::EvmHandler,
@@ -18,6 +16,8 @@ use revm::{
     FrameOrResult, FrameResult,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+pub use revm::primitives::State as StateChangeset;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///

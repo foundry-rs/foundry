@@ -26,7 +26,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_invariants, can_continue};
-use revm::{primitives::HashMap, DatabaseCommit};
+use revm::primitives::HashMap;
 use shrink::shrink_sequence;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
@@ -144,10 +144,6 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!("Invariant test function should have no inputs"))
         }
 
-        if !self.config.shrink_sequence {
-            error!(target: "forge::test", "shrink_sequence config is deprecated and will be removed, use shrink_run_limit = 0")
-        }
-
         let (fuzz_state, targeted_contracts, strat) =
             self.prepare_fuzzing(&invariant_contract, fuzz_fixtures)?;
 
@@ -211,26 +207,15 @@ impl<'a> InvariantExecutor<'a> {
             while current_run < self.config.depth {
                 let tx = inputs.last().expect("no input generated");
 
-                // Executes the call from the randomly generated sequence.
-                let call_result = if self.config.preserve_state {
-                    executor
-                        .call_raw_committing(
-                            tx.sender,
-                            tx.call_details.address,
-                            tx.call_details.calldata.clone(),
-                            U256::ZERO,
-                        )
-                        .expect("could not make raw evm call")
-                } else {
-                    executor
-                        .call_raw(
-                            tx.sender,
-                            tx.call_details.address,
-                            tx.call_details.calldata.clone(),
-                            U256::ZERO,
-                        )
-                        .expect("could not make raw evm call")
-                };
+                // Execute call from the randomly generated sequence and commit state changes.
+                let call_result = executor
+                    .call_raw_committing(
+                        tx.sender,
+                        tx.call_details.address,
+                        tx.call_details.calldata.clone(),
+                        U256::ZERO,
+                    )
+                    .expect("could not make raw evm call");
 
                 if call_result.result.as_ref() == MAGIC_ASSUME {
                     inputs.pop();
@@ -270,8 +255,6 @@ impl<'a> InvariantExecutor<'a> {
                             warn!(target: "forge::test", "{error}");
                         }
                     }
-                    // Commit changes to the database.
-                    executor.backend.commit(state_changeset.clone());
 
                     fuzz_runs.push(FuzzCase {
                         calldata: tx.call_details.calldata.clone(),

@@ -8,18 +8,14 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{optimism::OptimismTransactionFields, TransactionRequest, WithOtherFields};
 use anvil::{spawn, Hardfork, NodeConfig};
 
-// TODO: transaction is expected to fail, it does not, remove ignore once fixed
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn test_deposits_not_supported_if_optimism_disabled() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
-
-    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let tx = TransactionRequest::default()
         .with_from(from)
@@ -38,11 +34,9 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
         .into(),
     };
 
-    let res = provider.send_transaction(tx).await.unwrap().register().await;
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("op-stack deposit tx received but is not supported"));
+    let err = provider.send_transaction(tx).await.unwrap_err();
+    let s = err.to_string();
+    assert!(s.contains("op-stack deposit tx received but is not supported"), "{s:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

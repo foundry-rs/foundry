@@ -63,8 +63,6 @@ pub struct FailedInvariantCaseData {
     pub func: Bytes,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
-    /// Shrink the failed test case to the smallest sequence.
-    pub shrink_sequence: bool,
     /// Shrink run limit
     pub shrink_run_limit: usize,
     /// Fail on revert, used to check sequence when shrinking.
@@ -103,7 +101,6 @@ impl FailedInvariantCaseData {
             addr: invariant_contract.address,
             func: func.selector().to_vec().into(),
             inner_sequence: inner_sequence.to_vec(),
-            shrink_sequence: invariant_config.shrink_sequence,
             shrink_run_limit: invariant_config.shrink_run_limit,
             fail_on_revert: invariant_config.fail_on_revert,
         }

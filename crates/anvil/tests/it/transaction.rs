@@ -1,6 +1,6 @@
 use crate::{
     abi::{Greeter, MulticallContract, SimpleStorage},
-    utils::http_provider_with_signer,
+    utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
@@ -695,9 +695,9 @@ async fn can_get_pending_transaction() {
     assert!(pending.is_ok());
 
     api.mine_one().await;
-    let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap();
+    let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap().unwrap();
 
-    assert_eq!(mined.hash, pending.unwrap().hash);
+    assert_eq!(mined.hash, pending.unwrap().unwrap().hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -837,9 +837,6 @@ async fn test_tx_receipt() {
     assert!(tx.contract_address.is_some());
 }
 
-// TODO: Fix error: ErrorPayload { code: -32602, message: "invalid type: boolean `true`, expected
-// unit", data: None } originating from watch_full_pending_transactions, remove ignore
-#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_stream_pending_transactions() {
     let (_api, handle) =
@@ -847,7 +844,7 @@ async fn can_stream_pending_transactions() {
     let num_txs = 5;
 
     let provider = handle.http_provider();
-    let ws_provider = handle.ws_provider();
+    let ws_provider = connect_pubsub(&handle.ws_endpoint()).await;
 
     let accounts = provider.get_accounts().await.unwrap();
     let tx =
@@ -866,20 +863,20 @@ async fn can_stream_pending_transactions() {
     .fuse();
 
     let mut watch_tx_stream = provider
-        .watch_full_pending_transactions()
+        .watch_pending_transactions()
         .await
-        .unwrap() // TODO: Fix error here
+        .unwrap()
         .into_stream()
         .flat_map(futures::stream::iter)
         .take(num_txs)
         .fuse();
 
     let mut sub_tx_stream = ws_provider
-        .subscribe_full_pending_transactions()
+        .subscribe_pending_transactions()
         .await
         .unwrap()
         .into_stream()
-        .take(2)
+        .take(num_txs)
         .fuse();
 
     let mut sent = None;
@@ -901,14 +898,15 @@ async fn can_stream_pending_transactions() {
                     sub_received.push(tx);
                 }
             },
+            complete => unreachable!(),
         };
 
         if watch_received.len() == num_txs && sub_received.len() == num_txs {
-            if let Some(ref sent) = sent {
+            if let Some(sent) = &sent {
                 assert_eq!(sent.len(), watch_received.len());
                 let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
-                assert_eq!(sent_txs, watch_received.iter().map(|tx| tx.hash).collect());
-                assert_eq!(sent_txs, sub_received.iter().map(|tx| tx.hash).collect());
+                assert_eq!(sent_txs, watch_received.iter().copied().collect());
+                assert_eq!(sent_txs, sub_received.iter().copied().collect());
                 break
             }
         }

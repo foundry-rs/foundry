@@ -133,19 +133,18 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     ret
 }
 
-/// Returns all files with the given extension under the `root` dir
-pub fn files_with_ext(root: impl AsRef<Path>, ext: &str) -> Vec<PathBuf> {
+/// Returns an iterator over all files with the given extension under the `root` dir.
+pub fn files_with_ext<'a>(root: &Path, ext: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
     walkdir::WalkDir::new(root)
+        .sort_by_file_name()
         .into_iter()
         .filter_map(walkdir::Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| e.path().extension().map(|e| e == ext).unwrap_or_default())
-        .map(|e| e.path().into())
-        .collect()
+        .filter(|e| e.file_type().is_file() && e.path().extension() == Some(ext.as_ref()))
+        .map(walkdir::DirEntry::into_path)
 }
 
-/// Returns a list of absolute paths to all the json files under the root
-pub fn json_files(root: impl AsRef<Path>) -> Vec<PathBuf> {
+/// Returns an iterator over all JSON files under the `root` dir.
+pub fn json_files(root: &Path) -> impl Iterator<Item = PathBuf> {
     files_with_ext(root, "json")
 }
 

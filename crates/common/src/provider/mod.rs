@@ -13,6 +13,7 @@ use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
+use alloy_transport::utils::guess_local_url;
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
 use reqwest::Url;
@@ -84,9 +85,8 @@ pub struct ProviderBuilder {
     /// JWT Secret
     jwt: Option<String>,
     headers: Vec<String>,
+    is_local: bool,
 }
-
-// === impl ProviderBuilder ===
 
 impl ProviderBuilder {
     /// Creates a new builder instance
@@ -121,6 +121,9 @@ impl ProviderBuilder {
             })
             .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
 
+        // Use the final URL string to guess if it's a local URL.
+        let is_local = url.as_ref().map_or(false, |url| guess_local_url(url.as_str()));
+
         Self {
             url,
             chain: NamedChain::Mainnet,
@@ -132,6 +135,7 @@ impl ProviderBuilder {
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             jwt: None,
             headers: vec![],
+            is_local,
         }
     }
 
@@ -201,11 +205,19 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets the provider to be local.
+    ///
+    /// This is useful for local dev nodes.
+    pub fn local(mut self, is_local: bool) -> Self {
+        self.is_local = is_local;
+        self
+    }
+
     /// Sets aggressive `max_retry` and `initial_backoff` values
     ///
     /// This is only recommend for local dev nodes
     pub fn aggressive(self) -> Self {
-        self.max_retry(100).initial_backoff(100)
+        self.max_retry(100).initial_backoff(100).local(true)
     }
 
     /// Sets the JWT secret
@@ -233,6 +245,7 @@ impl ProviderBuilder {
             compute_units_per_second,
             jwt,
             headers,
+            is_local,
         } = self;
         let url = url?;
 
@@ -247,7 +260,7 @@ impl ProviderBuilder {
             .with_headers(headers)
             .with_jwt(jwt)
             .build();
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
+        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .on_provider(RootProvider::new(client));
@@ -267,6 +280,7 @@ impl ProviderBuilder {
             compute_units_per_second,
             jwt,
             headers,
+            is_local,
         } = self;
         let url = url?;
 
@@ -283,7 +297,7 @@ impl ProviderBuilder {
             .with_jwt(jwt)
             .build();
 
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
+        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .with_recommended_fillers()

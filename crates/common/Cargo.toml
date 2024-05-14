@@ -48,7 +48,7 @@ serde_json.workspace = true
 serde.workspace = true
 tempfile.workspace = true
 thiserror = "1"
-tokio = "1"
+tokio.workspace = true
 tracing.workspace = true
 url = "2"
 walkdir = "2"
@@ -59,4 +59,4 @@ num-format.workspace = true
 [dev-dependencies]
 foundry-macros.workspace = true
 similar-asserts.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
