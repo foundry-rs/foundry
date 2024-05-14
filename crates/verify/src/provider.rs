@@ -84,9 +84,7 @@ impl VerificationProviderType {
             VerificationProviderType::Blockscout => {
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
-            VerificationProviderType::Oklink => {
-                Ok(Box::<EtherscanVerificationProvider>::default())
-            }
+            VerificationProviderType::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
         }
     }
 }
