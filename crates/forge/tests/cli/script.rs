@@ -1395,3 +1395,59 @@ contract SimpleScript is Script {
 
     cmd.stdout_lossy();
 });
+
+// Asserts that running the same script twice only deploys library once.
+forgetest_async!(can_deploy_library_create2, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
+        .await;
+
+    tester.clear();
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 1), (1, 1)])
+        .await;
+});
+
+// Asserts that running the same script twice only deploys library once when using different
+// senders.
+forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
+        .await;
+
+    tester.clear();
+
+    // Run different script from the same contract (which requires the same library).
+    tester
+        .load_private_keys(&[2])
+        .await
+        .add_sig("BroadcastTest", "deployNoArgs()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(2, 2)])
+        .await;
+});
