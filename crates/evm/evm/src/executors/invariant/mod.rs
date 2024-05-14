@@ -671,7 +671,7 @@ fn collect_data(
         sender_changeset = state_changeset.remove(&tx.sender);
     }
 
-    fuzz_state.collect_state_from_call(
+    fuzz_state.collect_values_from_call(
         &tx.call_details.function,
         &tx.call_details.abi,
         &call_result.result,

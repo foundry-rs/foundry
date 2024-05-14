@@ -43,7 +43,7 @@ impl EvmFuzzState {
 
     /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to
     /// the given [FuzzDictionaryConfig].
-    pub fn collect_state_from_call(
+    pub fn collect_values_from_call(
         &self,
         function: &Function,
         abi: &JsonAbi,
