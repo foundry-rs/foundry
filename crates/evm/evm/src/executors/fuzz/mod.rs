@@ -15,7 +15,10 @@ use foundry_evm_fuzz::{
 };
 use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{borrow::Cow, cell::RefCell};
+use std::{
+    borrow::{Borrow, Cow},
+    cell::RefCell,
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -145,14 +148,17 @@ impl FuzzedExecutor {
         let mut traces = traces.into_inner();
         let last_run_traces = if run_result.is_ok() { traces.pop() } else { call.traces.clone() };
 
+        let inner = logs.into_inner();
+
         let mut result = FuzzTestResult {
             first_case: first_case.take().unwrap_or_default(),
             gas_by_case: gas_by_case.take(),
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
-            decoded_logs: decode_console_logs(&logs.clone().into_inner()),
-            logs: logs.into_inner(),
+            // decoded_logs: decode_console_logs(&logs.clone().into_inner()),
+            decoded_logs: decode_console_logs(&inner),
+            logs: inner,
             labeled_addresses: call.labels,
             traces: last_run_traces,
             gas_report_traces: traces,
