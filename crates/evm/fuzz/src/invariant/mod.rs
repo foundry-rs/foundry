@@ -53,13 +53,11 @@ pub struct CallDetails {
     pub calldata: Bytes,
     // Target function, used to decode values from result and to create counterexample.
     pub function: Function,
-    // Target contract abi, used to decode and collect values from logs.
-    pub abi: JsonAbi,
 }
 
 impl CallDetails {
-    pub fn new(address: Address, calldata: Bytes, function: Function, abi: JsonAbi) -> Self {
-        Self { address, calldata, function, abi }
+    pub fn new(address: Address, calldata: Bytes, function: Function) -> Self {
+        Self { address, calldata, function }
     }
 
     // Returns args of the call (decoded from calldata).

@@ -234,6 +234,7 @@ impl<'a> InvariantExecutor<'a> {
                     if !&call_result.reverted {
                         collect_data(
                             &mut state_changeset,
+                            &targeted_contracts,
                             tx,
                             &call_result,
                             &fuzz_state,
@@ -652,6 +653,7 @@ impl<'a> InvariantExecutor<'a> {
 /// randomly generated addresses.
 fn collect_data(
     state_changeset: &mut HashMap<Address, revm::primitives::Account>,
+    fuzzed_contracts: &FuzzRunIdentifiedContracts,
     tx: &BasicTxDetails,
     call_result: &RawCallResult,
     fuzz_state: &EvmFuzzState,
@@ -671,9 +673,16 @@ fn collect_data(
         sender_changeset = state_changeset.remove(&tx.sender);
     }
 
+    let target_abi = fuzzed_contracts
+        .targets
+        .lock()
+        .get(&tx.call_details.address)
+        .map(|(_, abi, _)| abi.clone())
+        .unwrap_or_default();
+
     fuzz_state.collect_values_from_call(
         &tx.call_details.function,
-        &tx.call_details.abi,
+        &target_abi,
         &call_result.result,
         &call_result.logs,
         &*state_changeset,
