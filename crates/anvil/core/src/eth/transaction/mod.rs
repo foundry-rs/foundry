@@ -6,7 +6,7 @@ use alloy_consensus::{
     TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, Bloom, Bytes, Log, Parity, Signature, TxHash, TxKind, B256, U256};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
     other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
@@ -22,13 +22,6 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
 pub mod optimism;
-
-/// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-#[cfg(feature = "impersonated-tx")]
-pub fn impersonated_signature() -> Signature {
-    Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false)
-        .unwrap()
-}
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -201,16 +194,23 @@ impl MaybeImpersonatedTransaction {
         self.transaction.recover()
     }
 
+    /// Returns whether the transaction is impersonated
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::hash] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn is_impersonated(&self) -> bool {
+        self.impersonated_sender.is_some()
+    }
+
     /// Returns the hash of the transaction
     ///
     /// Note: this is feature gated so it does not conflict with the `Deref`ed
     /// [TypedTransaction::hash] function by default.
     #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
-        if self.transaction.is_impersonated() {
-            if let Some(sender) = self.impersonated_sender {
-                return self.transaction.impersonated_hash(sender)
-            }
+        if let Some(sender) = self.impersonated_sender {
+            return self.transaction.impersonated_hash(sender)
         }
         self.transaction.hash()
     }
@@ -830,12 +830,6 @@ impl TypedTransaction {
         }
     }
 
-    /// Returns true if the transaction was impersonated (using the impersonate Signature)
-    #[cfg(feature = "impersonated-tx")]
-    pub fn is_impersonated(&self) -> bool {
-        self.signature() == impersonated_signature()
-    }
-
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
     /// This appends the `address` before hashing it
@@ -884,7 +878,7 @@ impl TypedTransaction {
             TypedTransaction::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                false,
+                Parity::Parity(false),
             )
             .unwrap(),
         }
