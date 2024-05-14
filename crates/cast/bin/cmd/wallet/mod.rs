@@ -158,7 +158,7 @@ pub enum WalletSubcommands {
         /// The name for the account in the keystore.
         #[arg(value_name = "ACCOUNT_NAME")]
         account_name: String,
-        /// If provided, keystore will be saved here instead of the default keystores directory
+        /// If not provided, keystore will try to be located at the default keystores directory
         /// (~/.foundry/keystores)
         #[arg(long, short)]
         keystore_dir: Option<String>,
