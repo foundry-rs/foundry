@@ -123,7 +123,7 @@ fn check_sequence(
         let tx = &calls[call_index];
         let call_result = executor.call_raw_committing(
             tx.sender,
-            tx.call_details.address,
+            tx.call_details.target,
             tx.call_details.calldata.clone(),
             U256::ZERO,
         )?;

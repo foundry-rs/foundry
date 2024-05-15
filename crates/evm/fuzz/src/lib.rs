@@ -7,7 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_primitives::{Address, Bytes, Log};
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
@@ -25,7 +25,6 @@ pub mod invariant;
 pub mod strategies;
 
 mod inspector;
-use crate::invariant::BasicTxDetails;
 pub use inspector::Fuzzer;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,25 +55,38 @@ pub struct BaseCounterExample {
 }
 
 impl BaseCounterExample {
-    pub fn from_tx_details(
-        tx: &BasicTxDetails,
+    pub fn create(
+        sender: Address,
+        addr: Address,
+        bytes: &Bytes,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Self {
-        let contract_name = if let Some((name, _)) = &contracts.get(&tx.call_details.address) {
-            Some(name.clone())
-        } else {
-            None
-        };
+        if let Some((name, abi)) = &contracts.get(&addr) {
+            if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
+                // skip the function selector when decoding
+                if let Ok(args) = func.abi_decode_input(&bytes[4..], false) {
+                    return BaseCounterExample {
+                        sender: Some(sender),
+                        addr: Some(addr),
+                        calldata: bytes.clone(),
+                        signature: Some(func.signature()),
+                        contract_name: Some(name.clone()),
+                        traces,
+                        args,
+                    };
+                }
+            }
+        }
 
         BaseCounterExample {
-            sender: Some(tx.sender),
-            addr: Some(tx.call_details.address),
-            calldata: tx.call_details.calldata.clone(),
-            signature: Some(tx.call_details.function.signature()),
-            contract_name,
+            sender: Some(sender),
+            addr: Some(addr),
+            calldata: bytes.clone(),
+            signature: None,
+            contract_name: None,
             traces,
-            args: tx.call_details.args(),
+            args: vec![],
         }
     }
 }

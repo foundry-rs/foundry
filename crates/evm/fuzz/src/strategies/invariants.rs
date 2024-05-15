@@ -101,7 +101,7 @@ fn generate_call(
                 (sender, contract)
             })
         })
-        .prop_map(|(sender, call_details)| BasicTxDetails::new(sender, call_details))
+        .prop_map(|(sender, call_details)| BasicTxDetails { sender, call_details })
         .boxed()
 }
 
@@ -167,7 +167,7 @@ fn select_random_function(
 pub fn fuzz_contract_with_calldata(
     fuzz_state: &EvmFuzzState,
     fuzz_fixtures: &FuzzFixtures,
-    contract: Address,
+    target: Address,
     func: Function,
 ) -> impl Strategy<Value = CallDetails> {
     // We need to compose all the strategies generated for each parameter in all possible
@@ -176,10 +176,10 @@ pub fn fuzz_contract_with_calldata(
     #[allow(clippy::arc_with_non_send_sync)]
     prop_oneof![
         60 => fuzz_calldata(func.clone(), fuzz_fixtures),
-        40 => fuzz_calldata_from_state(func.clone(), fuzz_state),
+        40 => fuzz_calldata_from_state(func, fuzz_state),
     ]
     .prop_map(move |calldata| {
         trace!(input=?calldata);
-        CallDetails::new(contract, calldata, func.clone())
+        CallDetails { target, calldata }
     })
 }

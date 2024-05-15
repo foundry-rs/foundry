@@ -38,7 +38,7 @@ pub fn replay_run(
     for tx in inputs.iter() {
         let call_result = executor.call_raw_committing(
             tx.sender,
-            tx.call_details.address,
+            tx.call_details.target,
             tx.call_details.calldata.clone(),
             U256::ZERO,
         )?;
@@ -60,8 +60,10 @@ pub fn replay_run(
         ));
 
         // Create counter example to be used in failed case.
-        counterexample_sequence.push(BaseCounterExample::from_tx_details(
-            tx,
+        counterexample_sequence.push(BaseCounterExample::create(
+            tx.sender,
+            tx.call_details.target,
+            &tx.call_details.calldata,
             &ided_contracts,
             call_result.traces,
         ));

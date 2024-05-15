@@ -71,7 +71,7 @@ impl RandomCallGenerator {
             )
         } else {
             // TODO: Do we want it to be 80% chance only too ?
-            let new_caller = original_target;
+            let sender = original_target;
 
             // Set which contract we mostly (80% chance) want to generate calldata from.
             *self.target_reference.write() = original_caller;
@@ -82,7 +82,7 @@ impl RandomCallGenerator {
                 .new_tree(&mut self.runner.lock())
                 .unwrap()
                 .current()
-                .map(|call_details| BasicTxDetails::new(new_caller, call_details));
+                .map(|call_details| BasicTxDetails { sender, call_details });
 
             self.last_sequence.write().push(choice.clone());
             choice

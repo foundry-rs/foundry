@@ -45,16 +45,16 @@ impl EvmFuzzState {
     /// the given [FuzzDictionaryConfig].
     pub fn collect_values_from_call(
         &self,
-        function: &Function,
-        abi: &JsonAbi,
+        target_abi: Option<&JsonAbi>,
+        target_function: Option<&Function>,
         result: &Bytes,
         logs: &[Log],
         state_changeset: &StateChangeset,
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
-        dict.insert_result_values(function, result, run_depth);
-        dict.insert_logs_values(abi, logs, run_depth);
+        dict.insert_result_values(target_function, result, run_depth);
+        dict.insert_logs_values(target_abi, logs, run_depth);
         dict.insert_state_values(state_changeset);
     }
 
@@ -128,31 +128,37 @@ impl FuzzDictionary {
     }
 
     /// Insert values collected from call result into fuzz dictionary.
-    fn insert_result_values(&mut self, function: &Function, result: &Bytes, run_depth: u32) {
-        let mut samples = Vec::new();
-        if !function.outputs.is_empty() {
-            // Decode result and collect samples to be used in subsequent fuzz runs.
-            if let Ok(decoded_result) = function.abi_decode_output(result, false) {
-                samples.extend(decoded_result);
+    fn insert_result_values(
+        &mut self,
+        function: Option<&Function>,
+        result: &Bytes,
+        run_depth: u32,
+    ) {
+        if let Some(function) = function {
+            if !function.outputs.is_empty() {
+                // Decode result and collect samples to be used in subsequent fuzz runs.
+                if let Ok(decoded_result) = function.abi_decode_output(result, false) {
+                    self.insert_sample_values(decoded_result, run_depth);
+                }
             }
         }
-        self.insert_sample_values(samples, run_depth);
     }
 
     /// Insert values from call log topics and data into fuzz dictionary.
-    /// These values are removed at the end of current run.
-    fn insert_logs_values(&mut self, abi: &JsonAbi, logs: &[Log], run_depth: u32) {
+    fn insert_logs_values(&mut self, abi: Option<&JsonAbi>, logs: &[Log], run_depth: u32) {
         let mut samples = Vec::new();
         // Decode logs with known events and collect samples from indexed fields and event body.
         for log in logs {
             let mut log_decoded = false;
             // Try to decode log with events from contract abi.
-            for event in abi.events() {
-                if let Ok(decoded_event) = event.decode_log(log, false) {
-                    samples.extend(decoded_event.indexed);
-                    samples.extend(decoded_event.body);
-                    log_decoded = true;
-                    break;
+            if let Some(abi) = abi {
+                for event in abi.events() {
+                    if let Ok(decoded_event) = event.decode_log(log, false) {
+                        samples.extend(decoded_event.indexed);
+                        samples.extend(decoded_event.body);
+                        log_decoded = true;
+                        break;
+                    }
                 }
             }
 
@@ -252,6 +258,7 @@ impl FuzzDictionary {
 
     /// Insert sample values that are reused across multiple runs.
     /// The number of samples is limited to invariant run depth.
+    /// If collected samples limit is reached then values are inserted as regular values.
     pub fn insert_sample_values(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
         for sample in sample_values {
             let sample_type = sample.as_type().unwrap();

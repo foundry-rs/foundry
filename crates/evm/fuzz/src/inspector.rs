@@ -85,11 +85,11 @@ impl Fuzzer {
                 if let Some(tx) = call_generator.next(call.context.caller, call.contract) {
                     *call.input = tx.call_details.calldata.0;
                     call.context.caller = tx.sender;
-                    call.contract = tx.call_details.address;
+                    call.contract = tx.call_details.target;
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = tx.call_details.address;
-                    call.context.address = tx.call_details.address;
+                    call.context.code_address = tx.call_details.target;
+                    call.context.address = tx.call_details.target;
 
                     call_generator.used = true;
                 }

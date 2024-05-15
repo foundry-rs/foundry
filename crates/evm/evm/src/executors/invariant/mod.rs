@@ -211,7 +211,7 @@ impl<'a> InvariantExecutor<'a> {
                 let call_result = executor
                     .call_raw_committing(
                         tx.sender,
-                        tx.call_details.address,
+                        tx.call_details.target,
                         tx.call_details.calldata.clone(),
                         U256::ZERO,
                     )
@@ -673,16 +673,11 @@ fn collect_data(
         sender_changeset = state_changeset.remove(&tx.sender);
     }
 
-    let target_abi = fuzzed_contracts
-        .targets
-        .lock()
-        .get(&tx.call_details.address)
-        .map(|(_, abi, _)| abi.clone())
-        .unwrap_or_default();
-
+    // Collect values from fuzzed call result and add them to fuzz dictionary.
+    let (fuzzed_contract_abi, fuzzed_function) = fuzzed_contracts.fuzzed_artifacts(tx);
     fuzz_state.collect_values_from_call(
-        &tx.call_details.function,
-        &target_abi,
+        fuzzed_contract_abi.as_ref(),
+        fuzzed_function.as_ref(),
         &call_result.result,
         &call_result.logs,
         &*state_changeset,
