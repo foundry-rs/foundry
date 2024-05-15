@@ -274,20 +274,16 @@ impl BindArgs {
         let mut solmacrogen = self.get_solmacrogen(artifacts)?;
         println!("Generating bindings for {} contracts", solmacrogen.instances.len());
 
-        // TODO (yash): complete this
-
         if !self.module {
-            tracing::info!(target: "forge::bind", "Generating crate with alloy bindings");
-            // TODO (yash): generate crate
+            trace!(single_file = self.single_file, "generating crate");
             solmacrogen.write_to_crate(
-                &self.crate_name.as_str(),
-                &self.crate_version.as_str(),
+                &self.crate_name,
+                &self.crate_version,
                 bindings_root,
                 self.single_file,
             );
         } else {
-            // TODO (yash): generate module
-            tracing::info!(target: "forge::bind", "Generating module with alloy bindings");
+            trace!(single_file = self.single_file, "generating module");
             solmacrogen.write_to_module(bindings_root, self.single_file);
         }
 
