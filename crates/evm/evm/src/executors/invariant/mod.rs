@@ -178,6 +178,11 @@ impl<'a> InvariantExecutor<'a> {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
         }
 
+        // If running with progress then set run label.
+        if let Some(progress) = progress {
+            progress.set_message("Runs");
+        }
+
         // The strategy only comes with the first `input`. We fill the rest of the `inputs`
         // until the desired `depth` so we can use the evolving fuzz dictionary
         // during the run. We need another proptest runner to query for random

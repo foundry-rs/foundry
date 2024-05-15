@@ -169,7 +169,7 @@ macro_rules! update_progress {
 /// Creates progress object and progress bar.
 #[macro_export]
 macro_rules! init_tests_progress {
-    ($tests_len:expr) => {{
+    ($tests_len:expr,$threads_no:expr) => {{
         let progress = MultiProgress::new();
         let pb = progress.add(indicatif::ProgressBar::new($tests_len as u64));
         pb.set_style(
@@ -177,7 +177,7 @@ macro_rules! init_tests_progress {
                 .unwrap()
                 .progress_chars("##-"),
         );
-        pb.set_message("completed");
+        pb.set_message(format!("completed (with {} threads)", $threads_no as u64));
         (progress, pb)
     }};
 }
@@ -208,7 +208,7 @@ macro_rules! init_invariant_test_progress {
             .insert_after($suite_progress, indicatif::ProgressBar::new($runs as u64));
         pb.set_style(
             indicatif::ProgressStyle::with_template(
-                "    ↪ {prefix:.bold.dim}: [{pos}/{len}] Runs {wide_msg}",
+                "    ↪ {prefix:.bold.dim}: [{pos}/{len}] {wide_msg}",
             )
             .unwrap()
             .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),

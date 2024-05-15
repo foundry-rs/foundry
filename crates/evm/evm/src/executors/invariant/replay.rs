@@ -101,13 +101,8 @@ pub fn replay_error(
         // Don't use at the moment.
         TestError::Abort(_) => Ok(None),
         TestError::Fail(_, ref calls) => {
-            // Display shrinking progress.
-            if let Some(progress) = progress {
-                progress.set_message(format!("| [{}] calls shrinking", calls.len()));
-            }
-
             // Shrink sequence of failed calls.
-            let calls = shrink_sequence(failed_case, calls, &executor)?;
+            let calls = shrink_sequence(failed_case, calls, &executor, progress)?;
 
             set_up_inner_replay(&mut executor, &failed_case.inner_sequence);
             // Replay calls to get the counterexample and to collect logs, traces and coverage.
