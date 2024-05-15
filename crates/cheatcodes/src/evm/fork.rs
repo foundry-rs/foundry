@@ -116,10 +116,6 @@ impl Cheatcode for selectForkCall {
         let Self { forkId } = self;
         check_broadcast(ccx.state)?;
 
-        // No need to correct since the sender's nonce does not get incremented when selecting a
-        // fork.
-        ccx.state.corrected_nonce = true;
-
         ccx.ecx.db.select_fork(*forkId, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
         Ok(Default::default())
     }
@@ -287,9 +283,6 @@ fn create_select_fork<DB: DatabaseExt>(
 ) -> Result {
     check_broadcast(ccx.state)?;
 
-    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
-    ccx.state.corrected_nonce = true;
-
     let fork = create_fork_request(ccx, url_or_alias, block)?;
     let id = ccx.ecx.db.create_select_fork(fork, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
     Ok(id.abi_encode())
@@ -313,9 +306,6 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: &B256,
 ) -> Result {
     check_broadcast(ccx.state)?;
-
-    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
-    ccx.state.corrected_nonce = true;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
     let id = ccx.ecx.db.create_select_fork_at_transaction(

@@ -159,6 +159,11 @@ impl Executor {
         Ok(self.backend.basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
+    /// Returns true if account has no code.
+    pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
+        Ok(self.backend.basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
+    }
+
     #[inline]
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
         self.inspector.tracing(tracing);

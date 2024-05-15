@@ -44,7 +44,8 @@ impl TransactionReceiptWithRevertReason {
         let transaction = provider
             .get_transaction_by_hash(self.receipt.transaction_hash)
             .await
-            .map_err(|_| eyre::eyre!("unable to fetch transaction"))?;
+            .map_err(|err| eyre::eyre!("unable to fetch transaction: {err}"))?
+            .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
         if let Some(block_hash) = self.receipt.block_hash {
             match provider
