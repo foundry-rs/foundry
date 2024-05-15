@@ -279,10 +279,15 @@ impl BindArgs {
         if !self.module {
             tracing::info!(target: "forge::bind", "Generating crate with alloy bindings");
             // TODO (yash): generate crate
-            solmacrogen.write_to_crate(&self.crate_name.as_str(), &self.crate_version.as_str(), bindings_root);
+            solmacrogen.write_to_crate(
+                &self.crate_name.as_str(),
+                &self.crate_version.as_str(),
+                bindings_root,
+            );
         } else {
             // TODO (yash): generate module
             tracing::info!(target: "forge::bind", "Generating module with alloy bindings");
+            solmacrogen.write_to_module(bindings_root);
         }
 
         Ok(())
