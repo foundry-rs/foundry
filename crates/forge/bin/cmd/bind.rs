@@ -283,11 +283,12 @@ impl BindArgs {
                 &self.crate_name.as_str(),
                 &self.crate_version.as_str(),
                 bindings_root,
+                self.single_file,
             );
         } else {
             // TODO (yash): generate module
             tracing::info!(target: "forge::bind", "Generating module with alloy bindings");
-            solmacrogen.write_to_module(bindings_root);
+            solmacrogen.write_to_module(bindings_root, self.single_file);
         }
 
         Ok(())
