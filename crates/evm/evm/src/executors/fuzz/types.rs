@@ -1,5 +1,5 @@
 use crate::executors::RawCallResult;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, Log};
 use foundry_common::evm::Breakpoints;
 use foundry_evm_core::debug::DebugArena;
 use foundry_evm_coverage::HitMaps;
@@ -20,6 +20,8 @@ pub struct CaseOutcome {
     pub debug: Option<DebugArena>,
     /// Breakpoints char pc map
     pub breakpoints: Breakpoints,
+    /// logs of a single fuzz test case
+    pub logs: Vec<Log>,
 }
 
 /// Returned by a single fuzz when a counterexample has been discovered
