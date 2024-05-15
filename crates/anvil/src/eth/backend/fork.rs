@@ -316,10 +316,11 @@ impl ClientFork {
         }
 
         let tx = self.provider().get_transaction_by_hash(hash).await?;
-
-        let mut storage = self.storage_write();
-        storage.transactions.insert(hash, tx.clone());
-        Ok(Some(tx))
+        if let Some(tx) = tx.clone() {
+            let mut storage = self.storage_write();
+            storage.transactions.insert(hash, tx);
+        }
+        Ok(tx)
     }
 
     pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, TransportError> {

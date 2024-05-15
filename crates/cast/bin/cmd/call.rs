@@ -122,9 +122,14 @@ impl CallArgs {
         };
 
         let mut req = WithOtherFields::<TransactionRequest>::default()
-            .with_to(to.unwrap_or_default())
             .with_from(sender)
             .with_value(tx.value.unwrap_or_default());
+
+        if let Some(to) = to {
+            req.set_to(to);
+        } else {
+            req.set_kind(alloy_primitives::TxKind::Create);
+        }
 
         if let Some(nonce) = tx.nonce {
             req.set_nonce(nonce.to());

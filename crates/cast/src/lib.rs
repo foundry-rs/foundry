@@ -635,7 +635,11 @@ where
         to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        let tx = self.provider.get_transaction_by_hash(tx_hash).await?;
+        let tx = self
+            .provider
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         Ok(if raw {
             format!("0x{}", hex::encode(TxEnvelope::try_from(tx.inner)?.encoded_2718()))
@@ -1047,6 +1051,24 @@ impl SimpleCast {
     /// ```
     pub fn from_utf8(s: &str) -> String {
         hex::encode_prefixed(s)
+    }
+
+    /// Converts hex input to UTF-8 text
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(Cast::to_utf8("0x796f")?, "yo");
+    /// assert_eq!(Cast::to_utf8("0x48656c6c6f2c20576f726c6421")?, "Hello, World!");
+    /// assert_eq!(Cast::to_utf8("0x547572626f44617070546f6f6c73")?, "TurboDappTools");
+    /// assert_eq!(Cast::to_utf8("0xe4bda0e5a5bd")?, "你好");
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn to_utf8(s: &str) -> Result<String> {
+        let bytes = hex::decode(s)?;
+        Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
 
     /// Converts hex data into text data

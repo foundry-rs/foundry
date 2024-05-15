@@ -68,6 +68,10 @@ async fn main() -> Result<()> {
             let value = stdin::unwrap(hexdata, false)?;
             println!("{}", SimpleCast::to_ascii(&value)?);
         }
+        CastSubcommand::ToUtf8 { hexdata } => {
+            let value = stdin::unwrap(hexdata, false)?;
+            println!("{}", SimpleCast::to_utf8(&value)?);
+        }
         CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
             println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?);

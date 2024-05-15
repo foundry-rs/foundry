@@ -498,7 +498,10 @@ impl EtherscanVerificationProvider {
         )?;
 
         let creation_data = client.contract_creation_data(args.address).await?;
-        let transaction = provider.get_transaction_by_hash(creation_data.transaction_hash).await?;
+        let transaction = provider
+            .get_transaction_by_hash(creation_data.transaction_hash)
+            .await?
+            .ok_or_eyre("Transaction not found")?;
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await?

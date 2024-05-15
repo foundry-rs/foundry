@@ -59,9 +59,6 @@ pub async fn build_tx<
 
     let from = from.into().resolve(provider).await?;
 
-    let to: Option<Address> =
-        if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
-
     let sidecar = blob_data
         .map(|data| {
             let mut coder = SidecarBuilder::<SimpleCoder>::default();
@@ -70,8 +67,7 @@ pub async fn build_tx<
         })
         .transpose()?;
 
-    let mut req = WithOtherFields::new(TransactionRequest::default())
-        .with_to(to.unwrap_or_default())
+    let mut req = WithOtherFields::<TransactionRequest>::default()
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
@@ -83,6 +79,12 @@ pub async fn build_tx<
             // If blob_base_fee is 0, uses 1 wei as minimum.
             tx.blob_gas_price.map_or(provider.get_blob_base_fee().await?.max(1), |g| g.to()),
         );
+    }
+
+    if let Some(to) = to {
+        req.set_to(to.into().resolve(provider).await?);
+    } else {
+        req.set_kind(alloy_primitives::TxKind::Create);
     }
 
     req.set_nonce(if let Some(nonce) = tx.nonce {
