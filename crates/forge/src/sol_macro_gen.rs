@@ -113,7 +113,7 @@ impl MultiSolMacroGen {
         }
     }
 
-    pub fn write_to_crate(&mut self, _name: &str, _version: &str, bindings_path: &Path) {
+    pub fn write_to_crate(&mut self, name: &str, version: &str, bindings_path: &Path) {
         self.generate_bindings();
 
         let src = bindings_path.join("src");
@@ -122,14 +122,12 @@ impl MultiSolMacroGen {
         let _ = fs::create_dir_all(&src);
 
         // Write Cargo.toml
-        // let mut _cargo_toml = std::fs::OpenOptions::new()
-        //     .read(true)
-        //     .write(true)
-        //     .create_new(true)
-        //     .open(bindings_path.join("Cargo.toml"))
-        //     .expect("Failed to open Cargo.toml");
+        let cargo_toml_path = bindings_path.join("Cargo.toml");
+        let toml_contents = format!("[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n\n[dependencies]\nalloy-sol-types = \"0.7.4\"\n", name, version);
+        fs::write(cargo_toml_path, toml_contents).expect("Failed to write Cargo.toml");
 
-        let mut lib_contents = String::new();
+        // Write src
+        let mut lib_contents = String::from("#![allow(unused_imports)]\n");
         for instance in &self.instances {
             let path = src.join(format!("{}.rs", instance.name.to_lowercase()));
             fs::write(path, instance.expansion.to_owned().unwrap().to_string())
@@ -138,6 +136,7 @@ impl MultiSolMacroGen {
         }
 
         // Write lib.rs
+        lib_contents += &format!("extern crate alloy_sol_types;\nextern crate core;\n");
         let lib_path = src.join("lib.rs");
         fs::write(lib_path, lib_contents).expect("Failed to write lib.rs");
 
