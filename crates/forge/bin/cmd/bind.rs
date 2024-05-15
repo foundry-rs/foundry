@@ -270,8 +270,8 @@ impl BindArgs {
         }
     }
 
-    fn generate_alloy(&self, artifacts: &Path, _bindings_root: &Path) -> Result<()> {
-        let solmacrogen = self.get_solmacrogen(artifacts)?;
+    fn generate_alloy(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
+        let mut solmacrogen = self.get_solmacrogen(artifacts)?;
         println!("Generating bindings for {} contracts", solmacrogen.instances.len());
 
         // TODO (yash): complete this
@@ -279,7 +279,7 @@ impl BindArgs {
         if !self.module {
             tracing::info!(target: "forge::bind", "Generating crate with alloy bindings");
             // TODO (yash): generate crate
-            solmacrogen.write_to_crate();
+            solmacrogen.write_to_crate(&self.crate_name.as_str(), &self.crate_version.as_str(), bindings_root);
         } else {
             // TODO (yash): generate module
             tracing::info!(target: "forge::bind", "Generating module with alloy bindings");

@@ -175,12 +175,13 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", 
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", default-features = false }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", default-features = false }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", default-features = false }
-alloy-primitives = { version = "0.7.1", features = ["getrandom"] }
-alloy-dyn-abi = "0.7.1"
-alloy-json-abi = "0.7.1"
-alloy-sol-types = "0.7.1"
-alloy-sol-macro-input = "0.7.1"
-syn-solidity = "0.7.1"
+alloy-primitives = { version = "0.7.3", features = ["getrandom"] }
+alloy-dyn-abi = "0.7.3"
+alloy-json-abi = "0.7.3"
+alloy-sol-types = "0.7.3"
+alloy-sol-macro-input = "0.7.3"
+alloy-sol-macro-expander = "0.7.3"
+syn-solidity = "0.7.3"
 alloy-chains = "0.1"
 alloy-trie = "0.3.1"
 alloy-rlp = "0.3.3"
@@ -189,7 +190,10 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"

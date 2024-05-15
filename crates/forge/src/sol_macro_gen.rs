@@ -1,18 +1,23 @@
 use alloy_json_abi::JsonAbi;
-use foundry_common::fs::json_files;
+use alloy_sol_macro_expander::expand::expand;
+use alloy_sol_macro_input::{SolInput, SolInputKind};
+use foundry_common::fs::{self, json_files};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::TokenStreamExt;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use alloy_sol_macro_input::{SolInput, SolInputKind};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
+    pub expansion: Option<TokenStream>,
 }
 
 impl SolMacroGen {
     pub fn new(path: PathBuf, name: String) -> Self {
-        Self { path, name }
+        Self { path, name, expansion: None }
     }
 
     pub fn get_json_abi(&self) -> JsonAbi {
@@ -73,8 +78,8 @@ impl MultiSolMacroGen {
         Self { artifacts_path, instances }
     }
 
-    pub fn write_to_crate(&self) {
-        for instance in &self.instances {
+    fn generate_bindings(&mut self) {
+        for instance in &mut self.instances {
             let mut json_abi = instance.get_json_abi();
 
             json_abi.dedup();
@@ -86,27 +91,57 @@ impl MultiSolMacroGen {
 
             let input: Result<SolInput, syn::Error> = syn::parse2(tokens);
 
-            let sol_input = if let Ok(input) = input {
-                input
-            } else {
-                panic!("Failed to parse SolInput")
-            };
+            let sol_input =
+                if let Ok(input) = input { input } else { panic!("Failed to parse SolInput") };
 
-            let SolInput { attrs, path, kind } = sol_input;
+            let SolInput { attrs: _attrs, path: _path, kind } = sol_input;
 
             let tokens = match kind {
                 SolInputKind::Sol(file) => {
                     // TODO: Add attributes if needed to file.attrs
 
-                    // TOOD: use `expand`
-
-                    todo!()
-                },
-                _ => panic!("Not possible")
+                    match expand(file) {
+                        Ok(tokens) => tokens,
+                        Err(e) => panic!("Failed to expand SolInput: {e}"),
+                    }
+                }
+                _ => panic!("Not possible"),
             };
 
-            
+            tracing::info!("Generated Rust tokens for {:?}", instance.name);
+            instance.expansion = Some(tokens);
         }
+    }
+
+    pub fn write_to_crate(&mut self, _name: &str, _version: &str, bindings_path: &Path) {
+        self.generate_bindings();
+
+        let src = bindings_path.join("src");
+        tracing::info!("Writing crate to src{:?}", src);
+
+        let _ = fs::create_dir_all(&src);
+
+        // Write Cargo.toml
+        // let mut _cargo_toml = std::fs::OpenOptions::new()
+        //     .read(true)
+        //     .write(true)
+        //     .create_new(true)
+        //     .open(bindings_path.join("Cargo.toml"))
+        //     .expect("Failed to open Cargo.toml");
+
+        let mut lib_contents = String::new();
+        for instance in &self.instances {
+            let path = src.join(format!("{}.rs", instance.name.to_lowercase()));
+            fs::write(path, instance.expansion.to_owned().unwrap().to_string())
+                .expect("Failed to write file");
+            lib_contents += &format!("pub mod {};\n", instance.name.to_lowercase());
+        }
+
+        // Write lib.rs
+        let lib_path = src.join("lib.rs");
+        fs::write(lib_path, lib_contents).expect("Failed to write lib.rs");
+
+        tracing::info!("Wrote crate to {:?}", bindings_path);
     }
 }
 

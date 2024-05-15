@@ -61,6 +61,7 @@ alloy-network.workspace = true
 alloy-transport.workspace = true
 alloy-signer.workspace = true
 alloy-sol-macro-input.workspace = true
+alloy-sol-macro-expander = {workspace = true, features = ["json"]}
 alloy-consensus.workspace = true
 alloy-chains.workspace = true
 
