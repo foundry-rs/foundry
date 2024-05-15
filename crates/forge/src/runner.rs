@@ -9,7 +9,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256};
 use eyre::Result;
-use foundry_cli::init_long_running_test_progress;
+use foundry_cli::init_invariant_test_progress;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
@@ -361,10 +361,11 @@ impl<'a> ContractRunner<'a> {
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
 
                     let test_progress = progress.map(|(overall_progress, suite_progress)| {
-                        init_long_running_test_progress!(
+                        init_invariant_test_progress!(
                             overall_progress,
                             suite_progress,
-                            func.name
+                            func.name,
+                            invariant_config.runs
                         )
                     });
 

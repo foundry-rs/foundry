@@ -175,7 +175,7 @@ impl MultiContractRunner {
             // Create overall tests progress and progress bar.
             // Tests progress is passed to test runners for adding individual test suite progress.
             // Progress bar is updated each time a test suite ends.
-            let (tests_progress, progress_bar) = init_tests_progress!(contracts);
+            let (tests_progress, progress_bar) = init_tests_progress!(contracts.len());
             // We collect test suite results to stream of the end of test run.
             let results = Arc::new(Mutex::new(Vec::new()));
             contracts.par_iter().for_each(|&(id, contract)| {

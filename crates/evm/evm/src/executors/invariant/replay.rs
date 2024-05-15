@@ -102,11 +102,8 @@ pub fn replay_error(
         TestError::Abort(_) => Ok(None),
         TestError::Fail(_, ref calls) => {
             // Display shrinking progress.
-            if progress.is_some() {
-                progress
-                    .as_ref()
-                    .unwrap()
-                    .set_message(format!("Shrinking [{}] calls", calls.len()));
+            if let Some(progress) = progress {
+                progress.set_message(format!("| [{}] calls shrinking", calls.len()));
             }
 
             // Shrink sequence of failed calls.

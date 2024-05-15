@@ -29,11 +29,7 @@ use proptest::{
 use result::{assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -182,9 +178,6 @@ impl<'a> InvariantExecutor<'a> {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
         }
 
-        // Record current run to display in progress bar.
-        let invariant_run = Cell::new(0);
-
         // The strategy only comes with the first `input`. We fill the rest of the `inputs`
         // until the desired `depth` so we can use the evolving fuzz dictionary
         // during the run. We need another proptest runner to query for random
@@ -309,14 +302,9 @@ impl<'a> InvariantExecutor<'a> {
             // Revert state to not persist values between runs.
             fuzz_state.revert();
 
-            // If running with progress then update test status with current run.
-            if progress.is_some() {
-                let mut completed_run = invariant_run.get();
-                completed_run += 1;
-                progress
-                    .unwrap()
-                    .set_message(format!("[{}/{}] Runs", completed_run, self.config.runs));
-                invariant_run.set(completed_run);
+            // If running with progress then increment completed runs.
+            if let Some(progress) = progress {
+                progress.inc(1);
             }
 
             Ok(())

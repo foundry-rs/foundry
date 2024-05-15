@@ -169,9 +169,9 @@ macro_rules! update_progress {
 /// Creates progress object and progress bar.
 #[macro_export]
 macro_rules! init_tests_progress {
-    ($tests:expr) => {{
+    ($tests_len:expr) => {{
         let progress = MultiProgress::new();
-        let pb = progress.add(indicatif::ProgressBar::new($tests.len() as u64));
+        let pb = progress.add(indicatif::ProgressBar::new($tests_len as u64));
         pb.set_style(
             indicatif::ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
                 .unwrap()
@@ -198,17 +198,17 @@ macro_rules! init_test_suite_progress {
     }};
 }
 
-/// Creates progress entry for long-running tests.
-/// Set only the prefix, leaving message to be updated during execution with current phase.
+/// Creates progress entry for invariant tests.
+/// Set the prefix and total number of runs. Message is updated during execution with current phase.
 /// Test progress is placed under test suite progress entry so all tests within suite are grouped.
 #[macro_export]
-macro_rules! init_long_running_test_progress {
-    ($overall_progress:expr, $suite_progress:expr, $test_name:expr) => {{
-        let pb =
-            $overall_progress.insert_after($suite_progress, indicatif::ProgressBar::new_spinner());
+macro_rules! init_invariant_test_progress {
+    ($overall_progress:expr, $suite_progress:expr, $test_name:expr, $runs:expr) => {{
+        let pb = $overall_progress
+            .insert_after($suite_progress, indicatif::ProgressBar::new($runs as u64));
         pb.set_style(
             indicatif::ProgressStyle::with_template(
-                "    ↪ {prefix:.bold.dim}: {wide_msg:.bold.dim}",
+                "    ↪ {prefix:.bold.dim}: [{pos}/{len}] Runs {wide_msg}",
             )
             .unwrap()
             .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
