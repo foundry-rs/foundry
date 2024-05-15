@@ -1,9 +1,8 @@
 use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
-use alloy_sol_macro_input::{SolInput, SolInputKind};
+use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
 use foundry_common::fs::{self, json_files};
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::TokenStreamExt;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 pub struct SolMacroGen {
@@ -83,6 +82,8 @@ impl MultiSolMacroGen {
             let ident_name: Ident = Ident::new(&instance.name, Span::call_site());
 
             let tokens = tokens_for_sol(&ident_name, &sol_str);
+            let tokens =
+                if let Ok(tokens) = tokens { tokens } else { panic!("Failed to get sol tokens") };
 
             let input: Result<SolInput, syn::Error> = syn::parse2(tokens);
 
@@ -157,29 +158,4 @@ impl MultiSolMacroGen {
         }
         fs::write(mod_path, mod_contents).expect("Failed to write mod.rs");
     }
-}
-
-/// Returns `sol!` tokens.
-/// Taken from alloy-macro-input/json
-/// TODO(yash): Remove this after making it pub in alloy.
-fn tokens_for_sol(name: &Ident, sol: &str) -> TokenStream {
-    let mk_err = |s: &str| {
-        let msg = format!(
-            "`JsonAbi::to_sol` generated invalid Rust tokens: {s}\n\
-             This is a bug. We would appreciate a bug report: \
-             https://github.com/alloy-rs/core/issues/new/choose"
-        );
-        syn::Error::new(name.span(), msg)
-    };
-    let brace_idx = sol.find('{').ok_or_else(|| mk_err("missing `{`")).unwrap();
-    let tts = syn::parse_str::<TokenStream>(&sol[brace_idx..])
-        .map_err(|e| mk_err(&e.to_string()))
-        .unwrap();
-
-    let mut tokens = TokenStream::new();
-    // append `name` manually for the span
-    tokens.append::<Ident>(syn::parse_str("interface").unwrap());
-    tokens.append(name.clone());
-    tokens.extend(tts);
-    tokens
 }

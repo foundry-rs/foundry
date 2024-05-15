@@ -61,13 +61,12 @@ alloy-network.workspace = true
 alloy-transport.workspace = true
 alloy-signer.workspace = true
 alloy-sol-macro-input.workspace = true
-alloy-sol-macro-expander = {workspace = true, features = ["json"]}
+alloy-sol-macro-expander = { workspace = true, features = ["json"] }
 alloy-consensus.workspace = true
 alloy-chains.workspace = true
 
 proc-macro2 = "1.0.82"
 syn = "2.0"
-quote = "1.0.36"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
