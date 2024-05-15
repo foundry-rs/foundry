@@ -442,8 +442,6 @@ pub async fn handle_traces(
 }
 
 pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
-    println!("{}", serde_json::to_string(&result.traces)?);
-
     if result.traces.is_empty() {
         panic!("No traces found")
     }

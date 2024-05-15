@@ -237,24 +237,6 @@ pub async fn render_trace(
 
     let decoded = decoder.decode_function(trace).await;
 
-    let trace_json = json!(
-        {
-            "from": trace.caller,
-            "to": trace.address,
-            "depth": trace.depth,
-            "kind": trace.kind,
-            "success": trace.success,
-            "gas_used": trace.gas_used,
-            "value": trace.value,
-            "data": hex::encode(&trace.data),
-            "output": hex::encode(&trace.output),
-            "status": trace.status,
-            "decoded": decoded
-        }
-    );
-
-    println!("TRACE: {}", serde_json::to_string(&trace_json).unwrap());
-
     if trace.kind.is_any_create() {
         write!(
             &mut s,
@@ -315,8 +297,6 @@ async fn render_trace_log(
 ) -> Result<String, std::fmt::Error> {
     let mut s = String::new();
     let decoded = decoder.decode_event(log).await;
-
-    println!("event: {}", serde_json::to_string(&decoded).unwrap());
 
     match decoded {
         DecodedCallLog::Raw(log) => {
