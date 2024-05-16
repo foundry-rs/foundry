@@ -5,8 +5,11 @@ use alloy_primitives::Bytes;
 use foundry_compilers::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::{
-    interpreter::opcode::{self, spec_opcode_gas},
-    primitives::{HashSet, SpecId},
+    interpreter::{
+        opcode::{self},
+        OpCode,
+    },
+    primitives::HashSet,
 };
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -114,7 +117,6 @@ pub fn find_anchor_branch(
 ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
     // NOTE(onbjerg): We use `SpecId::LATEST` here since it does not matter; the only difference
     // is the gas cost.
-    let opcode_infos = spec_opcode_gas(SpecId::LATEST);
 
     let mut anchors: Option<(ItemAnchor, ItemAnchor)> = None;
     let mut pc = 0;
@@ -124,7 +126,9 @@ pub fn find_anchor_branch(
 
         // We found a push, so we do some PC -> IC translation accounting, but we also check if
         // this push is coupled with the JUMPI we are interested in.
-        if opcode_infos[op as usize].is_push() {
+        let opcode_infos = OpCode::new(op)
+            .ok_or_else(|| eyre::eyre!("Invalid opcode: {}, Not found in jump table", op))?;
+        if opcode_infos.is_push() {
             let element = if let Some(element) = source_map.get(pc - cumulative_push_size) {
                 element
             } else {
