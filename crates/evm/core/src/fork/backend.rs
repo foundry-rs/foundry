@@ -22,7 +22,6 @@ use revm::{
 use rustc_hash::FxHashMap;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
-    future::IntoFuture,
     marker::PhantomData,
     pin::Pin,
     sync::{
@@ -190,11 +189,8 @@ where
                 let provider = self.provider.clone();
                 let block_id = self.block_id.unwrap_or(BlockId::latest());
                 let fut = Box::pin(async move {
-                    let storage = provider
-                        .get_storage_at(address, idx)
-                        .block_id(block_id)
-                        .await
-                        .map_err(Into::into);
+                    let storage =
+                        provider.get_storage_at(address, idx, block_id).await.map_err(Into::into);
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -208,9 +204,9 @@ where
         let provider = self.provider.clone();
         let block_id = self.block_id.unwrap_or(BlockId::latest());
         let fut = Box::pin(async move {
-            let balance = provider.get_balance(address).block_id(block_id).into_future();
-            let nonce = provider.get_transaction_count(address).block_id(block_id).into_future();
-            let code = provider.get_code_at(address).block_id(block_id).into_future();
+            let balance = provider.get_balance(address, block_id);
+            let nonce = provider.get_transaction_count(address, block_id);
+            let code = provider.get_code_at(address, block_id);
             let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
             (resp, address)
         });

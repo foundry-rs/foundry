@@ -109,7 +109,7 @@ impl VerifyBytecodeArgs {
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
 
-        let code = provider.get_code_at(self.address).block_id(BlockId::latest()).await?;
+        let code = provider.get_code_at(self.address, BlockId::latest()).await?;
         if code.is_empty() {
             eyre::bail!("No bytecode found at address {}", self.address);
         }
@@ -291,10 +291,8 @@ impl VerifyBytecodeArgs {
         // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.
         let prev_block_id = BlockId::Number(BlockNumberOrTag::Number(simulation_block - 1));
-        let prev_block_nonce = provider
-            .get_transaction_count(creation_data.contract_creator)
-            .block_id(prev_block_id)
-            .await?;
+        let prev_block_nonce =
+            provider.get_transaction_count(creation_data.contract_creator, prev_block_id).await?;
         transaction.nonce = prev_block_nonce;
 
         if let Some(ref block) = block {
@@ -345,8 +343,9 @@ impl VerifyBytecodeArgs {
                 )
             })?;
 
-        let onchain_runtime_code =
-            provider.get_code_at(self.address).block_id(BlockId::number(simulation_block)).await?;
+        let onchain_runtime_code = provider
+            .get_code_at(self.address, BlockId::Number(BlockNumberOrTag::Number(simulation_block)))
+            .await?;
 
         // Compare the runtime bytecode with the locally built bytecode
         let (did_match, with_status) = try_match(
