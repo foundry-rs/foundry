@@ -46,8 +46,7 @@ impl BuildData {
     pub async fn link(self, script_config: &ScriptConfig) -> Result<LinkedBuildData> {
         let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
             let provider = try_get_http_provider(fork_url)?;
-            let deployer_code =
-                provider.get_code_at(DEFAULT_CREATE2_DEPLOYER).block_id(BlockId::latest()).await?;
+            let deployer_code = provider.get_code_at(DEFAULT_CREATE2_DEPLOYER).await?;
 
             !deployer_code.is_empty()
         } else {

@@ -142,7 +142,6 @@ impl ScriptTester {
             if let Some(provider) = &self.provider {
                 let nonce = provider
                     .get_transaction_count(self.accounts_pub[index as usize])
-                    .block_id(BlockId::latest())
                     .await
                     .unwrap();
                 self.nonces.insert(index, nonce);
@@ -153,14 +152,8 @@ impl ScriptTester {
 
     pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
         for &address in addresses {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(address)
-                .block_id(BlockId::latest())
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(address).await.unwrap();
             self.address_nonces.insert(address, nonce);
         }
         self
@@ -200,14 +193,7 @@ impl ScriptTester {
     pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
         for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(addr)
-                .block_id(BlockId::latest())
-                .await
-                .unwrap();
+            let nonce = self.provider.as_ref().unwrap().get_transaction_count(addr).await.unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
@@ -226,14 +212,8 @@ impl ScriptTester {
         address_indexes: &[(Address, u32)],
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(*address)
-                .block_id(BlockId::latest())
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(*address).await.unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
             assert_eq!(nonce, *prev_nonce + *expected_increment as u64);

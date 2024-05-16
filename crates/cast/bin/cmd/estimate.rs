@@ -128,7 +128,7 @@ impl EstimateArgs {
 
         req.set_input(data);
 
-        let gas = provider.estimate_gas(&req).block_id(BlockId::latest()).await?;
+        let gas = provider.estimate_gas(&req).await?;
         println!("{gas}");
         Ok(())
     }

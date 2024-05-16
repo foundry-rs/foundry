@@ -109,7 +109,7 @@ impl VerifyBytecodeArgs {
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
 
-        let code = provider.get_code_at(self.address).block_id(BlockId::latest()).await?;
+        let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
             eyre::bail!("No bytecode found at address {}", self.address);
         }
