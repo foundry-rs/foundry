@@ -142,8 +142,8 @@ foundry-compilers = { version = "0.4.3", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "8", default-features = false }
-revm-primitives = { version = "3", default-features = false }
+revm = { version = "9", default-features = false }
+revm-primitives = { version = "4", default-features = false }
 revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "098ab30", features = [
     "serde",
 ] }

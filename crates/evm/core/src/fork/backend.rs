@@ -362,7 +362,7 @@ where
                             let acc = AccountInfo {
                                 nonce,
                                 balance,
-                                code: Some(Bytecode::new_raw(code).to_checked()),
+                                code: Some(Bytecode::new_raw(code)),
                                 code_hash,
                             };
                             pin.db.accounts().write().insert(addr, acc.clone());

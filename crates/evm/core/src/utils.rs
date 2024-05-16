@@ -9,8 +9,8 @@ use revm::{
     db::WrapDatabaseRef,
     handler::register::EvmHandler,
     interpreter::{
-        return_ok, CallContext, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
-        Gas, InstructionResult, InterpreterResult, Transfer,
+        return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        Gas, InstructionResult, InterpreterResult,
     },
     primitives::{CreateScheme, EVMError, SpecId, TransactTo, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
@@ -108,23 +108,16 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
 fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
-        contract: DEFAULT_CREATE2_DEPLOYER,
-        transfer: Transfer {
-            source: inputs.caller,
-            target: DEFAULT_CREATE2_DEPLOYER,
-            value: inputs.value,
-        },
+        caller: inputs.caller,
+        bytecode_address: DEFAULT_CREATE2_DEPLOYER,
+        target_address: DEFAULT_CREATE2_DEPLOYER,
+        scheme: CallScheme::Call,
+        value: CallValue::Transfer(inputs.value),
         input: calldata.into(),
         gas_limit: inputs.gas_limit,
-        context: CallContext {
-            caller: inputs.caller,
-            address: DEFAULT_CREATE2_DEPLOYER,
-            code_address: DEFAULT_CREATE2_DEPLOYER,
-            apparent_value: inputs.value,
-            scheme: CallScheme::Call,
-        },
         is_static: false,
         return_memory_offset: 0..0,
+        is_eof: false,
     }
 }
 

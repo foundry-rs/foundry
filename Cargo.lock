@@ -740,7 +740,7 @@ dependencies = [
  "k256",
  "parking_lot",
  "rand",
- "revm 8.0.0",
+ "revm",
  "serde",
  "serde_json",
  "serde_repr",
@@ -776,7 +776,7 @@ dependencies = [
  "foundry-common",
  "foundry-evm",
  "rand",
- "revm 8.0.0",
+ "revm",
  "serde",
  "serde_json",
 ]
@@ -1838,7 +1838,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest",
- "revm 8.0.0",
+ "revm",
  "rustyline",
  "semver 1.0.23",
  "serde",
@@ -3250,7 +3250,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest",
- "revm-primitives 3.1.1",
+ "revm-primitives",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3315,7 +3315,7 @@ dependencies = [
  "k256",
  "p256",
  "parking_lot",
- "revm 8.0.0",
+ "revm",
  "rustc-hash",
  "semver 1.0.23",
  "serde_json",
@@ -3480,7 +3480,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest",
- "revm-primitives 3.1.1",
+ "revm-primitives",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3507,7 +3507,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-traces",
  "ratatui",
- "revm 8.0.0",
+ "revm",
  "revm-inspectors",
  "tracing",
 ]
@@ -3533,7 +3533,7 @@ dependencies = [
  "foundry-evm-traces",
  "parking_lot",
  "proptest",
- "revm 8.0.0",
+ "revm",
  "revm-inspectors",
  "thiserror",
  "tracing",
@@ -3565,7 +3565,7 @@ dependencies = [
  "itertools 0.12.1",
  "once_cell",
  "parking_lot",
- "revm 8.0.0",
+ "revm",
  "revm-inspectors",
  "rustc-hash",
  "serde",
@@ -3585,7 +3585,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-evm-core",
- "revm 8.0.0",
+ "revm",
  "rustc-hash",
  "semver 1.0.23",
  "tracing",
@@ -3610,7 +3610,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand",
- "revm 8.0.0",
+ "revm",
  "serde",
  "thiserror",
  "tracing",
@@ -6344,21 +6344,6 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72a454c1c650b2b2e23f0c461af09e6c31e1d15e1cbebe905a701c46b8a50afc"
-dependencies = [
- "auto_impl",
- "cfg-if",
- "dyn-clone",
- "revm-interpreter 4.0.0",
- "revm-precompile 6.0.0",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "revm"
 version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a2c336f9921588e50871c00024feb51a521eca50ce6d01494bb9c50f837c8ed"
@@ -6366,8 +6351,8 @@ dependencies = [
  "auto_impl",
  "cfg-if",
  "dyn-clone",
- "revm-interpreter 5.0.0",
- "revm-precompile 7.0.0",
+ "revm-interpreter",
+ "revm-precompile",
  "serde",
  "serde_json",
 ]
@@ -6383,20 +6368,10 @@ dependencies = [
  "alloy-sol-types",
  "anstyle",
  "colorchoice",
- "revm 9.0.0",
+ "revm",
  "serde",
  "serde_json",
  "thiserror",
-]
-
-[[package]]
-name = "revm-interpreter"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d322f2730cd300e99d271a1704a2dfb8973d832428f5aa282aaa40e2473b5eec"
-dependencies = [
- "revm-primitives 3.1.1",
- "serde",
 ]
 
 [[package]]
@@ -6405,25 +6380,8 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a58182c7454179826f9dad2ca577661963092ce9d0fd0c9d682c1e9215a72e70"
 dependencies = [
- "revm-primitives 4.0.0",
+ "revm-primitives",
  "serde",
-]
-
-[[package]]
-name = "revm-precompile"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "931f692f3f4fc72ec39d5d270f8e9d208c4a6008de7590ee96cf948e3b6d3f8d"
-dependencies = [
- "aurora-engine-modexp",
- "c-kzg",
- "k256",
- "once_cell",
- "revm-primitives 3.1.1",
- "ripemd",
- "secp256k1 0.28.2",
- "sha2",
- "substrate-bn",
 ]
 
 [[package]]
@@ -6436,32 +6394,11 @@ dependencies = [
  "c-kzg",
  "k256",
  "once_cell",
- "revm-primitives 4.0.0",
+ "revm-primitives",
  "ripemd",
- "secp256k1 0.29.0",
+ "secp256k1",
  "sha2",
  "substrate-bn",
-]
-
-[[package]]
-name = "revm-primitives"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbbc9640790cebcb731289afb7a7d96d16ad94afeb64b5d0b66443bd151e79d6"
-dependencies = [
- "alloy-primitives",
- "auto_impl",
- "bitflags 2.5.0",
- "bitvec",
- "c-kzg",
- "cfg-if",
- "derive_more",
- "dyn-clone",
- "enumn",
- "hashbrown",
- "hex",
- "once_cell",
- "serde",
 ]
 
 [[package]]
@@ -6476,10 +6413,12 @@ dependencies = [
  "bitvec",
  "c-kzg",
  "cfg-if",
+ "derive_more",
  "dyn-clone",
  "enumn",
  "hashbrown",
  "hex",
+ "once_cell",
  "serde",
 ]
 
@@ -6928,31 +6867,12 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.28.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d24b59d129cdadea20aea4fb2352fa053712e5d713eee47d700cd4b2bc002f10"
-dependencies = [
- "rand",
- "secp256k1-sys 0.9.2",
-]
-
-[[package]]
-name = "secp256k1"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e0cc0f1cf93f4969faf3ea1c7d8a9faed25918d96affa959720823dfe86d4f3"
 dependencies = [
  "rand",
- "secp256k1-sys 0.10.0",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5d1746aae42c19d583c3c1a8c646bfad910498e2051c551a7f2e3c0c9fbb7eb"
-dependencies = [
- "cc",
+ "secp256k1-sys",
 ]
 
 [[package]]

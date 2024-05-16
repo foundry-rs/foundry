@@ -1169,6 +1169,7 @@ impl Backend {
             access_list: access_list.unwrap_or_default().flattened(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {

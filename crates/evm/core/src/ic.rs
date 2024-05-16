@@ -43,7 +43,7 @@ impl IcPcMap {
 }
 
 fn make_map<const PC_FIRST: bool>(spec: SpecId, code: &[u8]) -> FxHashMap<usize, usize> {
-    let opcode_infos = spec_opcode_gas(spec);
+    let opcode_infos = spec_opcode_gas(spec); // TODO(yash): What's the replacement for spec_opcode_gas in revm 9?
     let mut map = FxHashMap::default();
 
     let mut pc = 0;
