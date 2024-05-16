@@ -1,5 +1,5 @@
 use revm::{
-    interpreter::{opcode, opcode::spec_opcode_gas},
+    interpreter::{opcode, OpCode, OPCODE_INFO_JUMPTABLE},
     primitives::SpecId,
 };
 use rustc_hash::FxHashMap;
@@ -42,8 +42,7 @@ impl IcPcMap {
     }
 }
 
-fn make_map<const PC_FIRST: bool>(spec: SpecId, code: &[u8]) -> FxHashMap<usize, usize> {
-    let opcode_infos = spec_opcode_gas(spec); // TODO(yash): What's the replacement for spec_opcode_gas in revm 9?
+fn make_map<const PC_FIRST: bool>(_spec: SpecId, code: &[u8]) -> FxHashMap<usize, usize> {
     let mut map = FxHashMap::default();
 
     let mut pc = 0;
@@ -56,10 +55,10 @@ fn make_map<const PC_FIRST: bool>(spec: SpecId, code: &[u8]) -> FxHashMap<usize,
             map.insert(ic, pc);
         }
 
-        let op = code[pc];
-        if opcode_infos[op as usize].is_push() {
+        let op = unsafe { OpCode::new_unchecked(code[pc]) };
+        if op.is_push() {
             // Skip the push bytes.
-            let push_size = (op - opcode::PUSH0) as usize;
+            let push_size = (op.get() - opcode::PUSH0) as usize;
             pc += push_size;
             cumulative_push_size += push_size;
         }

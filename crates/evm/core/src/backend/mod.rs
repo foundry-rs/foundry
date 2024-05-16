@@ -765,6 +765,7 @@ impl Backend {
                     to
                 } else {
                     let code_hash = B256::from_slice(keccak256(&env.tx.data).as_slice());
+                    let salt = env.tx.
                     env.tx.caller.create2(B256::from(salt), code_hash) // TODO(yash): Get CREATE2
                                                                        // salt??
                 }
