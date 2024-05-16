@@ -53,7 +53,7 @@ async fn test_send_value_deposit_transaction() {
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let send_value = U256::from(1234);
-    let before_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let before_balance_to = provider.get_balance(to).await.unwrap();
 
     let tx = TransactionRequest::default()
         .with_from(from)
@@ -83,7 +83,7 @@ async fn test_send_value_deposit_transaction() {
     assert_eq!(receipt.to, Some(to));
 
     // the recipient should have received the value
-    let after_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let after_balance_to = provider.get_balance(to).await.unwrap();
     assert_eq!(after_balance_to, before_balance_to + send_value);
 }
 
@@ -101,7 +101,7 @@ async fn test_send_value_raw_deposit_transaction() {
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
 
     let send_value = U256::from(1234);
-    let before_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let before_balance_to = provider.get_balance(to).await.unwrap();
 
     let tx = TransactionRequest::default()
         .with_chain_id(31337)
@@ -140,6 +140,6 @@ async fn test_send_value_raw_deposit_transaction() {
     assert_eq!(receipt.to, Some(to));
 
     // the recipient should have received the value
-    let after_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let after_balance_to = provider.get_balance(to).await.unwrap();
     assert_eq!(after_balance_to, before_balance_to + send_value);
 }

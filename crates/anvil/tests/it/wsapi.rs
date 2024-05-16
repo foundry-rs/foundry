@@ -24,7 +24,7 @@ async fn can_dev_get_balance_ws() {
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
-        let balance = provider.get_balance(acc, BlockId::latest()).await.unwrap();
+        let balance = provider.get_balance(acc).await.unwrap();
         assert_eq!(balance, genesis_balance);
     }
 }
