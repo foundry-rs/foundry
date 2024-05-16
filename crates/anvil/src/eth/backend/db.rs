@@ -137,9 +137,7 @@ pub trait Db:
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(
-                            Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)),
-                        )
+                        Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
                     },
                     nonce,
                 },
