@@ -17,7 +17,7 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, Log,
         ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
@@ -760,21 +760,8 @@ impl Backend {
         self.set_spec_id(env.handler_cfg.spec_id);
 
         let test_contract = match env.tx.transact_to {
-            TransactTo::Call(to) => {
-                if to != DEFAULT_CREATE2_DEPLOYER {
-                    to
-                } else {
-                    let code_hash = B256::from_slice(keccak256(&env.tx.data).as_slice());
-                    let salt = env.tx.
-                    env.tx.caller.create2(B256::from(salt), code_hash) // TODO(yash): Get CREATE2
-                                                                       // salt??
-                }
-            }
+            TransactTo::Call(to) => to,
             TransactTo::Create => env.tx.caller.create(env.tx.nonce.unwrap_or_default()),
-            // TransactTo::Create(CreateScheme::Create2 { salt }) => {
-            //     let code_hash = B256::from_slice(keccak256(&env.tx.data).as_slice());
-            //     env.tx.caller.create2(B256::from(salt), code_hash)
-            // }
         };
         self.set_test_contract(test_contract);
     }
