@@ -1,5 +1,6 @@
 use alloy_primitives::Address;
 use arrayvec::ArrayVec;
+use eyre::OptionExt;
 use foundry_common::ErrorExt;
 use foundry_evm_core::{
     backend::DatabaseExt,
@@ -8,9 +9,9 @@ use foundry_evm_core::{
 };
 use revm::{
     interpreter::{
-        opcode::{self, spec_opcode_gas},
+        opcode::{self},
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
-        InterpreterResult,
+        InterpreterResult, OpCode,
     },
     EvmContext, Inspector,
 };
@@ -51,8 +52,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let op = interp.current_opcode();
 
         // Get opcode information
-        let opcode_infos = spec_opcode_gas(ecx.spec_id());
-        let opcode_info = &opcode_infos[op as usize];
+        let opcode_info = OpCode::new(op).ok_or_eyre("Invalid opcode").unwrap();
 
         // Extract the push bytes
         let push_size = if opcode_info.is_push() { (op - opcode::PUSH0) as usize } else { 0 };
@@ -95,8 +95,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.enter(
             ecx.journaled_state.depth() as usize,
-            inputs.context.code_address,
-            inputs.context.scheme.into(),
+            inputs.bytecode_address,
+            inputs.scheme.into(),
         );
 
         None

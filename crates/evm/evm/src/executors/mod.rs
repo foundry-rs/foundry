@@ -92,7 +92,7 @@ impl Executor {
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
-                code: Some(Bytecode::new_raw(Bytes::from_static(&[0])).to_checked()),
+                code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
                 ..Default::default()
             },
         );
@@ -386,7 +386,7 @@ impl Executor {
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TransactTo::Create(_)),
+            matches!(env.tx.transact_to, TransactTo::Create),
             "Expected create transaction, got {:?}",
             env.tx.transact_to
         );
@@ -419,7 +419,7 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TransactTo::Create(CreateScheme::Create), code, value);
+        let env = self.build_test_env(from, TransactTo::Create, code, value);
         self.deploy_with_env(env, rd)
     }
 
