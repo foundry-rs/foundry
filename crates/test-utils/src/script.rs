@@ -141,7 +141,8 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(self.accounts_pub[index as usize], BlockId::latest())
+                    .get_transaction_count(self.accounts_pub[index as usize])
+                    .block_id(BlockId::latest())
                     .await
                     .unwrap();
                 self.nonces.insert(index, nonce);
@@ -156,7 +157,8 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(address, BlockId::latest())
+                .get_transaction_count(address)
+                .block_id(BlockId::latest())
                 .await
                 .unwrap();
             self.address_nonces.insert(address, nonce);
@@ -202,7 +204,8 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(addr, BlockId::latest())
+                .get_transaction_count(addr)
+                .block_id(BlockId::latest())
                 .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
@@ -227,7 +230,8 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(*address, BlockId::latest())
+                .get_transaction_count(*address)
+                .block_id(BlockId::latest())
                 .await
                 .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();

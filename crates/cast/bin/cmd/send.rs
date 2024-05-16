@@ -144,7 +144,10 @@ impl SendTxArgs {
 
             if resend {
                 tx.nonce = Some(U64::from(
-                    provider.get_transaction_count(config.sender, BlockId::latest()).await?,
+                    provider
+                        .get_transaction_count(config.sender)
+                        .block_id(BlockId::latest())
+                        .await?,
                 ));
             }
 
@@ -175,8 +178,9 @@ impl SendTxArgs {
             tx::validate_from_address(eth.wallet.from, from)?;
 
             if resend {
-                tx.nonce =
-                    Some(U64::from(provider.get_transaction_count(from, BlockId::latest()).await?));
+                tx.nonce = Some(U64::from(
+                    provider.get_transaction_count(from).block_id(BlockId::latest()).await?,
+                ));
             }
 
             let signer = EthereumSigner::from(signer);

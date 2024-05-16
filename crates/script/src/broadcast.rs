@@ -44,7 +44,8 @@ where
 
     tx.set_gas_limit(
         provider
-            .estimate_gas(tx, BlockId::latest())
+            .estimate_gas(tx)
+            .block_id(BlockId::latest())
             .await
             .wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier as u128 /
@@ -56,7 +57,7 @@ where
 pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller, BlockId::latest()).await?)
+    Ok(provider.get_transaction_count(caller).block_id(BlockId::latest()).await?)
 }
 
 pub async fn send_transaction(
@@ -71,7 +72,7 @@ pub async fn send_transaction(
     let from = tx.from.expect("no sender");
 
     if sequential_broadcast {
-        let nonce = provider.get_transaction_count(from, BlockId::latest()).await?;
+        let nonce = provider.get_transaction_count(from).block_id(BlockId::latest()).await?;
 
         let tx_nonce = tx.nonce.expect("no nonce");
         if nonce != tx_nonce {

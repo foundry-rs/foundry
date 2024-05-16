@@ -90,8 +90,9 @@ impl MakeTxArgs {
         tx::validate_from_address(eth.wallet.from, from)?;
 
         if resend {
-            tx.nonce =
-                Some(U64::from(provider.get_transaction_count(from, BlockId::latest()).await?));
+            tx.nonce = Some(U64::from(
+                provider.get_transaction_count(from).block_id(BlockId::latest()).await?,
+            ));
         }
 
         let provider = get_provider(&config)?;
