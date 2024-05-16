@@ -163,10 +163,7 @@ impl ClientFork {
         keys: Vec<B256>,
         block_number: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse, TransportError> {
-        self.provider()
-            .get_proof(address, keys)
-            .block_id(block_number.unwrap_or(BlockId::latest()))
-            .await
+        self.provider().get_proof(address, keys).block_id(block_number.unwrap_or_default()).await
     }
 
     /// Sends `eth_call`
@@ -187,7 +184,7 @@ impl ClientFork {
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
-        let block = block.unwrap_or(BlockNumber::Latest);
+        let block = block.unwrap_or_default();
         let res = self.provider().estimate_gas(request).block_id(block.into()).await?;
 
         Ok(res)
@@ -199,10 +196,7 @@ impl ClientFork {
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
-        self.provider()
-            .create_access_list(request)
-            .block_id(block.unwrap_or(BlockNumber::Latest).into())
-            .await
+        self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
     }
 
     pub async fn storage_at(
@@ -213,7 +207,7 @@ impl ClientFork {
     ) -> Result<StorageValue, TransportError> {
         self.provider()
             .get_storage_at(address, index)
-            .block_id(number.unwrap_or(BlockNumber::Latest).into())
+            .block_id(number.unwrap_or_default().into())
             .await
     }
 
@@ -239,7 +233,7 @@ impl ClientFork {
             return Ok(code);
         }
 
-        let block_id = BlockId::Number(blocknumber.into());
+        let block_id = BlockId::number(blocknumber);
 
         let code = self.provider().get_code_at(address).block_id(block_id).await?;
 

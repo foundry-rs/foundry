@@ -352,7 +352,7 @@ async fn main() -> Result<()> {
             let address = address.resolve(&provider).await?;
             let value = provider
                 .get_proof(address, slots.into_iter().collect())
-                .block_id(block.unwrap_or(BlockId::latest()))
+                .block_id(block.unwrap_or_default())
                 .await?;
             println!("{}", serde_json::to_string(&value)?);
         }

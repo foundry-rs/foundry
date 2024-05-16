@@ -188,7 +188,7 @@ where
                 trace!(target: "backendhandler", %address, %idx, "preparing storage request");
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
-                let block_id = self.block_id.unwrap_or(BlockId::latest());
+                let block_id = self.block_id.unwrap_or_default();
                 let fut = Box::pin(async move {
                     let storage = provider
                         .get_storage_at(address, idx)
@@ -206,7 +206,7 @@ where
     fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Report> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
-        let block_id = self.block_id.unwrap_or(BlockId::latest());
+        let block_id = self.block_id.unwrap_or_default();
         let fut = Box::pin(async move {
             let balance = provider.get_balance(address).block_id(block_id).into_future();
             let nonce = provider.get_transaction_count(address).block_id(block_id).into_future();

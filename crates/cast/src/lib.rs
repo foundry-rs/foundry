@@ -200,11 +200,8 @@ where
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let access_list = self
-            .provider
-            .create_access_list(req)
-            .block_id(block.unwrap_or(BlockId::latest()))
-            .await?;
+        let access_list =
+            self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -226,7 +223,7 @@ where
     }
 
     pub async fn balance(&self, who: Address, block: Option<BlockId>) -> Result<U256> {
-        Ok(self.provider.get_balance(who).block_id(block.unwrap_or(BlockId::latest())).await?)
+        Ok(self.provider.get_balance(who).block_id(block.unwrap_or_default()).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -478,11 +475,7 @@ where
     /// # }
     /// ```
     pub async fn nonce(&self, who: Address, block: Option<BlockId>) -> Result<u64> {
-        Ok(self
-            .provider
-            .get_transaction_count(who)
-            .block_id(block.unwrap_or(BlockId::latest()))
-            .await?)
+        Ok(self.provider.get_transaction_count(who).block_id(block.unwrap_or_default()).await?)
     }
 
     /// # Example
@@ -509,7 +502,7 @@ where
         let value = self
             .provider
             .get_storage_at(who, slot.into())
-            .block_id(block.unwrap_or(BlockId::latest()))
+            .block_id(block.unwrap_or_default())
             .await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
@@ -539,7 +532,7 @@ where
         let value = self
             .provider
             .get_storage_at(who, slot.into())
-            .block_id(block.unwrap_or(BlockId::latest()))
+            .block_id(block.unwrap_or_default())
             .await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))

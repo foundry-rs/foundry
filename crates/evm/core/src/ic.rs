@@ -1,5 +1,5 @@
 use revm::{
-    interpreter::{opcode, OpCode, OPCODE_INFO_JUMPTABLE},
+    interpreter::{opcode, OpCode},
     primitives::SpecId,
 };
 use rustc_hash::FxHashMap;

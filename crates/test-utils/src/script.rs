@@ -1,7 +1,6 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use eyre::Result;
 use foundry_common::provider::{get_http_provider, RetryProvider};
 use std::{
