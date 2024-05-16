@@ -7,7 +7,6 @@ use crate::{
 };
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{

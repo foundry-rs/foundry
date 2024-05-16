@@ -3669,7 +3669,6 @@ version = "0.2.0"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types",
  "eyre",
  "fd-lock 4.0.2",
  "foundry-common",

@@ -2,7 +2,6 @@ use crate::tx;
 use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
 use alloy_primitives::U64;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::Result;

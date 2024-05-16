@@ -2,7 +2,7 @@ use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::Result;
 use foundry_cli::{opts::TransactionOpts, utils::parse_function_args};

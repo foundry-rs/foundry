@@ -2,7 +2,6 @@ use crate::tx;
 use alloy_network::{AnyNetwork, EthereumSigner};
 use alloy_primitives::{Address, U64};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::Cast;

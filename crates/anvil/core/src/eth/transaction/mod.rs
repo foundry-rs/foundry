@@ -16,7 +16,7 @@ use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
+    primitives::{OptimismFields, TransactTo, TxEnv},
 };
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
