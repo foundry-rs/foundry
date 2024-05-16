@@ -239,7 +239,7 @@ impl CreateArgs {
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, BlockId::latest()).await
+            provider.get_transaction_count(deployer_address).block_id(BlockId::latest()).await
         }?);
 
         // set tx value if specified
@@ -250,7 +250,7 @@ impl CreateArgs {
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
-            provider.estimate_gas(&deployer.tx, BlockId::latest()).await
+            provider.estimate_gas(&deployer.tx).block_id(BlockId::latest()).await
         }?);
 
         if is_legacy {

@@ -7,6 +7,7 @@ use crate::{
 };
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
@@ -46,7 +47,7 @@ impl BuildData {
         let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
             let provider = try_get_http_provider(fork_url)?;
             let deployer_code =
-                provider.get_code_at(DEFAULT_CREATE2_DEPLOYER, Default::default()).await?;
+                provider.get_code_at(DEFAULT_CREATE2_DEPLOYER).block_id(BlockId::latest()).await?;
 
             !deployer_code.is_empty()
         } else {
