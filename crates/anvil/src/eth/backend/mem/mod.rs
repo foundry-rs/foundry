@@ -62,13 +62,13 @@ use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
-    inspectors::AccessListInspector,
+    inspectors::AnvilAccessListInspector,
     revm::{
         db::CacheDB,
         interpreter::InstructionResult,
         primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, CreateScheme, EnvWithHandlerCfg, ExecutionResult,
-            Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+            BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, Output, SpecId,
+            TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
     utils::new_evm_with_inspector_ref,
@@ -1263,7 +1263,7 @@ impl Backend {
             from.create(nonce)
         };
 
-        let mut inspector = AccessListInspector::new(
+        let mut inspector = AnvilAccessListInspector::new(
             request.access_list.clone().unwrap_or_default(),
             from,
             to,

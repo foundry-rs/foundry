@@ -8,7 +8,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;

@@ -5,11 +5,12 @@ use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
-    inspectors::{LogCollector, TracingInspector},
+    inspectors::{AccessListInspector, LogCollector, TracingInspector},
     revm::{
+        db::WrapDatabaseRef,
         interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
         primitives::U256,
-        EvmContext,
+        DatabaseRef, EvmContext,
     },
     traces::TracingInspectorConfig,
     InspectorExt,
