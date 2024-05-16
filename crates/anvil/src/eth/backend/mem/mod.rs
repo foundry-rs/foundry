@@ -1160,7 +1160,7 @@ impl Backend {
             max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
             transact_to: match to {
                 Some(addr) => TransactTo::Call(*addr),
-                None => TransactTo::Create(CreateScheme::Create),
+                None => TransactTo::Create,
             },
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
@@ -2402,7 +2402,7 @@ impl TransactionValidator for Backend {
 
             // Ensure the tx does not exceed the max blobs per block.
             if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs)
+                return Err(InvalidTransactionError::TooManyBlobs(MAX_BLOBS_PER_BLOCK, blob_count))
             }
 
             // Check for any blob validation errors

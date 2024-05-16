@@ -447,7 +447,7 @@ impl PendingTransaction {
         fn transact_to(kind: &TxKind) -> TransactTo {
             match kind {
                 TxKind::Call(c) => TransactTo::Call(*c),
-                TxKind::Create => TransactTo::Create(CreateScheme::Create),
+                TxKind::Create => TransactTo::Create,
             }
         }
 

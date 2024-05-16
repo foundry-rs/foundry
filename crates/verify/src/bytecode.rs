@@ -350,7 +350,7 @@ impl VerifyBytecodeArgs {
 
         // Compare the runtime bytecode with the locally built bytecode
         let (did_match, with_status) = try_match(
-            &fork_runtime_code.bytecode,
+            fork_runtime_code.bytecode(),
             &onchain_runtime_code,
             &constructor_args,
             &verification_type,
