@@ -487,12 +487,12 @@ mod tests {
     "meta": {
         "cfg_env": {
             "chain_id": 1337,
-            "spec_id": "LATEST",
-            "perf_all_precompiles_have_balance": false,
-            "disable_coinbase_tip": false,
             "perf_analyse_created_bytecodes": "Analyse",
             "limit_contract_code_size": 18446744073709551615,
-            "memory_limit": 4294967295
+            "memory_limit": 4294967295,
+            "disable_block_gas_limit": false,
+            "disable_eip3607": false,
+            "disable_base_fee": false
         },
         "block_env": {
             "number": "0xed3ddf",
@@ -500,7 +500,8 @@ mod tests {
             "timestamp": "0x6324bc3f",
             "difficulty": "0x0",
             "basefee": "0x2e5fda223",
-            "gas_limit": "0x1c9c380"
+            "gas_limit": "0x1c9c380",
+            "prevrandao": "0x0000000000000000000000000000000000000000000000000000000000000000"
         },
         "hosts": [
             "eth-mainnet.alchemyapi.io"
@@ -512,11 +513,17 @@ mod tests {
             "nonce": 10,
             "code_hash": "0x3ac64c95eedf82e5d821696a12daac0e1b22c8ee18a9fd688b00cfaf14550aad",
             "code": {
-                "bytecode": "0x60806040526004361061006c5763ffffffff7c01000000000000000000000000000000000000000000000000000000006000350416634555d5c9811461012b5780634558850c1461015257806348a0c8dd146101965780635c60da1b146101bf57806386070cfe146101d4575b6127107f665fd576fbbe6f247aff98f5c94a561e3f71ec2d3c988d56f12d342396c50cea6000825a10156100e15760003411361583541616156100dc576040513381523460208201527f15eeaa57c7bd188c1388020bcadc2c436ec60d647d36ef5b9eb3c742217ddee1604082a1005b600080fd5b6100e96101e9565b9050610126816000368080601f0160208091040260200160405190810160405280939291908181526020018383808284375061026c945050505050565b505050005b34801561013757600080fd5b506101406102ad565b60408051918252519081900360200190f35b34801561015e57600080fd5b5061016d6004356024356102b2565b6040805173ffffffffffffffffffffffffffffffffffffffff9092168252519081900360200190f35b3480156101a257600080fd5b506101ab6102e2565b604080519115158252519081900360200190f35b3480156101cb57600080fd5b5061016d6101e9565b3480156101e057600080fd5b50610140610312565b7f3b4bf6bf3ad5000ecf0f989d5befde585c6860fea3e574a4fab4c49d1c177d9c6000527fc67454ed56db7ff90a4bb32fc9a8de1ab3174b221e5fecea22b7503a3111791f6020527f8e2ed18767e9c33b25344c240cdf92034fae56be99e2c07f3d9946d949ffede45473ffffffffffffffffffffffffffffffffffffffff1690565b600061027783610318565b151561028257600080fd5b612710905060008083516020850186855a03f43d604051816000823e8280156102a9578282f35b8282fd5b600290565b600060208181529281526040808220909352908152205473ffffffffffffffffffffffffffffffffffffffff1681565b600061030d7f665fd576fbbe6f247aff98f5c94a561e3f71ec2d3c988d56f12d342396c50cea610352565b905090565b60015481565b60008073ffffffffffffffffffffffffffffffffffffffff83161515610341576000915061034c565b823b90506000811191505b50919050565b54905600a165627a7a72305820968d404e148c1ec7bb58c8df6cbdcaad4978b93a804e00a1f0e97a5e789eacd40029000000000000000000000000000000000000000000000000000000000000000000",
-                "hash": "0x3ac64c95eedf82e5d821696a12daac0e1b22c8ee18a9fd688b00cfaf14550aad",
-                "state": {
-                    "Checked": {
-                        "len": 898
+                "LegacyAnalyzed": {
+                    "bytecode": "0x00",
+                    "original_len": 0,
+                    "jump_table": {
+                      "order": "bitvec::order::Lsb0",
+                      "head": {
+                        "width": 8,
+                        "index": 0
+                      },
+                      "bits": 1,
+                      "data": [0]
                     }
                 }
             }
@@ -557,7 +564,7 @@ mod tests {
     "meta": {
         "cfg_env": {
             "chain_id": 1,
-            "spec_id": "LATEST",
+            "kzg_settings": "Default",
             "perf_analyse_created_bytecodes": "Analyse",
             "limit_contract_code_size": 18446744073709551615,
             "memory_limit": 134217728,
@@ -589,10 +596,17 @@ mod tests {
             "nonce": 128912,
             "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
             "code": {
-                "bytecode": "0x000000000000000000000000000000000000000000000000000000000000000000",
-                "state": {
-                    "Checked": {
-                        "len": 0
+                "LegacyAnalyzed": {
+                    "bytecode": "0x00",
+                    "original_len": 0,
+                    "jump_table": {
+                      "order": "bitvec::order::Lsb0",
+                      "head": {
+                        "width": 8,
+                        "index": 0
+                      },
+                      "bits": 1,
+                      "data": [0]
                     }
                 }
             }
