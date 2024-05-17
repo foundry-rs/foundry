@@ -106,10 +106,10 @@ pub(crate) fn shrink_sequence(
             failed_case.fail_on_revert,
         ) {
             // If candidate sequence still fails then shrink more if possible.
-            Ok(false) if !shrinker.simplify() => break,
+            Ok((false, _)) if !shrinker.simplify() => break,
             // If candidate sequence pass then restore last removed call and shrink other
             // calls if possible.
-            Ok(true) if !shrinker.complicate() => break,
+            Ok((true, _)) if !shrinker.complicate() => break,
             _ => {}
         }
     }
@@ -120,6 +120,7 @@ pub(crate) fn shrink_sequence(
 /// Checks if the given call sequence breaks the invariant.
 /// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
 /// persisted failures.
+/// Returns the result of invariant check and if sequence was entirely applied.
 pub fn check_sequence(
     mut executor: Executor,
     calls: &[BasicTxDetails],
@@ -127,10 +128,15 @@ pub fn check_sequence(
     test_address: Address,
     test_function: Bytes,
     fail_on_revert: bool,
-) -> eyre::Result<bool> {
+) -> eyre::Result<(bool, bool)> {
     let mut sequence_failed = false;
     // Apply the call sequence.
+    // We keep track of the number of calls applied to check if persisted sequence is
+    // replayed entirely.
+    let mut calls_applied = 0;
     for call_index in sequence {
+        calls_applied += 1;
+
         let (sender, (addr, bytes)) = &calls[call_index];
         let call_result =
             executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
@@ -141,17 +147,23 @@ pub fn check_sequence(
             break;
         }
     }
+
+    let replayed_entirely = calls_applied == calls.len();
+
     // Return without checking the invariant if we already have a failing sequence.
     if sequence_failed {
-        return Ok(false);
+        return Ok((false, replayed_entirely));
     };
 
     // Check the invariant for call sequence.
     let mut call_result = executor.call_raw(CALLER, test_address, test_function, U256::ZERO)?;
-    Ok(executor.is_raw_call_success(
-        test_address,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
+    Ok((
+        executor.is_raw_call_success(
+            test_address,
+            Cow::Owned(call_result.state_changeset.take().unwrap()),
+            &call_result,
+            false,
+        ),
+        replayed_entirely,
     ))
 }

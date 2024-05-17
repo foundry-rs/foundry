@@ -576,7 +576,7 @@ impl<'a> ContractRunner<'a> {
                     (seq.sender.unwrap_or_default(), (seq.addr.unwrap_or_default(), seq.calldata))
                 })
                 .collect::<Vec<BasicTxDetails>>();
-            if let Ok(success) = check_sequence(
+            if let Ok((success, replayed_entirely)) = check_sequence(
                 self.executor.clone(),
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
@@ -599,10 +599,17 @@ impl<'a> ContractRunner<'a> {
                     );
                     return TestResult {
                         status: TestStatus::Failure,
-                        reason: Some(format!(
-                            "{} replay failure",
-                            invariant_contract.invariant_function.name
-                        )),
+                        reason: if replayed_entirely {
+                            Some(format!(
+                                "{} replay failure",
+                                invariant_contract.invariant_function.name
+                            ))
+                        } else {
+                            Some(format!(
+                                "{} persisted failure revert",
+                                invariant_contract.invariant_function.name
+                            ))
+                        },
                         decoded_logs: decode_console_logs(&logs),
                         traces,
                         coverage,
