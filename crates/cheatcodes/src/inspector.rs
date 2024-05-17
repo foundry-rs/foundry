@@ -832,7 +832,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // The value matches, if provided
                     expected
                         .value
-                        .map_or(true, |value| value == call.value.get()) &&
+                        .map_or(true, |value| Some(value) == call.transfer_value()) &&
                     // The gas matches, if provided
                     expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
@@ -846,13 +846,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get(&call.target_address) {
             let ctx =
-                MockCallDataContext { calldata: call.input.clone(), value: Some(call.value.get()) };
+                MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
             if let Some(return_data) = mocks.get(&ctx).or_else(|| {
                 mocks
                     .iter()
                     .find(|(mock, _)| {
                         call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.map_or(true, |value| value == call.value.get())
+                            mock.value.map_or(true, |value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v)
             }) {
@@ -933,8 +933,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         rpc: ecx.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
-                            to: Some(TxKind::from(Some(call.bytecode_address))), // TODO: Ensure it call.contract => call.bytecode_address NOT call.target_address
-                            value: Some(call.value.get()),
+                            to: Some(TxKind::from(Some(call.target_address))),
+                            value: call.transfer_value(),
                             input: TransactionInput::new(call.input.clone()),
                             nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
@@ -974,8 +974,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             let initialized;
             let old_balance;
             // TODO: use ecx.load_account
-            if let Ok((acc, _)) =
-                ecx.journaled_state.load_account(call.bytecode_address, &mut ecx.db)
+            if let Ok((acc, _)) = ecx.journaled_state.load_account(call.target_address, &mut ecx.db)
             {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
@@ -1000,12 +999,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     chainId: U256::from(ecx.env.cfg.chain_id),
                 },
                 accessor: call.caller,
-                account: call.bytecode_address,
+                account: call.target_address,
                 kind,
                 initialized,
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
-                value: call.value.get(),
+                value: call.call_value(),
                 data: call.input.clone(),
                 reverted: false,
                 deployedCode: Bytes::new(),
