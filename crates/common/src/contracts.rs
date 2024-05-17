@@ -1,16 +1,23 @@
 //! Commonly used contract types and functions.
 
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Selector, B256};
+use alloy_primitives::{bytes, Address, Bytes, Selector, B256};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::{CompactContractBytecode, ContractBytecodeSome},
+    artifacts::{
+        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
+        ContractBytecodeSome, Offsets,
+    },
     ArtifactId,
 };
 use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
+    str::FromStr,
 };
+
+/// https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries
+const CALL_PROTECTION_BYTECODE_PREFIX: Bytes = bytes!("730000000000000000000000000000000000000000");
 
 /// Container for commonly used contract data.
 #[derive(Debug, Clone)]
@@ -20,9 +27,21 @@ pub struct ContractData {
     /// Contract ABI.
     pub abi: JsonAbi,
     /// Contract creation code.
-    pub bytecode: Option<Bytes>,
+    pub bytecode: Option<CompactBytecode>,
     /// Contract runtime code.
-    pub deployed_bytecode: Option<Bytes>,
+    pub deployed_bytecode: Option<CompactDeployedBytecode>,
+}
+
+impl ContractData {
+    /// Returns reference to bytes of contract creation code, if present.
+    pub fn bytecode(&self) -> Option<&Bytes> {
+        self.bytecode.as_ref()?.bytes().filter(|b| !b.is_empty())
+    }
+
+    /// Returns reference to bytes of contract deployed code, if present.
+    pub fn deployed_bytecode(&self) -> Option<&Bytes> {
+        self.deployed_bytecode.as_ref()?.bytes().filter(|b| !b.is_empty())
+    }
 }
 
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
@@ -42,18 +61,10 @@ impl ContractsByArtifact {
                 .into_iter()
                 .filter_map(|(id, artifact)| {
                     let name = id.name.clone();
-                    let bytecode = artifact.bytecode.and_then(|b| b.into_bytes())?;
-                    let deployed_bytecode =
-                        artifact.deployed_bytecode.and_then(|b| b.into_bytes())?;
 
-                    // Exclude artifacts with present but empty bytecode. Such artifacts are usually
-                    // interfaces and abstract contracts.
-                    let bytecode = (bytecode.len() > 0).then_some(bytecode);
-                    let deployed_bytecode =
-                        (deployed_bytecode.len() > 0).then_some(deployed_bytecode);
-                    let abi = artifact.abi?;
+                    let CompactContractBytecode { abi, bytecode, deployed_bytecode } = artifact;
 
-                    Some((id, ContractData { name, abi, bytecode, deployed_bytecode }))
+                    Some((id, ContractData { name, abi: abi?, bytecode, deployed_bytecode }))
                 })
                 .collect(),
         )
@@ -62,7 +73,7 @@ impl ContractsByArtifact {
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, contract)| {
-            if let Some(bytecode) = &contract.bytecode {
+            if let Some(bytecode) = contract.bytecode() {
                 bytecode_diff_score(bytecode.as_ref(), code) <= 0.1
             } else {
                 false
@@ -73,10 +84,103 @@ impl ContractsByArtifact {
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, contract)| {
-            if let Some(deployed_bytecode) = &contract.deployed_bytecode {
+            if let Some(deployed_bytecode) = contract.deployed_bytecode() {
                 bytecode_diff_score(deployed_bytecode.as_ref(), code) <= 0.1
             } else {
                 false
+            }
+        })
+    }
+
+    /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
+    /// references and immutables.
+    pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
+        self.iter().find(|(_, contract)| {
+            let Some(ref deployed_bytecode) = contract.deployed_bytecode else {
+                return false;
+            };
+            let Some(ref deployed_code) = deployed_bytecode.bytecode else {
+                return false;
+            };
+
+            let len = match deployed_code.object {
+                BytecodeObject::Bytecode(ref bytes) => bytes.len(),
+                BytecodeObject::Unlinked(ref bytes) => bytes.len() / 2,
+            };
+
+            if len != code.len() {
+                return false;
+            }
+
+            // Collect ignored offsets by chaining link and immutable references.
+            let mut ignored = deployed_bytecode
+                .immutable_references
+                .values()
+                .chain(deployed_code.link_references.values().flat_map(|v| v.values()))
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>();
+
+            // For libraries solidity adds a call protection prefix to the bytecode. We need to
+            // ignore it as it includes library address determined at runtime.
+            // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
+            // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
+            let has_call_protection = match deployed_code.object {
+                BytecodeObject::Bytecode(ref bytes) => {
+                    bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                }
+                BytecodeObject::Unlinked(ref bytes) => {
+                    if let Ok(bytes) =
+                        Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
+                    {
+                        bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            if has_call_protection {
+                ignored.push(Offsets { start: 1, length: 20 });
+            }
+
+            ignored.sort_by_key(|o| o.start);
+
+            let mut left = 0;
+            for offset in ignored {
+                let right = offset.start as usize;
+
+                let matched = match deployed_code.object {
+                    BytecodeObject::Bytecode(ref bytes) => bytes[left..right] == code[left..right],
+                    BytecodeObject::Unlinked(ref bytes) => {
+                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
+                            bytes == code[left..right]
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if !matched {
+                    return false;
+                }
+
+                left = right + offset.length as usize;
+            }
+
+            if left < code.len() {
+                match deployed_code.object {
+                    BytecodeObject::Bytecode(ref bytes) => bytes[left..] == code[left..],
+                    BytecodeObject::Unlinked(ref bytes) => {
+                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
+                            bytes == code[left..]
+                        } else {
+                            false
+                        }
+                    }
+                }
+            } else {
+                true
             }
         })
     }

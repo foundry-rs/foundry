@@ -1,10 +1,12 @@
+use crate::provider::VerificationContext;
+
 use super::{EtherscanSourceProvider, VerifyArgs};
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
     artifacts::{BytecodeHash, Source},
     compilers::{solc::SolcVersionManager, Compiler, CompilerVersionManager},
-    AggregatedCompilerOutput, Project, SolcInput,
+    AggregatedCompilerOutput, SolcInput,
 };
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
@@ -15,11 +17,9 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
     fn source(
         &self,
         args: &VerifyArgs,
-        project: &Project,
-        target: &Path,
-        version: &Version,
+        context: &VerificationContext,
     ) -> Result<(String, String, CodeFormat)> {
-        let metadata = project.settings.metadata.as_ref();
+        let metadata = context.project.settings.metadata.as_ref();
         let bch = metadata.and_then(|m| m.bytecode_hash).unwrap_or_default();
 
         eyre::ensure!(
@@ -28,11 +28,13 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
             bch,
         );
 
-        let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
+        let source =
+            context.project.flatten(&context.target_path).wrap_err("Failed to flatten contract")?;
 
         if !args.force {
             // solc dry run of flattened code
-            self.check_flattened(source.clone(), version, target).map_err(|err| {
+            self.check_flattened(source.clone(), &context.compiler_version, &context.target_path)
+                .map_err(|err| {
                 eyre::eyre!(
                     "Failed to compile the flattened code locally: `{}`\
             To skip this solc dry, have a look at the `--force` flag of this command.",
@@ -41,8 +43,7 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
             })?;
         }
 
-        let name = args.contract.name.clone();
-        Ok((source, name, CodeFormat::SingleFile))
+        Ok((source, context.target_name.clone(), CodeFormat::SingleFile))
     }
 }
 

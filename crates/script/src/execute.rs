@@ -16,7 +16,7 @@ use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::get_http_provider,
-    shell, ContractData, ContractsByArtifact,
+    shell, ContractsByArtifact,
 };
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
@@ -61,20 +61,25 @@ impl LinkedState {
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 
-        let ContractData { abi, bytecode, .. } = build_data.get_target_contract()?;
+        let target_contract = build_data.get_target_contract()?;
 
-        let bytecode = bytecode.ok_or_eyre("target contract has no bytecode")?;
+        let bytecode = target_contract.bytecode().ok_or_eyre("target contract has no bytecode")?;
 
-        let (func, calldata) = args.get_method_and_calldata(&abi)?;
+        let (func, calldata) = args.get_method_and_calldata(&target_contract.abi)?;
 
-        ensure_clean_constructor(&abi)?;
+        ensure_clean_constructor(&target_contract.abi)?;
 
         Ok(PreExecutionState {
             args,
             script_config,
             script_wallets,
             build_data,
-            execution_data: ExecutionData { func, calldata, bytecode, abi },
+            execution_data: ExecutionData {
+                func,
+                calldata,
+                bytecode: bytecode.clone(),
+                abi: target_contract.abi,
+            },
         })
     }
 }

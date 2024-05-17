@@ -2,9 +2,92 @@ use super::{
     etherscan::EtherscanVerificationProvider, sourcify::SourcifyVerificationProvider, VerifyArgs,
     VerifyCheckArgs,
 };
+use alloy_json_abi::JsonAbi;
 use async_trait::async_trait;
-use eyre::Result;
-use std::{fmt, str::FromStr};
+use eyre::{OptionExt, Result};
+use foundry_common::compile::ProjectCompiler;
+use foundry_compilers::{
+    artifacts::{output_selection::OutputSelection, Metadata, Source},
+    compilers::{solc::SolcVersionManager, CompilerVersionManager},
+    CompilerConfig, Graph, Project,
+};
+use foundry_config::Config;
+use semver::Version;
+use std::{fmt, path::PathBuf, str::FromStr};
+
+/// Container with data required for contract verification.
+#[derive(Debug, Clone)]
+pub struct VerificationContext {
+    pub config: Config,
+    pub project: Project,
+    pub target_path: PathBuf,
+    pub target_name: String,
+    pub compiler_version: Version,
+}
+
+impl VerificationContext {
+    pub fn new(
+        target_path: PathBuf,
+        target_name: String,
+        compiler_version: Version,
+        config: Config,
+    ) -> Result<Self> {
+        let mut project = config.project()?;
+        project.no_artifacts = true;
+
+        // Set project's compiler to always use resolved version.
+        let vm = SolcVersionManager::default();
+        let solc = vm.get_or_install(&compiler_version)?;
+        project.compiler_config = CompilerConfig::Specific(solc);
+
+        Ok(Self { config, project, target_name, target_path, compiler_version })
+    }
+
+    /// Compiles target contract requesting only ABI and returns it.
+    pub fn get_target_abi(&self) -> Result<JsonAbi> {
+        let mut project = self.project.clone();
+        project.settings.output_selection =
+            OutputSelection::common_output_selection(["abi".to_string()]);
+
+        let output = ProjectCompiler::new()
+            .quiet(true)
+            .files([self.target_path.clone()])
+            .compile(&project)?;
+
+        let artifact = output
+            .find(self.target_path.to_string_lossy(), &self.target_name)
+            .ok_or_eyre("failed to find target artifact when compiling for abi")?;
+
+        artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
+    }
+
+    /// Compiles target file requesting only metadata and returns it.
+    pub fn get_target_metadata(&self) -> Result<Metadata> {
+        let mut project = self.project.clone();
+        project.settings.output_selection =
+            OutputSelection::common_output_selection(["metadata".to_string()]);
+
+        let output = ProjectCompiler::new()
+            .quiet(true)
+            .files([self.target_path.clone()])
+            .compile(&project)?;
+
+        let artifact = output
+            .find(self.target_path.to_string_lossy(), &self.target_name)
+            .ok_or_eyre("failed to find target artifact when compiling for metadata")?;
+
+        artifact.metadata.clone().ok_or_eyre("target artifact does not have an ABI")
+    }
+
+    /// Returns [Vec] containing imports of the target file.
+    pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
+        let mut sources = self.project.paths.read_input_files()?;
+        sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
+        let graph = Graph::resolve_sources(&self.project.paths, sources)?;
+
+        Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
+    }
+}
 
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
 #[async_trait]
@@ -16,10 +99,14 @@ pub trait VerificationProvider {
     /// [`VerifyArgs`] are valid to begin with. This should prevent situations where there's a
     /// contract deployment that's executed before the verify request and the subsequent verify task
     /// fails due to misconfiguration.
-    async fn preflight_check(&mut self, args: VerifyArgs) -> Result<()>;
+    async fn preflight_check(
+        &mut self,
+        args: VerifyArgs,
+        context: VerificationContext,
+    ) -> Result<()>;
 
     /// Sends the actual verify request for the targeted contract.
-    async fn verify(&mut self, args: VerifyArgs) -> Result<()>;
+    async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()>;
 
     /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> Result<()>;
