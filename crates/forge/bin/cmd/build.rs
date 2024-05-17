@@ -77,7 +77,6 @@ pub struct BuildArgs {
 impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
-        println!("{:?}", config.libraries);
         let mut project = config.project()?;
 
         if install::install_missing_dependencies(&mut config, self.args.silent) &&
