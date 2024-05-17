@@ -20,7 +20,8 @@ use std::{
 /// `PUSH20 0x0000000000000000000000000000000000000000`
 ///
 /// See: <https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries>
-const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] = hex!("730000000000000000000000000000000000000000");
+const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
+    hex!("730000000000000000000000000000000000000000");
 
 /// Container for commonly used contract data.
 #[derive(Debug, Clone)]
