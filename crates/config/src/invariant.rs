@@ -75,13 +75,6 @@ impl InvariantConfig {
             .join("failures")
             .join(contract_name.split(':').last().unwrap())
     }
-
-    /// Returns path to persisted failure of current invariant test (if any).
-    /// The path to failure file is `{failure_dir}/{test_contract_name}/{invariant_name}`,
-    /// for example: `cache/invariant/failures/InvariantTest/invariant_check`
-    pub fn failure_file(self, contract_name: &str, test_name: String) -> PathBuf {
-        self.failure_dir(contract_name).join(test_name)
-    }
 }
 
 impl InlineConfigParser for InvariantConfig {

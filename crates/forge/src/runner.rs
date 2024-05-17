@@ -36,7 +36,6 @@ use std::{
     borrow::Cow,
     cmp::min,
     collections::{BTreeMap, HashMap},
-    fs,
     sync::Arc,
     time::Instant,
 };
@@ -562,60 +561,55 @@ impl<'a> ContractRunner<'a> {
         let mut traces = traces.clone();
         let mut coverage = coverage.clone();
 
+        let failure_dir = invariant_config.clone().failure_dir(self.name);
+        let failure_file = failure_dir.join(invariant_contract.invariant_function.clone().name);
+
         // Try to replay recorded failure if any.
-        let failure_file = invariant_config
-            .clone()
-            .failure_file(self.name, invariant_contract.invariant_function.clone().name);
-        if failure_file.exists() {
-            if let Ok(data) = fs::read_to_string(failure_file) {
-                if let Ok(call_sequence) = serde_json::from_str::<Vec<BaseCounterExample>>(&data) {
-                    // Create calls from failed sequence and check if invariant still broken.
-                    let txes = call_sequence
-                        .clone()
-                        .into_iter()
-                        .map(|seq| {
-                            (
-                                seq.sender.unwrap_or_default(),
-                                (seq.addr.unwrap_or_default(), seq.calldata),
-                            )
-                        })
-                        .collect::<Vec<BasicTxDetails>>();
-                    if let Ok(success) = check_sequence(
+        if let Ok(call_sequence) =
+            foundry_common::fs::read_json_file::<Vec<BaseCounterExample>>(failure_file.as_path())
+        {
+            // Create calls from failed sequence and check if invariant still broken.
+            let txes = call_sequence
+                .clone()
+                .into_iter()
+                .map(|seq| {
+                    (seq.sender.unwrap_or_default(), (seq.addr.unwrap_or_default(), seq.calldata))
+                })
+                .collect::<Vec<BasicTxDetails>>();
+            if let Ok(success) = check_sequence(
+                self.executor.clone(),
+                &txes,
+                (0..min(txes.len(), invariant_config.depth as usize)).collect(),
+                invariant_contract.address,
+                invariant_contract.invariant_function.selector().to_vec().into(),
+                invariant_config.fail_on_revert,
+            ) {
+                if !success {
+                    // If sequence still fails then replay error to collect traces and
+                    // exit without executing new runs.
+                    let _ = replay_run(
+                        &invariant_contract,
                         self.executor.clone(),
-                        &txes,
-                        (0..min(txes.len(), invariant_config.depth as usize)).collect(),
-                        invariant_contract.address,
-                        invariant_contract.invariant_function.selector().to_vec().into(),
-                        invariant_config.fail_on_revert,
-                    ) {
-                        if !success {
-                            // If sequence still fails then replay error to collect traces and
-                            // exit without executing new runs.
-                            let _ = replay_run(
-                                &invariant_contract,
-                                self.executor.clone(),
-                                known_contracts,
-                                identified_contracts.clone(),
-                                &mut logs,
-                                &mut traces,
-                                &mut coverage,
-                                txes,
-                            );
-                            return TestResult {
-                                status: TestStatus::Failure,
-                                reason: Some(format!(
-                                    "{} replay failure",
-                                    invariant_contract.invariant_function.name
-                                )),
-                                decoded_logs: decode_console_logs(&logs),
-                                traces,
-                                coverage,
-                                counterexample: Some(CounterExample::Sequence(call_sequence)),
-                                kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
-                                duration: start.elapsed(),
-                                ..Default::default()
-                            }
-                        }
+                        known_contracts,
+                        identified_contracts.clone(),
+                        &mut logs,
+                        &mut traces,
+                        &mut coverage,
+                        txes,
+                    );
+                    return TestResult {
+                        status: TestStatus::Failure,
+                        reason: Some(format!(
+                            "{} replay failure",
+                            invariant_contract.invariant_function.name
+                        )),
+                        decoded_logs: decode_console_logs(&logs),
+                        traces,
+                        coverage,
+                        counterexample: Some(CounterExample::Sequence(call_sequence)),
+                        kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
+                        duration: start.elapsed(),
+                        ..Default::default()
                     }
                 }
             }
@@ -664,24 +658,13 @@ impl<'a> ContractRunner<'a> {
                         Ok(call_sequence) => {
                             if !call_sequence.is_empty() {
                                 // Persist error in invariant failure dir.
-                                match fs::create_dir_all(
-                                    invariant_config.clone().failure_dir(self.name),
+                                if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
+                                    error!(%err, "Failed to create invariant failure dir");
+                                } else if let Err(err) = foundry_common::fs::write_json_file(
+                                    failure_file.as_path(),
+                                    &call_sequence,
                                 ) {
-                                    Ok(_) => {
-                                        let _ = fs::write(
-                                            invariant_config.failure_file(
-                                                self.name,
-                                                invariant_contract.invariant_function.clone().name,
-                                            ),
-                                            serde_json::to_string_pretty(&call_sequence).unwrap(),
-                                        )
-                                        .map_err(|err| {
-                                            error!(%err, "Failed to record call sequence");
-                                        });
-                                    }
-                                    Err(err) => {
-                                        error!(%err, "Failed to create invariant failure dir")
-                                    }
+                                    error!(%err, "Failed to record call sequence");
                                 }
                                 counterexample = Some(CounterExample::Sequence(call_sequence))
                             }

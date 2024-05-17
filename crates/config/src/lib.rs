@@ -21,7 +21,7 @@ use foundry_compilers::{
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{solc::SolcVersionManager, CompilerVersionManager},
-    error::{SolcError, SolcIoError},
+    error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
     SolcConfig,
@@ -787,20 +787,17 @@ impl Config {
     pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
         project.cleanup()?;
 
-        macro_rules! remove_test_cache {
-            ($cache_dir:expr) => {
-                if let Some(test_cache) = $cache_dir {
-                    let path = project.root().join(test_cache);
-                    if path.exists() {
-                        std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
-                    }
+        // Remove fuzz and invariant cache directories.
+        let remove_test_dir = |test_dir: &Option<PathBuf>| {
+            if let Some(test_dir) = test_dir {
+                let path = project.root().join(test_dir);
+                if path.exists() {
+                    let _ = fs::remove_dir_all(&path);
                 }
-            };
-        }
-        // Remove fuzz cache directory.
-        remove_test_cache!(&self.fuzz.failure_persist_dir);
-        // Remove invariant cache directory.
-        remove_test_cache!(&self.invariant.failure_persist_dir);
+            }
+        };
+        remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
     }
