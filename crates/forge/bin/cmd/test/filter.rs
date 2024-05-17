@@ -186,7 +186,7 @@ impl ProjectPathsAwareFilter {
 impl FileFilter for ProjectPathsAwareFilter {
     /// Returns true if the file regex pattern match the `file`
     ///
-    /// If no file regex is set this returns true by default 
+    /// If no file regex is set this returns true by default
     fn is_match(&self, mut file: &Path) -> bool {
         file = file.strip_prefix(&self.paths.root).unwrap_or(file);
         self.args_filter.is_match(file)
