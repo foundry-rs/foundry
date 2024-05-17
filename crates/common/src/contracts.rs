@@ -1,7 +1,7 @@
 //! Commonly used contract types and functions.
 
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{bytes, Address, Bytes, Selector, B256};
+use alloy_primitives::{hex, Address, Bytes, Selector, B256};
 use eyre::Result;
 use foundry_compilers::{
     artifacts::{
@@ -16,8 +16,11 @@ use std::{
     str::FromStr,
 };
 
-/// https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries
-const CALL_PROTECTION_BYTECODE_PREFIX: Bytes = bytes!("730000000000000000000000000000000000000000");
+/// Libraries' runtime code always starts with the following instruction:
+/// `PUSH20 0x0000000000000000000000000000000000000000`
+///
+/// See: <https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries>
+const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] = hex!("730000000000000000000000000000000000000000");
 
 /// Container for commonly used contract data.
 #[derive(Debug, Clone)]

@@ -1,5 +1,4 @@
 use crate::provider::VerificationContext;
-
 use super::{EtherscanSourceProvider, VerifyArgs};
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
