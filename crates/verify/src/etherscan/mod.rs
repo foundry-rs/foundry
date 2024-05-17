@@ -538,8 +538,6 @@ mod tests {
         let contract_path = format!("{src_dir}/Counter.sol");
         fs::write(root.join(&contract_path), "").unwrap();
 
-        let mut etherscan = EtherscanVerificationProvider::default();
-
         // No compiler argument
         let args = VerifyArgs::parse_from([
             "foundry-cli",
