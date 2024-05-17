@@ -129,31 +129,17 @@ pub fn check_sequence(
     test_function: Bytes,
     fail_on_revert: bool,
 ) -> eyre::Result<(bool, bool)> {
-    let mut sequence_failed = false;
     // Apply the call sequence.
-    // We keep track of the number of calls applied to check if persisted sequence is
-    // replayed entirely.
-    let mut calls_applied = 0;
     for call_index in sequence {
-        calls_applied += 1;
-
         let (sender, (addr, bytes)) = &calls[call_index];
         let call_result =
             executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
         if call_result.reverted && fail_on_revert {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            sequence_failed = true;
-            break;
+            return Ok((false, false));
         }
     }
-
-    let replayed_entirely = calls_applied == calls.len();
-
-    // Return without checking the invariant if we already have a failing sequence.
-    if sequence_failed {
-        return Ok((false, replayed_entirely));
-    };
 
     // Check the invariant for call sequence.
     let mut call_result = executor.call_raw(CALLER, test_address, test_function, U256::ZERO)?;
@@ -164,6 +150,6 @@ pub fn check_sequence(
             &call_result,
             false,
         ),
-        replayed_entirely,
+        true,
     ))
 }
