@@ -1,7 +1,4 @@
-use revm::{
-    interpreter::{opcode, OpCode},
-    primitives::SpecId,
-};
+use revm::interpreter::{opcode, OpCode};
 use rustc_hash::FxHashMap;
 
 /// Maps from program counter to instruction counter.
@@ -13,8 +10,8 @@ pub struct PcIcMap {
 
 impl PcIcMap {
     /// Creates a new `PcIcMap` for the given code.
-    pub fn new(spec: SpecId, code: &[u8]) -> Self {
-        Self { inner: make_map::<true>(spec, code) }
+    pub fn new(code: &[u8]) -> Self {
+        Self { inner: make_map::<true>(code) }
     }
 
     /// Returns the instruction counter for the given program counter.
@@ -32,8 +29,8 @@ pub struct IcPcMap {
 
 impl IcPcMap {
     /// Creates a new `IcPcMap` for the given code.
-    pub fn new(spec: SpecId, code: &[u8]) -> Self {
-        Self { inner: make_map::<false>(spec, code) }
+    pub fn new(code: &[u8]) -> Self {
+        Self { inner: make_map::<false>(code) }
     }
 
     /// Returns the program counter for the given instruction counter.
@@ -42,7 +39,7 @@ impl IcPcMap {
     }
 }
 
-fn make_map<const PC_FIRST: bool>(_spec: SpecId, code: &[u8]) -> FxHashMap<usize, usize> {
+fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<usize, usize> {
     let mut map = FxHashMap::default();
 
     let mut pc = 0;
