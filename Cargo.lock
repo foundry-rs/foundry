@@ -3517,7 +3517,6 @@ name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
  "alloy-dyn-abi",
- "alloy-eips",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",

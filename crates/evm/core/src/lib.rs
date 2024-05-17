@@ -41,9 +41,5 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
     }
 }
 
-#[allow(dead_code)]
-struct EvmAccessListInspector<DB: Database>(AccessListInspector, std::marker::PhantomData<DB>);
-
-impl<DB: Database> Inspector<DB> for EvmAccessListInspector<DB> {}
 impl<DB: Database> InspectorExt<DB> for NoOpInspector {}
-impl<DB: Database> InspectorExt<DB> for EvmAccessListInspector<DB> {}
+impl<DB: Database> InspectorExt<DB> for AccessListInspector {}
