@@ -1,6 +1,5 @@
 use alloy_primitives::Address;
 use arrayvec::ArrayVec;
-use eyre::OptionExt;
 use foundry_common::ErrorExt;
 use foundry_evm_core::{
     backend::DatabaseExt,
@@ -9,9 +8,8 @@ use foundry_evm_core::{
 };
 use revm::{
     interpreter::{
-        opcode::{self},
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
-        InterpreterResult, OpCode,
+        opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult, OPCODE_INFO_JUMPTABLE,
     },
     EvmContext, Inspector,
 };
@@ -52,10 +50,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let op = interp.current_opcode();
 
         // Get opcode information
-        let opcode_info = OpCode::new(op).ok_or_eyre("Invalid opcode").unwrap();
-
+        let _opcode_info = OPCODE_INFO_JUMPTABLE[op as usize]
+            .ok_or_else(|| eyre::eyre!("Invalid opcode: {}, Not found in jump table", op));
         // Extract the push bytes
-        let push_size = if opcode_info.is_push() { (op - opcode::PUSH0) as usize } else { 0 };
+        let push_size = if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+            (op - opcode::PUSH0) as usize
+        } else {
+            0
+        };
         let push_bytes = (push_size > 0).then(|| {
             let start = pc + 1;
             let end = start + push_size;
