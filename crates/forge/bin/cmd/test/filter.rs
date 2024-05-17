@@ -92,8 +92,7 @@ impl fmt::Debug for FilterArgs {
 impl FileFilter for FilterArgs {
     /// Returns true if the file regex pattern match the `file`
     ///
-    /// If no file regex is set this returns true if the file ends with `.t.sol`, see
-    /// [`FoundryPathExt::is_sol_test()`].
+    /// If no file regex is set this returns true by default
     fn is_match(&self, file: &Path) -> bool {
         self.matches_path(file)
     }
@@ -187,8 +186,7 @@ impl ProjectPathsAwareFilter {
 impl FileFilter for ProjectPathsAwareFilter {
     /// Returns true if the file regex pattern match the `file`
     ///
-    /// If no file regex is set this returns true if the file ends with `.t.sol`, see
-    /// [FoundryPathExt::is_sol_test()]
+    /// If no file regex is set this returns true by default 
     fn is_match(&self, mut file: &Path) -> bool {
         file = file.strip_prefix(&self.paths.root).unwrap_or(file);
         self.args_filter.is_match(file)
