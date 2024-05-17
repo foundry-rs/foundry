@@ -15,11 +15,16 @@ use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::fmt::Debug;
 
 mod flatten;
 mod standard_json;
+
+pub static RE_BUILD_COMMIT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -288,6 +293,12 @@ impl EtherscanVerificationProvider {
     ) -> Result<VerifyContract> {
         let (source, contract_name, code_format) =
             self.source_provider(args).source(args, context)?;
+
+        let mut compiler_version = context.compiler_version.clone();
+        compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
+            Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
+            _ => BuildMetadata::EMPTY,
+        };
 
         let compiler_version =
             format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?);

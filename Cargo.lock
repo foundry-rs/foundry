@@ -3247,6 +3247,8 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.12.1",
+ "once_cell",
+ "regex",
  "reqwest",
  "revm-primitives",
  "semver 1.0.23",

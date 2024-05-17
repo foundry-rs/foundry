@@ -33,6 +33,8 @@ reqwest = { workspace = true, features = ["json"] }
 async-trait = "0.1"
 futures = "0.3"
 semver = "1"
+regex = { version = "1", default-features = false }
+once_cell = "1"
 yansi.workspace = true
 itertools.workspace = true
 
