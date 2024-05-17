@@ -1,32 +1,36 @@
 use super::ScriptResult;
-use alloy_primitives::{Address, Bytes, U256};
+use crate::build::ScriptPredeployLibraries;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
+use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_config::Config;
 use foundry_evm::{
-    constants::CALLER,
+    constants::{CALLER, DEFAULT_CREATE2_DEPLOYER},
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
+    opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
+use std::collections::VecDeque;
 use yansi::Paint;
 
 /// Drives script execution
 #[derive(Debug)]
 pub struct ScriptRunner {
     pub executor: Executor,
-    pub initial_balance: U256,
-    pub sender: Address,
+    pub evm_opts: EvmOpts,
 }
 
 impl ScriptRunner {
-    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
-        Self { executor, initial_balance, sender }
+    pub fn new(executor: Executor, evm_opts: EvmOpts) -> Self {
+        Self { executor, evm_opts }
     }
 
     /// Deploys the libraries and broadcast contract. Calls setUp method if requested.
     pub fn setup(
         &mut self,
-        libraries: &[Bytes],
+        libraries: &ScriptPredeployLibraries,
         code: Bytes,
         setup: bool,
         sender_nonce: u64,
@@ -36,9 +40,9 @@ impl ScriptRunner {
         trace!(target: "script", "executing setUP()");
 
         if !is_broadcast {
-            if self.sender == Config::DEFAULT_SENDER {
+            if self.evm_opts.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
-                self.executor.set_balance(self.sender, U256::MAX)?;
+                self.executor.set_balance(self.evm_opts.sender, U256::MAX)?;
             }
 
             if need_create2_deployer {
@@ -46,29 +50,86 @@ impl ScriptRunner {
             }
         }
 
-        self.executor.set_nonce(self.sender, sender_nonce)?;
+        self.executor.set_nonce(self.evm_opts.sender, sender_nonce)?;
 
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(CALLER, U256::MAX)?;
 
+        let mut library_transactions = VecDeque::new();
+        let mut traces = Traces::default();
+
         // Deploy libraries
-        let mut traces: Traces = libraries
-            .iter()
-            .filter_map(|code| {
-                self.executor
-                    .deploy(self.sender, code.clone(), U256::ZERO, None)
+        match libraries {
+            ScriptPredeployLibraries::Default(libraries) => libraries.iter().for_each(|code| {
+                let result = self
+                    .executor
+                    .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
                     .expect("couldn't deploy library")
-                    .raw
-                    .traces
-            })
-            .map(|traces| (TraceKind::Deployment, traces))
-            .collect();
+                    .raw;
+
+                if let Some(deploy_traces) = result.traces {
+                    traces.push((TraceKind::Deployment, deploy_traces));
+                }
+
+                library_transactions.push_back(BroadcastableTransaction {
+                    rpc: self.evm_opts.fork_url.clone(),
+                    transaction: TransactionRequest {
+                        from: Some(self.evm_opts.sender),
+                        input: Some(code.clone()).into(),
+                        nonce: Some(sender_nonce + library_transactions.len() as u64),
+                        ..Default::default()
+                    },
+                })
+            }),
+            ScriptPredeployLibraries::Create2(libraries, salt) => {
+                for library in libraries {
+                    let address =
+                        DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, library.as_ref());
+                    // Skip if already deployed
+                    if !self.executor.is_empty_code(address)? {
+                        continue;
+                    }
+                    let calldata = [salt.as_ref(), library.as_ref()].concat();
+                    let result = self
+                        .executor
+                        .call_raw_committing(
+                            self.evm_opts.sender,
+                            DEFAULT_CREATE2_DEPLOYER,
+                            calldata.clone().into(),
+                            U256::from(0),
+                        )
+                        .expect("couldn't deploy library");
+
+                    if let Some(deploy_traces) = result.traces {
+                        traces.push((TraceKind::Deployment, deploy_traces));
+                    }
+
+                    library_transactions.push_back(BroadcastableTransaction {
+                        rpc: self.evm_opts.fork_url.clone(),
+                        transaction: TransactionRequest {
+                            from: Some(self.evm_opts.sender),
+                            input: Some(calldata.into()).into(),
+                            nonce: Some(sender_nonce + library_transactions.len() as u64),
+                            to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
+                            ..Default::default()
+                        },
+                    });
+                }
+
+                // Sender nonce is not incremented when performing CALLs. We need to manually
+                // increase it.
+                self.executor.set_nonce(
+                    self.evm_opts.sender,
+                    sender_nonce + library_transactions.len() as u64,
+                )?;
+            }
+        };
 
         let address = CALLER.create(self.executor.get_nonce(CALLER)?);
 
         // Set the contracts initial balance before deployment, so it is available during the
         // construction
-        self.executor.set_balance(address, self.initial_balance)?;
+        self.executor.set_balance(address, self.evm_opts.initial_balance)?;
 
         // Deploy an instance of the contract
         let DeployResult {
@@ -85,9 +146,15 @@ impl ScriptRunner {
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
             self.executor.backend.set_test_contract(address);
-            (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
+            (
+                true,
+                0,
+                Default::default(),
+                Some(library_transactions),
+                vec![constructor_debug].into_iter().collect(),
+            )
         } else {
-            match self.executor.setup(Some(self.sender), address, None) {
+            match self.executor.setup(Some(self.evm_opts.sender), address, None) {
                 Ok(RawCallResult {
                     reverted,
                     traces: setup_traces,
@@ -95,19 +162,21 @@ impl ScriptRunner {
                     logs: setup_logs,
                     debug,
                     gas_used,
-                    transactions,
+                    transactions: setup_transactions,
                     ..
                 }) => {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
-                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
+                    if let Some(txs) = setup_transactions {
+                        library_transactions.extend(txs);
+                    }
 
                     (
                         !reverted,
                         gas_used,
                         labels,
-                        transactions,
+                        Some(library_transactions),
                         vec![constructor_debug, debug].into_iter().collect(),
                     )
                 }
@@ -125,13 +194,15 @@ impl ScriptRunner {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
-                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
+                    if let Some(txs) = transactions {
+                        library_transactions.extend(txs);
+                    }
 
                     (
                         !reverted,
                         gas_used,
                         labels,
-                        transactions,
+                        Some(library_transactions),
                         vec![constructor_debug, debug].into_iter().collect(),
                     )
                 }
@@ -156,27 +227,9 @@ impl ScriptRunner {
         ))
     }
 
-    /// We call the `setUp()` function with self.sender, and if there haven't been
-    /// any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
-    /// So we have to.
-    fn maybe_correct_nonce(
-        &mut self,
-        sender_initial_nonce: u64,
-        libraries_len: usize,
-    ) -> Result<()> {
-        if let Some(cheatcodes) = &self.executor.inspector.cheatcodes {
-            if !cheatcodes.corrected_nonce {
-                self.executor
-                    .set_nonce(self.sender, sender_initial_nonce + libraries_len as u64)?;
-            }
-            self.executor.inspector.cheatcodes.as_mut().unwrap().corrected_nonce = false;
-        }
-        Ok(())
-    }
-
     /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> Result<ScriptResult> {
-        self.call(self.sender, address, calldata, U256::ZERO, false)
+        self.call(self.evm_opts.sender, address, calldata, U256::ZERO, false)
     }
 
     /// Runs a broadcastable transaction locally and persists its state.

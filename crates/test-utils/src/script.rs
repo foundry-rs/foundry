@@ -4,11 +4,41 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use eyre::Result;
 use foundry_common::provider::{get_http_provider, RetryProvider};
-use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
+fn init_script_cmd(
+    cmd: &mut TestCommand,
+    project_root: &Path,
+    target_contract: &str,
+    endpoint: Option<&str>,
+) {
+    cmd.forge_fuse();
+    cmd.set_current_dir(project_root);
+
+    cmd.args([
+        "script",
+        "-R",
+        "ds-test/=lib/",
+        "-R",
+        "cheats/=cheats/",
+        target_contract,
+        "--root",
+        project_root.to_str().unwrap(),
+        "-vvvvv",
+    ]);
+
+    if let Some(rpc_url) = endpoint {
+        cmd.args(["--fork-url", rpc_url]);
+    }
+}
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
@@ -17,6 +47,9 @@ pub struct ScriptTester {
     pub nonces: BTreeMap<u32, u64>,
     pub address_nonces: BTreeMap<Address, u64>,
     pub cmd: TestCommand,
+    pub project_root: PathBuf,
+    pub target_contract: String,
+    pub endpoint: Option<String>,
 }
 
 impl ScriptTester {
@@ -29,23 +62,10 @@ impl ScriptTester {
     ) -> Self {
         init_tracing();
         ScriptTester::copy_testdata(project_root).unwrap();
-        cmd.set_current_dir(project_root);
-
-        cmd.args([
-            "script",
-            "-R",
-            "ds-test/=lib/",
-            "-R",
-            "cheats/=cheats/",
-            target_contract,
-            "--root",
-            project_root.to_str().unwrap(),
-            "-vvvvv",
-        ]);
+        init_script_cmd(&mut cmd, project_root, target_contract, endpoint);
 
         let mut provider = None;
         if let Some(endpoint) = endpoint {
-            cmd.args(["--fork-url", endpoint]);
             provider = Some(get_http_provider(endpoint))
         }
 
@@ -64,6 +84,9 @@ impl ScriptTester {
             nonces: BTreeMap::default(),
             address_nonces: BTreeMap::default(),
             cmd,
+            project_root: project_root.to_path_buf(),
+            target_contract: target_contract.to_string(),
+            endpoint: endpoint.map(|s| s.to_string()),
         }
     }
 
@@ -242,6 +265,17 @@ impl ScriptTester {
     pub fn args(&mut self, args: &[&str]) -> &mut Self {
         self.cmd.args(args);
         self
+    }
+
+    pub fn clear(&mut self) {
+        init_script_cmd(
+            &mut self.cmd,
+            &self.project_root,
+            &self.target_contract,
+            self.endpoint.as_deref(),
+        );
+        self.nonces.clear();
+        self.address_nonces.clear();
     }
 }
 
