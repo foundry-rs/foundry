@@ -2,7 +2,6 @@
 
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
