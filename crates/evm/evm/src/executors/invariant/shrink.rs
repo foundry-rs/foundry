@@ -92,7 +92,7 @@ pub(crate) fn shrink_sequence(
     if let Some(progress) = progress {
         progress.set_length(min(calls.len(), failed_case.shrink_run_limit) as u64);
         progress.reset();
-        progress.set_message("Shrink Runs");
+        progress.set_message(" Shrink");
     }
 
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to

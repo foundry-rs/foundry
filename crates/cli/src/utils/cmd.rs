@@ -198,23 +198,26 @@ macro_rules! init_test_suite_progress {
     }};
 }
 
-/// Creates progress entry for invariant tests.
+/// Creates progress entry for fuzz tests.
 /// Set the prefix and total number of runs. Message is updated during execution with current phase.
 /// Test progress is placed under test suite progress entry so all tests within suite are grouped.
 #[macro_export]
-macro_rules! init_invariant_test_progress {
-    ($overall_progress:expr, $suite_progress:expr, $test_name:expr, $runs:expr) => {{
-        let pb = $overall_progress
-            .insert_after($suite_progress, indicatif::ProgressBar::new($runs as u64));
-        pb.set_style(
-            indicatif::ProgressStyle::with_template(
-                "    ↪ {prefix:.bold.dim}: [{pos}/{len}] {wide_msg}",
-            )
-            .unwrap()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-        );
-        pb.set_prefix(format!("{}", $test_name));
-        pb
+macro_rules! init_fuzz_test_progress {
+    ($progress:expr, $test_name:expr, $runs:expr) => {{
+        let test_progress = $progress.map(|(overall_progress, suite_progress)| {
+            let pb = overall_progress
+                .insert_after(suite_progress, indicatif::ProgressBar::new($runs as u64));
+            pb.set_style(
+                indicatif::ProgressStyle::with_template(
+                    "    ↪ {prefix:.bold.dim}: [{pos}/{len}]{msg} Runs",
+                )
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+            );
+            pb.set_prefix(format!("{}", $test_name));
+            pb
+        });
+        test_progress
     }};
 }
 

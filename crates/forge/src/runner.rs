@@ -9,7 +9,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256};
 use eyre::Result;
-use foundry_cli::init_invariant_test_progress;
+use foundry_cli::init_fuzz_test_progress;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
@@ -359,16 +359,6 @@ impl<'a> ContractRunner<'a> {
                 let res = if func.is_invariant_test() {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
-
-                    let test_progress = progress.map(|(overall_progress, suite_progress)| {
-                        init_invariant_test_progress!(
-                            overall_progress,
-                            suite_progress,
-                            func.name,
-                            invariant_config.runs
-                        )
-                    });
-
                     self.run_invariant_test(
                         runner,
                         setup,
@@ -376,13 +366,20 @@ impl<'a> ContractRunner<'a> {
                         func,
                         &known_contracts,
                         identified_contracts.as_ref().unwrap(),
-                        test_progress,
+                        init_fuzz_test_progress!(progress, func.name, invariant_config.runs),
                     )
                 } else if func.is_fuzz_test() {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                    self.run_fuzz_test(
+                        func,
+                        should_fail,
+                        runner,
+                        setup,
+                        fuzz_config.clone(),
+                        init_fuzz_test_progress!(progress, func.name, fuzz_config.runs),
+                    )
                 } else {
                     debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
@@ -674,6 +671,7 @@ impl<'a> ContractRunner<'a> {
         runner: TestRunner,
         setup: TestSetup,
         fuzz_config: FuzzConfig,
+        progress: Option<ProgressBar>,
     ) -> TestResult {
         let span = info_span!("fuzz_test", %should_fail);
         if !span.is_disabled() {
@@ -704,8 +702,14 @@ impl<'a> ContractRunner<'a> {
             self.sender,
             fuzz_config.clone(),
         );
-        let result =
-            fuzzed_executor.fuzz(func, &fuzz_fixtures, address, should_fail, self.revert_decoder);
+        let result = fuzzed_executor.fuzz(
+            func,
+            &fuzz_fixtures,
+            address,
+            should_fail,
+            self.revert_decoder,
+            progress.as_ref(),
+        );
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();
