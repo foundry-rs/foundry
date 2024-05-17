@@ -249,7 +249,7 @@ impl VerifyArgs {
 
         if let Some(ref contract) = self.contract {
             let contract_path = if let Some(ref path) = contract.path {
-                PathBuf::from(path)
+                project.root().join(PathBuf::from(path))
             } else {
                 project.find_contract_path(&contract.name)?
             };
@@ -261,7 +261,11 @@ impl VerifyArgs {
                     SolcReq::Version(version) => version.to_owned(),
                     SolcReq::Local(solc) => Solc::new(solc)?.version,
                 }
-            } else if let Some(entry) = project.read_cache_file()?.entry(contract_path.clone()) {
+            } else if let Some(entry) = project
+                .read_cache_file()
+                .ok()
+                .and_then(|mut cache| cache.files.remove(&contract_path))
+            {
                 let unique_versions = entry
                     .artifacts
                     .get(&contract.name)

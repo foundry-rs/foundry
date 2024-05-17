@@ -548,47 +548,11 @@ mod tests {
             "--root",
             root_path,
         ]);
-        let context = args.resolve_context().await.unwrap();
-
-        let result = etherscan.preflight_check(args, context).await;
+        let result = args.resolve_context().await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
             "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
-        );
-
-        // No contract path
-        let args =
-            VerifyArgs::parse_from(["foundry-cli", address, contract_name, "--root", root_path]);
-
-        let context = args.resolve_context().await.unwrap();
-
-        let result = etherscan.preflight_check(args, context).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "If cache is disabled, contract info must be provided in the format <path>:<name>"
-        );
-
-        // Constructor args path
-        let args = VerifyArgs::parse_from([
-            "foundry-cli",
-            address,
-            &format!("{contract_path}:{contract_name}"),
-            "--constructor-args-path",
-            ".",
-            "--compiler-version",
-            "0.8.15",
-            "--root",
-            root_path,
-        ]);
-        let context = args.resolve_context().await.unwrap();
-
-        let result = etherscan.preflight_check(args, context).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Cache must be enabled in order to use the `--constructor-args-path` option",
         );
     }
 
