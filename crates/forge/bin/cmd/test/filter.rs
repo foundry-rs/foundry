@@ -1,6 +1,5 @@
 use clap::Parser;
 use forge::TestFilter;
-use foundry_cli::utils::FoundryPathExt;
 use foundry_common::glob::GlobMatcher;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::Config;
@@ -96,13 +95,7 @@ impl FileFilter for FilterArgs {
     /// If no file regex is set this returns true if the file ends with `.t.sol`, see
     /// [`FoundryPathExt::is_sol_test()`].
     fn is_match(&self, file: &Path) -> bool {
-        if let Some(glob) = &self.path_pattern {
-            return glob.is_match(file)
-        }
-        if let Some(glob) = &self.path_pattern_inverse {
-            return !glob.is_match(file)
-        }
-        file.is_sol_test()
+        self.matches_path(file)
     }
 }
 
@@ -195,7 +188,7 @@ impl FileFilter for ProjectPathsAwareFilter {
     /// Returns true if the file regex pattern match the `file`
     ///
     /// If no file regex is set this returns true if the file ends with `.t.sol`, see
-    /// [FoundryPathExr::is_sol_test()]
+    /// [FoundryPathExt::is_sol_test()]
     fn is_match(&self, mut file: &Path) -> bool {
         file = file.strip_prefix(&self.paths.root).unwrap_or(file);
         self.args_filter.is_match(file)
