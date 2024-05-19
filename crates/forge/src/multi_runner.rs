@@ -14,7 +14,6 @@ use foundry_evm::{
 };
 use foundry_linking::{LinkOutput, Linker};
 use indicatif::{MultiProgress, ProgressBar};
-use parking_lot::Mutex;
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -177,35 +176,39 @@ impl MultiContractRunner {
             // Progress bar is updated each time a test suite ends.
             let (tests_progress, progress_bar) =
                 init_tests_progress!(contracts.len(), rayon::current_num_threads());
-            // We collect test suite results to stream of the end of test run.
-            let results = Arc::new(Mutex::new(Vec::new()));
-            contracts.par_iter().for_each(|&(id, contract)| {
-                let _guard = handle.enter();
-                // Add test suite progress to tests result.
-                let suite_progress = init_test_suite_progress!(tests_progress, id.name);
-                // Run tests, pass tests progress and current test suite progress in order
-                // to add specific run details.
-                let result = self.run_tests(
-                    id,
-                    contract,
-                    db.clone(),
-                    filter,
-                    &handle,
-                    Some((&tests_progress, &suite_progress)),
-                );
-                // Remove test progress from overall progress and print summary.
-                suite_progress.finish_and_clear();
-                tests_progress.suspend(|| {
-                    println!("{}\n  ↪ {}", id.name.clone(), result.summary());
-                });
-                // Increment test progress bar to reflect completed test suite.
-                progress_bar.inc(1);
-                // Record test suite result in order to stream it when run completed.
-                results.lock().push((id.identifier(), result));
-            });
+            // Collect test suite results to stream at the end of test run.
+            let results: Vec<(String, SuiteResult)> = contracts
+                .par_iter()
+                .map(|&(id, contract)| {
+                    let _guard = handle.enter();
+                    // Add test suite progress to tests result.
+                    let suite_progress = init_test_suite_progress!(tests_progress, id.name);
+
+                    // Run tests, pass tests progress and current test suite progress in order
+                    // to add specific run details.
+                    let result = self.run_tests(
+                        id,
+                        contract,
+                        db.clone(),
+                        filter,
+                        &handle,
+                        Some((&tests_progress, &suite_progress)),
+                    );
+
+                    // Print result summary and remove test progress from overall progress.
+                    tests_progress.suspend(|| {
+                        println!("{}\n  ↪ {}", id.name.clone(), result.summary());
+                    });
+                    suite_progress.finish_and_clear();
+                    // Increment test progress bar to reflect completed test suite.
+                    progress_bar.inc(1);
+
+                    (id.identifier(), result)
+                })
+                .collect();
             // Tests completed, remove progress and stream results.
             tests_progress.clear().unwrap();
-            results.lock().iter().for_each(|result| {
+            results.iter().for_each(|result| {
                 let _ = tx.send(result.to_owned());
             });
         } else {
