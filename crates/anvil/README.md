@@ -13,8 +13,11 @@ A local Ethereum node, akin to Ganache, designed for development with [**Forge**
 
 ## Supported Versions
 
-- **solc**: 0.8.25
-- **evm**: Cancun
+- **anvil**:
+  - **evm**: Cancun
+- **forge**:
+  - **solc**: Latest
+  - **evm**: Cancun
 
   
 ## Installation
