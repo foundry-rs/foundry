@@ -102,6 +102,10 @@ pub struct TestArgs {
     #[arg(long)]
     pub fuzz_seed: Option<U256>,
 
+    /// Set fuzz dictionary weight.
+    #[arg(long)]
+    pub fuzz_dictionary_weight: Option<u32>,
+
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
@@ -225,6 +229,11 @@ impl TestArgs {
             // Do not collect gas report traces if gas report is not enabled.
             config.fuzz.gas_report_samples = 0;
             config.invariant.gas_report_samples = 0;
+        }
+
+        // Set fuzz dictionary weight if specified as arg.
+        if let Some(dictionary_weight) = self.fuzz_dictionary_weight {
+            config.fuzz.dictionary.dictionary_weight = dictionary_weight;
         }
 
         // Set up the project.

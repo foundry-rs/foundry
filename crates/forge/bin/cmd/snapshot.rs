@@ -94,8 +94,9 @@ impl SnapshotArgs {
     }
 
     pub async fn run(mut self) -> Result<()> {
-        // Set fuzz seed so gas snapshots are deterministic
+        // Set fuzz seed and disable fuzzing from state so gas snapshots are deterministic.
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        self.test.fuzz_dictionary_weight = Some(0);
 
         let outcome = self.test.execute_tests().await?;
         outcome.ensure_ok()?;
