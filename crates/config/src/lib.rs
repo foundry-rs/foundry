@@ -2930,7 +2930,7 @@ mod tests {
     fn test_default_test_path() {
         figment::Jail::expect_with(|_| {
             let config = Config::default();
-            let paths_config = config.project_paths();
+            let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
             Ok(())
         });
@@ -2997,7 +2997,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            let paths_config = config.project_paths();
+            let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"mytest"));
             Ok(())
         });
