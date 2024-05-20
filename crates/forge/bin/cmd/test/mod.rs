@@ -6,6 +6,7 @@ use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
+    opts::EvmOpts,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
@@ -20,16 +21,18 @@ use foundry_common::{
     shell,
 };
 use foundry_compilers::{
-    artifacts::output_selection::OutputSelection, utils::source_files_iter, SolcSparseFileFilter,
-    SOLC_EXTENSIONS,
+    artifacts::output_selection::OutputSelection,
+    compilers::{CompilationError, Compiler, CompilerSettings},
+    utils::source_files_iter,
+    Project, SparseOutputFileFilter,
 };
 use foundry_config::{
-    figment,
     figment::{
+        self,
         value::{Dict, Map},
         Metadata, Profile, Provider,
     },
-    get_available_profiles, Config,
+    get_available_profiles, with_resolved_project, Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -146,16 +149,20 @@ impl TestArgs {
     /// Returns sources which include any tests to be executed.
     /// If no filters are provided, sources are filtered by existence of test/invariant methods in
     /// them, If filters are provided, sources are additionaly filtered by them.
-    pub fn get_sources_to_compile(
+    pub fn get_sources_to_compile<C>(
         &self,
-        config: &Config,
+        project: &Project<C>,
         filter: &ProjectPathsAwareFilter,
-    ) -> Result<BTreeSet<PathBuf>> {
-        let mut project = config.create_project(true, true)?;
-        project.settings.output_selection =
+    ) -> Result<BTreeSet<PathBuf>>
+    where
+        C: Compiler,
+        ProjectPathsAwareFilter: SparseOutputFileFilter<C::ParsedSource>,
+    {
+        let mut project = project.clone();
+        *project.settings.output_selection_mut() =
             OutputSelection::common_output_selection(["abi".to_string()]);
 
-        let output = project.compile_sparse(Box::new(SolcSparseFileFilter::new(filter.clone())))?;
+        let output = project.compile_sparse(Box::new(filter.clone()))?;
 
         if output.has_compiler_errors() {
             println!("{}", output);
@@ -205,7 +212,7 @@ impl TestArgs {
         }
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(project.paths.sources, SOLC_EXTENSIONS));
+        test_sources.extend(source_files_iter(project.paths.sources, C::FILE_EXTENSIONS));
 
         Ok(test_sources)
     }
@@ -229,24 +236,36 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
-        // Set up the project.
-        let mut project = config.project()?;
-
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
-            project = config.project()?;
         }
 
+        with_resolved_project!(config, |project| {
+            self.run_with_project(config, evm_opts, project?).await
+        })
+    }
+
+    pub async fn run_with_project<C>(
+        &self,
+        config: Config,
+        mut evm_opts: EvmOpts,
+        project: Project<C>,
+    ) -> eyre::Result<TestOutcome>
+    where
+        C: Compiler,
+        C::CompilationError: Clone,
+        ProjectPathsAwareFilter: SparseOutputFileFilter<C::ParsedSource>,
+    {
         let mut filter = self.filter(&config);
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
+        let sources_to_compile = self.get_sources_to_compile(&project, &filter)?;
 
-        let compiler = ProjectCompiler::new()
+        let compiler = ProjectCompiler::<C>::new()
             .quiet_if(self.json || self.opts.silent)
             .files(sources_to_compile);
 
@@ -335,9 +354,9 @@ impl TestArgs {
     }
 
     /// Run all tests that matches the filter predicate from a test runner
-    pub async fn run_tests(
+    pub async fn run_tests<E: CompilationError>(
         &self,
-        mut runner: MultiContractRunner,
+        mut runner: MultiContractRunner<E>,
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
@@ -603,8 +622,8 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(
-    runner: MultiContractRunner,
+fn list<E: CompilationError>(
+    runner: MultiContractRunner<E>,
     filter: &ProjectPathsAwareFilter,
     json: bool,
 ) -> Result<TestOutcome> {

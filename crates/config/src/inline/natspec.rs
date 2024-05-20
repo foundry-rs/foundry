@@ -26,7 +26,7 @@ impl NatSpec {
     /// Factory function that extracts a vector of [`NatSpec`] instances from
     /// a solc compiler output. The root path is to express contract base dirs.
     /// That is essential to match per-test configs at runtime.
-    pub fn parse(output: &ProjectCompileOutput, root: &Path) -> Vec<Self> {
+    pub fn parse<E>(output: &ProjectCompileOutput<E>, root: &Path) -> Vec<Self> {
         let mut natspecs: Vec<Self> = vec![];
 
         let solc = SolcParser::new();

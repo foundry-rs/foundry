@@ -5,7 +5,10 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput, Solc};
+use foundry_compilers::{
+    artifacts::Libraries, compilers::CompilationError, Artifact, ArtifactId, ProjectCompileOutput,
+    Solc,
+};
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
@@ -35,7 +38,7 @@ pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
-pub struct MultiContractRunner {
+pub struct MultiContractRunner<E> {
     /// Mapping of contract name to JsonAbi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
@@ -62,10 +65,10 @@ pub struct MultiContractRunner {
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Output of the project compilation
-    pub output: ProjectCompileOutput,
+    pub output: ProjectCompileOutput<E>,
 }
 
-impl MultiContractRunner {
+impl<E: CompilationError> MultiContractRunner<E> {
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a>(
         &'a self,
@@ -315,13 +318,13 @@ impl MultiContractRunnerBuilder {
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build(
+    pub fn build<E: CompilationError>(
         self,
         root: &Path,
-        output: ProjectCompileOutput,
+        output: ProjectCompileOutput<E>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
-    ) -> Result<MultiContractRunner> {
+    ) -> Result<MultiContractRunner<E>> {
         let output = output.with_stripped_file_prefixes(root);
         let linker = Linker::new(root, output.artifact_ids().collect());
 

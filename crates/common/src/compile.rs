@@ -305,8 +305,8 @@ pub struct ContractSources {
 
 impl ContractSources {
     /// Collects the contract sources and artifacts from the project compile output.
-    pub fn from_project_output(
-        output: &ProjectCompileOutput,
+    pub fn from_project_output<E>(
+        output: &ProjectCompileOutput<E>,
         root: &Path,
         libraries: &Libraries,
     ) -> Result<ContractSources> {

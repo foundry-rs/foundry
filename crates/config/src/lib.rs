@@ -810,7 +810,7 @@ impl Config {
         compiler_config: CompilerConfig<C>,
         settings: C::Settings,
     ) -> Result<Project<C>, SolcError> {
-        let project = ProjectBuilder::<ConfigurableArtifacts, C>::new(Default::default())
+        let project = ProjectBuilder::<C>::new(Default::default())
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .settings(settings)
@@ -2797,6 +2797,24 @@ macro_rules! with_resolved_project {
             }
         }
     };
+}
+
+/// Helper trait to resolve project depending on [Compiler] generic.
+pub trait ResolveProject<C: Compiler> {
+    /// Returns configured project.
+    fn resolve_project(&self) -> Result<Project<C>, SolcError>;
+}
+
+impl ResolveProject<Solc> for Config {
+    fn resolve_project(&self) -> Result<Project<Solc>, SolcError> {
+        self.project()
+    }
+}
+
+impl ResolveProject<Vyper> for Config {
+    fn resolve_project(&self) -> Result<Project<Vyper>, SolcError> {
+        self.vyper_project()
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ use forge::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner,
 };
+use foundry_compilers::compilers::CompilationError;
 use foundry_evm::{
     decode::decode_console_logs,
     revm::primitives::SpecId,
@@ -15,18 +16,18 @@ use itertools::Itertools;
 use std::collections::BTreeMap;
 
 /// How to execute a test run.
-pub struct TestConfig {
-    pub runner: MultiContractRunner,
+pub struct TestConfig<E> {
+    pub runner: MultiContractRunner<E>,
     pub should_fail: bool,
     pub filter: Filter,
 }
 
-impl TestConfig {
-    pub fn new(runner: MultiContractRunner) -> Self {
+impl<E: CompilationError> TestConfig<E> {
+    pub fn new(runner: MultiContractRunner<E>) -> Self {
         Self::with_filter(runner, Filter::matches_all())
     }
 
-    pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
+    pub fn with_filter(runner: MultiContractRunner<E>, filter: Filter) -> Self {
         init_tracing();
         Self { runner, should_fail: false, filter }
     }

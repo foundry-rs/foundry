@@ -59,7 +59,7 @@ async fn repro_config(
     should_fail: bool,
     sender: Option<Address>,
     test_data: &ForgeTestData,
-) -> TestConfig {
+) -> TestConfig<foundry_compilers::artifacts::Error> {
     foundry_test_utils::init_tracing();
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 

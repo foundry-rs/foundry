@@ -7,11 +7,12 @@ use forge::{
 };
 use foundry_compilers::{
     artifacts::{Libraries, Settings},
-    EvmVersion, Project, ProjectCompileOutput, SolcConfig,
+    compilers::{vyper::Vyper, Compiler},
+    EvmVersion, Project, ProjectCompileOutput, Solc, SolcConfig,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
-    InvariantConfig, RpcEndpoint, RpcEndpoints,
+    InvariantConfig, Language, ResolveProject, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{
     constants::CALLER,
@@ -34,6 +35,7 @@ pub enum ForgeTestProfile {
     Default,
     Cancun,
     MultiVersion,
+    Vyper,
 }
 
 impl fmt::Display for ForgeTestProfile {
@@ -42,6 +44,7 @@ impl fmt::Display for ForgeTestProfile {
             ForgeTestProfile::Default => write!(f, "default"),
             ForgeTestProfile::Cancun => write!(f, "cancun"),
             ForgeTestProfile::MultiVersion => write!(f, "multi-version"),
+            ForgeTestProfile::Vyper => write!(f, "vyper"),
         }
     }
 }
@@ -50,6 +53,11 @@ impl ForgeTestProfile {
     /// Returns true if the profile is Cancun.
     pub fn is_cancun(&self) -> bool {
         matches!(self, Self::Cancun)
+    }
+
+    /// Returns true if the profile is for Vyper compilation.
+    pub fn is_vyper(&self) -> bool {
+        matches!(self, Self::Vyper)
     }
 
     pub fn root(&self) -> PathBuf {
@@ -71,11 +79,7 @@ impl ForgeTestProfile {
         SolcConfig::builder().settings(settings).build()
     }
 
-    pub fn project(&self) -> Project {
-        self.config().project().expect("Failed to build project")
-    }
-
-    pub fn test_opts(&self, output: &ProjectCompileOutput) -> TestOptions {
+    pub fn test_opts<E>(&self, output: &ProjectCompileOutput<E>) -> TestOptions {
         TestOptionsBuilder::default()
             .fuzz(FuzzConfig {
                 runs: 256,
@@ -109,7 +113,7 @@ impl ForgeTestProfile {
                 gas_report_samples: 256,
                 failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
             })
-            .build(output, Path::new(self.project().root()))
+            .build(output, &self.root())
             .expect("Config loaded")
     }
 
@@ -154,30 +158,37 @@ impl ForgeTestProfile {
             config.evm_version = EvmVersion::Cancun;
         }
 
+        if self.is_vyper() {
+            config.lang = Language::Vyper;
+        }
+
         config
     }
 }
 
 /// Container for test data for a specific test profile.
-pub struct ForgeTestData {
-    pub project: Project,
-    pub output: ProjectCompileOutput,
+pub struct ForgeTestData<C: Compiler = Solc> {
+    pub project: Project<C>,
+    pub output: ProjectCompileOutput<C::CompilationError>,
     pub test_opts: TestOptions,
     pub evm_opts: EvmOpts,
     pub config: Config,
     pub profile: ForgeTestProfile,
 }
 
-impl ForgeTestData {
+impl<C: Compiler> ForgeTestData<C> {
     /// Builds [ForgeTestData] for the given [ForgeTestProfile].
     ///
     /// Uses [get_compiled] to lazily compile the project.
-    pub fn new(profile: ForgeTestProfile) -> Self {
-        let project = profile.project();
+    pub fn new(profile: ForgeTestProfile) -> Self
+    where
+        Config: ResolveProject<C>,
+    {
+        let config = profile.config();
+        let project = config.resolve_project().unwrap();
+        let evm_opts = profile.evm_opts();
         let output = get_compiled(&project);
         let test_opts = profile.test_opts(&output);
-        let config = profile.config();
-        let evm_opts = profile.evm_opts();
 
         Self { project, output, test_opts, evm_opts, config, profile }
     }
@@ -196,7 +207,7 @@ impl ForgeTestData {
     }
 
     /// Builds a non-tracing runner
-    pub fn runner(&self) -> MultiContractRunner {
+    pub fn runner(&self) -> MultiContractRunner<C::CompilationError> {
         let mut config = self.config.clone();
         config.fs_permissions =
             FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
@@ -204,7 +215,10 @@ impl ForgeTestData {
     }
 
     /// Builds a non-tracing runner
-    pub fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
+    pub fn runner_with_config(
+        &self,
+        mut config: Config,
+    ) -> MultiContractRunner<C::CompilationError> {
         config.rpc_endpoints = rpc_endpoints();
         config.allow_paths.push(manifest_root().to_path_buf());
 
@@ -234,7 +248,7 @@ impl ForgeTestData {
     }
 
     /// Builds a tracing runner
-    pub fn tracing_runner(&self) -> MultiContractRunner {
+    pub fn tracing_runner(&self) -> MultiContractRunner<C::CompilationError> {
         let mut opts = self.evm_opts.clone();
         opts.verbosity = 5;
         self.base_runner()
@@ -243,7 +257,7 @@ impl ForgeTestData {
     }
 
     /// Builds a runner that runs against forked state
-    pub async fn forked_runner(&self, rpc: &str) -> MultiContractRunner {
+    pub async fn forked_runner(&self, rpc: &str) -> MultiContractRunner<C::CompilationError> {
         let mut opts = self.evm_opts.clone();
 
         opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
@@ -259,7 +273,9 @@ impl ForgeTestData {
     }
 }
 
-pub fn get_compiled(project: &Project) -> ProjectCompileOutput {
+pub fn get_compiled<C: Compiler>(
+    project: &Project<C>,
+) -> ProjectCompileOutput<C::CompilationError> {
     let lock_file_path = project.sources_path().join(".lock");
     // Compile only once per test run.
     // We need to use a file lock because `cargo-nextest` runs tests in different processes.
@@ -297,6 +313,10 @@ pub static TEST_DATA_CANCUN: Lazy<ForgeTestData> =
 /// Data for tests requiring Cancun support on Solc and EVM level.
 pub static TEST_DATA_MULTI_VERSION: Lazy<ForgeTestData> =
     Lazy::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
+
+/// Data for tests requiring Cancun support on Solc and EVM level.
+pub static TEST_DATA_VYPER: Lazy<ForgeTestData<Vyper>> =
+    Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Vyper));
 
 pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));

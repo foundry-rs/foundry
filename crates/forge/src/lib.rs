@@ -45,8 +45,8 @@ pub struct TestOptions {
 impl TestOptions {
     /// Tries to create a new instance by detecting inline configurations from the project compile
     /// output.
-    pub fn new(
-        output: &ProjectCompileOutput,
+    pub fn new<E>(
+        output: &ProjectCompileOutput<E>,
         root: &Path,
         profiles: Vec<String>,
         base_fuzz: FuzzConfig,
@@ -201,9 +201,9 @@ impl TestOptionsBuilder {
     /// `root` is a reference to the user's project root dir. This is essential
     /// to determine the base path of generated contract identifiers. This is to provide correct
     /// matchers for inline test configs.
-    pub fn build(
+    pub fn build<E>(
         self,
-        output: &ProjectCompileOutput,
+        output: &ProjectCompileOutput<E>,
         root: &Path,
     ) -> Result<TestOptions, InlineConfigError> {
         let profiles: Vec<String> =

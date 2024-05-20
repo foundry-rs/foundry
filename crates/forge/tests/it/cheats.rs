@@ -4,14 +4,15 @@ use crate::{
     config::*,
     test_helpers::{
         ForgeTestData, RE_PATH_SEPARATOR, TEST_DATA_CANCUN, TEST_DATA_DEFAULT,
-        TEST_DATA_MULTI_VERSION,
+        TEST_DATA_MULTI_VERSION, TEST_DATA_VYPER,
     },
 };
+use foundry_compilers::compilers::Compiler;
 use foundry_config::{fs_permissions::PathPermission, FsPermissions};
 use foundry_test_utils::Filter;
 
 /// Executes all cheat code tests but not fork cheat codes or tests that require isolation mode
-async fn test_cheats_local(test_data: &ForgeTestData) {
+async fn test_cheats_local<C: Compiler>(test_data: &ForgeTestData<C>) {
     let mut filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
         .exclude_paths("Fork")
         .exclude_contracts("Isolated");
@@ -57,4 +58,9 @@ async fn test_cheats_local_multi_version() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local_cancun() {
     test_cheats_local(&TEST_DATA_CANCUN).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cheats_local_vyper() {
+    test_cheats_local(&TEST_DATA_VYPER).await
 }

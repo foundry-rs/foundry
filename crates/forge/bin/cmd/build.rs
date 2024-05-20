@@ -90,7 +90,7 @@ impl BuildArgs {
         with_resolved_project!(config, |project| {
             let project = project?;
 
-            let filter = if let Some(ref skip) = self.skip {
+            let filter = if let Some(skip) = &self.skip {
                 if !skip.is_empty() {
                     let filter = SkipBuildFilters::new(skip.clone(), project.root().clone())?;
                     Some(filter)

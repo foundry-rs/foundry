@@ -1,9 +1,16 @@
 use clap::Parser;
 use forge::TestFilter;
 use foundry_common::glob::GlobMatcher;
-use foundry_compilers::{FileFilter, ProjectPathsConfig};
+use foundry_compilers::{
+    compilers::vyper::parser::VyperParsedSource,
+    resolver::{parse::SolData, GraphEdges},
+    FileFilter, ProjectPathsConfig, SolcSparseFileFilter, SparseOutputFileFilter,
+};
 use foundry_config::Config;
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 /// The filter to use during testing.
 ///
@@ -212,5 +219,27 @@ impl TestFilter for ProjectPathsAwareFilter {
 impl fmt::Display for ProjectPathsAwareFilter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.args_filter.fmt(f)
+    }
+}
+
+impl FileFilter for &ProjectPathsAwareFilter {
+    fn is_match(&self, file: &Path) -> bool {
+        (*self).is_match(file)
+    }
+}
+
+impl SparseOutputFileFilter<SolData> for ProjectPathsAwareFilter {
+    fn sparse_sources(&self, file: &Path, graph: &GraphEdges<SolData>) -> Vec<PathBuf> {
+        SolcSparseFileFilter::new(self).sparse_sources(file, graph)
+    }
+}
+
+impl SparseOutputFileFilter<VyperParsedSource> for ProjectPathsAwareFilter {
+    fn sparse_sources(&self, file: &Path, _graph: &GraphEdges<VyperParsedSource>) -> Vec<PathBuf> {
+        if self.is_match(file) {
+            vec![file.to_path_buf()]
+        } else {
+            vec![]
+        }
     }
 }
