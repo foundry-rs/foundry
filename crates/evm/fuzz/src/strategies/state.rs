@@ -12,7 +12,11 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::{AccountInfo, SpecId},
 };
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    sync::Arc,
+};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -113,7 +117,9 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info, false);
             // Insert storage values.
             if self.config.include_storage {
-                for (slot, value) in &account.storage {
+                // Sort storage values before inserting to ensure deterministic dictionary.
+                let values = account.storage.iter().collect::<BTreeMap<_, _>>();
+                for (slot, value) in values {
                     self.insert_storage_value(slot, value, false);
                 }
             }
