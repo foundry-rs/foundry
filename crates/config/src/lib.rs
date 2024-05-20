@@ -927,8 +927,8 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// use foundry_config::Config;
     /// use foundry_compilers::Solc;
+    /// use foundry_config::Config;
     /// let config = Config::load_with_root(".").sanitized();
     /// let paths = config.project_paths::<Solc>();
     /// ```
