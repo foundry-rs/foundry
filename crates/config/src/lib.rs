@@ -28,7 +28,7 @@ use foundry_compilers::{
 };
 use inflector::Inflector;
 use regex::Regex;
-use revm_primitives::SpecId;
+use revm_primitives::{FixedBytes, SpecId};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -394,6 +394,9 @@ pub struct Config {
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
     pub unchecked_cheatcode_artifacts: bool,
 
+    /// CREATE2 salt to use for the library deployment in scripts.
+    pub create2_library_salt: B256,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -449,6 +452,9 @@ impl Config {
     ///
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
     pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
+
+    /// Default salt for create2 library deployments
+    pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
 
     /// Returns the current `Config`
     ///
@@ -2010,6 +2016,7 @@ impl Default for Config {
             doc: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
+            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
             __non_exhaustive: (),
             __warnings: vec![],
         }

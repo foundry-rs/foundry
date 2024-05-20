@@ -27,7 +27,11 @@ use foundry_evm::{
         },
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
-    fuzz::{fixture_name, invariant::InvariantContract, CounterExample, FuzzFixtures},
+    fuzz::{
+        fixture_name,
+        invariant::{CallDetails, InvariantContract},
+        CounterExample, FuzzFixtures,
+    },
     traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::TestRunner;
@@ -572,8 +576,12 @@ impl<'a> ContractRunner<'a> {
             let txes = call_sequence
                 .clone()
                 .into_iter()
-                .map(|seq| {
-                    (seq.sender.unwrap_or_default(), (seq.addr.unwrap_or_default(), seq.calldata))
+                .map(|seq| BasicTxDetails {
+                    sender: seq.sender.unwrap_or_default(),
+                    call_details: CallDetails {
+                        target: seq.addr.unwrap_or_default(),
+                        calldata: seq.calldata,
+                    },
                 })
                 .collect::<Vec<BasicTxDetails>>();
             if let Ok((success, replayed_entirely)) = check_sequence(

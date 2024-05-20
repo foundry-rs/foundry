@@ -1,5 +1,5 @@
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, Signature};
+use alloy_primitives::{Address, Signature, B256};
 use alloy_signer::Signer;
 use alloy_signer_wallet::{
     coins_bip39::{English, Mnemonic},
@@ -151,6 +151,22 @@ pub enum WalletSubcommands {
     /// Derives private key from mnemonic
     #[command(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
     DerivePrivateKey { mnemonic: String, mnemonic_index: Option<u8> },
+
+    /// Decrypt a keystore file to get the private key
+    #[command(name = "decrypt-keystore", visible_alias = "dk")]
+    DecryptKeystore {
+        /// The name for the account in the keystore.
+        #[arg(value_name = "ACCOUNT_NAME")]
+        account_name: String,
+        /// If not provided, keystore will try to be located at the default keystores directory
+        /// (~/.foundry/keystores)
+        #[arg(long, short)]
+        keystore_dir: Option<String>,
+        /// Password for the JSON keystore in cleartext
+        /// This is unsafe, we recommend using the default hidden password prompt
+        #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
+        unsafe_password: Option<String>,
+    },
 }
 
 impl WalletSubcommands {
@@ -364,6 +380,38 @@ flag to set your key via:
                 println!("- Account:");
                 println!("Address:     {}", wallet.address());
                 println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
+            }
+            WalletSubcommands::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
+                // Set up keystore directory
+                let dir = if let Some(path) = keystore_dir {
+                    Path::new(&path).to_path_buf()
+                } else {
+                    Config::foundry_keystores_dir().ok_or_else(|| {
+                        eyre::eyre!("Could not find the default keystore directory.")
+                    })?
+                };
+
+                let keypath = dir.join(&account_name);
+
+                if !keypath.exists() {
+                    eyre::bail!("Keystore file does not exist at {}", keypath.display());
+                }
+
+                let password = if let Some(password) = unsafe_password {
+                    password
+                } else {
+                    // if no --unsafe-password was provided read via stdin
+                    rpassword::prompt_password("Enter password: ")?
+                };
+
+                let wallet = LocalWallet::decrypt_keystore(keypath, password)?;
+
+                let private_key = B256::from_slice(&wallet.signer().to_bytes());
+
+                let success_message =
+                    format!("{}'s private key is: {}", &account_name, private_key);
+
+                println!("{}", success_message.green());
             }
         };
 

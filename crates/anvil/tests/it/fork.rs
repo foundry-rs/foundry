@@ -488,7 +488,7 @@ async fn can_reset_properly() {
     assert_eq!(to_balance, fork_provider.get_balance(to, BlockId::latest()).await.unwrap());
 
     // tx does not exist anymore
-    assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.is_err())
+    assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.unwrap().is_none())
 }
 
 #[tokio::test(flavor = "multi_thread")]

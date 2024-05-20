@@ -1,11 +1,11 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, SenderFilters},
+    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
     strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
     FuzzFixtures,
 };
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Address;
 use parking_lot::RwLock;
 use proptest::prelude::*;
 use std::{rc::Rc, sync::Arc};
@@ -16,7 +16,7 @@ pub fn override_call_strat(
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,
     fuzz_fixtures: FuzzFixtures,
-) -> SBoxedStrategy<(Address, Bytes)> {
+) -> SBoxedStrategy<CallDetails> {
     let contracts_ref = contracts.targets.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
@@ -101,6 +101,7 @@ fn generate_call(
                 (sender, contract)
             })
         })
+        .prop_map(|(sender, call_details)| BasicTxDetails { sender, call_details })
         .boxed()
 }
 
@@ -166,9 +167,9 @@ fn select_random_function(
 pub fn fuzz_contract_with_calldata(
     fuzz_state: &EvmFuzzState,
     fuzz_fixtures: &FuzzFixtures,
-    contract: Address,
+    target: Address,
     func: Function,
-) -> impl Strategy<Value = (Address, Bytes)> {
+) -> impl Strategy<Value = CallDetails> {
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
@@ -179,6 +180,6 @@ pub fn fuzz_contract_with_calldata(
     ]
     .prop_map(move |calldata| {
         trace!(input=?calldata);
-        (contract, calldata)
+        CallDetails { target, calldata }
     })
 }
