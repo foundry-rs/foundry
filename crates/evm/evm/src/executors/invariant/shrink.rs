@@ -120,9 +120,13 @@ fn check_sequence(
     let mut sequence_failed = false;
     // Apply the shrinked candidate sequence.
     for call_index in sequence {
-        let (sender, (addr, bytes)) = &calls[call_index];
-        let call_result =
-            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
+        let tx = &calls[call_index];
+        let call_result = executor.call_raw_committing(
+            tx.sender,
+            tx.call_details.target,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
         if call_result.reverted && failed_case.fail_on_revert {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.

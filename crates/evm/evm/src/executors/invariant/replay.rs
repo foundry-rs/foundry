@@ -35,9 +35,13 @@ pub fn replay_run(
     let mut counterexample_sequence = vec![];
 
     // Replay each call from the sequence, collect logs, traces and coverage.
-    for (sender, (addr, bytes)) in inputs.iter() {
-        let call_result =
-            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
+    for tx in inputs.iter() {
+        let call_result = executor.call_raw_committing(
+            tx.sender,
+            tx.call_details.target,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
 
@@ -57,9 +61,9 @@ pub fn replay_run(
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::create(
-            *sender,
-            *addr,
-            bytes,
+            tx.sender,
+            tx.call_details.target,
+            &tx.call_details.calldata,
             &ided_contracts,
             call_result.traces,
         ));

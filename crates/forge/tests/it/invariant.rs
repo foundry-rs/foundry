@@ -181,6 +181,26 @@ async fn test_invariant() {
                 "default/fuzz/invariant/common/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest",
                 vec![("invariant_shrink_fail_on_revert()", true, None, None, None)],
             ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromReturnValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from return found".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromLogValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from logs found".into()),
+                    None,
+                    None,
+                )],
+            )
         ]),
     );
 }
@@ -564,5 +584,37 @@ async fn test_invariant_fixtures() {
                 None,
             )],
         )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_scrape_values() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeValues.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromReturnValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from return found".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromLogValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from logs found".into()),
+                    None,
+                    None,
+                )],
+            ),
+        ]),
     );
 }
