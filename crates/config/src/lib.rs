@@ -928,8 +928,9 @@ impl Config {
     ///
     /// ```
     /// use foundry_config::Config;
+    /// use foundry_compilers::Solc;
     /// let config = Config::load_with_root(".").sanitized();
-    /// let paths = config.project_paths();
+    /// let paths = config.project_paths::<Solc>();
     /// ```
     pub fn project_paths<C>(&self) -> ProjectPathsConfig<C> {
         let mut builder = ProjectPathsConfig::builder()
