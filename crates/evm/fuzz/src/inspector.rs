@@ -82,18 +82,13 @@ impl Fuzzer {
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
-                // TODO: Assure that revm 9 `CallInputs` have been correctly mapped from revm 8.
-                if let Some((sender, (contract, input))) =
-                    call_generator.next(call.caller, call.target_address)
-                {
-                    *call.input = input.0;
-                    call.caller = sender;
-                    call.bytecode_address = contract;
+                if let Some(tx) = call_generator.next(call.caller, call.target_address) {
+                    *call.input = tx.call_details.calldata.0;
+                    call.caller = tx.sender;
+                    call.target_address = tx.call_details.target;
 
                     // TODO: in what scenarios can the following be problematic
-                    call.bytecode_address = contract;
-                    call.target_address = contract;
-
+                    call.bytecode_address = tx.call_details.target;
                     call_generator.used = true;
                 }
             }

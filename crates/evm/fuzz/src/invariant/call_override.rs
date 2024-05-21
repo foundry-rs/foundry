@@ -1,5 +1,5 @@
-use super::BasicTxDetails;
-use alloy_primitives::{Address, Bytes};
+use super::{BasicTxDetails, CallDetails};
+use alloy_primitives::Address;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     option::weighted,
@@ -17,7 +17,7 @@ pub struct RandomCallGenerator {
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<Mutex<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
-    pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
+    pub strategy: SBoxedStrategy<Option<CallDetails>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
     /// Flag to know if a call has been overridden. Don't allow nesting for now.
@@ -33,7 +33,7 @@ impl RandomCallGenerator {
     pub fn new(
         test_address: Address,
         runner: TestRunner,
-        strategy: SBoxedStrategy<(Address, Bytes)>,
+        strategy: SBoxedStrategy<CallDetails>,
         target_reference: Arc<RwLock<Address>>,
     ) -> Self {
         let strategy = weighted(0.9, strategy).sboxed();
@@ -71,7 +71,7 @@ impl RandomCallGenerator {
             )
         } else {
             // TODO: Do we want it to be 80% chance only too ?
-            let new_caller = original_target;
+            let sender = original_target;
 
             // Set which contract we mostly (80% chance) want to generate calldata from.
             *self.target_reference.write() = original_caller;
@@ -82,7 +82,7 @@ impl RandomCallGenerator {
                 .new_tree(&mut self.runner.lock())
                 .unwrap()
                 .current()
-                .map(|(new_target, calldata)| (new_caller, (new_target, calldata)));
+                .map(|call_details| BasicTxDetails { sender, call_details });
 
             self.last_sequence.write().push(choice.clone());
             choice

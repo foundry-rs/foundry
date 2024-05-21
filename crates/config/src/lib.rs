@@ -21,7 +21,7 @@ use foundry_compilers::{
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{solc::SolcVersionManager, CompilerVersionManager},
-    error::{SolcError, SolcIoError},
+    error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
     SolcConfig,
@@ -793,13 +793,17 @@ impl Config {
     pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
         project.cleanup()?;
 
-        // Remove fuzz cache directory.
-        if let Some(fuzz_cache) = &self.fuzz.failure_persist_dir {
-            let path = project.root().join(fuzz_cache);
-            if path.exists() {
-                std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
+        // Remove fuzz and invariant cache directories.
+        let remove_test_dir = |test_dir: &Option<PathBuf>| {
+            if let Some(test_dir) = test_dir {
+                let path = project.root().join(test_dir);
+                if path.exists() {
+                    let _ = fs::remove_dir_all(&path);
+                }
             }
-        }
+        };
+        remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
     }
@@ -1958,7 +1962,7 @@ impl Default for Config {
             path_pattern: None,
             path_pattern_inverse: None,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
-            invariant: Default::default(),
+            invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
             prompt_timeout: 120,
@@ -4461,7 +4465,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.invariant,
-                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
+                InvariantConfig {
+                    runs: 512,
+                    depth: 10,
+                    failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    ..Default::default()
+                }
             );
 
             Ok(())
