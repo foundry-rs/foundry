@@ -3132,6 +3132,7 @@ dependencies = [
  "path-slash",
  "proc-macro2",
  "proptest",
+ "quote",
  "rayon",
  "regex",
  "reqwest",

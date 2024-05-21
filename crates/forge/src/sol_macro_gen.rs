@@ -16,19 +16,29 @@ impl SolMacroGen {
         Self { path, name, expansion: None }
     }
 
-    pub fn get_json_abi(&self) -> JsonAbi {
+    pub fn get_json_abi(&self) -> (JsonAbi, Option<String>) {
         let json = std::fs::read(&self.path).expect("Failed to read JSON file");
 
         // Need to do this to get the abi in the next step.
         let json: Value = serde_json::from_slice(&json).expect("Failed to parse JSON file");
 
         // Get the abi from the json.
-        if let Some(abi) = json.get("abi") {
-            serde_json::from_str(&abi.clone().to_string()).expect("Failed to parse ABI")
+        let json_abi = if let Some(abi) = json.get("abi") {
+            let json: JsonAbi =
+                serde_json::from_str(&abi.clone().to_string()).expect("Failed to parse ABI");
+            json
         } else {
-            // TODO (yash): Remove panic, throw error.
             panic!("No ABI found in JSON file");
-        }
+        };
+
+        let bytecode = if let Some(bytecode) = json.get("bytecode") {
+            tracing::info!("Found creation bytecode in JSON file");
+            Some(bytecode.to_string())
+        } else {
+            None
+        };
+
+        (json_abi, bytecode)
     }
 }
 
@@ -74,7 +84,7 @@ impl MultiSolMacroGen {
 
     fn generate_bindings(&mut self) {
         for instance in &mut self.instances {
-            let mut json_abi = instance.get_json_abi();
+            let (mut json_abi, maybe_bytecode) = instance.get_json_abi();
 
             json_abi.dedup();
             let sol_str = json_abi.to_sol(&instance.name, None);
@@ -84,6 +94,27 @@ impl MultiSolMacroGen {
             let tokens = tokens_for_sol(&ident_name, &sol_str);
             let tokens =
                 if let Ok(tokens) = tokens { tokens } else { panic!("Failed to get sol tokens") };
+
+            let tokens = if let Some(_bytecode) = maybe_bytecode {
+                // let bytecode_literal = syn::LitStr::new(&bytecode, Span::call_site());
+                // quote::quote! {
+                //     #[derive(Debug)]
+                //     #[sol(rpc, bytecode = #bytecode_literal)] // TODO: Bug here due to bytecode
+                // string literal     #tokens
+                // }
+
+                quote::quote! {
+                    #[derive(Debug)]
+                    #[sol(rpc)]
+                    #tokens
+                }
+            } else {
+                quote::quote! {
+                    #[derive(Debug)]
+                    #[sol(rpc)]
+                    #tokens
+                }
+            };
 
             let input: Result<SolInput, syn::Error> = syn::parse2(tokens);
 
@@ -123,7 +154,7 @@ impl MultiSolMacroGen {
 
         // Write Cargo.toml
         let cargo_toml_path = bindings_path.join("Cargo.toml");
-        let toml_contents = format!("[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n\n[dependencies]\nalloy-sol-types = \"0.7.4\"\n", name, version);
+        let toml_contents = format!("[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n\n[dependencies]\nalloy-sol-types = \"0.7.4\"\nalloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\", rev = \"64feb9b\" }}", name, version);
         fs::write(cargo_toml_path, toml_contents).expect("Failed to write Cargo.toml");
 
         // Write src
