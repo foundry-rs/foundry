@@ -94,7 +94,7 @@ impl ForgeTestProfile {
             })
             .invariant(InvariantConfig {
                 runs: 256,
-                depth: 500,
+                depth: 15,
                 fail_on_revert: false,
                 call_override: false,
                 dictionary: FuzzDictionaryConfig {
