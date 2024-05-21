@@ -267,19 +267,17 @@ impl FuzzDictionary {
     /// If collected samples limit is reached then values are inserted as regular values.
     pub fn insert_sample_values(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
         for sample in sample_values {
-            if let Some(sample_type) = sample.as_type() {
-                if let Some(sample_value) = sample.as_word() {
-                    let sample_value = sample_value.into();
-                    if let Some(values) = self.sample_values.get_mut(&sample_type) {
-                        if values.len() < limit as usize {
-                            values.insert(sample_value);
-                        } else {
-                            // Insert as state value (will be removed at the end of the run).
-                            self.insert_value(sample_value, true);
-                        }
+            if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
+                let sample_value = sample_value.into();
+                if let Some(values) = self.sample_values.get_mut(&sample_type) {
+                    if values.len() < limit as usize {
+                        values.insert(sample_value);
                     } else {
-                        self.sample_values.entry(sample_type).or_default().insert(sample_value);
+                        // Insert as state value (will be removed at the end of the run).
+                        self.insert_value(sample_value, true);
                     }
+                } else {
+                    self.sample_values.entry(sample_type).or_default().insert(sample_value);
                 }
             }
         }
