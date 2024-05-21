@@ -1242,7 +1242,7 @@ impl EthApi {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-    /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
+    /// Introduced in EIP-1559 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
     pub async fn fee_history(
