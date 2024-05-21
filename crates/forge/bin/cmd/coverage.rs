@@ -312,7 +312,7 @@ impl CoverageArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_test_options(TestOptions {
                 fuzz: config.fuzz.clone(),
-                invariant: config.invariant,
+                invariant: config.invariant.clone(),
                 ..Default::default()
             })
             .set_coverage(true)

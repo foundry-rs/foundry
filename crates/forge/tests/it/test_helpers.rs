@@ -107,6 +107,7 @@ impl ForgeTestProfile {
                 shrink_run_limit: 2usize.pow(18u32),
                 max_assume_rejects: 65536,
                 gas_report_samples: 256,
+                failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
             })
             .build(output, Path::new(self.project().root()))
             .expect("Config loaded")
