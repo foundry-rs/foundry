@@ -1,7 +1,5 @@
-use crate::tx;
+use crate::tx::{self, CastTxBuilder};
 use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
-use alloy_primitives::U64;
-use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::Result;
@@ -27,10 +25,6 @@ pub struct MakeTxArgs {
 
     /// The arguments of the function to call.
     args: Vec<String>,
-
-    /// Reuse the latest nonce for the sender account.
-    #[arg(long, conflicts_with = "nonce")]
-    resend: bool,
 
     #[command(subcommand)]
     command: Option<MakeTxSubcommands>,
@@ -60,7 +54,7 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let MakeTxArgs { to, mut sig, mut args, resend, command, mut tx, eth } = self;
+        let MakeTxArgs { to, mut sig, mut args, command, tx, eth } = self;
 
         let code = if let Some(MakeTxSubcommands::Create {
             code,
@@ -75,12 +69,10 @@ impl MakeTxArgs {
             None
         };
 
-        tx::validate_to_address(&code, &to)?;
-
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain));
+
+        let tx_kind = tx::resolve_tx_kind(&provider, &code, &to).await?;
 
         // Retrieve the signer, and bail if it can't be constructed.
         let signer = eth.wallet.signer().await?;
@@ -88,14 +80,15 @@ impl MakeTxArgs {
 
         tx::validate_from_address(eth.wallet.from, from)?;
 
-        if resend {
-            tx.nonce = Some(U64::from(provider.get_transaction_count(from).await?));
-        }
-
         let provider = get_provider(&config)?;
 
-        let (tx, _) =
-            tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key, None).await?;
+        let tx = CastTxBuilder::new(provider, tx, &config)
+            .await?
+            .with_tx_kind(tx_kind)
+            .with_code_sig_and_args(code, sig, args)
+            .await?
+            .build(from)
+            .await?;
 
         let tx = tx.build(&EthereumSigner::new(signer)).await?;
 
