@@ -1,4 +1,4 @@
-use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
@@ -35,6 +35,82 @@ pub fn validate_to_address(code: &Option<String>, to: &Option<NameOrAddress>) ->
         eyre::bail!("Must specify a recipient address or contract code to deploy");
     }
     Ok(())
+}
+
+#[derive(Default)]
+pub struct TxBuilder<T: Transport + Clone> {
+    provider: &Provider<T, AnyNetwork>,
+    from: Option<Address>,
+    to: Option<Address>,
+    code: Option<String>,
+    sig: Option<String>,
+    args: Vec<String>,
+    tx: TransactionOpts,
+    chain: Chain,
+    etherscan_api_key: Option<String>,
+    blob_data: Option<Vec<u8>>,
+    sidecar: Option<BlobTransactionSidecar>,
+}
+
+impl TxBuilder<T: Transport + Clone> {
+    pub fn new(provider: &Provider<T, AnyNetwork>) -> Self {
+        Self { provider, ..Self::default() }
+    }
+
+    pub fn with_from(mut self, from: Into<NameOrAddress>) -> Self {
+        self.from = Some(from.into().resolve(self.provider).await?);
+        self
+    }
+
+    pub fn with_to(mut self, to: Into<NameOrAddress>) -> Self {
+        self.to = Some(to.into().resolve(self.provider).await?);
+        self
+    }
+
+    pub fn with_code(mut self, code: String) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    pub fn with_sig(mut self, sig: String) -> Self {
+        self.sig = Some(sig);
+        self
+    }
+
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn with_tx_opts(mut self, tx: TransactionOpts) -> Self {
+        self.tx = tx;
+        self
+    }
+
+    pub fn with_chain(mut self, chain: Into<Chain>) -> Self {
+        self.chain = chain;
+        self
+    }
+
+    pub fn with_etherscan_api_key(mut self, api_key: String) -> Self {
+        self.etherscan_api_key = Some(api_key);
+        self
+    }
+
+    pub fn with_blob_data(mut self, data: Vec<u8>) -> Self {
+        self.blob_data = Some(data);
+        self
+    }
+
+    pub fn populate_sidecar(mut self) {
+        if let Some(blob_data) = self.blob_data {
+            let mut coder = SidecarBuilder::<SimpleCoder>::default();
+            coder.ingest(&blob_data);
+            self.sidecar = Some(coder.build());
+        }
+    }
+
+    // TODO: Add build_req
 }
 
 #[allow(clippy::too_many_arguments)]
