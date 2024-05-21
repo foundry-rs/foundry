@@ -14,7 +14,7 @@ use foundry_cli::{
 };
 use foundry_common::{cli_warn, ens::NameOrAddress};
 use foundry_config::{Chain, Config};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -59,6 +59,10 @@ pub struct SendTxArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// The path of blob data to be sent.
+    #[arg(long, value_name = "BLOB_DATA_PATH", conflicts_with = "legacy", requires = "blob")]
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -91,7 +95,10 @@ impl SendTxArgs {
             resend,
             command,
             unlocked,
+            path,
         } = self;
+
+        let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
         let code = if let Some(SendTxSubcommands::Create {
             code,
@@ -161,6 +168,7 @@ impl SendTxArgs {
                 cast_async,
                 confirmations,
                 to_json,
+                blob_data,
             )
             .await
         // Case 2:
@@ -196,6 +204,7 @@ impl SendTxArgs {
                 cast_async,
                 confirmations,
                 to_json,
+                blob_data,
             )
             .await
         }
@@ -216,13 +225,15 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     cast_async: bool,
     confs: u64,
     to_json: bool,
+    blob_data: Option<Vec<u8>>,
 ) -> Result<()> {
     let (tx, _) =
-        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key).await?;
+        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key, blob_data)
+            .await?;
 
     let cast = Cast::new(provider);
-
     let pending_tx = cast.send(tx).await?;
+
     let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {
