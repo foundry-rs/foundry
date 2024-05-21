@@ -8,7 +8,7 @@ use foundry_evm_core::constants::CALLER;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     invariant::{BasicTxDetails, InvariantContract},
-    BaseCounterExample, CounterExample,
+    BaseCounterExample,
 };
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
 use parking_lot::RwLock;
@@ -28,7 +28,7 @@ pub fn replay_run(
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
     inputs: Vec<BasicTxDetails>,
-) -> Result<Option<CounterExample>> {
+) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     executor.set_tracing(true);
 
@@ -60,31 +60,34 @@ pub fn replay_run(
         ));
 
         // Create counter example to be used in failed case.
-        counterexample_sequence.push(BaseCounterExample::create(
+        counterexample_sequence.push(BaseCounterExample::from_invariant_call(
             tx.sender,
             tx.call_details.target,
             &tx.call_details.calldata,
             &ided_contracts,
             call_result.traces,
         ));
-
-        // Replay invariant to collect logs and traces.
-        let error_call_result = executor.call_raw(
-            CALLER,
-            invariant_contract.address,
-            invariant_contract
-                .invariant_function
-                .abi_encode_input(&[])
-                .expect("invariant should have no inputs")
-                .into(),
-            U256::ZERO,
-        )?;
-        traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
-        logs.extend(error_call_result.logs);
     }
 
-    Ok((!counterexample_sequence.is_empty())
-        .then_some(CounterExample::Sequence(counterexample_sequence)))
+    // Replay invariant to collect logs and traces.
+    // We do this only once at the end of the replayed sequence.
+    // Checking after each call doesn't add valuable info for passing scenario
+    // (invariant call result is always success) nor for failed scenarios
+    // (invariant call result is always success until the last call that breaks it).
+    let invariant_result = executor.call_raw(
+        CALLER,
+        invariant_contract.address,
+        invariant_contract
+            .invariant_function
+            .abi_encode_input(&[])
+            .expect("invariant should have no inputs")
+            .into(),
+        U256::ZERO,
+    )?;
+    traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
+    logs.extend(invariant_result.logs);
+
+    Ok(counterexample_sequence)
 }
 
 /// Replays the error case, shrinks the failing sequence and collects all necessary traces.
@@ -98,15 +101,16 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
-) -> Result<Option<CounterExample>> {
+) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
-        TestError::Abort(_) => Ok(None),
+        TestError::Abort(_) => Ok(vec![]),
         TestError::Fail(_, ref calls) => {
             // Shrink sequence of failed calls.
             let calls = shrink_sequence(failed_case, calls, &executor)?;
 
             set_up_inner_replay(&mut executor, &failed_case.inner_sequence);
+
             // Replay calls to get the counterexample and to collect logs, traces and coverage.
             replay_run(
                 invariant_contract,

@@ -257,7 +257,7 @@ impl TestArgs {
 
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz.clone())
-            .invariant(config.invariant)
+            .invariant(config.invariant.clone())
             .profiles(profiles)
             .build(&output, project_root)?;
 
