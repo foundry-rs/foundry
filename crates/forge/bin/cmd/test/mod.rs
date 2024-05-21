@@ -239,6 +239,15 @@ impl TestArgs {
             project = config.project()?;
         }
 
+        // Set number of threads to use for running tests.
+        // If not specified then the number of threads determined by rayon will be used.
+        if let Some(test_threads) = config.max_test_threads {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(test_threads as usize)
+                .build_global()
+                .unwrap();
+        }
+
         let mut filter = self.filter(&config);
         trace!(target: "forge::test", ?filter, "using filter");
 
