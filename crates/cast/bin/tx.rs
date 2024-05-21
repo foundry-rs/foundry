@@ -76,6 +76,8 @@ where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
+    /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
+    /// provided [TransactionOpts].
     pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config) -> Result<Self> {
         let mut tx = WithOtherFields::<TransactionRequest>::default();
 
@@ -190,6 +192,7 @@ where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
+    /// Builds tx from the [CastTxBuilder], filling missing fields (gas, gas_price, nonce).
     pub async fn build(
         mut self,
         from: impl Into<NameOrAddress>,
