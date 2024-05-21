@@ -19,6 +19,7 @@ use k256::{
     Secp256k1,
 };
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
+use rand::Rng;
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -142,6 +143,17 @@ impl Cheatcode for ensNamehashCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         Ok(namehash(name).abi_encode())
+    }
+}
+
+impl Cheatcode for randomUintCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        // Use thread_rng to get a random number
+        let mut rng = rand::thread_rng();
+        let num: [u64; 4] = rng.gen();
+        let random_number = U256::from_limbs(num);
+        Ok(random_number.abi_encode())
     }
 }
 
