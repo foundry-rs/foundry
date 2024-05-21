@@ -413,4 +413,5 @@ interface Vm {
     function writeLine(string calldata path, string calldata data) external;
     function writeToml(string calldata json, string calldata path) external;
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
+    function randomUint() external returns (uint256);
 }
