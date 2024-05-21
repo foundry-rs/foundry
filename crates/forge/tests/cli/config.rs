@@ -72,7 +72,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()
         },
-        invariant: InvariantConfig { runs: 256, ..Default::default() },
+        invariant: InvariantConfig {
+            runs: 256,
+            failure_persist_dir: Some("test-cache/fuzz".into()),
+            ..Default::default()
+        },
         ffi: true,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
@@ -130,6 +134,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         cancun: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
+        create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         __non_exhaustive: (),
         __warnings: vec![],
     };
