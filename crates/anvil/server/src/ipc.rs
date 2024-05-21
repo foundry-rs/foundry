@@ -47,7 +47,6 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
 
         let name = to_name(path.as_ref())?;
         let listener = ls::ListenerOptions::new().name(name).create_tokio()?;
-        // TODO: https://github.com/kotauskas/interprocess/issues/64
         let connections = futures::stream::unfold(listener, |listener| async move {
             let conn = listener.accept().await;
             Some((conn, listener))
