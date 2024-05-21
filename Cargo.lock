@@ -3451,7 +3451,6 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.4.3"
-source = "git+https://github.com/foundry-rs/compilers?rev=90d38a4#90d38a48514a1010623af1b016035969b71e9819"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3482,6 +3481,7 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
+ "winnow 0.6.8",
  "yansi",
 ]
 
