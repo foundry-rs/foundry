@@ -6393,6 +6393,26 @@
     },
     {
       "func": {
+        "id": "randomUint",
+        "description": "Returns a random uint256 value.",
+        "declaration": "function randomUint() external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint()",
+        "selector": "0x25124730",
+        "selectorBytes": [
+          37,
+          18,
+          71,
+          48
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "readCallers",
         "description": "Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.",
         "declaration": "function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);",
