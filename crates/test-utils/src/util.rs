@@ -198,6 +198,7 @@ impl ExtTester {
             test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
+        test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
 
         test_cmd.assert_non_empty_stdout();
     }
