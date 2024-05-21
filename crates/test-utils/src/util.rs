@@ -1,7 +1,11 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
-    artifacts::Settings, cache::CompilerCache, error::Result as SolcResult, project_util::{copy_dir, TempProject}, ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc
+    artifacts::Settings,
+    cache::CompilerCache,
+    error::Result as SolcResult,
+    project_util::{copy_dir, TempProject},
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
